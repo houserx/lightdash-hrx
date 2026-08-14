@@ -19,7 +19,7 @@ overrides:
   glob@>=10.2.0 <10.5.0: 10.5.0
   jws: 4.0.1
   qs: 6.15.2
-  hono: 4.12.27
+  hono: 4.12.34
   tar: 7.5.21
   eslint: 8.57.1
   canvas: 3.2.1
@@ -1650,21 +1650,21 @@ importers:
         specifier: 10.0.1
         version: 10.0.1
       hono:
-        specifier: 4.12.27
-        version: 4.12.27
+        specifier: 4.12.34
+        version: 4.12.34
       ssh2:
         specifier: 1.17.0
         version: 1.17.0
     devDependencies:
       '@flue/cli':
         specifier: 2.0.3
-        version: 2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.2)(ai@6.0.205(zod@4.4.3))(esbuild@0.28.2)(hono@4.12.27)(jiti@2.6.1)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(sugarss@5.0.1(postcss@8.5.23))(supports-color@9.1.0)(terser@5.46.1)(tsx@4.23.12)(typescript@7.0.2)(ws@8.20.0)(yaml@2.9.0)(zod@4.4.3)
+        version: 2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.2)(ai@6.0.205(zod@4.4.3))(esbuild@0.28.2)(hono@4.12.34)(jiti@2.6.1)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(sugarss@5.0.1(postcss@8.5.23))(supports-color@9.1.0)(terser@5.46.1)(tsx@4.23.12)(typescript@7.0.2)(ws@8.20.0)(yaml@2.9.0)(zod@4.4.3)
       '@flue/sdk':
         specifier: 2.0.3
         version: 2.0.3
       '@flue/vite':
         specifier: 2.0.3
-        version: 2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.27)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)
+        version: 2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.34)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)
       '@types/node':
         specifier: 24.13.2
         version: 24.13.2
@@ -4027,13 +4027,13 @@ packages:
     resolution: {integrity: sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
   '@hono/node-server@2.1.0':
     resolution: {integrity: sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg==}
     engines: {node: '>=20'}
     peerDependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
   '@humanwhocodes/config-array@0.13.0':
     resolution: {integrity: sha512-DZLEEqFWQFiyK6h5YIeynKx7JlvCYWL0cImfSRXZ9l4Sg2efkFGTuFf6vzXjK1cq6IYkU+Eg/JizXw+TD2vRNw==}
@@ -10432,9 +10432,6 @@ packages:
   fastest-stable-stringify@2.0.2:
     resolution: {integrity: sha512-bijHueCGd0LqqNK9b5oCMHc0MluJAx0cwqASgbWMvkO01lCYgIhacVRLcaDz3QnyYIRNJRDwMb41VuT6pHJ91Q==}
 
-  fastq@1.11.0:
-    resolution: {integrity: sha512-7Eczs8gIPDrVzT+EksYBcupqMyxSHXXrHOLRRxU2/DicV8789MRBRR8+Hc2uWzUupOs4YS4JzBmBxjjCVBxD/g==}
-
   fastq@1.20.1:
     resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
 
@@ -11051,8 +11048,8 @@ packages:
     resolution: {integrity: sha512-eSmmWE5bZTK2Nou4g0AI3zZ9rswp7GRKoKXS1BLUkvPviOqs4YTN1djQIqrXy9k5gEtdLPy86JjRwsNM9tnDcA==}
     engines: {node: '>=0.10.0'}
 
-  hono@4.12.27:
-    resolution: {integrity: sha512-1yrb/+w6HWQJrUCLkJ2IF5jNIPvvFkblV5RNOYl6bV+OA6p9GLcMpHFFGTosSvHvcAUibuUukRqhlYI4z32C7Q==}
+  hono@4.12.34:
+    resolution: {integrity: sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==}
     engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@4.0.0:
@@ -19747,10 +19744,10 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@flue/cli@2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.2)(ai@6.0.205(zod@4.4.3))(esbuild@0.28.2)(hono@4.12.27)(jiti@2.6.1)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(sugarss@5.0.1(postcss@8.5.23))(supports-color@9.1.0)(terser@5.46.1)(tsx@4.23.12)(typescript@7.0.2)(ws@8.20.0)(yaml@2.9.0)(zod@4.4.3)':
+  '@flue/cli@2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(@types/node@24.13.2)(ai@6.0.205(zod@4.4.3))(esbuild@0.28.2)(hono@4.12.34)(jiti@2.6.1)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(sugarss@5.0.1(postcss@8.5.23))(supports-color@9.1.0)(terser@5.46.1)(tsx@4.23.12)(typescript@7.0.2)(ws@8.20.0)(yaml@2.9.0)(zod@4.4.3)':
     dependencies:
       '@flue/runtime': 2.0.3(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(supports-color@9.1.0)(typescript@7.0.2)(ws@8.20.0)(zod@4.4.3)
-      '@flue/vite': 2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.27)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)
+      '@flue/vite': 2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.34)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)
       '@vercel/detect-agent': 1.2.4
       cac: 7.0.0
       minisearch: 7.2.0
@@ -19800,7 +19797,7 @@ snapshots:
     dependencies:
       '@flue/runtime': 2.0.3(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(supports-color@9.1.0)(typescript@7.0.2)(ws@8.20.0)(zod@4.4.3)
       '@linear/sdk': 88.3.0(graphql@16.8.1)
-      hono: 4.12.27
+      hono: 4.12.34
     transitivePeerDependencies:
       - graphql
 
@@ -19808,10 +19805,10 @@ snapshots:
     dependencies:
       '@earendil-works/pi-agent-core': 0.83.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(supports-color@9.1.0)(ws@8.20.0)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.83.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(supports-color@9.1.0)(ws@8.20.0)(zod@4.4.3)
-      '@hono/node-server': 2.1.0(hono@4.12.27)
+      '@hono/node-server': 2.1.0(hono@4.12.34)
       '@modelcontextprotocol/client': 2.0.0
       '@valibot/to-json-schema': 1.7.1(valibot@1.4.2(typescript@7.0.2))
-      hono: 4.12.27
+      hono: 4.12.34
       js-yaml: 5.2.3
       ulidx: 2.4.1
       valibot: 1.4.2(typescript@7.0.2)
@@ -19828,10 +19825,10 @@ snapshots:
     dependencies:
       '@durable-streams/client': 0.2.6
 
-  '@flue/vite@2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.27)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)':
+  '@flue/vite@2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.34)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)':
     dependencies:
       '@flue/runtime': 2.0.3(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(supports-color@9.1.0)(typescript@7.0.2)(ws@8.20.0)(zod@4.4.3)
-      '@hono/node-server': 2.1.0(hono@4.12.27)
+      '@hono/node-server': 2.1.0(hono@4.12.34)
       agents: 0.20.1(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(zod@4.4.3)
       magic-string: 1.1.0
       tinyglobby: 0.2.15
@@ -19863,10 +19860,10 @@ snapshots:
       - ws
       - zod
 
-  '@flue/vite@2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.27)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)':
+  '@flue/vite@2.0.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(hono@4.12.34)(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(supports-color@9.1.0)(typescript@7.0.2)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(ws@8.20.0)(zod@4.4.3)':
     dependencies:
       '@flue/runtime': 2.0.3(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(supports-color@9.1.0)(typescript@7.0.2)(ws@8.20.0)(zod@4.4.3)
-      '@hono/node-server': 2.1.0(hono@4.12.27)
+      '@hono/node-server': 2.1.0(hono@4.12.34)
       agents: 0.20.1(@babel/core@8.0.1)(@babel/runtime@7.28.6)(@cloudflare/workers-types@5.20260811.1)(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@6.0.205(zod@4.4.3))(just-bash@3.0.1(supports-color@9.1.0))(react@19.2.0)(rolldown@1.2.3)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))(zod@4.4.3)
       magic-string: 1.1.0
       tinyglobby: 0.2.15
@@ -20222,13 +20219,13 @@ snapshots:
       - '@types/react-dom'
       - react-native
 
-  '@hono/node-server@1.19.9(hono@4.12.27)':
+  '@hono/node-server@1.19.9(hono@4.12.34)':
     dependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
-  '@hono/node-server@2.1.0(hono@4.12.27)':
+  '@hono/node-server@2.1.0(hono@4.12.34)':
     dependencies:
-      hono: 4.12.27
+      hono: 4.12.34
 
   '@humanwhocodes/config-array@0.13.0(supports-color@5.5.0)':
     dependencies:
@@ -20735,7 +20732,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@5.5.0)(zod@3.25.55)':
     dependencies:
-      '@hono/node-server': 1.19.9(hono@4.12.27)
+      '@hono/node-server': 1.19.9(hono@4.12.34)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -20745,7 +20742,7 @@ snapshots:
       eventsource-parser: 3.0.8
       express: 5.2.1(supports-color@5.5.0)
       express-rate-limit: 8.3.0(express@5.2.1(supports-color@5.5.0))
-      hono: 4.12.27
+      hono: 4.12.34
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.0
@@ -20759,7 +20756,7 @@ snapshots:
 
   '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.4.3)':
     dependencies:
-      '@hono/node-server': 1.19.9(hono@4.12.27)
+      '@hono/node-server': 1.19.9(hono@4.12.34)
       ajv: 8.18.0
       ajv-formats: 3.0.1(ajv@8.18.0)
       content-type: 1.0.5
@@ -20769,7 +20766,7 @@ snapshots:
       eventsource-parser: 3.0.8
       express: 5.2.1(supports-color@9.1.0)
       express-rate-limit: 8.3.0(express@5.2.1(supports-color@9.1.0))
-      hono: 4.12.27
+      hono: 4.12.34
       jose: 6.1.3
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.0
@@ -20876,7 +20873,7 @@ snapshots:
   '@nodelib/fs.walk@1.2.8':
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
-      fastq: 1.11.0
+      fastq: 1.20.1
 
   '@npmcli/fs@2.1.2':
     dependencies:
@@ -21986,7 +21983,7 @@ snapshots:
   '@rolldown/plugin-babel@0.2.3(@babel/core@7.28.4(supports-color@9.1.0))(@babel/runtime@7.28.6)(rolldown@1.2.3)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.27.7)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.19.4)(yaml@2.8.3))':
     dependencies:
       '@babel/core': 7.28.4(supports-color@9.1.0)
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       rolldown: 1.2.3
     optionalDependencies:
       '@babel/runtime': 7.28.6
@@ -21996,7 +21993,7 @@ snapshots:
   '@rolldown/plugin-babel@0.2.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(rolldown@1.2.3)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.27.7)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.19.4)(yaml@2.8.3))':
     dependencies:
       '@babel/core': 8.0.1
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       rolldown: 1.2.3
     optionalDependencies:
       '@babel/runtime': 7.28.6
@@ -22006,7 +22003,7 @@ snapshots:
   '@rolldown/plugin-babel@0.2.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(rolldown@1.2.3)(vite@8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 8.0.1
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       rolldown: 1.2.3
     optionalDependencies:
       '@babel/runtime': 7.28.6
@@ -22015,7 +22012,7 @@ snapshots:
   '@rolldown/plugin-babel@0.2.3(@babel/core@8.0.1)(@babel/runtime@7.28.6)(rolldown@1.2.3)(vite@8.2.1(@types/node@24.13.2)(esbuild@0.28.2)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0))':
     dependencies:
       '@babel/core': 8.0.1
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       rolldown: 1.2.3
     optionalDependencies:
       '@babel/runtime': 7.28.6
@@ -27691,10 +27688,6 @@ snapshots:
 
   fastest-stable-stringify@2.0.2: {}
 
-  fastq@1.11.0:
-    dependencies:
-      reusify: 1.0.4
-
   fastq@1.20.1:
     dependencies:
       reusify: 1.0.4
@@ -27726,6 +27719,10 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
+
+  fdir@6.5.0(picomatch@4.0.5):
+    optionalDependencies:
+      picomatch: 4.0.5
 
   fecha@4.2.3: {}
 
@@ -28615,7 +28612,7 @@ snapshots:
     dependencies:
       parse-passwd: 1.0.0
 
-  hono@4.12.27: {}
+  hono@4.12.34: {}
 
   html-encoding-sniffer@4.0.0:
     dependencies:
@@ -34135,8 +34132,8 @@ snapshots:
 
   tinyglobby@0.2.17:
     dependencies:
-      fdir: 6.5.0(picomatch@4.0.4)
-      picomatch: 4.0.4
+      fdir: 6.5.0(picomatch@4.0.5)
+      picomatch: 4.0.5
 
   tinypool@2.1.0: {}
 
@@ -35044,11 +35041,11 @@ snapshots:
   vite@7.3.5(@types/node@22.13.1)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
       esbuild: 0.27.7
-      fdir: 6.5.0(picomatch@4.0.4)
-      picomatch: 4.0.4
+      fdir: 6.5.0(picomatch@4.0.5)
+      picomatch: 4.0.5
       postcss: 8.5.23
       rollup: 4.60.2
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 22.13.1
       fsevents: 2.3.3
@@ -35062,11 +35059,11 @@ snapshots:
   vite@7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.19.4)(yaml@2.8.3):
     dependencies:
       esbuild: 0.27.7
-      fdir: 6.5.0(picomatch@4.0.4)
-      picomatch: 4.0.4
+      fdir: 6.5.0(picomatch@4.0.5)
+      picomatch: 4.0.5
       postcss: 8.5.23
       rollup: 4.60.2
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 24.13.2
       fsevents: 2.3.3
@@ -35080,11 +35077,11 @@ snapshots:
   vite@7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.8.3):
     dependencies:
       esbuild: 0.27.7
-      fdir: 6.5.0(picomatch@4.0.4)
-      picomatch: 4.0.4
+      fdir: 6.5.0(picomatch@4.0.5)
+      picomatch: 4.0.5
       postcss: 8.5.23
       rollup: 4.60.2
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 24.13.2
       fsevents: 2.3.3
@@ -35098,11 +35095,11 @@ snapshots:
   vite@7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
       esbuild: 0.27.7
-      fdir: 6.5.0(picomatch@4.0.4)
-      picomatch: 4.0.4
+      fdir: 6.5.0(picomatch@4.0.5)
+      picomatch: 4.0.5
       postcss: 8.5.23
       rollup: 4.60.2
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
     optionalDependencies:
       '@types/node': 24.13.2
       fsevents: 2.3.3
@@ -35184,11 +35181,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 7.3.5(@types/node@22.13.1)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0)
       why-is-node-running: 2.3.0
@@ -35213,11 +35210,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.8.3)
       why-is-node-running: 2.3.0
@@ -35242,11 +35239,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 8.0.5(@emnapi/core@1.9.2)(@emnapi/runtime@1.11.1)(@types/node@24.13.2)(esbuild@0.27.7)(jiti@2.6.1)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.19.4)(yaml@2.8.3)
       why-is-node-running: 2.3.0
@@ -35271,11 +35268,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.19.4)(yaml@2.8.3)
       why-is-node-running: 2.3.0
@@ -35300,11 +35297,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.8.3)
       why-is-node-running: 2.3.0
@@ -35329,11 +35326,11 @@ snapshots:
       magic-string: 0.30.21
       obug: 2.1.1
       pathe: 2.0.3
-      picomatch: 4.0.4
+      picomatch: 4.0.5
       std-env: 4.0.0
       tinybench: 2.9.0
       tinyexec: 1.0.4
-      tinyglobby: 0.2.15
+      tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 7.3.5(@types/node@24.13.2)(jiti@2.6.1)(lightningcss@1.33.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.46.1)(tsx@4.23.12)(yaml@2.9.0)
       why-is-node-running: 2.3.0

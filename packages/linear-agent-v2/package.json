@@ -21,7 +21,7 @@
 		"@flue/runtime": "2.0.3",
 		"@linear/sdk": "88.3.0",
 		"execa": "10.0.1",
-		"hono": "4.12.27",
+		"hono": "4.12.34",
 		"ssh2": "1.17.0"
 	},
 	"devDependencies": {
