@@ -440,6 +440,8 @@ export class AiOrganizationSettingsService extends BaseService {
                 aiAgentReviewsAvailable: false,
                 defaultAiAgentModelConfig: null,
                 defaultAiAgentModelOptions: [],
+                dataAppCodingAgent:
+                    this.lightdashConfig.appRuntime.dataAppCodingAgent,
                 visibleDataAppModels: getVisibleDataAppClaudeModels(
                     dataAppModelVisibility,
                 ),
@@ -457,6 +459,8 @@ export class AiOrganizationSettingsService extends BaseService {
                 settings.aiAgentReviewsPausedByByok !== true,
             defaultAiAgentModelConfig: settings.defaultAiAgentModelConfig,
             defaultAiAgentModelOptions: settings.defaultAiAgentModelOptions,
+            dataAppCodingAgent:
+                this.lightdashConfig.appRuntime.dataAppCodingAgent,
             visibleDataAppModels: getVisibleDataAppClaudeModels(
                 settings.dataAppModelVisibility,
             ),

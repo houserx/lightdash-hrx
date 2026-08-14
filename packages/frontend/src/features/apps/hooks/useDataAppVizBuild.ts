@@ -3,6 +3,7 @@ import {
     getErrorMessage,
     type ApiAppVersionSummary,
     type DataAppClaudeModel,
+    type DataAppCodexModel,
     type DataAppVizFieldMapping,
     type ItemsMap,
 } from '@lightdash/common';
@@ -32,8 +33,10 @@ type Args = {
 export type VizBuildRequest = {
     description: string;
     fileIds: string[];
-    claudeModel: DataAppClaudeModel;
-};
+} & (
+    | { claudeModel: DataAppClaudeModel; codexModel?: never }
+    | { codexModel: DataAppCodexModel; claudeModel?: never }
+);
 
 /** The app claimed by a build before it has a renderable version. */
 export type DataAppVizDraft = {
@@ -174,7 +177,9 @@ export const useDataAppVizBuild = ({
                         creationExperience: 'chart_type_builder',
                         appUuid: draftAppUuid,
                         fileIds: files,
-                        claudeModel: request.claudeModel,
+                        ...(request.codexModel
+                            ? { codexModel: request.codexModel }
+                            : { claudeModel: request.claudeModel }),
                     },
                     {
                         onSuccess: ({ appUuid, version }) => {
@@ -198,7 +203,9 @@ export const useDataAppVizBuild = ({
                     prompt,
                     creationExperience: 'chart_type_builder',
                     fileIds: files,
-                    claudeModel: request.claudeModel,
+                    ...(request.codexModel
+                        ? { codexModel: request.codexModel }
+                        : { claudeModel: request.claudeModel }),
                 },
                 {
                     onSuccess: ({ version }) =>
