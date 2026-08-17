@@ -409,28 +409,41 @@ export const getAllScopesForOrgRole = (
 ): string[] => [...ORGANIZATION_ROLE_TO_SCOPES_MAP[role]];
 
 /**
- * Canonical action/subject footprint emitted by a system organization role.
- * Feeds `organizationRolePermissions.ts`'s confused-deputy grant check
- * (`validateOrganizationScopesCanBeGranted`) -- isEnterprise: true because
- * this must be conservative: under-reporting a role's permissions here
- * would weaken that check, and the hand-written builder this replaced
- * (A10c) never filtered by license either. Verified byte-identical to the
- * pre-A10c hand-written output for every role by
- * `getOrganizationMemberRolePermissions.goldenMaster.test.ts`.
+ * Canonical action/subject footprint emitted by an arbitrary scope list --
+ * the reusable half of `getOrganizationMemberRolePermissions` below, split
+ * out so a caller with a DB-sourced scope list (e.g. from `scoped_roles`,
+ * for either a custom or well-known-system role_uuid) can get the same
+ * conservative footprint without going through the literal role->scopes
+ * map. isEnterprise defaults true for the same reason
+ * `getOrganizationMemberRolePermissions` always passed it: under-reporting
+ * permissions here would weaken the confused-deputy check this feeds.
  */
-export const getOrganizationMemberRolePermissions = (
-    role: OrganizationMemberRole,
+export const getPermissionsFromScopes = (
+    scopes: string[],
+    { isEnterprise = true }: { isEnterprise?: boolean } = {},
 ): string[] => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
     buildAbilityFromScopes(
         {
             organizationUuid: 'delegation-validation-organization',
             userUuid: 'delegation-validation-user',
-            scopes: getAllScopesForOrgRole(role),
-            isEnterprise: true,
+            scopes,
+            isEnterprise,
         },
         builder,
     );
 
     return getPermissionsFromAbilityRules(builder.rules);
 };
+
+/**
+ * Canonical action/subject footprint emitted by a system organization role.
+ * Feeds `organizationRolePermissions.ts`'s confused-deputy grant check
+ * (`validateOrganizationScopesCanBeGranted`) for callers that only have a
+ * role, not a resolved scope list. Verified byte-identical to the
+ * pre-A10c hand-written output for every role by
+ * `getOrganizationMemberRolePermissions.goldenMaster.test.ts`.
+ */
+export const getOrganizationMemberRolePermissions = (
+    role: OrganizationMemberRole,
+): string[] => getPermissionsFromScopes(getAllScopesForOrgRole(role));

@@ -6,7 +6,7 @@ import {
     GroupMember,
     GroupMembership,
     GroupWithMembers,
-    isSystemRole,
+    isSystemRoleName,
     NotFoundError,
     ParameterError,
     ProjectGroupAccess,
@@ -793,7 +793,7 @@ export class GroupsModel {
             .insert({
                 group_uuid: groupUuid,
                 project_uuid: projectUuid,
-                ...(isSystemRole(role)
+                ...(isSystemRoleName(role)
                     ? { role }
                     : {
                           role: ProjectMemberRole.VIEWER,

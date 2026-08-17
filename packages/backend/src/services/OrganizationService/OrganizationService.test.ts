@@ -64,6 +64,9 @@ const organizationMemberProfileModel = {
 };
 const rolesModel = {
     getRoleWithScopesByUuid: vi.fn(),
+    // No scoped_roles row to prefer -- forces the literal-map fallback,
+    // matching this suite's pre-A15b expectations.
+    getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
 };
 
 describe('organization service', () => {

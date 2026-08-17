@@ -427,7 +427,7 @@ export const PROJECT_ROLE_TO_SCOPES_MAP: Record<ProjectMemberRole, string[]> = {
 
 /**
  * Ordered list of all built-in project system roles, lowest to highest.
- * Used only for enumeration (`getSystemRoles`, `isSystemRole`) -- no
+ * Used only for enumeration (`getSystemRoleNames`, `isSystemRoleName`) -- no
  * scope-union computation is derived from this ordering anymore.
  */
 const ROLE_HIERARCHY = [
@@ -489,7 +489,21 @@ export const getNonEnterpriseScopesForRole = (
     );
 };
 
-export const getSystemRoles = (): RoleWithScopes[] =>
+/**
+ * Lists project system roles for role-assignment CRUD/display purposes,
+ * with `roleUuid` set to the role-name string itself (e.g. "viewer") --
+ * a display/API identity, NOT the real well-known role_uuid seeded into
+ * `roles`/`scoped_roles` by migration (see systemRoleUuids.ts). Ability-
+ * building never reads this; it's a permanently separate concern from
+ * scope resolution. Renamed from `getSystemRoles`/`isSystemRole` (A15c.1)
+ * specifically to remove the false kinship the old names implied with
+ * systemRoleUuids.ts's real UUIDs -- the two schemes stay unified in name
+ * only by accident of history, not by any shared underlying identifier.
+ * Do not change the string this returns for `roleUuid`: it's serialized
+ * as-is into the `GET /orgs/{orgUuid}/roles` API response and into SCIM
+ * role ids that external identity providers (Okta, Entra) persist.
+ */
+export const getSystemRoleNames = (): RoleWithScopes[] =>
     ROLE_HIERARCHY.map((role) => ({
         roleUuid: role,
         name: ProjectMemberRoleLabels[role],
@@ -503,5 +517,7 @@ export const getSystemRoles = (): RoleWithScopes[] =>
         createdBy: null,
     }));
 
-export const isSystemRole = (roleUuid: string): roleUuid is ProjectMemberRole =>
+export const isSystemRoleName = (
+    roleUuid: string,
+): roleUuid is ProjectMemberRole =>
     ROLE_HIERARCHY.includes(roleUuid as ProjectMemberRole);

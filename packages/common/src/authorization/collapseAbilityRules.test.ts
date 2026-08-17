@@ -405,7 +405,6 @@ describe('collapseAbilityRules', () => {
             customRoleScopes: {
                 'custom-role': ['view:Dashboard', 'manage:Space'],
             },
-            customRolesEnabled: true,
         });
         expect(builder.rules.some((r) => r.inverted)).toBe(false);
 

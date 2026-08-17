@@ -1,17 +1,43 @@
 import {
     ForbiddenError,
-    getOrganizationMemberRolePermissions,
+    getAllScopesForOrgRole,
+    getPermissionsFromScopes,
     getUncoveredPermissions,
     OrganizationMemberRole,
+    resolveEffectiveOrgRoleUuid,
+    resolveRoleScopes,
     type SessionUser,
 } from '@lightdash/common';
 import { RolesModel } from '../models/RolesModel';
 
-export const getOrganizationSystemRoleScopes = (
+/**
+ * A system role's scopes, preferring `scoped_roles` (via its well-known
+ * role_uuid, see A14's resolveEffectiveOrgRoleUuid) over the literal
+ * `orgRoleToScopeMapping.ts` map -- the same DB-first, literal-map-fallback
+ * resolution `getUserAbilityBuilder` uses for ability building (A15),
+ * applied here to the confused-deputy grant check instead.
+ */
+export const getOrganizationSystemRoleScopes = async (
     role: OrganizationMemberRole,
+    rolesModel: RolesModel,
     { includePersonalAccessToken = false } = {},
-): string[] => {
-    const permissions = getOrganizationMemberRolePermissions(role);
+): Promise<string[]> => {
+    const effectiveRoleUuid = resolveEffectiveOrgRoleUuid({
+        role,
+        roleUuid: undefined,
+    });
+    const dbScopes = await rolesModel.getScopesByRoleUuid(effectiveRoleUuid);
+    const scopes = resolveRoleScopes({
+        effectiveRoleUuid,
+        hasCustomRoleUuid: false,
+        systemRoleScopes: getAllScopesForOrgRole(role),
+        customRoleScopes: dbScopes
+            ? { [effectiveRoleUuid]: dbScopes }
+            : undefined,
+    });
+    // hasCustomRoleUuid: false guarantees resolveRoleScopes never returns
+    // undefined -- it only fails closed for a genuine custom role_uuid.
+    const permissions = getPermissionsFromScopes(scopes as string[]);
     return includePersonalAccessToken
         ? [...permissions, 'manage:PersonalAccessToken']
         : permissions;
@@ -36,7 +62,7 @@ const getCallerOrganizationScopes = async (
     );
 
     if (!user.roleUuid) {
-        return getOrganizationSystemRoleScopes(user.role, {
+        return getOrganizationSystemRoleScopes(user.role, rolesModel, {
             includePersonalAccessToken: canManagePersonalAccessToken,
         });
     }

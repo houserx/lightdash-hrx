@@ -5,7 +5,7 @@ import {
     defineUserAbility,
     ForbiddenError,
     getOrganizationMemberRolePermissions,
-    getSystemRoles,
+    getSystemRoleNames,
     InviteLinkPurpose,
     NotFoundError,
     OrganizationMemberRole,
@@ -710,7 +710,7 @@ describe('RolesService', () => {
 
             beforeEach(() => {
                 // Mock system role exists
-                const systemRoles = getSystemRoles();
+                const systemRoles = getSystemRoleNames();
                 const systemRole = systemRoles.find(
                     (r) => r.roleUuid === systemRoleId,
                 );
@@ -898,7 +898,7 @@ describe('RolesService', () => {
             const roleId = 'editor';
 
             beforeEach(() => {
-                const systemRoles = getSystemRoles();
+                const systemRoles = getSystemRoleNames();
                 const systemRole = systemRoles.find(
                     (r) => r.roleUuid === roleId,
                 );
@@ -962,7 +962,7 @@ describe('RolesService', () => {
             const roleId = 'editor';
 
             beforeEach(() => {
-                const systemRoles = getSystemRoles();
+                const systemRoles = getSystemRoleNames();
                 const systemRole = systemRoles.find(
                     (r) => r.roleUuid === roleId,
                 );

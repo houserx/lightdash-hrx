@@ -14,8 +14,10 @@ import {
     LightdashUser,
     MemberAbility,
     NotFoundError,
+    ORGANIZATION_SYSTEM_ROLE_UUIDS,
     OrganizationMemberRole,
     PasswordLoginBlockedError,
+    PROJECT_SYSTEM_ROLE_UUIDS,
     ProjectMemberRole,
     ServiceAccountScope,
     type ProjectAbilityProfile,
@@ -634,6 +636,121 @@ describe('UserModel', () => {
             expectedRules.forEach((expectedRule) => {
                 expect(actualRules).toContainEqual(expectedRule);
             });
+        });
+    });
+
+    describe('given a system role with scopes seeded in scoped_roles (A13/A14/A15 cutover)', () => {
+        // The well-known system-role uuid (systemRoleUuids.ts) is looked up
+        // in scoped_roles the same way a real custom role_uuid is -- proving
+        // this is genuinely one path, not a literal-map default with a
+        // bolted-on DB check. Uses a scope absent from MEMBER's literal
+        // list (orgRoleToScopeMapping.ts) so a pass here can only mean the
+        // DB-sourced scopes were used, not the literal fallback.
+        it('org layer: prefers scoped_roles scopes over the literal map for the well-known org role_uuid', async () => {
+            const model = createUserModel();
+            const wellKnownOrgUuid =
+                ORGANIZATION_SYSTEM_ROLE_UUIDS[OrganizationMemberRole.MEMBER];
+            model.customRoleScopes = vi.fn(async (roleUuids) =>
+                roleUuids.includes(wellKnownOrgUuid)
+                    ? { [wellKnownOrgUuid]: ['manage:Organization'] }
+                    : {},
+            );
+
+            const { abilityBuilder } = await model.generateUserAbilityBuilder({
+                ...userDetails,
+                is_internal: false,
+            });
+            const ability = abilityBuilder.build();
+
+            expect(model.customRoleScopes).toHaveBeenCalledWith(
+                expect.arrayContaining([wellKnownOrgUuid]),
+                expect.anything(),
+            );
+            expect(
+                ability.can(
+                    'manage',
+                    subject('Organization', { organizationUuid: 'org-1' }),
+                ),
+            ).toBe(true);
+            // MEMBER's literal-map scopes are absent -- DB scopes replaced
+            // them rather than merging alongside.
+            expect(
+                ability.can(
+                    'view',
+                    subject('OrganizationMemberProfile', {
+                        organizationUuid: 'org-1',
+                    }),
+                ),
+            ).toBe(false);
+        });
+
+        it('project layer (service account): prefers scoped_roles scopes over the literal map for the well-known project role_uuid', async () => {
+            const model = new UserModel({
+                database: vi.fn() as unknown as Knex,
+                lightdashConfig,
+                featureFlagModel,
+            }) as unknown as TestableUserModel;
+            model.hasAuthentication = vi.fn(async () => true);
+            model.getUserProjectRoles = vi.fn(async () => []);
+            model.getUserGroupProjectRoles = vi.fn(async () => []);
+            model.findServiceAccountByUserUuid = vi.fn(async () => ({
+                uuid: 'service-account',
+                description: 'Service account',
+                scopes: [ServiceAccountScope.SYSTEM_MEMBER],
+                organizationUuid: 'org-1',
+            }));
+
+            const wellKnownProjectUuid =
+                PROJECT_SYSTEM_ROLE_UUIDS[ProjectMemberRole.VIEWER];
+            model.customRoleScopes = vi.fn(async (roleUuids) =>
+                roleUuids.includes(wellKnownProjectUuid)
+                    ? { [wellKnownProjectUuid]: ['manage:Space'] }
+                    : {},
+            );
+
+            const PROJECT_UUID = 'sa-project-well-known';
+            const trx = (() => {
+                const builder = {
+                    leftJoin: () => builder,
+                    select: () => builder,
+                    where: () =>
+                        Promise.resolve([
+                            {
+                                project_uuid: PROJECT_UUID,
+                                role: ProjectMemberRole.VIEWER,
+                                role_uuid: null,
+                                project_type: 'DEFAULT',
+                                created_by_user_uuid: null,
+                            },
+                        ]),
+                };
+                return vi.fn(() => builder) as unknown as Knex;
+            })();
+
+            const { abilityBuilder } = await model.generateUserAbilityBuilder(
+                userDetails,
+                trx,
+            );
+            const ability = abilityBuilder.build();
+
+            expect(model.customRoleScopes).toHaveBeenCalledWith(
+                expect.arrayContaining([wellKnownProjectUuid]),
+                expect.anything(),
+            );
+            expect(
+                ability.can(
+                    'manage',
+                    subject('Space', { projectUuid: PROJECT_UUID }),
+                ),
+            ).toBe(true);
+            // VIEWER's literal-map scopes (e.g. view:Dashboard) are absent
+            // -- DB scopes replaced them rather than merging alongside.
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', { projectUuid: PROJECT_UUID }),
+                ),
+            ).toBe(false);
         });
     });
 

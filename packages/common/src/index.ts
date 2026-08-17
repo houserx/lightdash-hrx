@@ -54,12 +54,14 @@ export {
 export * from './authorization/jwtAbility';
 export * from './authorization/orgRoleToScopeMapping';
 export * from './authorization/parseAccount';
+export * from './authorization/resolveRoleScopes';
 export * from './authorization/roleToScopeMapping';
 export * from './authorization/scopeAbilityBuilder';
 export * from './authorization/scopes';
 export * from './authorization/serviceAccountAbility';
 export * from './authorization/space/customRoleProjectRole';
 export * from './authorization/space/spaceAccessResolver';
+export * from './authorization/systemRoleUuids';
 export * from './authorization/types';
 export * from './compiler/compilationReport';
 export * from './compiler/exploreCompiler';

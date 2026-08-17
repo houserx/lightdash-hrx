@@ -92,7 +92,7 @@ Don't write unit tests that test implementation, only write unit tests for new b
 
 - Use CASL for permission management
 - Implement proper role-based access control
-- All permission logic is written in `packages/common/src/authorization/organizationMemberAbility.ts` + `packages/common/src/authorization/projectMemberAbility.ts`
+- All permission logic is composed from scopes via `packages/common/src/authorization/scopeAbilityBuilder.ts` (`buildAbilityFromScopes`), driven by `packages/common/src/authorization/index.ts`'s `getUserAbilityBuilder`. Every role — built-in system role or custom role — is a role_uuid whose scopes live in the `roles`/`scoped_roles` tables (system roles are seeded there by migration with well-known uuids; see `packages/common/src/authorization/systemRoleUuids.ts`) or, as a transitional fallback for well-known system roles, the literal scope-list modules `roleToScopeMapping.ts`/`orgRoleToScopeMapping.ts`. There is no per-role hand-written ability builder to edit when adding a permission — add or adjust the scope in `scopes.ts` instead.
 - All service methods must have permission checks
 - Permission checks should use the `createAuditedAbility` method (instead of accessing `user.ability` / `account.user.ability` directly) — see `docs/audit-logging.md`
 - Permission checks always execute against a subject using fields only from the subject

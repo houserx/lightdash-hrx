@@ -69,8 +69,8 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
         );
     });
 
-    describe('Custom-roles feature flag', () => {
-        it('falls through to the system role path when customRolesEnabled=false (even if roleUuid is set)', () => {
+    describe('Dangling custom role_uuid reference', () => {
+        it('fails closed (grants nothing for the org layer) when roleUuid is set but no scopes are loaded, regardless of the role string', () => {
             const { builder } = getUserAbilityBuilder({
                 user: {
                     role: OrganizationMemberRole.ADMIN,
@@ -80,37 +80,14 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                 },
                 projectProfiles: [],
                 permissionsConfig: PERMISSIONS_CONFIG,
-                customRoleScopes: { [CUSTOM_ROLE_UUID]: ['view:Dashboard'] },
-                customRolesEnabled: false, // gate off
+                customRoleScopes: {}, // no scopes for this role -- dangling reference
             });
-            ruleSetEqual(
-                builder.build().rules,
-                buildExpected(OrganizationMemberRole.ADMIN),
-            );
-        });
-
-        it('falls through to the system role path when customRolesEnabled=true but the role has no scopes loaded', () => {
-            const { builder } = getUserAbilityBuilder({
-                user: {
-                    role: OrganizationMemberRole.ADMIN,
-                    organizationUuid: ORG_UUID,
-                    userUuid: USER_UUID,
-                    roleUuid: CUSTOM_ROLE_UUID,
-                },
-                projectProfiles: [],
-                permissionsConfig: PERMISSIONS_CONFIG,
-                customRoleScopes: {}, // no scopes for this role
-                customRolesEnabled: true,
-            });
-            ruleSetEqual(
-                builder.build().rules,
-                buildExpected(OrganizationMemberRole.ADMIN),
-            );
+            expect(builder.build().rules).toEqual([]);
         });
     });
 
     describe('Org-level custom role active', () => {
-        it('uses the scope-derived path when roleUuid + customRolesEnabled + scopes are all present', () => {
+        it('uses the scope-derived path when roleUuid + scopes are both present', () => {
             // A custom role granting only view:Dashboard. Admin's normal
             // abilities should NOT appear (e.g. manage:InviteLink).
             const { builder } = getUserAbilityBuilder({
@@ -123,7 +100,6 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                 projectProfiles: [],
                 permissionsConfig: PERMISSIONS_CONFIG,
                 customRoleScopes: { [CUSTOM_ROLE_UUID]: ['view:Dashboard'] },
-                customRolesEnabled: true,
             });
             const ability = builder.build();
             // Custom role grants what the scope says
@@ -156,7 +132,6 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                     [READ_ONLY_UUID]: ['view:Dashboard'],
                     [EDIT_UUID]: ['view:Dashboard', 'manage:Dashboard'],
                 },
-                customRolesEnabled: true,
             });
 
             const { builder: editBuilder } = getUserAbilityBuilder({
@@ -172,7 +147,6 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                     [READ_ONLY_UUID]: ['view:Dashboard'],
                     [EDIT_UUID]: ['view:Dashboard', 'manage:Dashboard'],
                 },
-                customRolesEnabled: true,
             });
 
             const readOnlyRules = readOnlyBuilder.build().rules;
@@ -303,7 +277,6 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                         'manage:Dashboard@self',
                     ],
                 },
-                customRolesEnabled: true,
                 isEnterprise: true,
             });
             const ability = builder.build();
@@ -391,7 +364,6 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                 customRoleScopes: {
                     [CUSTOM_ROLE_UUID]: ['manage:Dashboard@self'],
                 },
-                customRolesEnabled: true,
                 isEnterprise: true,
             });
             const ability = builder.build();

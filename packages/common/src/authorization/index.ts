@@ -1,5 +1,4 @@
 import { Ability, AbilityBuilder } from '@casl/ability';
-import { NotFoundError } from '../types/errors';
 import { type OrganizationMemberRole } from '../types/organizationMemberProfile';
 import { type ProjectMemberProfile } from '../types/projectMemberProfile';
 import { type ProjectType } from '../types/projects';
@@ -7,11 +6,16 @@ import { type Role, type RoleWithScopes } from '../types/roles';
 import { type LightdashUser } from '../types/user';
 import { collapseAbilityRules } from './collapseAbilityRules';
 import { getAllScopesForOrgRole } from './orgRoleToScopeMapping';
+import { resolveRoleScopes } from './resolveRoleScopes';
 import { getAllScopesForRole } from './roleToScopeMapping';
 import {
     buildAbilityFromScopes,
     type OptionalIdContext,
 } from './scopeAbilityBuilder';
+import {
+    resolveEffectiveOrgRoleUuid,
+    resolveEffectiveProjectRoleUuid,
+} from './systemRoleUuids';
 import { type MemberAbility } from './types';
 
 /**
@@ -39,7 +43,6 @@ type UserAbilityBuilderArgs = {
         };
     };
     customRoleScopes?: Record<Role['roleUuid'], RoleWithScopes['scopes']>;
-    customRolesEnabled?: boolean;
     isEnterprise?: boolean;
 };
 
@@ -55,7 +58,6 @@ export const getUserAbilityBuilder = ({
     projectProfiles,
     permissionsConfig,
     customRoleScopes,
-    customRolesEnabled,
     isEnterprise,
 }: UserAbilityBuilderArgs): UserAbilityBuilderResult => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
@@ -83,64 +85,67 @@ export const getUserAbilityBuilder = ({
     };
 
     if (user.role && user.organizationUuid) {
-        // Org-level custom role: if the user's organization_memberships row
-        // points at a role_uuid AND custom roles are enabled AND we have the
-        // role's scopes, build CASL from those scopes (same path as
-        // project-level custom roles below). Falls back to the system role
-        // path otherwise -- including when a role_uuid is set but its scopes
-        // are missing from customRoleScopes (dangling reference), unlike the
-        // project loop below, which skips granting anything for that project
-        // in the equivalent case. Pre-existing asymmetry, not changed here.
+        // Every membership -- custom role or system role alike -- resolves
+        // to an effective role_uuid (systemRoleUuids.ts) and its scopes are
+        // read the same way via resolveRoleScopes: scoped_roles first, with
+        // the literal scope-list modules as a fallback only for well-known
+        // system uuids (see resolveRoleScopes.ts). A genuine custom
+        // role_uuid with no matching scopes is a dangling reference and
+        // fails closed (grants nothing for that layer, logged below) --
+        // this now applies uniformly to the org layer and each project,
+        // where previously only the project loop failed closed.
         //
         // buildAbilityFromScopes applies the dynamic PAT gate itself (see
         // handlePatConfigApplication in scopeAbilityBuilder.ts), keyed on
         // organizationRole -- no separate dynamic-abilities call needed.
-        const orgCustomRoleScopes =
-            customRolesEnabled && user.roleUuid
-                ? customRoleScopes?.[user.roleUuid]
-                : undefined;
-
-        applyScopes({
-            organizationUuid: user.organizationUuid,
-            userUuid: user.userUuid,
-            scopes: orgCustomRoleScopes ?? getAllScopesForOrgRole(user.role),
+        const orgScopes = resolveRoleScopes({
+            effectiveRoleUuid: resolveEffectiveOrgRoleUuid({
+                role: user.role,
+                roleUuid: user.roleUuid,
+            }),
+            hasCustomRoleUuid: Boolean(user.roleUuid),
+            systemRoleScopes: getAllScopesForOrgRole(user.role),
+            customRoleScopes,
         });
 
+        if (orgScopes) {
+            applyScopes({
+                organizationUuid: user.organizationUuid,
+                userUuid: user.userUuid,
+                scopes: orgScopes,
+            });
+        } else {
+            // eslint-disable-next-line no-console
+            console.error(
+                `Custom org role with uuid ${user.roleUuid} was not found`,
+            );
+        }
+
         projectProfiles.forEach((projectProfile) => {
-            if (projectProfile.roleUuid && customRolesEnabled) {
-                if (!user.organizationUuid) {
-                    throw new NotFoundError(
-                        `Organization with uuid ${user.organizationUuid} was not found`,
-                    );
-                }
+            const projectScopes = resolveRoleScopes({
+                effectiveRoleUuid:
+                    resolveEffectiveProjectRoleUuid(projectProfile),
+                hasCustomRoleUuid: Boolean(projectProfile.roleUuid),
+                systemRoleScopes: getAllScopesForRole(projectProfile.role),
+                customRoleScopes,
+            });
 
-                const scopes = customRoleScopes?.[projectProfile.roleUuid];
-                if (!scopes) {
-                    // eslint-disable-next-line no-console
-                    console.error(
-                        `Custom role with uuid ${projectProfile.roleUuid} was not found`,
-                    );
-                    return;
-                }
-
-                applyScopes({
-                    projectUuid: projectProfile.projectUuid,
-                    projectType: projectProfile.projectType,
-                    projectCreatedByUserUuid:
-                        projectProfile.projectCreatedByUserUuid,
-                    userUuid: user.userUuid,
-                    scopes,
-                });
-            } else {
-                applyScopes({
-                    projectUuid: projectProfile.projectUuid,
-                    projectType: projectProfile.projectType,
-                    projectCreatedByUserUuid:
-                        projectProfile.projectCreatedByUserUuid,
-                    userUuid: user.userUuid,
-                    scopes: getAllScopesForRole(projectProfile.role),
-                });
+            if (!projectScopes) {
+                // eslint-disable-next-line no-console
+                console.error(
+                    `Custom role with uuid ${projectProfile.roleUuid} was not found`,
+                );
+                return;
             }
+
+            applyScopes({
+                projectUuid: projectProfile.projectUuid,
+                projectType: projectProfile.projectType,
+                projectCreatedByUserUuid:
+                    projectProfile.projectCreatedByUserUuid,
+                userUuid: user.userUuid,
+                scopes: projectScopes,
+            });
         });
     }
     // Collapse per-project rules into `{ $in: [...] }` so the rule set (and the

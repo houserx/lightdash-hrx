@@ -12,7 +12,7 @@ import {
     InviteLinkPurpose,
     isOrganizationMemberRole,
     isScopeAssignableAtLevel,
-    isSystemRole,
+    isSystemRoleName,
     NotFoundError,
     OrganizationMemberRole,
     ParameterError,
@@ -207,7 +207,7 @@ export class RolesService extends BaseService {
         auditedAbility: CaslAuditWrapper<Ability>,
         role: Role,
     ): void {
-        if (isSystemRole(role.roleUuid) && role.ownerType === 'system') {
+        if (isSystemRoleName(role.roleUuid) && role.ownerType === 'system') {
             return;
         }
 
@@ -939,7 +939,7 @@ export class RolesService extends BaseService {
         createRoleData: CreateRole,
     ): Promise<Role> {
         const { scopes, name, description, level = 'project' } = createRoleData;
-        if (isSystemRole(name)) {
+        if (isSystemRoleName(name)) {
             throw new ParameterError(
                 `Cannot create role with name "${name}", this is reserved for system roles`,
             );
@@ -1001,7 +1001,7 @@ export class RolesService extends BaseService {
     ): Promise<Role> {
         const { scopes, name, description } = updateRoleData;
 
-        if (isSystemRole(roleUuid)) {
+        if (isSystemRoleName(roleUuid)) {
             throw new ParameterError(`Cannot update system role "${roleUuid}"`);
         }
 
@@ -1107,14 +1107,16 @@ export class RolesService extends BaseService {
     ): Promise<RoleAssignment> {
         const previousRole = user.role;
         const isCustomRole =
-            roleId !== OrganizationMemberRole.MEMBER && !isSystemRole(roleId);
+            roleId !== OrganizationMemberRole.MEMBER &&
+            !isSystemRoleName(roleId);
 
         let roleName = roleId;
         let ownerType: Role['ownerType'] = 'system';
         let roleScopes = isCustomRole
             ? []
-            : getOrganizationSystemRoleScopes(
+            : await getOrganizationSystemRoleScopes(
                   roleId as OrganizationMemberRole,
+                  this.rolesModel,
                   {
                       includePersonalAccessToken:
                           this.lightdashConfig.auth?.pat?.enabled === true &&
@@ -1254,7 +1256,7 @@ export class RolesService extends BaseService {
             assignments.push({
                 roleId: userAccess.roleUuid,
                 roleName: userAccess.roleName,
-                ownerType: isSystemRole(userAccess.roleUuid)
+                ownerType: isSystemRoleName(userAccess.roleUuid)
                     ? 'system'
                     : 'user',
                 assigneeType: 'user',
@@ -1271,7 +1273,7 @@ export class RolesService extends BaseService {
             assignments.push({
                 roleId: groupAccess.roleUuid, // This might be role name for legacy
                 roleName: groupAccess.roleName,
-                ownerType: isSystemRole(groupAccess.roleUuid)
+                ownerType: isSystemRoleName(groupAccess.roleUuid)
                     ? 'system'
                     : 'user',
                 assigneeType: 'group',
@@ -1370,7 +1372,7 @@ export class RolesService extends BaseService {
                 projectUuid,
             );
 
-        if (isSystemRole(roleId)) {
+        if (isSystemRoleName(roleId)) {
             await this.rolesModel.upsertSystemRoleProjectAccess(
                 projectUuid,
                 userUuid,
@@ -1408,7 +1410,7 @@ export class RolesService extends BaseService {
                 `/projects/${projectUuid}/home`,
                 this.lightdashConfig.siteUrl,
             ).href;
-            const data = isSystemRole(roleId)
+            const data = isSystemRoleName(roleId)
                 ? {
                       email: userEmail,
                       role: roleId,
@@ -1427,7 +1429,7 @@ export class RolesService extends BaseService {
         }
 
         this.analytics.track({
-            event: isSystemRole(roleId)
+            event: isSystemRoleName(roleId)
                 ? 'project_access.upserted_system_role'
                 : 'project_access.upserted_custom_role',
             userId: account.user?.id,
@@ -1435,12 +1437,12 @@ export class RolesService extends BaseService {
                 projectUuid,
                 userUuid,
                 roleId,
-                isSystemRole: isSystemRole(roleId),
+                isSystemRole: isSystemRoleName(roleId),
             },
         });
 
         const previousProjectRole = userProjectRole[0]?.role ?? null;
-        const newProjectRole = isSystemRole(roleId) ? roleId : null;
+        const newProjectRole = isSystemRoleName(roleId) ? roleId : null;
         this.adminNotificationService
             .notifyProjectAdminRoleChange({
                 account,
@@ -1491,7 +1493,7 @@ export class RolesService extends BaseService {
             throw new ForbiddenError();
         }
 
-        if (isSystemRole(roleId)) {
+        if (isSystemRoleName(roleId)) {
             await this.rolesModel.upsertSystemRoleGroupAccess(
                 groupUuid,
                 projectUuid,
@@ -1518,7 +1520,7 @@ export class RolesService extends BaseService {
         }
 
         this.analytics.track({
-            event: isSystemRole(roleId)
+            event: isSystemRoleName(roleId)
                 ? 'project_group_access.upserted_system_role'
                 : 'project_group_access.upserted_custom_role',
             userId: account.user?.id,
@@ -1526,7 +1528,7 @@ export class RolesService extends BaseService {
                 projectUuid,
                 groupUuid,
                 roleId,
-                isSystemRole: isSystemRole(roleId),
+                isSystemRole: isSystemRoleName(roleId),
             },
         });
 
@@ -1547,7 +1549,7 @@ export class RolesService extends BaseService {
         account: Account,
         roleUuid: string,
     ): Promise<RoleAssignee[]> {
-        if (isSystemRole(roleUuid)) {
+        if (isSystemRoleName(roleUuid)) {
             return [];
         }
         const role = await this.rolesModel.getRoleByUuid(roleUuid);
@@ -1558,7 +1560,7 @@ export class RolesService extends BaseService {
     }
 
     async deleteRole(account: Account, roleUuid: string): Promise<void> {
-        if (isSystemRole(roleUuid)) {
+        if (isSystemRoleName(roleUuid)) {
             throw new ParameterError('Cannot remove system roles');
         }
         try {
@@ -1639,7 +1641,7 @@ export class RolesService extends BaseService {
         await this.validateProjectAccess(account, projectUuid);
 
         if (
-            !isSystemRole(roleUuid) &&
+            !isSystemRoleName(roleUuid) &&
             role.organizationUuid !== project.organizationUuid
         ) {
             throw new ForbiddenError();
@@ -1738,7 +1740,7 @@ export class RolesService extends BaseService {
         scopeData: AddScopesToRole,
         { tx, role }: { tx?: Knex.Transaction; role?: Role } = {},
     ): Promise<void> {
-        if (isSystemRole(roleUuid)) {
+        if (isSystemRoleName(roleUuid)) {
             throw new ParameterError('Cannot add scopes to system roles');
         }
 
@@ -1782,7 +1784,7 @@ export class RolesService extends BaseService {
         roleUuid: string,
         scopeName: string,
     ): Promise<void> {
-        if (isSystemRole(roleUuid)) {
+        if (isSystemRoleName(roleUuid)) {
             throw new ParameterError('Cannot remove scopes from system roles');
         }
 
@@ -1821,7 +1823,7 @@ export class RolesService extends BaseService {
             throw new ParameterError('scopeNames are required');
         }
 
-        if (isSystemRole(roleUuid)) {
+        if (isSystemRoleName(roleUuid)) {
             throw new ParameterError('Cannot remove scopes from system roles');
         }
 
@@ -1899,7 +1901,7 @@ export class RolesService extends BaseService {
                 sourceRoleUuid: roleUuid,
                 newRoleUuid: newRole.roleUuid,
                 newRoleName: newRole.name,
-                isSourceSystemRole: isSystemRole(roleUuid),
+                isSourceSystemRole: isSystemRoleName(roleUuid),
                 organizationUuid,
                 scopeCount: scopeNames.length,
             },

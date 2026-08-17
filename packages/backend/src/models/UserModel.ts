@@ -5,7 +5,6 @@ import {
     applyServiceAccountAbilities,
     buildAbilityFromScopes,
     collapseAbilityRules,
-    CommercialFeatureFlags,
     CreateUserArgs,
     CreateUserWithRole,
     ForbiddenError,
@@ -30,6 +29,9 @@ import {
     ProjectMemberProfile,
     ProjectMemberRole,
     ProjectType,
+    resolveEffectiveOrgRoleUuid,
+    resolveEffectiveProjectRoleUuid,
+    resolveRoleScopes,
     Role,
     RoleWithScopes,
     ServiceAccountScope,
@@ -907,35 +909,39 @@ export class UserModel {
             }
         }
 
-        // Fetch scopes for custom roles. Includes the org-membership role_uuid
-        // so org-level custom roles assigned to human users are realized at
-        // runtime (getUserAbilityBuilder reads customRoleScopes[user.roleUuid]).
-        const customRoleUuids = [
-            lightdashUser.roleUuid,
-            ...projectRoles.map((role) => role.roleUuid),
-            ...groupProjectRoles.map((role) => role.roleUuid),
-        ].filter((roleUuid): roleUuid is string => Boolean(roleUuid));
-        const [customRoleScopes, customRolesFlag] = await Promise.all([
-            this.customRoleScopes(customRoleUuids, trx),
-            this.featureFlagModel.get(
-                {
-                    user: lightdashUser,
-                    featureFlagId: CommercialFeatureFlags.CustomRoles,
-                },
-                { trx },
+        // Every membership (org + each project/group) resolves to an
+        // effective role_uuid -- its own custom role_uuid if set, else the
+        // well-known uuid for its system role (systemRoleUuids.ts) -- and
+        // scopes for all of them are loaded from scoped_roles in one batch.
+        // This is the single path getUserAbilityBuilder now relies on for
+        // both custom and system roles alike; the customRoles.enabled/
+        // CustomRoles flag no longer gates ability construction here -- it
+        // only matters for whether an org admin may create a new custom
+        // role, a separate authorization concern handled elsewhere.
+        const projectProfiles = [...projectRoles, ...groupProjectRoles];
+        const roleUuidsToLoad = [
+            lightdashUser.role
+                ? resolveEffectiveOrgRoleUuid({
+                      role: lightdashUser.role,
+                      roleUuid: lightdashUser.roleUuid,
+                  })
+                : undefined,
+            ...projectProfiles.map((profile) =>
+                resolveEffectiveProjectRoleUuid(profile),
             ),
-        ]);
+        ].filter((roleUuid): roleUuid is string => Boolean(roleUuid));
+        const customRoleScopes = await this.customRoleScopes(
+            [...new Set(roleUuidsToLoad)],
+            trx,
+        );
         const { builder: abilityBuilder, invalidScopes } =
             getUserAbilityBuilder({
                 user: lightdashUser,
-                projectProfiles: [...projectRoles, ...groupProjectRoles],
+                projectProfiles,
                 permissionsConfig: {
                     pat: this.lightdashConfig.auth.pat,
                 },
                 customRoleScopes,
-                customRolesEnabled:
-                    this.lightdashConfig.customRoles.enabled ||
-                    customRolesFlag.enabled,
                 isEnterprise:
                     this.lightdashConfig.license.licenseKey !== undefined,
             });
@@ -996,56 +1002,56 @@ export class UserModel {
             )
             .where(`${ProjectMembershipsTableName}.user_id`, userId);
 
-        // Bulk-load scopes for any custom-role grants. Matches the human
-        // path's philosophy (UserModel.generateUserAbilityBuilder): once a
+        // Every row resolves to an effective role_uuid -- its own custom
+        // role_uuid if set, else the well-known uuid for its system role
+        // (systemRoleUuids.ts) -- and scopes for all of them are loaded from
+        // scoped_roles in one batch, the same single-path resolution the
+        // human path uses (see generateUserAbilityBuilder above). Once a
         // role is bound in the DB the runtime must respect it, regardless
         // of the customRoles.enabled feature flag (which gates UI only).
-        const customRoleUuids = rows
-            .map((r) => r.role_uuid)
-            .filter((u): u is string => u !== null);
-        const customRoleScopes =
-            customRoleUuids.length > 0
-                ? await this.customRoleScopes(customRoleUuids, trx)
-                : {};
+        const effectiveRoleUuids = rows.map((row) =>
+            resolveEffectiveProjectRoleUuid({
+                role: row.role,
+                roleUuid: row.role_uuid,
+            }),
+        );
+        const customRoleScopes = await this.customRoleScopes(
+            [...new Set(effectiveRoleUuids)],
+            trx,
+        );
         const isEnterprise =
             this.lightdashConfig.license.licenseKey !== undefined;
 
         const aggregatedInvalidScopes = new Set<string>();
-        for (const row of rows) {
-            const scopes = row.role_uuid
-                ? customRoleScopes[row.role_uuid]
-                : undefined;
-            if (scopes) {
-                const invalid = buildAbilityFromScopes(
-                    {
-                        projectUuid: row.project_uuid,
-                        projectType: row.project_type,
-                        projectCreatedByUserUuid: row.created_by_user_uuid,
-                        userUuid,
-                        scopes,
-                        isEnterprise,
-                        permissionsConfig: {
-                            pat: this.lightdashConfig.auth.pat,
-                        },
-                    },
-                    builder,
+        rows.forEach((row, index) => {
+            const scopes = resolveRoleScopes({
+                effectiveRoleUuid: effectiveRoleUuids[index],
+                hasCustomRoleUuid: Boolean(row.role_uuid),
+                systemRoleScopes: getAllScopesForRole(row.role),
+                customRoleScopes,
+            });
+            if (!scopes) {
+                Logger.warn(
+                    `Service account ${userUuid} custom role with uuid ${row.role_uuid} for project ${row.project_uuid} was not found`,
                 );
-                invalid.forEach((s) => aggregatedInvalidScopes.add(s));
-            } else {
-                const invalid = buildAbilityFromScopes(
-                    {
-                        projectUuid: row.project_uuid,
-                        projectType: row.project_type,
-                        projectCreatedByUserUuid: row.created_by_user_uuid,
-                        userUuid,
-                        scopes: getAllScopesForRole(row.role),
-                        isEnterprise,
-                    },
-                    builder,
-                );
-                invalid.forEach((s) => aggregatedInvalidScopes.add(s));
+                return;
             }
-        }
+            const invalid = buildAbilityFromScopes(
+                {
+                    projectUuid: row.project_uuid,
+                    projectType: row.project_type,
+                    projectCreatedByUserUuid: row.created_by_user_uuid,
+                    userUuid,
+                    scopes,
+                    isEnterprise,
+                    permissionsConfig: {
+                        pat: this.lightdashConfig.auth.pat,
+                    },
+                },
+                builder,
+            );
+            invalid.forEach((s) => aggregatedInvalidScopes.add(s));
+        });
         if (aggregatedInvalidScopes.size > 0) {
             Logger.warn(
                 `Service account ${userUuid} project custom roles reference scopes not in the runtime vocabulary: ${[

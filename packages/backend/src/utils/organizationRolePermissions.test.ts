@@ -1,15 +1,53 @@
 import { Ability, AbilityBuilder } from '@casl/ability';
 import {
+    ORGANIZATION_SYSTEM_ROLE_UUIDS,
     OrganizationMemberRole,
     type MemberAbility,
     type SessionUser,
 } from '@lightdash/common';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { RolesModel } from '../models/RolesModel';
 import {
     getOrganizationSystemRoleScopes,
     validateOrganizationScopesCanBeGranted,
 } from './organizationRolePermissions';
+
+describe('getOrganizationSystemRoleScopes', () => {
+    it('prefers scoped_roles scopes over the literal map for the well-known org role_uuid', async () => {
+        const wellKnownUuid =
+            ORGANIZATION_SYSTEM_ROLE_UUIDS[OrganizationMemberRole.MEMBER];
+        const rolesModel = {
+            getScopesByRoleUuid: vi.fn(async (roleUuid: string) =>
+                roleUuid === wellKnownUuid
+                    ? ['manage:Organization']
+                    : undefined,
+            ),
+        } as unknown as RolesModel;
+
+        const permissions = await getOrganizationSystemRoleScopes(
+            OrganizationMemberRole.MEMBER,
+            rolesModel,
+        );
+
+        expect(rolesModel.getScopesByRoleUuid).toHaveBeenCalledWith(
+            wellKnownUuid,
+        );
+        expect(permissions).toEqual(['manage:Organization']);
+    });
+
+    it('falls back to the literal map when scoped_roles has no row for the well-known uuid', async () => {
+        const rolesModel = {
+            getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
+        } as unknown as RolesModel;
+
+        const permissions = await getOrganizationSystemRoleScopes(
+            OrganizationMemberRole.MEMBER,
+            rolesModel,
+        );
+
+        expect(permissions).toContain('view:OrganizationMemberProfile');
+    });
+});
 
 const ORG = 'org-1';
 const CUSTOM_ROLE = 'custom-org-manager';
@@ -37,6 +75,9 @@ const customRoleCaller = ({
     } as never;
 };
 
+// getScopesByRoleUuid always resolves undefined -- no scoped_roles row to
+// prefer, so getOrganizationSystemRoleScopes falls back to the literal map
+// (the only behavior that existed before A15b's DB-first resolution).
 const rolesModelWithScopes = (scopes: string[]) =>
     ({
         getRoleWithScopesByUuid: vi.fn().mockResolvedValue({
@@ -45,14 +86,22 @@ const rolesModelWithScopes = (scopes: string[]) =>
             level: 'organization',
             scopes,
         }),
+        getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
     }) as unknown as RolesModel;
 
 describe('validateOrganizationScopesCanBeGranted', () => {
-    const managerScopes = [
-        'manage:Organization',
-        'manage:OrganizationMemberProfile',
-        ...getOrganizationSystemRoleScopes(OrganizationMemberRole.MEMBER),
-    ];
+    let managerScopes: string[];
+
+    beforeAll(async () => {
+        managerScopes = [
+            'manage:Organization',
+            'manage:OrganizationMemberProfile',
+            ...(await getOrganizationSystemRoleScopes(
+                OrganizationMemberRole.MEMBER,
+                rolesModelWithScopes([]),
+            )),
+        ];
+    });
 
     it('lets a custom-role caller grant a system role while personal access tokens are enabled', async () => {
         await expect(
@@ -61,8 +110,9 @@ describe('validateOrganizationScopesCanBeGranted', () => {
                     canManagePersonalAccessToken: true,
                 }),
                 organizationUuid: ORG,
-                grantedScopes: getOrganizationSystemRoleScopes(
+                grantedScopes: await getOrganizationSystemRoleScopes(
                     OrganizationMemberRole.MEMBER,
+                    rolesModelWithScopes(managerScopes),
                     { includePersonalAccessToken: true },
                 ),
                 rolesModel: rolesModelWithScopes(managerScopes),
@@ -77,8 +127,9 @@ describe('validateOrganizationScopesCanBeGranted', () => {
                     canManagePersonalAccessToken: true,
                 }),
                 organizationUuid: ORG,
-                grantedScopes: getOrganizationSystemRoleScopes(
+                grantedScopes: await getOrganizationSystemRoleScopes(
                     OrganizationMemberRole.ADMIN,
+                    rolesModelWithScopes(managerScopes),
                     { includePersonalAccessToken: true },
                 ),
                 rolesModel: rolesModelWithScopes(managerScopes),
@@ -96,8 +147,9 @@ describe('validateOrganizationScopesCanBeGranted', () => {
             validateOrganizationScopesCanBeGranted({
                 user: orgless,
                 organizationUuid: ORG,
-                grantedScopes: getOrganizationSystemRoleScopes(
+                grantedScopes: await getOrganizationSystemRoleScopes(
                     OrganizationMemberRole.MEMBER,
+                    rolesModelWithScopes(managerScopes),
                 ),
                 rolesModel: rolesModelWithScopes(managerScopes),
             }),
@@ -112,8 +164,9 @@ describe('validateOrganizationScopesCanBeGranted', () => {
                     organizationUuid: 'some-other-org',
                 } as never,
                 organizationUuid: ORG,
-                grantedScopes: getOrganizationSystemRoleScopes(
+                grantedScopes: await getOrganizationSystemRoleScopes(
                     OrganizationMemberRole.MEMBER,
+                    rolesModelWithScopes(managerScopes),
                 ),
                 rolesModel: rolesModelWithScopes(managerScopes),
             }),

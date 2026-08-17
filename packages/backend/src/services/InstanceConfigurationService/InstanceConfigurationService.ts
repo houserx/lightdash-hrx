@@ -7,7 +7,7 @@ import {
     DbtProjectConfig,
     DbtVersionOptionLatest,
     isGitProjectType,
-    isSystemRole,
+    isSystemRoleName,
     NotFoundError,
     OrganizationMemberRole,
     ParameterError,
@@ -967,7 +967,7 @@ export class InstanceConfigurationService extends BaseService {
 
         // Resolve the role: system role as-is, else custom role by name.
         let resolvedRole: string;
-        if (isSystemRole(entry.role)) {
+        if (isSystemRoleName(entry.role)) {
             resolvedRole = entry.role;
         } else {
             const customRole = customRoles.find((r) => r.name === entry.role);
@@ -997,7 +997,7 @@ export class InstanceConfigurationService extends BaseService {
         } else if (existing.roleUuid !== resolvedRole) {
             await this.groupsModel.updateProjectAccess(
                 { groupUuid: group.uuid, projectUuid },
-                isSystemRole(resolvedRole)
+                isSystemRoleName(resolvedRole)
                     ? { role: resolvedRole, role_uuid: null }
                     : {
                           role: ProjectMemberRole.VIEWER,
