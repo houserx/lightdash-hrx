@@ -11,8 +11,8 @@ import {
 /**
  * Given: the 221 `ability.can()` expectations originally captured from the
  *   now-deleted hand-written `projectMemberAbility.test.ts` (128 cases) --
- *   knowledge worth preserving once plan item A10c deleted the hand-written
- *   builder those tests exercised.
+ *   knowledge worth preserving now that the hand-written builder those
+ *   tests exercised has been deleted.
  * When: asserted against the sole remaining ability-building path,
  *   scope-composed `buildAbilityFromScopes(getAllScopesForRole(role))`.
  * Then: `ability.can(...)` matches the originally-captured expectation for

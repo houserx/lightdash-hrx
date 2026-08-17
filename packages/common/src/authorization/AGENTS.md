@@ -87,7 +87,7 @@ Always verify exact conditions in `scopes.ts`; suffix names are shorthand only.
 | Add custom-role coverage to `scopes.ts`.                                | Custom roles cannot grant permissions without a scope.               |
 | Update `roleToScopeMapping.ts` and/or `orgRoleToScopeMapping.ts` to change what a built-in role grants. | These flat literal lists are the sole source of truth for built-in roles now — no second builder to keep in sync. |
 | Add `scoped_roles` migrations for scope vocabulary changes.             | Existing custom roles persist scope names as strings.                |
-| Add/extend fixture cases in `*.fixture.test.ts` when touching roles/scopes. | The differential hand-written-vs-scope-composed harness that used to catch drift was deleted with the hand-written builders (A10c) — fixtures are the regression oracle now. |
+| Add/extend fixture cases in `*.fixture.test.ts` when touching roles/scopes. | The differential hand-written-vs-scope-composed harness that used to catch drift was deleted along with the hand-written builders — fixtures are the regression oracle now. |
 | Check both org and project layers when debugging.                       | Either additive layer can grant access.                              |
 | Check space access for private/assigned content.                        | Many content rules depend on `access` entries and `SpaceMemberRole`. |
 

@@ -4,22 +4,22 @@ import { ProjectMemberRole } from '../types/projectMemberRole';
 import { PROJECT_ROLE_TO_SCOPES_MAP } from './roleToScopeMapping';
 
 /**
- * Given: `PROJECT_ROLE_TO_SCOPES_MAP` today is computed at module-load time by
+ * Given: `PROJECT_ROLE_TO_SCOPES_MAP` was computed at module-load time by
  *   looping over `ROLE_HIERARCHY` and unioning `BASE_ROLE_SCOPES` cumulatively
  *   -- itself a form of inheritance-by-composition-in-a-loop, not the flat,
- *   explicit data plan item A3 calls for.
+ *   explicit data the scope-composed model calls for.
  * When: the implementation is flattened into literal per-role arrays.
  * Then: (a) the exact same set of scopes is produced for every role (this
- *   fixture is the golden master, captured from the pre-flattening output --
- *   see plan item A3), and (b) no runtime union/loop composition remains in
- *   the source.
+ *   fixture is the golden master, captured from the pre-flattening output),
+ *   and (b) no runtime union/loop composition remains in the source.
  */
 
 // Captured verbatim from PROJECT_ROLE_TO_SCOPES_MAP's output before
 // flattening (packages/common/src/authorization/_diag.test.ts, deleted after
-// use). This is the behavior-preservation contract for A3 -- order doesn't
-// matter functionally (scopes are applied via `context.scopes.forEach`,
-// order-independent), so comparisons below are set-based.
+// use). This is the behavior-preservation contract for the flattening --
+// order doesn't matter functionally (scopes are applied via
+// `context.scopes.forEach`, order-independent), so comparisons below are
+// set-based.
 const GOLDEN_MASTER: Record<ProjectMemberRole, string[]> = {
     [ProjectMemberRole.VIEWER]: [
         'view:Dashboard',

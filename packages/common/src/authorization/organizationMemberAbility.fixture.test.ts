@@ -14,8 +14,8 @@ import {
  *   including the 3 PAT-dynamic-gate cases that override the default
  *   `permissionsConfig`, and 16 cases that check a bare subject-type string
  *   rather than a tagged resource instance) -- knowledge worth preserving
- *   once plan item A10c deleted the hand-written builder those tests
- *   exercised.
+ *   now that the hand-written builder those tests exercised has been
+ *   deleted.
  * When: asserted against the sole remaining ability-building path,
  *   scope-composed `buildAbilityFromScopes(getAllScopesForOrgRole(role))`,
  *   which -- unlike the project-layer scope build -- must also apply the PAT
@@ -6326,14 +6326,13 @@ const buildAbility = (
 };
 
 /**
- * [227, 235] (`create:Project@preview` org-blindness, plan item B0) were a
- * confirmed bug when this file was first ported -- fixed in scopes.ts
- * (the condition now branches on organizationUuid at org level), so no
- * longer excluded here.
+ * [227, 235] (`create:Project@preview` org-blindness) were a confirmed bug
+ * when this file was first ported -- fixed in scopes.ts (the condition now
+ * branches on organizationUuid at org level), so no longer excluded here.
  *
- * [238] stays excluded (A10c: the hand-written path it was verified against
- * is gone, so this becomes a documented untested case, not a re-baselined
- * one): `delete:Project@self`'s condition (`ownPreviewProjectConditions` in
+ * [238] stays excluded: the hand-written path it was verified against is
+ * gone, so this becomes a documented untested case, not a re-baselined one:
+ * `delete:Project@self`'s condition (`ownPreviewProjectConditions` in
  * `scopes.ts`) requires `createdByUserUuid` to match the current user, but
  * the hand-written developer-tier grant for the same case (now-deleted
  * `organizationMemberAbility.ts`) had no such check -- `can('delete',
@@ -6341,8 +6340,8 @@ const buildAbility = (
  * `manage:DeployProject@self`, which did check `createdByUserUuid`. So
  * before this cutover a developer could delete *any* preview project in
  * their org despite the "@self" scope name; the scope-composed path is
- * narrower (safer): only the preview's own creator. This is an
- * intentional narrowing (plan item B0c), not a bug.
+ * narrower (safer): only the preview's own creator. This is an intentional
+ * narrowing, not a bug.
  */
 const KNOWN_SCOPE_VOCABULARY_GAP_INDICES = new Set([238]);
 
