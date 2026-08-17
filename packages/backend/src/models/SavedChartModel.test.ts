@@ -7,6 +7,10 @@ import {
     DashboardsTableName,
     DashboardTileChartTableName,
 } from '../database/entities/dashboards';
+import {
+    ResourceGroupAccessTableName,
+    ResourceUserAccessTableName,
+} from '../database/entities/resourceAccess';
 import { SavedChartsTableName } from '../database/entities/savedCharts';
 import { SavedChartSlugMappingsTableName } from '../database/entities/savedChartSlugMappings';
 import { SpaceTableName } from '../database/entities/spaces';
@@ -637,6 +641,43 @@ describe('update', () => {
             expect.arrayContaining([targetSpaceUuid, projectUuid]),
         );
         expect(tracker.history.update).toHaveLength(0);
+    });
+});
+
+describe('permanentDelete', () => {
+    const database = knex({ client: MockClient, dialect: 'pg' });
+    const model = new SavedChartModel({
+        database,
+        lightdashConfig: lightdashConfigMock,
+    });
+    let tracker: Tracker;
+
+    beforeAll(() => {
+        tracker = getTracker();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        tracker.reset();
+    });
+
+    test('cleans up dangling resource-access grants alongside the chart -- resource_uuid has no FK to cascade on', async () => {
+        const chartUuid = '11111111-1111-4111-8111-111111111111';
+        vi.spyOn(model, 'get').mockResolvedValue(chartSummary as AnyType);
+        tracker.on.delete(SavedChartsTableName).responseOnce(1);
+        tracker.on.delete(ResourceUserAccessTableName).responseOnce(0);
+        tracker.on.delete(ResourceGroupAccessTableName).responseOnce(0);
+
+        await model.permanentDelete(chartUuid);
+
+        const userAccessDelete = tracker.history.delete.find((query) =>
+            query.sql.includes(ResourceUserAccessTableName),
+        );
+        const groupAccessDelete = tracker.history.delete.find((query) =>
+            query.sql.includes(ResourceGroupAccessTableName),
+        );
+        expect(userAccessDelete?.bindings).toEqual([chartUuid, 'SavedChart']);
+        expect(groupAccessDelete?.bindings).toEqual([chartUuid, 'SavedChart']);
     });
 });
 

@@ -18,6 +18,10 @@ import {
     DashboardVersionsTableName,
     DashboardViewsTableName,
 } from '../../database/entities/dashboards';
+import {
+    ResourceGroupAccessTableName,
+    ResourceUserAccessTableName,
+} from '../../database/entities/resourceAccess';
 import { SavedChartsTableName } from '../../database/entities/savedCharts';
 import { SpaceTableName } from '../../database/entities/spaces';
 import { projectUuid } from '../ProjectModel/ProjectModel.mock';
@@ -603,9 +607,94 @@ describe('DashboardModel', () => {
         tracker.on
             .delete(queryMatcher(DashboardsTableName, [dashboardUuid]))
             .response([]);
+        tracker.on
+            .delete(
+                queryMatcher(ResourceUserAccessTableName, [
+                    dashboardUuid,
+                    'Dashboard',
+                ]),
+            )
+            .response([]);
+        tracker.on
+            .delete(
+                queryMatcher(ResourceGroupAccessTableName, [
+                    dashboardUuid,
+                    'Dashboard',
+                ]),
+            )
+            .response([]);
 
         await model.permanentDelete(dashboardUuid);
-        expect(tracker.history.delete).toHaveLength(1);
+        expect(tracker.history.delete).toHaveLength(3);
+    });
+
+    test('should clean up resource-access grants when permanently deleting a dashboard', async () => {
+        const dashboardUuid = 'dashboard uuid';
+        tracker.on
+            .select(queryMatcher(DashboardsTableName, [dashboardUuid, 1]))
+            .response([dashboardWithVersionEntry]);
+        tracker.on
+            .select(
+                queryMatcher(DashboardViewsTableName, [
+                    dashboardWithVersionEntry.dashboard_version_id,
+                ]),
+            )
+            .response([dashboardViewEntry]);
+        tracker.on
+            .select(
+                queryMatcher(DashboardTilesTableName, [
+                    dashboardWithVersionEntry.dashboard_version_id,
+                ]),
+            )
+            .response([
+                dashboardTileWithSavedChartEntry,
+                loomTileEntry,
+                markdownTileEntry,
+            ]);
+        tracker.on
+            .select(
+                queryMatcher(DashboardTabsTableName, [
+                    dashboardWithVersionEntry.dashboard_version_id,
+                    dashboardWithVersionEntry.dashboard_id,
+                ]),
+            )
+            .response([]);
+        tracker.on
+            .delete(queryMatcher(DashboardsTableName, [dashboardUuid]))
+            .response([]);
+        tracker.on
+            .delete(
+                queryMatcher(ResourceUserAccessTableName, [
+                    dashboardUuid,
+                    'Dashboard',
+                ]),
+            )
+            .response([]);
+        tracker.on
+            .delete(
+                queryMatcher(ResourceGroupAccessTableName, [
+                    dashboardUuid,
+                    'Dashboard',
+                ]),
+            )
+            .response([]);
+
+        await model.permanentDelete(dashboardUuid);
+
+        const userAccessDelete = tracker.history.delete.find((query) =>
+            query.sql.includes(ResourceUserAccessTableName),
+        );
+        const groupAccessDelete = tracker.history.delete.find((query) =>
+            query.sql.includes(ResourceGroupAccessTableName),
+        );
+        expect(userAccessDelete?.bindings).toEqual([
+            dashboardUuid,
+            'Dashboard',
+        ]);
+        expect(groupAccessDelete?.bindings).toEqual([
+            dashboardUuid,
+            'Dashboard',
+        ]);
     });
 
     test("should error on create dashboard version if dashboard isn't found", async () => {

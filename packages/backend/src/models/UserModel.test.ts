@@ -21,6 +21,7 @@ import {
     ProjectMemberRole,
     ServiceAccountScope,
     type ProjectAbilityProfile,
+    type ResourceAccessGrant,
     type SessionUser,
 } from '@lightdash/common';
 import bcrypt from 'bcrypt';
@@ -74,6 +75,15 @@ type TestableUserModel = {
         roleUuids: string[],
         trx?: Knex,
     ) => Promise<Record<string, string[]>>;
+    getResourceAccessGrants: (
+        userUuid: string,
+        trx?: Knex,
+    ) => Promise<ResourceAccessGrant[]>;
+    getGroupResourceAccessGrants: (
+        userId: number,
+        organizationId: number,
+        trx?: Knex,
+    ) => Promise<ResourceAccessGrant[]>;
     applyServiceAccountProjectMemberships: (
         userId: number,
         userUuid: string,
@@ -145,6 +155,8 @@ const createUserModel = (): TestableUserModel => {
     model.customRoleScopes = vi.fn(async () => ({
         'custom-role': ['view:Dashboard'],
     }));
+    model.getResourceAccessGrants = vi.fn(async () => []);
+    model.getGroupResourceAccessGrants = vi.fn(async () => []);
     model.applyServiceAccountProjectMemberships = vi.fn(
         async (_userId, userUuid, builder) => {
             Array.from({ length: 125 }, (_, i) => `project-${i}`).forEach(
@@ -635,6 +647,161 @@ describe('UserModel', () => {
             expectedRules.forEach((expectedRule) => {
                 expect(actualRules).toContainEqual(expectedRule);
             });
+        });
+    });
+
+    describe('given a human user with a direct resource-access grant', () => {
+        const humanUserDetails: DbUserDetails = {
+            ...userDetails,
+            is_internal: false,
+        };
+
+        it('routes getResourceAccessGrants into the ability builder, additive on top of the org-member layer', async () => {
+            const model = createUserModel();
+            const grants: ResourceAccessGrant[] = [
+                {
+                    resourceUuid: 'dash-1',
+                    resourceType: 'Dashboard',
+                    action: 'view',
+                },
+            ];
+            model.getResourceAccessGrants = vi.fn(async () => grants);
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+            const ability = abilityBuilder.build();
+
+            expect(model.getResourceAccessGrants).toHaveBeenCalledWith(
+                humanUserDetails.user_uuid,
+                expect.anything(),
+            );
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', {
+                        metadata: { dashboardUuid: 'dash-1' },
+                    }),
+                ),
+            ).toBe(true);
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', {
+                        metadata: { dashboardUuid: 'not-granted' },
+                    }),
+                ),
+            ).toBe(false);
+        });
+
+        it('is a no-op when there are no grants', async () => {
+            const model = createUserModel();
+
+            const { abilityBuilder: withoutGrants } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            model.getResourceAccessGrants = vi.fn(async () => []);
+            const { abilityBuilder: withEmptyGrants } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            expect(withoutGrants.build().rules).toEqual(
+                withEmptyGrants.build().rules,
+            );
+        });
+    });
+
+    describe('given a human user with a group-based resource-access grant', () => {
+        const humanUserDetails: DbUserDetails = {
+            ...userDetails,
+            is_internal: false,
+        };
+
+        it('routes getGroupResourceAccessGrants into the ability builder alongside the direct-grant path', async () => {
+            const model = createUserModel();
+            const groupGrants: ResourceAccessGrant[] = [
+                {
+                    resourceUuid: 'chart-1',
+                    resourceType: 'SavedChart',
+                    action: 'manage',
+                },
+            ];
+            model.getGroupResourceAccessGrants = vi.fn(async () => groupGrants);
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+            const ability = abilityBuilder.build();
+
+            expect(model.getGroupResourceAccessGrants).toHaveBeenCalledWith(
+                humanUserDetails.user_id,
+                humanUserDetails.organization_id,
+                expect.anything(),
+            );
+            expect(
+                ability.can(
+                    'update',
+                    subject('SavedChart', {
+                        metadata: { savedChartUuid: 'chart-1' },
+                    }),
+                ),
+            ).toBe(true);
+        });
+
+        it('merges direct and group-based grants additively', async () => {
+            const model = createUserModel();
+            model.getResourceAccessGrants = vi.fn(
+                async (): Promise<ResourceAccessGrant[]> => [
+                    {
+                        resourceUuid: 'dash-1',
+                        resourceType: 'Dashboard',
+                        action: 'view',
+                    },
+                ],
+            );
+            model.getGroupResourceAccessGrants = vi.fn(
+                async (): Promise<ResourceAccessGrant[]> => [
+                    {
+                        resourceUuid: 'chart-1',
+                        resourceType: 'SavedChart',
+                        action: 'manage',
+                    },
+                ],
+            );
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+            const ability = abilityBuilder.build();
+
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', {
+                        metadata: { dashboardUuid: 'dash-1' },
+                    }),
+                ),
+            ).toBe(true);
+            expect(
+                ability.can(
+                    'update',
+                    subject('SavedChart', {
+                        metadata: { savedChartUuid: 'chart-1' },
+                    }),
+                ),
+            ).toBe(true);
+        });
+
+        it('is still a no-op when both grant sources are empty', async () => {
+            const model = createUserModel();
+
+            const { abilityBuilder: withoutGrants } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            model.getResourceAccessGrants = vi.fn(async () => []);
+            model.getGroupResourceAccessGrants = vi.fn(async () => []);
+            const { abilityBuilder: withEmptyGrants } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            expect(withoutGrants.build().rules).toEqual(
+                withEmptyGrants.build().rules,
+            );
         });
     });
 

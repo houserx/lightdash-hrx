@@ -55,6 +55,7 @@ export * from './authorization/jwtAbility';
 export * from './authorization/orgRoleToScopeMapping';
 export * from './authorization/parseAccount';
 export * from './authorization/resolveRoleScopes';
+export * from './authorization/resourceAccessAbility';
 export * from './authorization/roleToScopeMapping';
 export * from './authorization/scopeAbilityBuilder';
 export * from './authorization/scopes';
@@ -301,6 +302,7 @@ export type {
 export * from './types/promotion';
 export * from './types/queryHistory';
 export * from './types/rename';
+export * from './types/resourceAccess';
 export * from './types/resourceViewItem';
 export * from './types/results';
 export * from './types/roadmap';
