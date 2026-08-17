@@ -107,6 +107,7 @@ import {
     SavedChartCustomSqlDimensionsTableName,
     SavedChartsTableName,
 } from '../../database/entities/savedCharts';
+import { SavedChartSlugMappingsTableName } from '../../database/entities/savedChartSlugMappings';
 import {
     DbSavedSql,
     InsertSql,
@@ -204,6 +205,11 @@ type RawSummaryRow = {
         | null;
     baseTableAnyAttributes: Explore['tables'][string]['anyAttributes'] | null;
     aiHint: Explore['aiHint'] | null;
+};
+
+type PreviewChartUuidMapping = {
+    sourceChartUuid: string;
+    previewChartUuid: string;
 };
 
 export class ProjectModel {
@@ -2828,6 +2834,52 @@ export class ProjectModel {
         return swapped;
     }
 
+    async copyChartSlugMappingsToPreview(
+        trx: Knex,
+        sourceProjectUuid: string,
+        previewProjectUuid: string,
+        chartUuidMapping: PreviewChartUuidMapping[],
+    ): Promise<void> {
+        if (chartUuidMapping.length === 0) return;
+
+        const aliases = await trx(SavedChartSlugMappingsTableName)
+            .where('project_uuid', sourceProjectUuid)
+            .whereIn(
+                'saved_query_uuid',
+                chartUuidMapping.map(({ sourceChartUuid }) => sourceChartUuid),
+            )
+            .select('saved_query_uuid', 'slug');
+        if (aliases.length === 0) return;
+
+        const previewChartUuidBySource = new Map(
+            chartUuidMapping.map(({ sourceChartUuid, previewChartUuid }) => [
+                sourceChartUuid,
+                previewChartUuid,
+            ]),
+        );
+        const previewAliases = aliases.map((alias) => {
+            const previewChartUuid = previewChartUuidBySource.get(
+                alias.saved_query_uuid,
+            );
+            if (!previewChartUuid) {
+                throw new UnexpectedServerError(
+                    `Missing preview chart mapping for ${alias.saved_query_uuid}`,
+                );
+            }
+            return {
+                project_uuid: previewProjectUuid,
+                saved_query_uuid: previewChartUuid,
+                slug: alias.slug,
+            };
+        });
+
+        await trx.batchInsert(
+            SavedChartSlugMappingsTableName,
+            previewAliases,
+            INSERT_BATCH_SIZE,
+        );
+    }
+
     async duplicateContent(
         projectUuid: string,
         previewProjectUuid: string,
@@ -3284,6 +3336,25 @@ export class ProjectModel {
                 id: c.saved_query_id,
                 newId: newChartsInDashboards[i].saved_query_id,
             }));
+
+            const chartUuidMapping = [
+                ...charts.map((chart, index) => ({
+                    sourceChartUuid: chart.saved_query_uuid,
+                    previewChartUuid: newCharts[index].saved_query_uuid,
+                })),
+                ...chartsInDashboards.map((chart, index) => ({
+                    sourceChartUuid: chart.saved_query_uuid,
+                    previewChartUuid:
+                        newChartsInDashboards[index].saved_query_uuid,
+                })),
+            ];
+
+            await this.copyChartSlugMappingsToPreview(
+                trx,
+                projectUuid,
+                previewProjectUuid,
+                chartUuidMapping,
+            );
 
             const chartMapping = [
                 ...chartInSpacesMapping,
@@ -3946,6 +4017,43 @@ export class ProjectModel {
             (mapping) => String(mapping.id) === aiAgentUuid,
         );
         return typeof match?.newId === 'string' ? match.newId : null;
+    }
+
+    async getUpstreamChartUuidFromPreview(
+        previewProjectUuid: string,
+        previewChartUuid: string,
+    ): Promise<string | null> {
+        const previewChart = await this.database(SavedChartsTableName)
+            .select('saved_query_id')
+            .where('project_uuid', previewProjectUuid)
+            .where('saved_query_uuid', previewChartUuid)
+            .whereNull('deleted_at')
+            .first();
+        if (!previewChart) return null;
+
+        const previewContent = await this.database('preview_content')
+            .select<
+                {
+                    project_uuid: string;
+                    content_mapping: PreviewContentMapping;
+                }[]
+            >('project_uuid', 'content_mapping')
+            .where('preview_project_uuid', previewProjectUuid)
+            .orderBy('created_at', 'desc')
+            .first();
+        const sourceMapping = previewContent?.content_mapping.charts.find(
+            ({ newId }) => Number(newId) === previewChart.saved_query_id,
+        );
+        if (!previewContent || !sourceMapping) return null;
+
+        const upstreamChart = await this.database(SavedChartsTableName)
+            .select('saved_query_uuid')
+            .where('project_uuid', previewContent.project_uuid)
+            .where('saved_query_id', sourceMapping.id)
+            .whereNull('deleted_at')
+            .first();
+
+        return upstreamChart?.saved_query_uuid ?? null;
     }
 
     // Easier to mock in ProjectService

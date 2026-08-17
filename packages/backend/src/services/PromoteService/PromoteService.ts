@@ -235,18 +235,33 @@ export class PromoteService extends BaseService {
         if (cachedUpstreamChart !== undefined) {
             upstreamChart = cachedUpstreamChart;
         } else {
-            const upstreamCharts = await this.savedChartModel.find({
-                projectUuid: upstreamProjectUuid,
-                slug: savedChart.slug,
-                includeOrphanChartsWithinDashboard,
-            });
-            if (upstreamCharts.length > 1) {
-                throw new AlreadyExistsError(
-                    `There are multiple charts with the same identifier ${savedChart.slug}`,
+            const mappedUpstreamChartUuid =
+                savedChart.projectUuid === upstreamProjectUuid
+                    ? null
+                    : await this.projectModel.getUpstreamChartUuidFromPreview(
+                          savedChart.projectUuid,
+                          savedChart.uuid,
+                      );
+            if (mappedUpstreamChartUuid) {
+                upstreamChart = await this.savedChartModel.get(
+                    mappedUpstreamChartUuid,
+                    undefined,
+                    { projectUuid: upstreamProjectUuid },
                 );
+            } else {
+                const upstreamCharts = await this.savedChartModel.find({
+                    projectUuid: upstreamProjectUuid,
+                    slug: savedChart.slug,
+                    includeOrphanChartsWithinDashboard,
+                });
+                if (upstreamCharts.length > 1) {
+                    throw new AlreadyExistsError(
+                        `There are multiple charts with the same identifier ${savedChart.slug}`,
+                    );
+                }
+                upstreamChart =
+                    upstreamCharts.length === 1 ? upstreamCharts[0] : undefined;
             }
-            upstreamChart =
-                upstreamCharts.length === 1 ? upstreamCharts[0] : undefined;
         }
 
         const upstreamSpaces = await this.spaceModel.find({
@@ -806,7 +821,8 @@ export class PromoteService extends BaseService {
         return (
             promotedChart.updatedAt > upstreamChart.updatedAt ||
             promotedChart.name !== upstreamChart.name ||
-            promotedChart.description !== upstreamChart.description
+            promotedChart.description !== upstreamChart.description ||
+            promotedChart.slug !== upstreamChart.slug
         );
     }
 
@@ -837,8 +853,21 @@ export class PromoteService extends BaseService {
         await Promise.all(
             charts
                 .filter((change) => change.action === PromotionAction.UPDATE)
-                .map((chartChange) => {
+                .map(async (chartChange) => {
                     const changeChart = chartChange.data;
+                    const currentChart = await this.savedChartModel.get(
+                        changeChart.uuid,
+                        undefined,
+                        { projectUuid: changeChart.projectUuid },
+                    );
+                    if (currentChart.slug !== changeChart.slug) {
+                        await this.savedChartModel.renameSlug({
+                            projectUuid: changeChart.projectUuid,
+                            savedChartUuid: changeChart.uuid,
+                            from: currentChart.slug,
+                            to: changeChart.slug,
+                        });
+                    }
                     // We also update chart name and description if they have changed
                     return this.savedChartModel.update(changeChart.uuid, {
                         name: changeChart.name,

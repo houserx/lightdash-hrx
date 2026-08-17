@@ -43,6 +43,7 @@ const projectModel = {
     getSummary: vi.fn(async () => ({
         upstreamProjectUuid: existingUpstreamDashboard.projectUuid,
     })),
+    getUpstreamChartUuidFromPreview: vi.fn(async () => null),
 };
 
 const savedChartModel = {
@@ -52,6 +53,9 @@ const savedChartModel = {
     get: vi.fn(async () => promotedChart.chart),
     find: vi.fn(async () => [existingUpstreamChart.chart]),
     create: vi.fn(async () => existingUpstreamChart.chart),
+    createVersion: vi.fn(async () => existingUpstreamChart.chart),
+    update: vi.fn(async () => existingUpstreamChart.chart),
+    renameSlug: vi.fn(async () => undefined),
 };
 
 const savedSqlModel = {
@@ -208,6 +212,28 @@ describe('PromoteService chart changes', () => {
         expect(changes.spaces[0].action).toBe('no changes');
     });
 
+    test('getChartChanges treats a canonical slug rename as an update', async () => {
+        (spaceModel.find as import('vitest').Mock).mockImplementationOnce(
+            async () => [upstreamSpace],
+        );
+
+        const changes = await service.getChartChanges(
+            {
+                ...promotedChart,
+                chart: {
+                    ...promotedChart.chart,
+                    slug: 'renamed-chart',
+                },
+            },
+            existingUpstreamChart,
+        );
+
+        expect(changes.charts[0]).toMatchObject({
+            action: PromotionAction.UPDATE,
+            data: { slug: 'renamed-chart' },
+        });
+    });
+
     test('getChartChanges update chart', async () => {
         const updatedAt = new Date();
         (spaceModel.find as import('vitest').Mock).mockImplementationOnce(
@@ -292,6 +318,39 @@ describe('PromoteService chart changes', () => {
             ...promotedChart.space,
             projectUuid: existingUpstreamChart.projectUuid,
         });
+    });
+
+    test('resolves a renamed preview chart through its original content mapping', async () => {
+        const renamedPreviewChart = {
+            ...promotedChart.chart,
+            slug: 'renamed-chart',
+        };
+        (
+            projectModel.getUpstreamChartUuidFromPreview as import('vitest').Mock
+        ).mockResolvedValueOnce(existingUpstreamChart.chart!.uuid);
+        (savedChartModel.get as import('vitest').Mock)
+            .mockResolvedValueOnce(renamedPreviewChart)
+            .mockResolvedValueOnce(existingUpstreamChart.chart);
+        (spaceModel.find as import('vitest').Mock).mockResolvedValueOnce([
+            upstreamSpace,
+        ]);
+
+        const result = await service.getPromoteCharts(
+            user,
+            existingUpstreamChart.projectUuid,
+            renamedPreviewChart.uuid,
+        );
+
+        expect(result.upstreamChart.chart?.uuid).toBe(
+            existingUpstreamChart.chart!.uuid,
+        );
+        expect(savedChartModel.find).not.toHaveBeenCalled();
+        expect(savedChartModel.get).toHaveBeenNthCalledWith(
+            2,
+            existingUpstreamChart.chart!.uuid,
+            undefined,
+            { projectUuid: existingUpstreamChart.projectUuid },
+        );
     });
 });
 
@@ -1003,6 +1062,52 @@ describe('PromoteService promoting and mutating changes', () => {
 
         expect(newChanges.charts[0].data.dashboardUuid).toEqual(
             existingUpstreamDashboard.dashboard?.uuid,
+        );
+    });
+
+    test('renames the upstream chart through the canonical rename operation', async () => {
+        const upstreamChart = {
+            ...existingUpstreamChart.chart!,
+            slug: 'original-chart',
+        };
+        const renamedChart = {
+            ...promotedChart.chart,
+            uuid: upstreamChart.uuid,
+            oldUuid: promotedChart.chart.uuid,
+            projectUuid: existingUpstreamChart.projectUuid,
+            spaceUuid: existingUpstreamChart.space!.uuid,
+            spaceSlug: promotedChart.space.slug,
+            spacePath: promotedChart.space.path,
+            slug: 'renamed-chart',
+        };
+        const changes: PromotionChanges = {
+            spaces: [],
+            dashboards: [],
+            charts: [
+                {
+                    action: PromotionAction.UPDATE,
+                    data: renamedChart,
+                },
+            ],
+        };
+        (savedChartModel.get as import('vitest').Mock).mockResolvedValueOnce(
+            upstreamChart,
+        );
+        (
+            savedChartModel.createVersion as import('vitest').Mock
+        ).mockResolvedValueOnce({ ...upstreamChart, slug: 'renamed-chart' });
+
+        await service.upsertCharts(user, changes);
+
+        expect(savedChartModel.renameSlug).toHaveBeenCalledWith({
+            projectUuid: existingUpstreamChart.projectUuid,
+            savedChartUuid: upstreamChart.uuid,
+            from: 'original-chart',
+            to: 'renamed-chart',
+        });
+        expect(savedChartModel.update).toHaveBeenCalledWith(
+            upstreamChart.uuid,
+            expect.objectContaining({ name: renamedChart.name }),
         );
     });
 
