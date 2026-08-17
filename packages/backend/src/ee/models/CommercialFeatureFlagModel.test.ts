@@ -3,8 +3,6 @@ import { Knex } from 'knex';
 import { lightdashConfigMock } from '../../config/lightdashConfig.mock';
 import { LightdashConfig } from '../../config/parseConfig';
 import {
-    DbFeatureFlag,
-    DbFeatureFlagOverride,
     FeatureFlagOverridesTableName,
     FeatureFlagsTableName,
 } from '../../database/entities/featureFlags';
@@ -119,124 +117,6 @@ describe('CommercialFeatureFlagModel – multiple-roles', () => {
         expect(await model.get({ user, featureFlagId })).toEqual({
             id: featureFlagId,
             enabled: false,
-        });
-    });
-});
-
-// Minimal stub — tests below don't exercise the database layer
-const databaseStub = {} as Knex;
-
-const buildScopeComposedTestModel = (
-    configOverrides: Partial<LightdashConfig> = {},
-    database: Knex = databaseStub,
-) =>
-    new CommercialFeatureFlagModel({
-        database,
-        lightdashConfig: {
-            ...lightdashConfigMock,
-            enabledFeatureFlags: new Set<string>(),
-            ...configOverrides,
-        } as LightdashConfig,
-    });
-
-const dbUser = {
-    userUuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    organizationUuid: 'org-uuid',
-};
-
-type FakeRows = {
-    flag?: Partial<DbFeatureFlag>;
-    userOverride?: Partial<DbFeatureFlagOverride>;
-    orgOverride?: Partial<DbFeatureFlagOverride>;
-};
-
-// Same fake-Knex shape as FeatureFlagModel.test.ts's buildFakeDatabase —
-// duplicated locally rather than shared, since that helper isn't exported
-// and this file only needs the flag-default/org-override cases.
-const buildScopeComposedFakeDatabase = (rows: FakeRows): Knex => {
-    const makeBuilder = (table: string) => {
-        const filters = new Set<string>();
-        const builder = {
-            where(column: string) {
-                filters.add(column);
-                return builder;
-            },
-            whereNull(column: string) {
-                filters.add(`${column}:null`);
-                return builder;
-            },
-            first() {
-                if (table === FeatureFlagsTableName) {
-                    return Promise.resolve(rows.flag);
-                }
-                if (table === FeatureFlagOverridesTableName) {
-                    if (filters.has('user_uuid')) {
-                        return Promise.resolve(rows.userOverride);
-                    }
-                    if (filters.has('user_uuid:null')) {
-                        return Promise.resolve(rows.orgOverride);
-                    }
-                }
-                return Promise.resolve(undefined);
-            },
-        };
-        return builder;
-    };
-    return ((table: string) => makeBuilder(table)) as unknown as Knex;
-};
-
-describe('CommercialFeatureFlagModel', () => {
-    describe('ScopeComposedSystemRoles defaults to on', () => {
-        it('is enabled when neither database nor override has an opinion', async () => {
-            const model = buildScopeComposedTestModel(
-                {},
-                buildScopeComposedFakeDatabase({}),
-            );
-
-            const result = await model.get({
-                featureFlagId: CommercialFeatureFlags.ScopeComposedSystemRoles,
-                user: dbUser,
-            });
-
-            expect(result).toEqual({
-                id: CommercialFeatureFlags.ScopeComposedSystemRoles,
-                enabled: true,
-            });
-        });
-
-        it('is disabled by an organization override, the standard escape hatch', async () => {
-            const model = buildScopeComposedTestModel(
-                {},
-                buildScopeComposedFakeDatabase({
-                    flag: { default_enabled: null },
-                    orgOverride: { enabled: false },
-                }),
-            );
-
-            const result = await model.get({
-                featureFlagId: CommercialFeatureFlags.ScopeComposedSystemRoles,
-                user: dbUser,
-            });
-
-            expect(result.enabled).toBe(false);
-        });
-
-        it('is disabled by LIGHTDASH_DISABLE_FEATURE_FLAGS, ignoring the database', async () => {
-            const model = buildScopeComposedTestModel(
-                {
-                    disabledFeatureFlags: new Set([
-                        CommercialFeatureFlags.ScopeComposedSystemRoles,
-                    ]),
-                },
-                buildScopeComposedFakeDatabase({ flag: { default_enabled: true } }),
-            );
-
-            const result = await model.get({
-                featureFlagId: CommercialFeatureFlags.ScopeComposedSystemRoles,
-                user: dbUser,
-            });
-
-            expect(result.enabled).toBe(false);
         });
     });
 });

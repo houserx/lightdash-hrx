@@ -79,7 +79,6 @@ type TestableUserModel = {
         userUuid: string,
         builder: AbilityBuilder<MemberAbility>,
         trx?: Knex,
-        scopeComposedSystemRolesEnabled?: boolean,
     ) => Promise<void>;
     generateUserAbilityBuilder: (
         user: DbUserDetails,
