@@ -24,6 +24,7 @@ const buildUser = (role: OrganizationMemberRole): SessionUser =>
         userUuid: 'user-uuid',
         organizationUuid: ORGANIZATION_UUID,
         organizationName: 'Org',
+        // AiAgentService is EE-only -- reaching it at all means the org is licensed.
         ability: defineUserAbility(
             {
                 organizationUuid: ORGANIZATION_UUID,
@@ -31,6 +32,8 @@ const buildUser = (role: OrganizationMemberRole): SessionUser =>
                 role,
             },
             [],
+            undefined,
+            { isEnterprise: true },
         ),
     }) as unknown as SessionUser;
 

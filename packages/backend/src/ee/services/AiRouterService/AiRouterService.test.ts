@@ -55,6 +55,7 @@ const makeAccount = (userAbility: unknown): RegisteredAccount =>
 const account = makeAccount(ability);
 
 // Org base role `member` plus a project system role — no org-level AI grants.
+// AiRouterService is EE-only -- reaching it at all means the org is licensed.
 const orgMemberProjectEditorAbility = defineUserAbility(
     {
         role: OrganizationMemberRole.MEMBER,
@@ -70,6 +71,8 @@ const orgMemberProjectEditorAbility = defineUserAbility(
             roleUuid: undefined,
         },
     ],
+    undefined,
+    { isEnterprise: true },
 );
 
 // Org `member` with no project access anywhere.
@@ -81,6 +84,8 @@ const orgMemberOnlyAbility = defineUserAbility(
         roleUuid: undefined,
     },
     [],
+    undefined,
+    { isEnterprise: true },
 );
 
 // Project-level custom role holding only the agent view scopes.

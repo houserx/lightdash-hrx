@@ -3,18 +3,38 @@ import { ServiceAccountScope } from '../ee/serviceAccounts/types';
 import { OrganizationMemberRole } from '../types/organizationMemberProfile';
 import { ProjectType } from '../types/projects';
 import { getPermissionsFromAbilityRules } from './abilityPermissions';
-import { applyOrganizationMemberStaticAbilities } from './organizationMemberAbility';
+import { getAllScopesForOrgRole } from './orgRoleToScopeMapping';
+import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import { type MemberAbility } from './types';
 
 type ServiceAccountAbilitiesArgs = {
     organizationUuid: string;
-    builder: Pick<AbilityBuilder<MemberAbility>, 'can'>;
+    // Full builder (not just `can`) -- the SYSTEM_* handlers' scope-composed
+    // path reads `builder.rules` via `buildAbilityFromScopes`'s PAT-gate
+    // dedup check. Every real caller already constructs a full
+    // `AbilityBuilder`.
+    builder: AbilityBuilder<MemberAbility>;
     // Dedicated user uuid for the service account. Required so that
     // `*@self`-style ability conditions (e.g. `manage:DeployProject@self`,
     // `delete:Project@self`) resolve to the SA's own row rather than
     // matching nothing. Older legacy-scope handlers that don't reference
     // userUuid keep working unchanged.
     userUuid: string;
+};
+
+const applySystemRoleAlias = (
+    role: OrganizationMemberRole,
+    { organizationUuid, userUuid, builder }: ServiceAccountAbilitiesArgs,
+): void => {
+    buildAbilityFromScopes(
+        {
+            organizationUuid,
+            userUuid,
+            scopes: getAllScopesForOrgRole(role),
+            isEnterprise: true,
+        },
+        builder,
+    );
 };
 
 const applyServiceAccountStaticAbilities: Record<
@@ -28,9 +48,7 @@ const applyServiceAccountStaticAbilities: Record<
         can('view', 'OrganizationMemberProfile', {
             organizationUuid,
         });
-        can('view', 'JobStatus', {
-            // createdByUserUuid: userUuid,
-        });
+        can('view', 'JobStatus');
         can('view', 'PinnedItems', {
             organizationUuid,
         });
@@ -45,16 +63,9 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('view', 'Dashboard', {
             organizationUuid,
-            /* access: {
-                $elemMatch: { userUuid: userUuid },
-            }, */
         });
         can('view', 'SavedChart', {
             organizationUuid,
-            /*
-           access: {
-                $elemMatch: { userUuid: userUuid },
-            }, */
         });
         can('view', 'Space', {
             organizationUuid,
@@ -62,9 +73,6 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('view', 'Space', {
             organizationUuid,
-            /* access: {
-                $elemMatch: { userUuid: userUuid },
-            }, */
         });
         can('view', 'Project', {
             organizationUuid,
@@ -89,15 +97,10 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('view', 'AiAgentThread', {
             organizationUuid,
-            // userUuid: userUuid,
         });
 
         can('create', 'Job');
-        can(
-            'view',
-            'Job',
-            // { userUuid: userUuid }
-        );
+        can('view', 'Job');
         can('view', 'UnderlyingData', {
             organizationUuid,
         });
@@ -118,59 +121,23 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('manage', 'Dashboard', {
             organizationUuid,
-            /*  access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.EDITOR,
-                },
-            }, */
         });
         can('manage', 'SavedChart', {
             organizationUuid,
-            /* access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.EDITOR,
-                },
-            }, */
         });
 
         can('manage', 'SemanticViewer', {
             organizationUuid,
-            /*  access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.EDITOR,
-                },
-            }, */
         });
         can('manage', 'Dashboard', {
             organizationUuid,
-            /* access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.ADMIN,
-                },
-            }, */
         });
         can('manage', 'SavedChart', {
             organizationUuid,
-            /* access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.ADMIN,
-                },
-            }, */
         });
 
         can('manage', 'Space', {
             organizationUuid,
-            /*  access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.ADMIN,
-                },
-            }, */
         });
 
         can('view', 'AiAgent', {
@@ -195,12 +162,13 @@ const applyServiceAccountStaticAbilities: Record<
     [ServiceAccountScope.ORG_EDIT]: ({
         organizationUuid,
         userUuid,
-        builder: { can },
+        builder,
     }) => {
+        const { can } = builder;
         applyServiceAccountStaticAbilities[ServiceAccountScope.ORG_READ]({
             organizationUuid,
             userUuid,
-            builder: { can },
+            builder,
         });
         can('manage', 'Space', {
             organizationUuid,
@@ -240,12 +208,13 @@ const applyServiceAccountStaticAbilities: Record<
     [ServiceAccountScope.ORG_ADMIN]: ({
         organizationUuid,
         userUuid,
-        builder: { can },
+        builder,
     }) => {
+        const { can } = builder;
         applyServiceAccountStaticAbilities[ServiceAccountScope.ORG_EDIT]({
             organizationUuid,
             userUuid,
-            builder: { can },
+            builder,
         });
         can('view', 'Roadmap', {
             organizationUuid,
@@ -276,21 +245,9 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('promote', 'SavedChart', {
             organizationUuid,
-            /* access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.EDITOR,
-                },
-            }, */
         });
         can('promote', 'Dashboard', {
             organizationUuid,
-            /* access: {
-                $elemMatch: {
-                    userUuid: userUuid,
-                    role: SpaceMemberRole.EDITOR,
-                },
-            }, */
         });
         can('manage', 'CompileProject', {
             organizationUuid,
@@ -332,7 +289,6 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('manage', 'AiAgentThread', {
             organizationUuid,
-            //  userUuid: userUuid,
         });
         can('manage', 'DataApp', {
             organizationUuid,
@@ -407,67 +363,23 @@ const applyServiceAccountStaticAbilities: Record<
             organizationUuid,
         });
     },
-    // System-role aliases. Each one delegates to the matching org-member
-    // ability builder so the SA's CASL is exactly the user-with-this-role
-    // shape — no parallel scope mapping to drift out of sync.
-    [ServiceAccountScope.SYSTEM_MEMBER]: ({
-        organizationUuid,
-        userUuid,
-        builder: { can },
-    }) => {
-        applyOrganizationMemberStaticAbilities[OrganizationMemberRole.MEMBER](
-            { organizationUuid, userUuid },
-            { can },
-        );
-    },
-    [ServiceAccountScope.SYSTEM_ADMIN]: ({
-        organizationUuid,
-        userUuid,
-        builder: { can },
-    }) => {
-        applyOrganizationMemberStaticAbilities[OrganizationMemberRole.ADMIN](
-            { organizationUuid, userUuid },
-            { can },
-        );
-    },
-    [ServiceAccountScope.SYSTEM_DEVELOPER]: ({
-        organizationUuid,
-        userUuid,
-        builder: { can },
-    }) => {
-        applyOrganizationMemberStaticAbilities[
-            OrganizationMemberRole.DEVELOPER
-        ]({ organizationUuid, userUuid }, { can });
-    },
-    [ServiceAccountScope.SYSTEM_EDITOR]: ({
-        organizationUuid,
-        userUuid,
-        builder: { can },
-    }) => {
-        applyOrganizationMemberStaticAbilities[OrganizationMemberRole.EDITOR](
-            { organizationUuid, userUuid },
-            { can },
-        );
-    },
-    [ServiceAccountScope.SYSTEM_INTERACTIVE_VIEWER]: ({
-        organizationUuid,
-        userUuid,
-        builder: { can },
-    }) => {
-        applyOrganizationMemberStaticAbilities[
-            OrganizationMemberRole.INTERACTIVE_VIEWER
-        ]({ organizationUuid, userUuid }, { can });
-    },
-    [ServiceAccountScope.SYSTEM_VIEWER]: ({
-        organizationUuid,
-        userUuid,
-        builder: { can },
-    }) => {
-        applyOrganizationMemberStaticAbilities[OrganizationMemberRole.VIEWER](
-            { organizationUuid, userUuid },
-            { can },
-        );
-    },
+    // System-role aliases. Each one grants exactly the same CASL as a human
+    // org member with that role -- either via the same flag-gated
+    // scope-composed path humans use (A6), or (when the flag is off) by
+    // delegating to the matching hand-written org-member ability builder.
+    // No parallel scope mapping to drift out of sync either way.
+    [ServiceAccountScope.SYSTEM_MEMBER]: (args) =>
+        applySystemRoleAlias(OrganizationMemberRole.MEMBER, args),
+    [ServiceAccountScope.SYSTEM_ADMIN]: (args) =>
+        applySystemRoleAlias(OrganizationMemberRole.ADMIN, args),
+    [ServiceAccountScope.SYSTEM_DEVELOPER]: (args) =>
+        applySystemRoleAlias(OrganizationMemberRole.DEVELOPER, args),
+    [ServiceAccountScope.SYSTEM_EDITOR]: (args) =>
+        applySystemRoleAlias(OrganizationMemberRole.EDITOR, args),
+    [ServiceAccountScope.SYSTEM_INTERACTIVE_VIEWER]: (args) =>
+        applySystemRoleAlias(OrganizationMemberRole.INTERACTIVE_VIEWER, args),
+    [ServiceAccountScope.SYSTEM_VIEWER]: (args) =>
+        applySystemRoleAlias(OrganizationMemberRole.VIEWER, args),
 };
 
 /**

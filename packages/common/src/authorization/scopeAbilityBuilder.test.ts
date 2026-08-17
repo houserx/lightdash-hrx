@@ -177,6 +177,75 @@ describe('scopeAbilityBuilder', () => {
         ).toBe(false);
     });
 
+    it('should scope project preview creation to the granting organization at org level (B0 regression)', () => {
+        const builder = new AbilityBuilder<MemberAbility>(Ability);
+        buildAbilityFromScopes(
+            {
+                ...baseContextWithOrg,
+                scopes: ['create:Project@preview'],
+            },
+            builder,
+        );
+        const ability = builder.build();
+
+        // Can create a preview project within the granting organization.
+        expect(
+            ability.can(
+                'create',
+                subject('Project', {
+                    organizationUuid: 'org-123',
+                    type: ProjectType.PREVIEW,
+                }),
+            ),
+        ).toBe(true);
+
+        // Cannot create a preview project in a different organization --
+        // the condition must not ignore organizationUuid entirely.
+        expect(
+            ability.can(
+                'create',
+                subject('Project', {
+                    organizationUuid: 'a-different-organization',
+                    type: ProjectType.PREVIEW,
+                }),
+            ),
+        ).toBe(false);
+    });
+
+    it('manage:SourceCode should exclude protected branches (B0b regression)', () => {
+        const builder = new AbilityBuilder<MemberAbility>(Ability);
+        buildAbilityFromScopes(
+            {
+                ...baseContext,
+                scopes: ['manage:SourceCode'],
+            },
+            builder,
+        );
+        const ability = builder.build();
+
+        expect(
+            ability.can(
+                'manage',
+                subject('SourceCode', {
+                    projectUuid: 'project-123',
+                    isProtectedBranch: false,
+                }),
+            ),
+        ).toBe(true);
+
+        // Writes to a protected branch must be denied, matching the
+        // hand-written developer-tier grant this scope replaces.
+        expect(
+            ability.can(
+                'manage',
+                subject('SourceCode', {
+                    projectUuid: 'project-123',
+                    isProtectedBranch: true,
+                }),
+            ),
+        ).toBe(false);
+    });
+
     it('cannot create projects by default', () => {
         const builder = new AbilityBuilder<MemberAbility>(Ability);
         buildAbilityFromScopes(baseContext, builder);
@@ -2470,7 +2539,7 @@ describe('scopeAbilityBuilder', () => {
             expect(ability.can('manage', contentAsCodeSubject)).toBe(false);
         });
 
-        it('content as code scopes are gated behind enterprise', () => {
+        it('content as code scopes are available without a license (no service-level gate backs them)', () => {
             const builder = new AbilityBuilder<MemberAbility>(Ability);
             buildAbilityFromScopes(
                 {
@@ -2483,7 +2552,8 @@ describe('scopeAbilityBuilder', () => {
             );
             const ability = builder.build();
 
-            expect(ability.rules.length).toBe(0);
+            expect(ability.can('view', contentAsCodeSubject)).toBe(true);
+            expect(ability.can('manage', contentAsCodeSubject)).toBe(true);
         });
     });
 

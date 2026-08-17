@@ -909,6 +909,12 @@ describe('ProjectService', () => {
                             projectWithSensitiveFields.organizationUuid,
                     },
                     [],
+                    undefined,
+                    // Organization warehouse credentials only exist at all
+                    // once an org has created one, which is only reachable
+                    // through the EE-only, license-gated service -- so any
+                    // org that has this UUID to reference is licensed.
+                    { isEnterprise: true },
                 ),
             },
         } as typeof developerAccount;

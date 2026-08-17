@@ -4,7 +4,8 @@ import { ProjectMemberRole } from '../types/projectMemberRole';
 import { ProjectType } from '../types/projects';
 import { collapseAbilityRules } from './collapseAbilityRules';
 import { getUserAbilityBuilder } from './index';
-import applyOrganizationMemberAbilities from './organizationMemberAbility';
+import { getAllScopesForOrgRole } from './orgRoleToScopeMapping';
+import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import { type MemberAbility } from './types';
 
 const ORG_UUID = 'test-org-uuid';
@@ -17,12 +18,17 @@ const PERMISSIONS_CONFIG = {
 
 const buildExpected = (role: OrganizationMemberRole) => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
-    applyOrganizationMemberAbilities({
-        role,
-        member: { organizationUuid: ORG_UUID, userUuid: USER_UUID },
+    buildAbilityFromScopes(
+        {
+            organizationUuid: ORG_UUID,
+            userUuid: USER_UUID,
+            scopes: getAllScopesForOrgRole(role),
+            isEnterprise: undefined,
+            organizationRole: role,
+            permissionsConfig: PERMISSIONS_CONFIG,
+        },
         builder,
-        permissionsConfig: PERMISSIONS_CONFIG,
-    });
+    );
     // getUserAbilityBuilder collapses rules before returning, so the reference
     // set must be collapsed the same way for an apples-to-apples comparison.
     builder.rules = collapseAbilityRules(builder.rules);
@@ -253,7 +259,9 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
                     >
                 ).projectUuid.$in,
             ).toEqual([...projectUuids].sort());
-            expect(ability.rules.length).toBeLessThan(100);
+            // Bounded by role-tier scope count, not by the 125 project
+            // profiles above -- that's what collapsing buys us.
+            expect(ability.rules.length).toBeLessThan(150);
             expect(
                 ability.can(
                     'manage',

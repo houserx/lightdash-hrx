@@ -1,7 +1,10 @@
 import { Ability, AbilityBuilder, subject } from '@casl/ability';
 import { ServiceAccountScope } from '../ee/serviceAccounts/types';
 import { ProjectMemberRole } from '../types/projectMemberRole';
-import { projectMemberAbilities } from './projectMemberAbility';
+import {
+    getAllScopesForRole,
+    PROJECT_ROLE_TO_SCOPES_MAP,
+} from './roleToScopeMapping';
 import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import {
     applyServiceAccountAbilities,
@@ -76,11 +79,12 @@ const buildAbilityWithGrants = (
     });
     for (const grant of grants) {
         if ('role' in grant) {
-            projectMemberAbilities[grant.role](
+            buildAbilityFromScopes(
                 {
                     projectUuid: grant.projectUuid,
                     userUuid: SA_USER,
-                    role: grant.role,
+                    scopes: getAllScopesForRole(grant.role),
+                    isEnterprise: true,
                 },
                 builder,
             );
@@ -164,7 +168,7 @@ describe('content-as-code writes', () => {
 describe('SYSTEM_MEMBER + project_memberships (system roles)', () => {
     // Parity: SA with a system-role grant should view/manage in that project
     // the same way a human ProjectMember with that role does. Drives off
-    // projectMemberAbilities so adding a 6th role would surface here.
+    // PROJECT_ROLE_TO_SCOPES_MAP so adding a 6th role would surface here.
     const expectations: Array<{
         role: ProjectMemberRole;
         canViewProject: boolean;
@@ -235,11 +239,11 @@ describe('SYSTEM_MEMBER + project_memberships (system roles)', () => {
         },
     );
 
-    it('covers every key of projectMemberAbilities (drift sentinel)', () => {
+    it('covers every key of PROJECT_ROLE_TO_SCOPES_MAP (drift sentinel)', () => {
         // If a new system role lands without a matching expectations row,
         // this assertion fails loudly — preventing silent gaps in coverage.
         expect(new Set(expectations.map((e) => e.role))).toEqual(
-            new Set(Object.keys(projectMemberAbilities)),
+            new Set(Object.keys(PROJECT_ROLE_TO_SCOPES_MAP)),
         );
     });
 });

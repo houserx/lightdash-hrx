@@ -1,6 +1,5 @@
 import { Ability, AbilityBuilder, subject } from '@casl/ability';
 import { OrganizationMemberRole } from '../types/organizationMemberProfile';
-import applyOrganizationMemberAbilities from './organizationMemberAbility';
 import { getAllScopesForOrgRole } from './orgRoleToScopeMapping';
 import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import {
@@ -10,33 +9,26 @@ import {
 } from './types';
 
 /**
- * Given: `organizationMemberAbility.test.ts`'s 188 hand-written test cases
- *   (275 individual `ability.can()` assertions) encode curated, meaningful
- *   expectations about what each org system role can/cannot do -- knowledge
- *   worth preserving once plan item A10 deletes the hand-written
- *   `organizationMemberAbility.ts` builder those tests exercise.
- * When: captured programmatically (not manually transcribed, to eliminate
- *   transcription-error risk across 275 entries), the same way A7a ported
- *   `projectMemberAbility.test.ts`: temporarily instrumented
- *   `ability.can()` in the original test file, ran it, recorded every
- *   (role, permissionsConfig, action, subjectType, resource, expected)
- *   tuple actually observed (including the 3 PAT-dynamic-gate cases that
- *   override the default `permissionsConfig`, and 16 cases that check a
- *   bare subject-type string rather than a tagged resource instance), then
- *   reverted that instrumentation -- the original file is unchanged in this
- *   commit.
- * Then: the same 275 expectations are asserted against BOTH ability-building
- *   paths (hand-written `applyOrganizationMemberAbilities` and
+ * Given: the 275 `ability.can()` expectations originally captured from the
+ *   now-deleted hand-written `organizationMemberAbility.test.ts` (188 cases,
+ *   including the 3 PAT-dynamic-gate cases that override the default
+ *   `permissionsConfig`, and 16 cases that check a bare subject-type string
+ *   rather than a tagged resource instance) -- knowledge worth preserving
+ *   once plan item A10c deleted the hand-written builder those tests
+ *   exercised.
+ * When: asserted against the sole remaining ability-building path,
  *   scope-composed `buildAbilityFromScopes(getAllScopesForOrgRole(role))`,
  *   which -- unlike the project-layer scope build -- must also apply the PAT
  *   dynamic gate itself via `organizationRole`/`permissionsConfig`, since
- *   there's no separate dynamic-abilities call on that path), so this
- *   fixture remains a valid regression oracle whichever path is active.
+ *   there's no separate dynamic-abilities call on that path.
+ * Then: `ability.can(...)` matches the originally-captured expectation for
+ *   every case except [238] (see its own comment below).
  *
- * NOT ported: the file's separate "derives the %s delegation footprint"
- * test block, which asserts against `getOrganizationMemberRolePermissions`
- * (a rules-introspection utility) via `.rules`, never `.can()` -- a
- * different function under test, out of scope here.
+ * NOT ported: the original file's separate "derives the %s delegation
+ * footprint" test block, which asserted against
+ * `getOrganizationMemberRolePermissions` (a rules-introspection utility) via
+ * `.rules`, never `.can()` -- a different function under test, out of scope
+ * here.
  */
 
 type FixtureEntry = {
@@ -6317,83 +6309,57 @@ const FIXTURE: FixtureEntry[] = [
 
 const buildAbility = (
     entry: Pick<FixtureEntry, 'role' | 'permissionsConfig'>,
-    useScopedPath: boolean,
 ): MemberAbility => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
-    if (useScopedPath) {
-        buildAbilityFromScopes(
-            {
-                userUuid: USER_UUID,
-                organizationUuid: ORG_UUID,
-                scopes: getAllScopesForOrgRole(entry.role),
-                isEnterprise: true,
-                organizationRole: entry.role,
-                permissionsConfig: entry.permissionsConfig,
-            },
-            builder,
-        );
-    } else {
-        applyOrganizationMemberAbilities({
-            role: entry.role,
-            member: { organizationUuid: ORG_UUID, userUuid: USER_UUID },
-            builder,
+    buildAbilityFromScopes(
+        {
+            userUuid: USER_UUID,
+            organizationUuid: ORG_UUID,
+            scopes: getAllScopesForOrgRole(entry.role),
+            isEnterprise: true,
+            organizationRole: entry.role,
             permissionsConfig: entry.permissionsConfig,
-        });
-    }
+        },
+        builder,
+    );
     return builder.build();
 };
 
 /**
- * Known, pre-existing scope-vocabulary asymmetries surfaced by this port,
- * excluded from the scope-composed run only (still verified, and still
- * passing, against the hand-written path):
+ * [227, 235] (`create:Project@preview` org-blindness, plan item B0) were a
+ * confirmed bug when this file was first ported -- fixed in scopes.ts
+ * (the condition now branches on organizationUuid at org level), so no
+ * longer excluded here.
  *
- * [227, 235] `create:Project@preview`'s condition (`scopes.ts`) never
- * branches on org-vs-project context -- confirmed here to be *over-broad*
- * at org level (grants across organizations unconditionally), not merely
- * unsatisfiable as originally hypothesized when this was first flagged as
- * plan item B0. Tracked there; not fixed here pending maintainer input.
- *
- * [238] `delete:Project@self`'s condition (`ownPreviewProjectConditions` in
+ * [238] stays excluded (A10c: the hand-written path it was verified against
+ * is gone, so this becomes a documented untested case, not a re-baselined
+ * one): `delete:Project@self`'s condition (`ownPreviewProjectConditions` in
  * `scopes.ts`) requires `createdByUserUuid` to match the current user, but
- * the hand-written developer-tier grant for the same case
- * (`organizationMemberAbility.ts`) has no such check -- `can('delete',
+ * the hand-written developer-tier grant for the same case (now-deleted
+ * `organizationMemberAbility.ts`) had no such check -- `can('delete',
  * 'Project', { organizationUuid, type: PREVIEW })` -- unlike its sibling
- * `manage:DeployProject@self`, which does check `createdByUserUuid` in the
- * hand-written path. So today a developer can delete *any* preview project
- * in their org via the hand-written path despite the "@self" scope name;
- * the scope-composed path is narrower (safer): only the preview's own
- * creator. This is an intentional-narrowing-on-cutover case, same category
- * as the asymmetries already catalogued in `differentialEquivalence.test.ts`
- * -- new plan item B0c, flagged alongside B0/B0b for maintainer input,
- * not fixed here.
+ * `manage:DeployProject@self`, which did check `createdByUserUuid`. So
+ * before this cutover a developer could delete *any* preview project in
+ * their org despite the "@self" scope name; the scope-composed path is
+ * narrower (safer): only the preview's own creator. This is an
+ * intentional narrowing (plan item B0c), not a bug.
  */
-const KNOWN_SCOPE_VOCABULARY_GAP_INDICES = new Set([227, 235, 238]);
+const KNOWN_SCOPE_VOCABULARY_GAP_INDICES = new Set([238]);
 
-describe.each([
-    ['hand-written applyOrganizationMemberAbilities', false],
-    ['scope-composed buildAbilityFromScopes', true],
-] as const)('given the %s builder', (_label, useScopedPath) => {
-    const casesForThisPath = FIXTURE.map((entry, i) => ({
-        ...entry,
-        i,
-    })).filter((entry) =>
-        useScopedPath ? !KNOWN_SCOPE_VOCABULARY_GAP_INDICES.has(entry.i) : true,
-    );
-    describe.each(casesForThisPath)(
-        'when checking fixture case $i ($role $action:$subjectType)',
-        (entry) => {
-            it(`then can() returns ${entry.expected}`, () => {
-                const ability = buildAbility(entry, useScopedPath);
-                const result =
-                    entry.resource === null
-                        ? ability.can(entry.action, entry.subjectType)
-                        : ability.can(
-                              entry.action,
-                              subject(entry.subjectType, entry.resource),
-                          );
-                expect(result).toBe(entry.expected);
-            });
-        },
-    );
+describe.each(
+    FIXTURE.map((entry, i) => ({ ...entry, i })).filter(
+        (entry) => !KNOWN_SCOPE_VOCABULARY_GAP_INDICES.has(entry.i),
+    ),
+)('when checking fixture case $i ($role $action:$subjectType)', (entry) => {
+    it(`then can() returns ${entry.expected}`, () => {
+        const ability = buildAbility(entry);
+        const result =
+            entry.resource === null
+                ? ability.can(entry.action, entry.subjectType)
+                : ability.can(
+                      entry.action,
+                      subject(entry.subjectType, entry.resource),
+                  );
+        expect(result).toBe(entry.expected);
+    });
 });

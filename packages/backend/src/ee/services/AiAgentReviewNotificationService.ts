@@ -69,7 +69,12 @@ export class AiAgentReviewNotificationService {
 
         return members.data
             .filter((member) =>
-                defineUserAbility(member, []).can(
+                // This service is only ever instantiated under a validated
+                // license (see ee/index.ts's service registration), so
+                // isEnterprise is always true whenever this code runs.
+                defineUserAbility(member, [], undefined, {
+                    isEnterprise: true,
+                }).can(
                     'manage',
                     subject('OrganizationAiAgent', { organizationUuid }),
                 ),

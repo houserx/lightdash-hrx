@@ -1,7 +1,5 @@
 import { Ability, AbilityBuilder, subject } from '@casl/ability';
 import { ProjectMemberRole } from '../types/projectMemberRole';
-import { projectMemberAbilities } from './projectMemberAbility';
-import { PROJECT_VIEWER } from './projectMemberAbility.mock';
 import { getAllScopesForRole } from './roleToScopeMapping';
 import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import {
@@ -11,28 +9,20 @@ import {
 } from './types';
 
 /**
- * Given: `projectMemberAbility.test.ts`'s 128 hand-written test cases
- *   (221 individual `ability.can()` assertions) encode curated, meaningful
- *   expectations about what each project system role can/cannot do --
- *   knowledge worth preserving once plan item A10 deletes the hand-written
- *   `projectMemberAbility.ts` builder those tests exercise.
- * When: captured programmatically (not manually transcribed, to eliminate
- *   transcription-error risk across 221 entries) by temporarily
- *   instrumenting `ability.can()` in the original test file, running it,
- *   and recording every (role, action, subjectType, resource, expected)
- *   tuple actually observed -- then reverting that instrumentation, since
- *   the original file stays unchanged in this commit.
- * Then: the same 221 expectations are asserted against BOTH ability-building
- *   paths (hand-written `projectMemberAbilities[role]` and scope-composed
- *   `buildAbilityFromScopes(getAllScopesForRole(role))`) here, so this
- *   fixture remains a valid regression oracle whichever path is active --
- *   including after A10, when only the scope-composed path exists.
+ * Given: the 221 `ability.can()` expectations originally captured from the
+ *   now-deleted hand-written `projectMemberAbility.test.ts` (128 cases) --
+ *   knowledge worth preserving once plan item A10c deleted the hand-written
+ *   builder those tests exercised.
+ * When: asserted against the sole remaining ability-building path,
+ *   scope-composed `buildAbilityFromScopes(getAllScopesForRole(role))`.
+ * Then: `ability.can(...)` matches the originally-captured expectation for
+ *   every case.
  *
- * Built directly via the project-role builders (not `getUserAbilityBuilder`)
+ * Built directly via the project-role builder (not `getUserAbilityBuilder`)
  * to isolate the project layer exactly as the original file did, with zero
- * org-layer interaction. `isEnterprise: true` on the scope-composed side
- * matches the hand-written side's behavior, which has no enterprise gating
- * at all (always grants enterprise-only scopes unconditionally).
+ * org-layer interaction. `isEnterprise: true` matches the hand-written
+ * side's behavior it was ported from, which had no enterprise gating at
+ * all (always granted enterprise-only scopes unconditionally).
  */
 
 type FixtureEntry = {
@@ -43,7 +33,11 @@ type FixtureEntry = {
     expected: boolean;
 };
 
-const { projectUuid, userUuid } = PROJECT_VIEWER;
+// Must match projectMemberAbility.mock.ts's (now-deleted) PROJECT_VIEWER,
+// since captured resource literals below were generated against that
+// exact member context.
+const projectUuid = 'project-uuid-1234';
+const userUuid = 'user-uuid-1234';
 
 const FIXTURE: FixtureEntry[] = [
     // [0] admin: can view and manage all kinds of dashboards
@@ -2238,65 +2232,37 @@ const FIXTURE: FixtureEntry[] = [
     },
 ];
 
-/**
- * Confirmed vocabulary gap, not a fixture/mapping error: `manage:SourceCode`'s
- * scope condition (`scopes.ts`) is `addDefaultUuidCondition` (project-scoped
- * only) -- it never checks `isProtectedBranch`, unlike developer's
- * hand-written grant (`projectMemberAbility.ts`), which explicitly excludes
- * protected branches (`{ projectUuid, isProtectedBranch: false }`). A
- * developer holding this scope (system role today, or a custom role in the
- * future) can manage source code on a protected branch via the scope path,
- * which the hand-written path prevents. Flagged rather than fixed here --
- * this commit only ports tests, matching plan item B0's precedent for
- * pre-existing scope-vocabulary gaps found along the way and deferred for
- * maintainer input. Excluded from the scope-composed run only; still
- * verified (and still passes) against the hand-written path.
- */
-const KNOWN_SCOPE_VOCABULARY_GAP_INDICES = new Set([114]);
+// B0b (fixture case 114, manage:SourceCode/isProtectedBranch) was a
+// confirmed scope-vocabulary gap when this file was first ported -- fixed
+// in scopes.ts (`manage:SourceCode` now excludes protected branches, same
+// as the hand-written grant it replaces), so no fixture case needs
+// excluding from the scope-composed run anymore.
 
-const buildAbility = (
-    role: ProjectMemberRole,
-    useScopedPath: boolean,
-): MemberAbility => {
+const buildAbility = (role: ProjectMemberRole): MemberAbility => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
-    if (useScopedPath) {
-        buildAbilityFromScopes(
-            {
-                userUuid,
-                projectUuid,
-                scopes: getAllScopesForRole(role),
-                isEnterprise: true,
-            },
-            builder,
-        );
-    } else {
-        projectMemberAbilities[role]({ projectUuid, userUuid, role }, builder);
-    }
+    buildAbilityFromScopes(
+        {
+            userUuid,
+            projectUuid,
+            scopes: getAllScopesForRole(role),
+            isEnterprise: true,
+        },
+        builder,
+    );
     return builder.build();
 };
 
-describe.each([
-    ['hand-written projectMemberAbilities', false],
-    ['scope-composed buildAbilityFromScopes', true],
-] as const)('given the %s builder', (_label, useScopedPath) => {
-    const casesForThisPath = FIXTURE.map((entry, i) => ({
-        ...entry,
-        i,
-    })).filter((entry) =>
-        useScopedPath ? !KNOWN_SCOPE_VOCABULARY_GAP_INDICES.has(entry.i) : true,
-    );
-    describe.each(casesForThisPath)(
-        'when checking fixture case $i ($role $action:$subjectType)',
-        (entry) => {
-            it(`then can() returns ${entry.expected}`, () => {
-                const ability = buildAbility(entry.role, useScopedPath);
-                expect(
-                    ability.can(
-                        entry.action,
-                        subject(entry.subjectType, entry.resource),
-                    ),
-                ).toBe(entry.expected);
-            });
-        },
-    );
-});
+describe.each(FIXTURE.map((entry, i) => ({ ...entry, i })))(
+    'when checking fixture case $i ($role $action:$subjectType)',
+    (entry) => {
+        it(`then can() returns ${entry.expected}`, () => {
+            const ability = buildAbility(entry.role);
+            expect(
+                ability.can(
+                    entry.action,
+                    subject(entry.subjectType, entry.resource),
+                ),
+            ).toBe(entry.expected);
+        });
+    },
+);

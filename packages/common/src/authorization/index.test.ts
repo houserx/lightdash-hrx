@@ -436,4 +436,44 @@ describe('Lightdash member permissions', () => {
             ).toEqual(true);
         });
     });
+
+    describe('isEnterprise', () => {
+        // buildAbilityFromScopes drops every isEnterprise: true scope from
+        // the map when isEnterprise is falsy -- defineUserAbility must let
+        // callers say which they mean instead of always defaulting falsy,
+        // since at least one real caller (AiAgentReviewNotificationService)
+        // only ever runs in an already-licensed context.
+        it('omits enterprise-only scopes when isEnterprise is not passed', () => {
+            const enterpriseAbility = defineUserAbility(adminOrgProfile, []);
+
+            expect(
+                enterpriseAbility.can(
+                    'manage',
+                    subject('OrganizationAiAgent', {
+                        organizationUuid: adminOrgProfile.organizationUuid,
+                    }),
+                ),
+            ).toEqual(false);
+        });
+
+        it('grants enterprise-only scopes when isEnterprise: true is passed', () => {
+            const enterpriseAbility = defineUserAbility(
+                adminOrgProfile,
+                [],
+                undefined,
+                {
+                    isEnterprise: true,
+                },
+            );
+
+            expect(
+                enterpriseAbility.can(
+                    'manage',
+                    subject('OrganizationAiAgent', {
+                        organizationUuid: adminOrgProfile.organizationUuid,
+                    }),
+                ),
+            ).toEqual(true);
+        });
+    });
 });

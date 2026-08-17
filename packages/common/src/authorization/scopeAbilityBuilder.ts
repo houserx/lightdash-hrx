@@ -63,7 +63,7 @@ const applyScopeAbilities = (
     handlePatConfigApplication(context, builder);
 };
 
-type OptionalIdContext =
+export type OptionalIdContext =
     | {
           organizationUuid: string;
           projectUuid?: never;

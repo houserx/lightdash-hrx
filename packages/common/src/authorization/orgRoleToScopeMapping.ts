@@ -1,4 +1,8 @@
+import { Ability, AbilityBuilder } from '@casl/ability';
 import { OrganizationMemberRole } from '../types/organizationMemberProfile';
+import { getPermissionsFromAbilityRules } from './abilityPermissions';
+import { buildAbilityFromScopes } from './scopeAbilityBuilder';
+import { type MemberAbility } from './types';
 
 /**
  * Maps organization member roles to their equivalent scopes, derived by
@@ -26,6 +30,21 @@ import { OrganizationMemberRole } from '../types/organizationMemberProfile';
  * including `view`) -- so `view:Job` is intentionally omitted from every
  * tier here, unlike the project mapping which lists it explicitly at
  * `interactive_viewer` and up.
+ *
+ * Two more confirmed vocabulary gaps, surfaced by the (now-deleted, A10c)
+ * differential harness against the hand-written builder, are still live --
+ * no scope in `scopes.ts` covers either grant's exact shape, and the
+ * mapping below deliberately picks the narrower available scope (safer
+ * under-grant) rather than a broader one that would over-grant:
+ * - `create:Project`: the hand-written admin grant was unconditional across
+ *   both `DEFAULT` and `PREVIEW` types; `create:Project@preview` (used here)
+ *   only ever covers `PREVIEW`.
+ * - `delete:Project`: the hand-written developer grant was `{ type: PREVIEW }`
+ *   with no creator restriction -- deletable by anyone, but only previews.
+ *   Neither existing scope matches exactly: `delete:Project` allows any
+ *   project type; `delete:Project@self` (used here) restricts to previews
+ *   the caller created themselves, narrower than intended but never
+ *   over-granting.
  */
 export const ORGANIZATION_ROLE_TO_SCOPES_MAP: Record<
     OrganizationMemberRole,
@@ -388,3 +407,30 @@ export const ORGANIZATION_ROLE_TO_SCOPES_MAP: Record<
 export const getAllScopesForOrgRole = (
     role: OrganizationMemberRole,
 ): string[] => [...ORGANIZATION_ROLE_TO_SCOPES_MAP[role]];
+
+/**
+ * Canonical action/subject footprint emitted by a system organization role.
+ * Feeds `organizationRolePermissions.ts`'s confused-deputy grant check
+ * (`validateOrganizationScopesCanBeGranted`) -- isEnterprise: true because
+ * this must be conservative: under-reporting a role's permissions here
+ * would weaken that check, and the hand-written builder this replaced
+ * (A10c) never filtered by license either. Verified byte-identical to the
+ * pre-A10c hand-written output for every role by
+ * `getOrganizationMemberRolePermissions.goldenMaster.test.ts`.
+ */
+export const getOrganizationMemberRolePermissions = (
+    role: OrganizationMemberRole,
+): string[] => {
+    const builder = new AbilityBuilder<MemberAbility>(Ability);
+    buildAbilityFromScopes(
+        {
+            organizationUuid: 'delegation-validation-organization',
+            userUuid: 'delegation-validation-user',
+            scopes: getAllScopesForOrgRole(role),
+            isEnterprise: true,
+        },
+        builder,
+    );
+
+    return getPermissionsFromAbilityRules(builder.rules);
+};

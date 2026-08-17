@@ -9,6 +9,7 @@ import {
     CreateUserArgs,
     CreateUserWithRole,
     ForbiddenError,
+    getAllScopesForRole,
     getUserAbilityBuilder,
     getUserAvatarUrl,
     InvalidUser,
@@ -26,7 +27,6 @@ import {
     PasswordLoginBlockedError,
     PersonalAccessToken,
     ProjectAbilityProfile,
-    projectMemberAbilities,
     ProjectMemberProfile,
     ProjectMemberRole,
     ProjectType,
@@ -915,25 +915,16 @@ export class UserModel {
             ...projectRoles.map((role) => role.roleUuid),
             ...groupProjectRoles.map((role) => role.roleUuid),
         ].filter((roleUuid): roleUuid is string => Boolean(roleUuid));
-        const [customRoleScopes, customRolesFlag, scopeComposedRolesFlag] =
-            await Promise.all([
-                this.customRoleScopes(customRoleUuids, trx),
-                this.featureFlagModel.get(
-                    {
-                        user: lightdashUser,
-                        featureFlagId: CommercialFeatureFlags.CustomRoles,
-                    },
-                    { trx },
-                ),
-                this.featureFlagModel.get(
-                    {
-                        user: lightdashUser,
-                        featureFlagId:
-                            CommercialFeatureFlags.ScopeComposedSystemRoles,
-                    },
-                    { trx },
-                ),
-            ]);
+        const [customRoleScopes, customRolesFlag] = await Promise.all([
+            this.customRoleScopes(customRoleUuids, trx),
+            this.featureFlagModel.get(
+                {
+                    user: lightdashUser,
+                    featureFlagId: CommercialFeatureFlags.CustomRoles,
+                },
+                { trx },
+            ),
+        ]);
         const { builder: abilityBuilder, invalidScopes } =
             getUserAbilityBuilder({
                 user: lightdashUser,
@@ -947,7 +938,6 @@ export class UserModel {
                     customRolesFlag.enabled,
                 isEnterprise:
                     this.lightdashConfig.license.licenseKey !== undefined,
-                scopeComposedSystemRolesEnabled: scopeComposedRolesFlag.enabled,
             });
 
         if (invalidScopes.length > 0) {
@@ -971,8 +961,8 @@ export class UserModel {
      *
      * Reads `project_memberships` rows keyed on the SA's `user_id` (the SA
      * has a dedicated `users` row with `is_internal=true`) and applies the
-     * matching `projectMemberAbilities[role]` for each row. Composed on top
-     * of whatever org-level scope handler ran first — strictly additive.
+     * matching per-row grant. Composed on top of whatever org-level scope
+     * handler ran first — strictly additive.
      *
      * For SAs created with `scopes: ['system:member']`, this is the only
      * source of useful abilities. For SAs with org-wide scopes (admin etc.)
@@ -1042,14 +1032,18 @@ export class UserModel {
                 );
                 invalid.forEach((s) => aggregatedInvalidScopes.add(s));
             } else {
-                projectMemberAbilities[row.role](
+                const invalid = buildAbilityFromScopes(
                     {
                         projectUuid: row.project_uuid,
+                        projectType: row.project_type,
+                        projectCreatedByUserUuid: row.created_by_user_uuid,
                         userUuid,
-                        role: row.role,
+                        scopes: getAllScopesForRole(row.role),
+                        isEnterprise,
                     },
                     builder,
                 );
+                invalid.forEach((s) => aggregatedInvalidScopes.add(s));
             }
         }
         if (aggregatedInvalidScopes.size > 0) {
