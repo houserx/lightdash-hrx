@@ -915,16 +915,25 @@ export class UserModel {
             ...projectRoles.map((role) => role.roleUuid),
             ...groupProjectRoles.map((role) => role.roleUuid),
         ].filter((roleUuid): roleUuid is string => Boolean(roleUuid));
-        const [customRoleScopes, customRolesFlag] = await Promise.all([
-            this.customRoleScopes(customRoleUuids, trx),
-            this.featureFlagModel.get(
-                {
-                    user: lightdashUser,
-                    featureFlagId: CommercialFeatureFlags.CustomRoles,
-                },
-                { trx },
-            ),
-        ]);
+        const [customRoleScopes, customRolesFlag, scopeComposedRolesFlag] =
+            await Promise.all([
+                this.customRoleScopes(customRoleUuids, trx),
+                this.featureFlagModel.get(
+                    {
+                        user: lightdashUser,
+                        featureFlagId: CommercialFeatureFlags.CustomRoles,
+                    },
+                    { trx },
+                ),
+                this.featureFlagModel.get(
+                    {
+                        user: lightdashUser,
+                        featureFlagId:
+                            CommercialFeatureFlags.ScopeComposedSystemRoles,
+                    },
+                    { trx },
+                ),
+            ]);
         const { builder: abilityBuilder, invalidScopes } =
             getUserAbilityBuilder({
                 user: lightdashUser,
@@ -938,6 +947,7 @@ export class UserModel {
                     customRolesFlag.enabled,
                 isEnterprise:
                     this.lightdashConfig.license.licenseKey !== undefined,
+                scopeComposedSystemRolesEnabled: scopeComposedRolesFlag.enabled,
             });
 
         if (invalidScopes.length > 0) {

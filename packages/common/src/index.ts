@@ -54,6 +54,7 @@ export {
 export * from './authorization/jwtAbility';
 export { getOrganizationMemberRolePermissions } from './authorization/organizationMemberAbility';
 export { projectMemberAbilities } from './authorization/projectMemberAbility';
+export * from './authorization/orgRoleToScopeMapping';
 export * from './authorization/parseAccount';
 export * from './authorization/roleToScopeMapping';
 export * from './authorization/scopeAbilityBuilder';

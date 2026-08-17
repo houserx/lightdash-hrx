@@ -18,6 +18,8 @@ export class CommercialFeatureFlagModel extends FeatureFlagModel {
                 this.getHomepageBuilderFlag.bind(this),
             [CommercialFeatureFlags.MultipleRoles]:
                 this.getMultipleRolesFlag.bind(this),
+            [CommercialFeatureFlags.ScopeComposedSystemRoles]:
+                this.getScopeComposedSystemRolesFlag.bind(this),
         };
     }
 
@@ -81,5 +83,17 @@ export class CommercialFeatureFlagModel extends FeatureFlagModel {
 
         const dbResult = await this.tryGetFromDatabase({ user, featureFlagId });
         return dbResult ?? { id: featureFlagId, enabled: false };
+    }
+
+    // On by default (A8: verified equivalent to the hand-written path via
+    // A1's differential harness and the A7a/A7b fixture ports). A per-org
+    // override remains the escape hatch if a customer's ability output ever
+    // regresses.
+    private async getScopeComposedSystemRolesFlag({
+        featureFlagId,
+        user,
+    }: FeatureFlagLogicArgs) {
+        const dbResult = await this.tryGetFromDatabase({ user, featureFlagId });
+        return dbResult ?? { id: featureFlagId, enabled: true };
     }
 }

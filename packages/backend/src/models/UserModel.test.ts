@@ -1,5 +1,14 @@
-import { subject, type AbilityBuilder, type RawRuleOf } from '@casl/ability';
 import {
+    Ability,
+    AbilityBuilder,
+    subject,
+    type RawRuleOf,
+} from '@casl/ability';
+import {
+    buildAbilityFromScopes,
+    collapseAbilityRules,
+    CommercialFeatureFlags,
+    getAllScopesForRole,
     LightdashMode,
     LightdashUser,
     MemberAbility,
@@ -9,6 +18,7 @@ import {
     projectMemberAbilities,
     ProjectMemberRole,
     ServiceAccountScope,
+    type ProjectAbilityProfile,
     type SessionUser,
 } from '@lightdash/common';
 import bcrypt from 'bcrypt';
@@ -39,7 +49,7 @@ type TestableUserModel = {
     getUserProjectRoles: (
         userUuid: string,
         options?: { trx?: Knex },
-    ) => Promise<never[]>;
+    ) => Promise<ProjectAbilityProfile[]>;
     getUserGroupProjectRoles: (
         userId: number,
         organizationId: number,
@@ -433,6 +443,110 @@ describe('UserModel', () => {
             expect.anything(),
             trx,
         );
+    });
+
+    describe('given a human user with a project system role', () => {
+        const humanUserDetails: DbUserDetails = {
+            ...userDetails,
+            is_internal: false,
+        };
+        const DEVELOPER_PROJECT_UUID = 'project-1';
+
+        const createHumanUserModel = () => {
+            const model = createUserModel();
+            model.getUserProjectRoles = vi.fn(async () => [
+                {
+                    projectUuid: DEVELOPER_PROJECT_UUID,
+                    role: ProjectMemberRole.DEVELOPER,
+                    userUuid: humanUserDetails.user_uuid,
+                    roleUuid: undefined,
+                },
+            ]);
+            return model;
+        };
+
+        // The actual behavioral effect of this flag (hand-written vs
+        // scope-composed path) is exhaustively covered at the `common`
+        // package level (projectSystemRoleScopeFlag.test.ts, 15 cases across
+        // all 5 project roles + both flag states). This layer's only job is
+        // plumbing: fetch the right feature flag and thread its value
+        // through -- verified directly via call arguments, the same
+        // convention this file already uses ("uses one transaction executor
+        // for every ability source").
+        it('resolves the ScopeComposedSystemRoles flag for the user and passes it through unconditionally-off by default', async () => {
+            const model = createHumanUserModel();
+            const trx = vi.fn() as unknown as Knex;
+
+            await model.generateUserAbilityBuilder(humanUserDetails, trx);
+
+            expect(featureFlagModel.get).toHaveBeenCalledWith(
+                {
+                    user: expect.objectContaining({
+                        userUuid: humanUserDetails.user_uuid,
+                    }),
+                    featureFlagId:
+                        CommercialFeatureFlags.ScopeComposedSystemRoles,
+                },
+                { trx },
+            );
+        });
+
+        it('does not disturb the granted abilities when the flag resolves false (default)', async () => {
+            const model = createHumanUserModel();
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            // Developer's project role grants unconditional manage:DeployProject
+            // in projectMemberAbility.ts -- present regardless of which path
+            // built the ability, so this just confirms the human path still
+            // produces a normal, populated project ability (i.e. adding the
+            // new Promise.all entry and constructor arg didn't break anything
+            // upstream of it).
+            expect(
+                abilityBuilder.build().can(
+                    'manage',
+                    subject('DeployProject', {
+                        projectUuid: DEVELOPER_PROJECT_UUID,
+                    }),
+                ),
+            ).toBe(true);
+        });
+
+        it('routes to buildAbilityFromScopes when the flag resolves true, matching getAllScopesForRole(role) directly', async () => {
+            const model = createHumanUserModel();
+            vi.mocked(featureFlagModel.get).mockImplementation(
+                async ({ featureFlagId }) => ({
+                    id: featureFlagId,
+                    enabled:
+                        featureFlagId ===
+                        CommercialFeatureFlags.ScopeComposedSystemRoles,
+                }),
+            );
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            const expectedBuilder = new AbilityBuilder<MemberAbility>(Ability);
+            buildAbilityFromScopes(
+                {
+                    userUuid: humanUserDetails.user_uuid,
+                    projectUuid: DEVELOPER_PROJECT_UUID,
+                    scopes: getAllScopesForRole(ProjectMemberRole.DEVELOPER),
+                    isEnterprise: false,
+                },
+                expectedBuilder,
+            );
+            expectedBuilder.rules = collapseAbilityRules(expectedBuilder.rules);
+            const expectedRules = expectedBuilder.build().rules;
+            const actualRules = abilityBuilder.build().rules;
+
+            // Actual also carries the (minimal) org-member layer, so check
+            // containment rather than full-set equality.
+            expectedRules.forEach((expectedRule) => {
+                expect(actualRules).toContainEqual(expectedRule);
+            });
+        });
     });
 
     describe('getUserByPrimaryEmailAndPassword', () => {

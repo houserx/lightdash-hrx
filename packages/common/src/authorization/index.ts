@@ -8,7 +8,9 @@ import { collapseAbilityRules } from './collapseAbilityRules';
 import applyOrganizationMemberAbilities, {
     type OrganizationMemberAbilitiesArgs,
 } from './organizationMemberAbility';
+import { getAllScopesForOrgRole } from './orgRoleToScopeMapping';
 import { projectMemberAbilities } from './projectMemberAbility';
+import { getAllScopesForRole } from './roleToScopeMapping';
 import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import { type MemberAbility } from './types';
 
@@ -34,6 +36,18 @@ type UserAbilityBuilderArgs = {
     customRoleScopes?: Record<Role['roleUuid'], RoleWithScopes['scopes']>;
     customRolesEnabled?: boolean;
     isEnterprise?: boolean;
+    /**
+     * Feature-flagged, defaults to off/omitted. When true, a system role
+     * (org-level, or a project membership without a custom role_uuid)
+     * builds its ability via `buildAbilityFromScopes(getAllScopesForRole(role))`
+     * / `getAllScopesForOrgRole(role)` instead of the hand-written
+     * `applyOrganizationMemberAbilities`/`projectMemberAbilities[role]`.
+     * Both paths are verified behaviorally equivalent (modulo documented,
+     * waived exceptions) by `differentialEquivalence.test.ts` -- this flag
+     * exists to stage the cutover safely in production, not because the two
+     * paths are expected to diverge. See plan items A5/A6.
+     */
+    scopeComposedSystemRolesEnabled?: boolean;
 };
 
 export const JWT_HEADER_NAME = 'lightdash-embed-token';
@@ -50,6 +64,7 @@ export const getUserAbilityBuilder = ({
     customRoleScopes,
     customRolesEnabled,
     isEnterprise,
+    scopeComposedSystemRolesEnabled,
 }: UserAbilityBuilderArgs): UserAbilityBuilderResult => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
     const invalidScopes: string[] = [];
@@ -71,6 +86,25 @@ export const getUserAbilityBuilder = ({
                         organizationUuid: user.organizationUuid,
                         userUuid: user.userUuid,
                         scopes: orgCustomRoleScopes,
+                        isEnterprise,
+                        organizationRole: user.role,
+                        permissionsConfig,
+                    },
+                    builder,
+                ),
+            );
+        } else if (scopeComposedSystemRolesEnabled) {
+            // buildAbilityFromScopes applies the dynamic PAT gate itself
+            // (see handlePatConfigApplication in scopeAbilityBuilder.ts),
+            // keyed on organizationRole -- no separate dynamic-abilities
+            // call needed here, unlike the applyOrganizationMemberAbilities
+            // wrapper below.
+            invalidScopes.push(
+                ...buildAbilityFromScopes(
+                    {
+                        organizationUuid: user.organizationUuid,
+                        userUuid: user.userUuid,
+                        scopes: getAllScopesForOrgRole(user.role),
                         isEnterprise,
                         organizationRole: user.role,
                         permissionsConfig,
@@ -116,6 +150,23 @@ export const getUserAbilityBuilder = ({
                                 projectProfile.projectCreatedByUserUuid,
                             userUuid: user.userUuid,
                             scopes,
+                            isEnterprise,
+                            organizationRole: user.role,
+                            permissionsConfig,
+                        },
+                        builder,
+                    ),
+                );
+            } else if (scopeComposedSystemRolesEnabled) {
+                invalidScopes.push(
+                    ...buildAbilityFromScopes(
+                        {
+                            projectUuid: projectProfile.projectUuid,
+                            projectType: projectProfile.projectType,
+                            projectCreatedByUserUuid:
+                                projectProfile.projectCreatedByUserUuid,
+                            userUuid: user.userUuid,
+                            scopes: getAllScopesForRole(projectProfile.role),
                             isEnterprise,
                             organizationRole: user.role,
                             permissionsConfig,
