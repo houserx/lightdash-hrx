@@ -1,5 +1,7 @@
-import { test } from '@fast-check/vitest';
-import fc from 'fast-check';
+// `fc` comes from @fast-check/vitest rather than fast-check directly: importing
+// it from both resolves fast-check's ESM and CJS entry points side by side, and
+// the two Arbitrary types are then structurally incompatible under `tsc --build`.
+import { fc, test } from '@fast-check/vitest';
 import { OrganizationMemberRole } from '../../types/organizationMemberProfile';
 import {
     ProjectMemberRole,

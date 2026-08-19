@@ -58,6 +58,7 @@ export * from './authorization/parseAccount';
 export * from './authorization/roleToScopeMapping';
 export * from './authorization/scopeAbilityBuilder';
 export * from './authorization/scopes';
+export * from './authorization/resource/resourceAccessResolver';
 export * from './authorization/serviceAccountAbility';
 export * from './authorization/space/customRoleProjectRole';
 export * from './authorization/space/spaceAccessResolver';
@@ -300,6 +301,7 @@ export type {
 export * from './types/promotion';
 export * from './types/queryHistory';
 export * from './types/rename';
+export * from './types/resourceAccess';
 export * from './types/resourceViewItem';
 export * from './types/results';
 export * from './types/roadmap';
