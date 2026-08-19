@@ -230,5 +230,51 @@ describe('ResourceAccessModel', () => {
                 expect(tracker.history.all).toHaveLength(2);
             });
         });
+
+        describe('grantee organization validation', () => {
+            it('given the user holds a membership, then it reports true', async () => {
+                tracker.on
+                    .any(() => true)
+                    .response([{ userUuid: 'grantee-1' }]);
+
+                await expect(
+                    model.isUserInOrganization('org-1', 'grantee-1'),
+                ).resolves.toBe(true);
+            });
+
+            it('given the user holds no membership, then it reports false', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await expect(
+                    model.isUserInOrganization('org-1', 'grantee-1'),
+                ).resolves.toBe(false);
+            });
+
+            it('given the user is checked, then the organization is part of the filter', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await model.isUserInOrganization('org-1', 'grantee-1');
+
+                const [{ bindings }] = tracker.history.all;
+                expect(bindings).toContain('org-1');
+                expect(bindings).toContain('grantee-1');
+            });
+
+            it('given a group in the organization, then it reports true', async () => {
+                tracker.on.any(() => true).response([{ groupUuid: 'group-1' }]);
+
+                await expect(
+                    model.isGroupInOrganization('org-1', 'group-1'),
+                ).resolves.toBe(true);
+            });
+
+            it('given a group outside the organization, then it reports false', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await expect(
+                    model.isGroupInOrganization('org-1', 'group-1'),
+                ).resolves.toBe(false);
+            });
+        });
     });
 });
