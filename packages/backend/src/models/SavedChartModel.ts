@@ -76,6 +76,10 @@ import {
 } from '../database/entities/pinnedList';
 import { ProjectTableName } from '../database/entities/projects';
 import {
+    ResourceGroupAccessTableName,
+    ResourceUserAccessTableName,
+} from '../database/entities/resourceAccess';
+import {
     CreateDbSavedChartVersionField,
     CreateDbSavedChartVersionSort,
     DBFilteredAdditionalMetrics,
@@ -1152,6 +1156,18 @@ export class SavedChartModel {
         await this.database(SavedChartsTableName)
             .delete()
             .where('saved_query_uuid', savedChartUuid);
+        // resource_uuid has no FK (it's polymorphic across resource types),
+        // so a hard delete can't rely on ON DELETE CASCADE like
+        // space_user_access/space_group_access do -- clean up explicitly or
+        // these grants would dangle forever.
+        await this.database(ResourceUserAccessTableName)
+            .where('resource_uuid', savedChartUuid)
+            .andWhere('resource_type', 'SavedChart')
+            .delete();
+        await this.database(ResourceGroupAccessTableName)
+            .where('resource_uuid', savedChartUuid)
+            .andWhere('resource_type', 'SavedChart')
+            .delete();
         return savedChart;
     }
 

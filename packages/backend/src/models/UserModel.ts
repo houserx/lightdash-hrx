@@ -38,6 +38,7 @@ import {
     SessionUser,
     UpdateUserArgs,
     validatePassword,
+    type ResourceAccessGrant,
 } from '@lightdash/common';
 import bcrypt from 'bcrypt';
 import { Knex } from 'knex';
@@ -62,6 +63,10 @@ import {
 import { DbPersonalAccessToken } from '../database/entities/personalAccessTokens';
 import { ProjectMembershipsTableName } from '../database/entities/projectMemberships';
 import { ProjectTableName } from '../database/entities/projects';
+import {
+    ResourceGroupAccessTableName,
+    ResourceUserAccessTableName,
+} from '../database/entities/resourceAccess';
 import { ScopedRolesTableName } from '../database/entities/roles';
 import {
     DbUser,
@@ -791,6 +796,59 @@ export class UserModel {
         return scopesRecord;
     }
 
+    /**
+     * Direct resource-access grants (the resource_user_access table) for a
+     * single human user -- group-based grants (resource_group_access) are a
+     * separate read path, below.
+     */
+    private async getResourceAccessGrants(
+        userUuid: string,
+        trx: Knex = this.database,
+    ): Promise<ResourceAccessGrant[]> {
+        const rows = await trx(ResourceUserAccessTableName)
+            .select('resource_uuid', 'resource_type', 'action')
+            .where('user_uuid', userUuid);
+
+        return rows.map((row) => ({
+            resourceUuid: row.resource_uuid,
+            resourceType: row.resource_type,
+            action: row.action,
+        }));
+    }
+
+    /**
+     * Group-based resource-access grants (the resource_group_access table),
+     * for every group the user belongs to.
+     * Joins group_memberships -> resource_group_access the same way
+     * getUserGroupProjectRoles joins group_memberships ->
+     * project_group_access -- same shape, different target table.
+     */
+    private async getGroupResourceAccessGrants(
+        userId: number,
+        organizationId: number,
+        trx: Knex = this.database,
+    ): Promise<ResourceAccessGrant[]> {
+        const rows = await trx('group_memberships')
+            .innerJoin(
+                ResourceGroupAccessTableName,
+                `${ResourceGroupAccessTableName}.group_uuid`,
+                'group_memberships.group_uuid',
+            )
+            .where('group_memberships.organization_id', organizationId)
+            .andWhere('group_memberships.user_id', userId)
+            .select(
+                `${ResourceGroupAccessTableName}.resource_uuid`,
+                `${ResourceGroupAccessTableName}.resource_type`,
+                `${ResourceGroupAccessTableName}.action`,
+            );
+
+        return rows.map((row) => ({
+            resourceUuid: row.resource_uuid,
+            resourceType: row.resource_type,
+            action: row.action,
+        }));
+    }
+
     private async generateUserAbilityBuilder(
         user: DbUserDetails,
         trx: Knex = this.database,
@@ -930,10 +988,16 @@ export class UserModel {
                 resolveEffectiveProjectRoleUuid(profile),
             ),
         ].filter((roleUuid): roleUuid is string => Boolean(roleUuid));
-        const customRoleScopes = await this.customRoleScopes(
-            [...new Set(roleUuidsToLoad)],
-            trx,
-        );
+        const [customRoleScopes, directResourceGrants, groupResourceGrants] =
+            await Promise.all([
+                this.customRoleScopes([...new Set(roleUuidsToLoad)], trx),
+                this.getResourceAccessGrants(lightdashUser.userUuid, trx),
+                this.getGroupResourceAccessGrants(
+                    user.user_id,
+                    user.organization_id,
+                    trx,
+                ),
+            ]);
         const { builder: abilityBuilder, invalidScopes } =
             getUserAbilityBuilder({
                 user: lightdashUser,
@@ -942,6 +1006,10 @@ export class UserModel {
                     pat: this.lightdashConfig.auth.pat,
                 },
                 customRoleScopes,
+                resourceAccessGrants: [
+                    ...directResourceGrants,
+                    ...groupResourceGrants,
+                ],
                 isEnterprise:
                     this.lightdashConfig.license.licenseKey !== undefined,
             });

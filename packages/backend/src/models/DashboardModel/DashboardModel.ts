@@ -73,6 +73,10 @@ import {
     ProjectTableName,
 } from '../../database/entities/projects';
 import {
+    ResourceGroupAccessTableName,
+    ResourceUserAccessTableName,
+} from '../../database/entities/resourceAccess';
+import {
     SavedChartsTableName,
     SavedChartTable,
 } from '../../database/entities/savedCharts';
@@ -1593,6 +1597,18 @@ export class DashboardModel {
         });
         await this.database(DashboardsTableName)
             .where('dashboard_uuid', dashboardUuid)
+            .delete();
+        // resource_uuid has no FK (it's polymorphic across resource types),
+        // so a hard delete can't rely on ON DELETE CASCADE like
+        // space_user_access/space_group_access do -- clean up explicitly or
+        // these grants would dangle forever.
+        await this.database(ResourceUserAccessTableName)
+            .where('resource_uuid', dashboardUuid)
+            .andWhere('resource_type', 'Dashboard')
+            .delete();
+        await this.database(ResourceGroupAccessTableName)
+            .where('resource_uuid', dashboardUuid)
+            .andWhere('resource_type', 'Dashboard')
             .delete();
         return dashboard;
     }
