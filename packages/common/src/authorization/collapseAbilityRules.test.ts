@@ -4,7 +4,8 @@ import { OrganizationMemberRole } from '../types/organizationMemberProfile';
 import { ProjectMemberRole } from '../types/projectMemberRole';
 import { collapseAbilityRules } from './collapseAbilityRules';
 import { getUserAbilityBuilder } from './index';
-import { projectMemberAbilities } from './projectMemberAbility';
+import { getAllScopesForRole } from './roleToScopeMapping';
+import { buildAbilityFromScopes } from './scopeAbilityBuilder';
 import { applyServiceAccountAbilities } from './serviceAccountAbility';
 import { type MemberAbility } from './types';
 
@@ -16,8 +17,13 @@ const buildRawRules = (
 ) => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
     projectUuids.forEach((projectUuid) =>
-        projectMemberAbilities[role](
-            { role, projectUuid, userUuid: USER },
+        buildAbilityFromScopes(
+            {
+                projectUuid,
+                userUuid: USER,
+                scopes: getAllScopesForRole(role),
+                isEnterprise: true,
+            },
             builder,
         ),
     );
@@ -42,8 +48,9 @@ describe('collapseAbilityRules', () => {
         expect(raw.length).toBeGreaterThan(9000);
 
         const collapsed = collapseAbilityRules(raw);
-        // 125 projects of identical shape collapse to one project's worth of rules
-        expect(collapsed.length).toBeLessThan(100);
+        // 125 projects of identical shape collapse to one project's worth of
+        // rules, not something that scales with project count.
+        expect(collapsed.length).toBeLessThan(150);
     });
 
     it('merges non-projectUuid scalar ids too (e.g. upstreamProjectUuid)', () => {
@@ -398,7 +405,6 @@ describe('collapseAbilityRules', () => {
             customRoleScopes: {
                 'custom-role': ['view:Dashboard', 'manage:Space'],
             },
-            customRolesEnabled: true,
         });
         expect(builder.rules.some((r) => r.inverted)).toBe(false);
 

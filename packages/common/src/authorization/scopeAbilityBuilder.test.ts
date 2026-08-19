@@ -177,6 +177,75 @@ describe('scopeAbilityBuilder', () => {
         ).toBe(false);
     });
 
+    it('should scope project preview creation to the granting organization at org level', () => {
+        const builder = new AbilityBuilder<MemberAbility>(Ability);
+        buildAbilityFromScopes(
+            {
+                ...baseContextWithOrg,
+                scopes: ['create:Project@preview'],
+            },
+            builder,
+        );
+        const ability = builder.build();
+
+        // Can create a preview project within the granting organization.
+        expect(
+            ability.can(
+                'create',
+                subject('Project', {
+                    organizationUuid: 'org-123',
+                    type: ProjectType.PREVIEW,
+                }),
+            ),
+        ).toBe(true);
+
+        // Cannot create a preview project in a different organization --
+        // the condition must not ignore organizationUuid entirely.
+        expect(
+            ability.can(
+                'create',
+                subject('Project', {
+                    organizationUuid: 'a-different-organization',
+                    type: ProjectType.PREVIEW,
+                }),
+            ),
+        ).toBe(false);
+    });
+
+    it('manage:SourceCode should exclude protected branches', () => {
+        const builder = new AbilityBuilder<MemberAbility>(Ability);
+        buildAbilityFromScopes(
+            {
+                ...baseContext,
+                scopes: ['manage:SourceCode'],
+            },
+            builder,
+        );
+        const ability = builder.build();
+
+        expect(
+            ability.can(
+                'manage',
+                subject('SourceCode', {
+                    projectUuid: 'project-123',
+                    isProtectedBranch: false,
+                }),
+            ),
+        ).toBe(true);
+
+        // Writes to a protected branch must be denied, matching the
+        // hand-written developer-tier grant this scope replaces.
+        expect(
+            ability.can(
+                'manage',
+                subject('SourceCode', {
+                    projectUuid: 'project-123',
+                    isProtectedBranch: true,
+                }),
+            ),
+        ).toBe(false);
+    });
+
     it('cannot create projects by default', () => {
         const builder = new AbilityBuilder<MemberAbility>(Ability);
         buildAbilityFromScopes(baseContext, builder);
