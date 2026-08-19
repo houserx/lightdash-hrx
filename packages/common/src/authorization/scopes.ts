@@ -572,12 +572,25 @@ const scopes: Scope[] = [
                 description: 'Compile the preview after creating it',
             },
         ],
-        getConditions: (context) => [
-            {
-                upstreamProjectUuid: context.projectUuid,
-                type: ProjectType.PREVIEW,
-            },
-        ],
+        // Must branch on org-vs-project context like its `@self`
+        // siblings (`ownPreviewProjectConditions`) -- an org-level grant
+        // has no `projectUuid`, so a bare `upstreamProjectUuid:
+        // context.projectUuid` condition matches any resource lacking that
+        // key too, granting preview creation across every organization.
+        getConditions: (context) =>
+            context.organizationUuid
+                ? [
+                      {
+                          organizationUuid: context.organizationUuid,
+                          type: ProjectType.PREVIEW,
+                      },
+                  ]
+                : [
+                      {
+                          upstreamProjectUuid: context.projectUuid,
+                          type: ProjectType.PREVIEW,
+                      },
+                  ],
     },
     {
         name: 'update:Project',
@@ -940,7 +953,7 @@ const scopes: Scope[] = [
     {
         name: 'view:ContentAsCode',
         description: 'Download content as code',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.CONTENT,
         dependencies: [{ name: 'view:Project' }, { name: 'view:Space' }],
         getConditions: addDefaultUuidCondition,
@@ -949,7 +962,7 @@ const scopes: Scope[] = [
         name: 'create:ContentAsCode',
         description:
             'Upload charts, dashboards and spaces as code. Respects CustomSql, CustomFields and CustomSqlTableCalculations scopes',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.CONTENT,
         dependencies: [
             { name: 'view:Project' },
@@ -964,7 +977,7 @@ const scopes: Scope[] = [
     {
         name: 'manage:ContentAsCode',
         description: 'Download and upload any content as code',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.CONTENT,
         dependencies: [
             { name: 'view:Project' },
@@ -981,7 +994,7 @@ const scopes: Scope[] = [
         name: 'manage:ContentAsCode@self',
         description:
             'Upload content as code to preview projects created by the user',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.CONTENT,
         dependencies: [
             { name: 'view:Project' },
@@ -1198,7 +1211,12 @@ const scopes: Scope[] = [
         isEnterprise: false,
         group: ScopeGroup.DATA,
         dependencies: [{ name: 'view:Project' }],
-        getConditions: addDefaultUuidCondition,
+        // Must exclude protected branches, matching the hand-written
+        // developer-tier grant this scope replaces
+        // (`{ projectUuid, isProtectedBranch: false }`).
+        getConditions: (context) => [
+            { ...addUuidCondition(context), isProtectedBranch: false },
+        ],
     },
 
     // AI Agent
@@ -1509,7 +1527,7 @@ const scopes: Scope[] = [
     {
         name: 'manage:SpotlightTableConfig',
         description: 'Configure spotlight table settings',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.SPOTLIGHT,
         dependencies: [{ name: 'view:Project' }],
         getConditions: addDefaultUuidCondition,
@@ -1517,7 +1535,7 @@ const scopes: Scope[] = [
     {
         name: 'view:SpotlightTableConfig',
         description: 'View spotlight table configuration',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.SPOTLIGHT,
         dependencies: [{ name: 'view:Project' }],
         getConditions: addDefaultUuidCondition,
@@ -1525,7 +1543,7 @@ const scopes: Scope[] = [
     {
         name: 'view:MetricsTree',
         description: 'View metrics tree',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.SPOTLIGHT,
         dependencies: [{ name: 'view:Project' }],
         getConditions: addDefaultUuidCondition,
@@ -1533,7 +1551,7 @@ const scopes: Scope[] = [
     {
         name: 'manage:MetricsTree',
         description: 'Manage metrics tree configuration',
-        isEnterprise: true,
+        isEnterprise: false,
         group: ScopeGroup.SPOTLIGHT,
         dependencies: [{ name: 'view:Project' }],
         getConditions: addDefaultUuidCondition,

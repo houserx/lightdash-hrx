@@ -326,4 +326,34 @@ describe('scope dependency graph helpers', () => {
             ).toEqual([]);
         });
     });
+
+    describe('isEnterprise flag matches an actual license gate', () => {
+        // ContentAsCode, MetricsTree, and SpotlightTableConfig have no
+        // license check anywhere in their service layer (CoderService,
+        // CatalogService, SpotlightService all live outside `ee/`) --
+        // unlike AiAgent/OrganizationWarehouseCredentials, whose services
+        // are only registered under a validated license. Marking these
+        // `isEnterprise: true` made no difference while the hand-written
+        // path (which never checked isEnterprise) was still reachable, but
+        // now that buildAbilityFromScopes is the only path, it would
+        // silently strip these scopes from every unlicensed org.
+        it.each([
+            'view:ContentAsCode',
+            'create:ContentAsCode',
+            'manage:ContentAsCode',
+            'manage:ContentAsCode@self',
+            'view:SpotlightTableConfig',
+            'manage:SpotlightTableConfig',
+            'view:MetricsTree',
+            'manage:MetricsTree',
+        ])(
+            'grants %s without a license, since no license gate backs it',
+            (scopeName) => {
+                const scope = getScopes({ isEnterprise: false }).find(
+                    (s) => s.name === scopeName,
+                );
+                expect(scope).toBeDefined();
+            },
+        );
+    });
 });

@@ -5,15 +5,18 @@ import {
 import type { RoleWithScopes } from '../types/roles';
 
 /**
- * Utility functions to convert project member roles to equivalent scope sets
- * for testing migration compatibility between role-based and scope-based authorization
+ * Maps project member roles to their equivalent scopes, based on
+ * `projectMemberAbility.ts` analysis. Each role's array is a flat, explicit
+ * enumeration of every scope it carries -- not derived by unioning a lower
+ * tier's list at runtime. A higher role's array already includes everything
+ * the tiers below it grant, stated outright (composition), rather than
+ * being computed by a role calling into the tier below it (inheritance).
+ * Comments mark which tier first introduces each contiguous block, purely
+ * for readability -- they carry no runtime meaning.
  */
-
-/**
- * Base scopes for each role level (without inheritance)
- */
-const BASE_ROLE_SCOPES = {
+export const PROJECT_ROLE_TO_SCOPES_MAP: Record<ProjectMemberRole, string[]> = {
     [ProjectMemberRole.VIEWER]: [
+        // --- viewer ---
         // Basic viewing permissions
         'view:Dashboard',
         'view:JobStatus@self', // For viewing job status created by user
@@ -39,7 +42,24 @@ const BASE_ROLE_SCOPES = {
     ],
 
     [ProjectMemberRole.INTERACTIVE_VIEWER]: [
-        // Additional interactive viewer permissions
+        // --- viewer ---
+        'view:Dashboard',
+        'view:JobStatus@self',
+        'view:SavedChart',
+        'view:Space',
+        'view:Project',
+        'view:PinnedItems',
+        'view:DashboardComments',
+        'view:Tags',
+        'manage:ExportCsv',
+        'view:Organization',
+        'view:OrganizationMemberProfile',
+        'view:MetricsTree',
+        'view:SpotlightTableConfig',
+        'view:AiAgentThread@self',
+        'view:OrganizationDesign',
+
+        // --- + interactive_viewer ---
         'view:UnderlyingData',
         'view:SemanticViewer',
         'manage:Explore',
@@ -75,7 +95,51 @@ const BASE_ROLE_SCOPES = {
     ],
 
     [ProjectMemberRole.EDITOR]: [
-        // Editor-specific permissions
+        // --- viewer ---
+        'view:Dashboard',
+        'view:JobStatus@self',
+        'view:SavedChart',
+        'view:Space',
+        'view:Project',
+        'view:PinnedItems',
+        'view:DashboardComments',
+        'view:Tags',
+        'manage:ExportCsv',
+        'view:Organization',
+        'view:OrganizationMemberProfile',
+        'view:MetricsTree',
+        'view:SpotlightTableConfig',
+        'view:AiAgentThread@self',
+        'view:OrganizationDesign',
+
+        // --- interactive_viewer ---
+        'view:UnderlyingData',
+        'view:SemanticViewer',
+        'manage:Explore',
+        'manage:ChangeCsvResults',
+        'create:ScheduledDeliveries',
+        'manage:ScheduledDeliveries@self',
+        'create:DashboardComments',
+        'manage:GoogleSheets',
+        'create:Job',
+        'view:Job',
+        'view:Job@self',
+        'manage:Dashboard@space',
+        'manage:SavedChart@space',
+        'manage:SemanticViewer@space',
+        'manage:DataApp@space',
+        'manage:Space@assigned',
+        'view:AiAgent',
+        'view:OrganizationAiAgent',
+        'view:AiAgentDocument',
+        'create:AiAgentThread',
+        'view:DataApp',
+        'view:DataApp@self',
+        'manage:DataApp@self',
+        'view:ExternalConnection',
+        'view:ContentVerification',
+
+        // --- + editor ---
         'create:Space',
         'manage:Space@public', // For non-private spaces
         'manage:Job',
@@ -102,7 +166,66 @@ const BASE_ROLE_SCOPES = {
     ],
 
     [ProjectMemberRole.DEVELOPER]: [
-        // Developer-specific permissions
+        // --- viewer ---
+        'view:Dashboard',
+        'view:JobStatus@self',
+        'view:SavedChart',
+        'view:Space',
+        'view:Project',
+        'view:PinnedItems',
+        'view:DashboardComments',
+        'view:Tags',
+        'manage:ExportCsv',
+        'view:Organization',
+        'view:OrganizationMemberProfile',
+        'view:MetricsTree',
+        'view:SpotlightTableConfig',
+        'view:AiAgentThread@self',
+        'view:OrganizationDesign',
+
+        // --- interactive_viewer ---
+        'view:UnderlyingData',
+        'view:SemanticViewer',
+        'manage:Explore',
+        'manage:ChangeCsvResults',
+        'create:ScheduledDeliveries',
+        'manage:ScheduledDeliveries@self',
+        'create:DashboardComments',
+        'manage:GoogleSheets',
+        'create:Job',
+        'view:Job',
+        'view:Job@self',
+        'manage:Dashboard@space',
+        'manage:SavedChart@space',
+        'manage:SemanticViewer@space',
+        'manage:DataApp@space',
+        'manage:Space@assigned',
+        'view:AiAgent',
+        'view:OrganizationAiAgent',
+        'view:AiAgentDocument',
+        'create:AiAgentThread',
+        'view:DataApp',
+        'view:DataApp@self',
+        'manage:DataApp@self',
+        'view:ExternalConnection',
+        'view:ContentVerification',
+
+        // --- editor ---
+        'create:Space',
+        'manage:Space@public',
+        'manage:Job',
+        'manage:PinnedItems',
+        'manage:DashboardComments',
+        'manage:Tags',
+        'manage:SemanticViewer',
+        'view:OrganizationWarehouseCredentials',
+        'manage:MetricsTree',
+        'manage:AiAgentThread@self',
+        'view:ContentAsCode',
+        'create:ContentAsCode',
+        'create:DataApp',
+
+        // --- + developer ---
         'manage:PreAggregation',
         'manage:VirtualView',
         // Granular create/delete companions to manage:VirtualView. Both
@@ -151,13 +274,109 @@ const BASE_ROLE_SCOPES = {
         'manage:AiAgent',
         'manage:OrganizationAiAgent',
         'manage:AiAgentDocument',
-        'manage:AiAgentThread@self', // User's own threads
         'manage:ContentVerification',
         'create:AiDeepResearch',
     ],
 
     [ProjectMemberRole.ADMIN]: [
-        // Admin-specific permissions
+        // --- viewer ---
+        'view:Dashboard',
+        'view:JobStatus@self',
+        'view:SavedChart',
+        'view:Space',
+        'view:Project',
+        'view:PinnedItems',
+        'view:DashboardComments',
+        'view:Tags',
+        'manage:ExportCsv',
+        'view:Organization',
+        'view:OrganizationMemberProfile',
+        'view:MetricsTree',
+        'view:SpotlightTableConfig',
+        'view:AiAgentThread@self',
+        'view:OrganizationDesign',
+
+        // --- interactive_viewer ---
+        'view:UnderlyingData',
+        'view:SemanticViewer',
+        'manage:Explore',
+        'manage:ChangeCsvResults',
+        'create:ScheduledDeliveries',
+        'manage:ScheduledDeliveries@self',
+        'create:DashboardComments',
+        'manage:GoogleSheets',
+        'create:Job',
+        'view:Job',
+        'view:Job@self',
+        'manage:Dashboard@space',
+        'manage:SavedChart@space',
+        'manage:SemanticViewer@space',
+        'manage:DataApp@space',
+        'manage:Space@assigned',
+        'view:AiAgent',
+        'view:OrganizationAiAgent',
+        'view:AiAgentDocument',
+        'create:AiAgentThread',
+        'view:DataApp',
+        'view:DataApp@self',
+        'manage:DataApp@self',
+        'view:ExternalConnection',
+        'view:ContentVerification',
+
+        // --- editor ---
+        'create:Space',
+        'manage:Space@public',
+        'manage:Job',
+        'manage:PinnedItems',
+        'manage:DashboardComments',
+        'manage:Tags',
+        'manage:SemanticViewer',
+        'view:OrganizationWarehouseCredentials',
+        'manage:MetricsTree',
+        'manage:AiAgentThread@self',
+        'view:ContentAsCode',
+        'create:ContentAsCode',
+        'create:DataApp',
+
+        // --- developer ---
+        'manage:PreAggregation',
+        'manage:VirtualView',
+        'create:VirtualView',
+        'delete:VirtualView',
+        'manage:CustomSql',
+        'manage:CustomFields',
+        'view:CompiledSql',
+        'manage:CustomSqlTableCalculations',
+        'manage:SqlRunner',
+        'manage:Validation',
+        'manage:CompileProject',
+        'manage:DeployProject',
+        'manage:DeployProject@self',
+        'create:Project@preview',
+        'delete:Project@self',
+        'update:Project',
+        'update:Project@self',
+        'manage:Dashboard@self',
+        'manage:SavedChart@self',
+        'manage:Space@self',
+        'manage:Explore@self',
+        'view:JobStatus',
+        'view:SourceCode',
+        'manage:SourceCode',
+        'promote:Dashboard',
+        'promote:Dashboard@space',
+        'promote:SavedChart',
+        'promote:SavedChart@space',
+        'manage:SpotlightTableConfig',
+        'manage:ContentAsCode',
+        'manage:ContentAsCode@self',
+        'manage:AiAgent',
+        'manage:OrganizationAiAgent',
+        'manage:AiAgentDocument',
+        'manage:ContentVerification',
+        'create:AiDeepResearch',
+
+        // --- + admin ---
         'manage:DataApp',
         'manage:DataAppDependency', // Add custom npm deps (supply-chain capability)
         'manage:ExternalConnection',
@@ -204,10 +423,12 @@ const BASE_ROLE_SCOPES = {
         // to restrict PAT to specific tiers.
         'manage:PersonalAccessToken',
     ],
-} as const;
+};
 
 /**
- * Role hierarchy for inheritance
+ * Ordered list of all built-in project system roles, lowest to highest.
+ * Used only for enumeration (`getSystemRoleNames`, `isSystemRoleName`) -- no
+ * scope-union computation is derived from this ordering anymore.
  */
 const ROLE_HIERARCHY = [
     ProjectMemberRole.VIEWER,
@@ -216,32 +437,6 @@ const ROLE_HIERARCHY = [
     ProjectMemberRole.DEVELOPER,
     ProjectMemberRole.ADMIN,
 ] as const;
-
-/**
- * Maps project member roles to their equivalent scopes based on projectMemberAbility.ts analysis
- * Each role inherits permissions from the roles below it in the hierarchy
- */
-export const PROJECT_ROLE_TO_SCOPES_MAP: Record<ProjectMemberRole, string[]> =
-    (() => {
-        const result = {} as Record<ProjectMemberRole, string[]>;
-
-        for (const role of ROLE_HIERARCHY) {
-            const roleIndex = ROLE_HIERARCHY.indexOf(role);
-            const inheritedScopes = new Set<string>();
-
-            // Add scopes from all lower-level roles
-            for (let i = 0; i <= roleIndex; i += 1) {
-                const currentRole = ROLE_HIERARCHY[i];
-                BASE_ROLE_SCOPES[currentRole].forEach((scope) =>
-                    inheritedScopes.add(scope),
-                );
-            }
-
-            result[role] = Array.from(inheritedScopes);
-        }
-
-        return result;
-    })();
 
 /**
  * Gets the scopes required for a specific project member role
@@ -294,7 +489,21 @@ export const getNonEnterpriseScopesForRole = (
     );
 };
 
-export const getSystemRoles = (): RoleWithScopes[] =>
+/**
+ * Lists project system roles for role-assignment CRUD/display purposes,
+ * with `roleUuid` set to the role-name string itself (e.g. "viewer") --
+ * a display/API identity, NOT the real well-known role_uuid seeded into
+ * `roles`/`scoped_roles` by migration (see systemRoleUuids.ts). Ability-
+ * building never reads this; it's a permanently separate concern from
+ * scope resolution. Renamed from `getSystemRoles`/`isSystemRole`
+ * specifically to remove the false kinship the old names implied with
+ * systemRoleUuids.ts's real UUIDs -- the two schemes stay unified in name
+ * only by accident of history, not by any shared underlying identifier.
+ * Do not change the string this returns for `roleUuid`: it's serialized
+ * as-is into the `GET /orgs/{orgUuid}/roles` API response and into SCIM
+ * role ids that external identity providers (Okta, Entra) persist.
+ */
+export const getSystemRoleNames = (): RoleWithScopes[] =>
     ROLE_HIERARCHY.map((role) => ({
         roleUuid: role,
         name: ProjectMemberRoleLabels[role],
@@ -308,5 +517,7 @@ export const getSystemRoles = (): RoleWithScopes[] =>
         createdBy: null,
     }));
 
-export const isSystemRole = (roleUuid: string): roleUuid is ProjectMemberRole =>
+export const isSystemRoleName = (
+    roleUuid: string,
+): roleUuid is ProjectMemberRole =>
     ROLE_HIERARCHY.includes(roleUuid as ProjectMemberRole);
