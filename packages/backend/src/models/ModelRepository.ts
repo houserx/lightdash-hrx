@@ -47,6 +47,7 @@ import { ProjectModel } from './ProjectModel/ProjectModel';
 import { ProjectParametersModel } from './ProjectParametersModel';
 import { PullRequestsModel } from './PullRequestsModel';
 import { QueryHistoryModel } from './QueryHistoryModel/QueryHistoryModel';
+import { ResourceAccessModel } from './ResourceAccessModel';
 import { ResourceViewItemModel } from './ResourceViewItemModel';
 import { RolesModel } from './RolesModel';
 import { SavedChartModel } from './SavedChartModel';
@@ -119,6 +120,7 @@ export type ModelManifest = {
     projectDbtSourcesModel: ProjectDbtSourcesModel;
     projectCompileLogModel: ProjectCompileLogModel;
     pullRequestsModel: PullRequestsModel;
+    resourceAccessModel: ResourceAccessModel;
     resourceViewItemModel: ResourceViewItemModel;
     rolesModel: RolesModel;
     savedChartModel: SavedChartModel;
@@ -607,6 +609,13 @@ export class ModelRepository
         return this.getModel(
             'projectCompileLogModel',
             () => new ProjectCompileLogModel({ database: this.database }),
+        );
+    }
+
+    public getResourceAccessModel(): ResourceAccessModel {
+        return this.getModel(
+            'resourceAccessModel',
+            () => new ResourceAccessModel({ database: this.database }),
         );
     }
 
