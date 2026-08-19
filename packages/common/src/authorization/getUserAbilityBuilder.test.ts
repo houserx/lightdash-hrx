@@ -407,4 +407,71 @@ describe('getUserAbilityBuilder — org-level role resolution', () => {
             ).toBe(false);
         });
     });
+
+    describe('direct resource-access grants (additive)', () => {
+        it('is a no-op when no grants are supplied, even for a member with minimal scopes', () => {
+            const withoutGrants = getUserAbilityBuilder({
+                user: {
+                    role: OrganizationMemberRole.MEMBER,
+                    organizationUuid: ORG_UUID,
+                    userUuid: USER_UUID,
+                    roleUuid: undefined,
+                },
+                projectProfiles: [],
+                permissionsConfig: PERMISSIONS_CONFIG,
+            }).builder.build().rules;
+
+            const withEmptyGrants = getUserAbilityBuilder({
+                user: {
+                    role: OrganizationMemberRole.MEMBER,
+                    organizationUuid: ORG_UUID,
+                    userUuid: USER_UUID,
+                    roleUuid: undefined,
+                },
+                projectProfiles: [],
+                permissionsConfig: PERMISSIONS_CONFIG,
+                resourceAccessGrants: [],
+            }).builder.build().rules;
+
+            ruleSetEqual(withoutGrants, withEmptyGrants);
+        });
+
+        it('grants a plain member (with no other Dashboard access) view access to exactly the named dashboard', () => {
+            const { builder } = getUserAbilityBuilder({
+                user: {
+                    role: OrganizationMemberRole.MEMBER,
+                    organizationUuid: ORG_UUID,
+                    userUuid: USER_UUID,
+                    roleUuid: undefined,
+                },
+                projectProfiles: [],
+                permissionsConfig: PERMISSIONS_CONFIG,
+                resourceAccessGrants: [
+                    {
+                        resourceUuid: 'dash-1',
+                        resourceType: 'Dashboard',
+                        action: 'view',
+                    },
+                ],
+            });
+            const ability = builder.build();
+
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', {
+                        metadata: { dashboardUuid: 'dash-1' },
+                    }),
+                ),
+            ).toBe(true);
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', {
+                        metadata: { dashboardUuid: 'not-granted' },
+                    }),
+                ),
+            ).toBe(false);
+        });
+    });
 });

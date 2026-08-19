@@ -425,4 +425,64 @@ describe('collapseAbilityRules', () => {
             );
         });
     });
+
+    describe('given direct resource-access grants (dotted metadata.<key> conditions)', () => {
+        // The resource-access loader grants direct access to a
+        // single Dashboard/SavedChart via a `metadata.<key>` condition,
+        // e.g. `{ 'metadata.dashboardUuid': uuid }` -- structurally just
+        // another scalar-string-valued top-level condition key to this
+        // function, which doesn't special-case any key name. This fixture
+        // proves the single-varying-scalar assumption still holds with a
+        // dotted key in the mix, without requiring any change to the
+        // grouping/merge logic above.
+        it('merges multiple direct-grant rules for the same action/subject into one $in rule', () => {
+            const builder = new AbilityBuilder<MemberAbility>(Ability);
+            const dashboardUuids = ['dash-1', 'dash-2', 'dash-3'];
+            dashboardUuids.forEach((dashboardUuid) => {
+                builder.can('view', 'Dashboard', {
+                    'metadata.dashboardUuid': dashboardUuid,
+                });
+            });
+
+            const collapsed = collapseAbilityRules(builder.rules);
+
+            expect(collapsed).toHaveLength(1);
+            const conditions = getConditionsWithIn(
+                collapsed[0],
+                'Expected a single collapsed rule',
+            );
+            expect(conditions['metadata.dashboardUuid'].$in).toEqual(
+                [...dashboardUuids].sort(),
+            );
+        });
+
+        it('keeps direct-grant rules separate from unconditioned/differently-shaped rules for the same action/subject', () => {
+            const builder = new AbilityBuilder<MemberAbility>(Ability);
+            builder.can('view', 'Dashboard', {
+                'metadata.dashboardUuid': 'dash-1',
+            });
+            // An org/project-level grant for the same action+subject, but a
+            // different condition shape (no metadata key at all) -- must
+            // never be merged with the direct grant above.
+            builder.can('view', 'Dashboard', { projectUuid: 'project-1' });
+
+            const collapsed = collapseAbilityRules(builder.rules);
+
+            expect(collapsed).toHaveLength(2);
+        });
+
+        it('keeps view and manage direct grants on the same resource separate', () => {
+            const builder = new AbilityBuilder<MemberAbility>(Ability);
+            builder.can('view', 'Dashboard', {
+                'metadata.dashboardUuid': 'dash-1',
+            });
+            builder.can('manage', 'Dashboard', {
+                'metadata.dashboardUuid': 'dash-1',
+            });
+
+            const collapsed = collapseAbilityRules(builder.rules);
+
+            expect(collapsed).toHaveLength(2);
+        });
+    });
 });

@@ -7,6 +7,10 @@ import { type LightdashUser } from '../types/user';
 import { collapseAbilityRules } from './collapseAbilityRules';
 import { getAllScopesForOrgRole } from './orgRoleToScopeMapping';
 import { resolveRoleScopes } from './resolveRoleScopes';
+import {
+    applyResourceAccessAbilities,
+    type ResourceAccessGrant,
+} from './resourceAccessAbility';
 import { getAllScopesForRole } from './roleToScopeMapping';
 import {
     buildAbilityFromScopes,
@@ -44,6 +48,7 @@ type UserAbilityBuilderArgs = {
     };
     customRoleScopes?: Record<Role['roleUuid'], RoleWithScopes['scopes']>;
     isEnterprise?: boolean;
+    resourceAccessGrants?: ResourceAccessGrant[];
 };
 
 export const JWT_HEADER_NAME = 'lightdash-embed-token';
@@ -59,6 +64,7 @@ export const getUserAbilityBuilder = ({
     permissionsConfig,
     customRoleScopes,
     isEnterprise,
+    resourceAccessGrants,
 }: UserAbilityBuilderArgs): UserAbilityBuilderResult => {
     const builder = new AbilityBuilder<MemberAbility>(Ability);
     const invalidScopes: string[] = [];
@@ -148,6 +154,12 @@ export const getUserAbilityBuilder = ({
             });
         });
     }
+
+    // Direct resource-access grants (Dashboard/SavedChart) -- additive,
+    // composes via CASL's native OR-semantics without touching any rule
+    // above, so an empty/absent grant list is a no-op.
+    applyResourceAccessAbilities(resourceAccessGrants ?? [], builder);
+
     // Collapse per-project rules into `{ $in: [...] }` so the rule set (and the
     // serialized `abilityRules` payload) scales with role tiers, not project count.
     builder.rules = collapseAbilityRules(builder.rules);
