@@ -6,6 +6,9 @@ import {
 } from '@lightdash/common';
 import { Knex } from 'knex';
 import { GroupMembershipTableName } from '../database/entities/groupMemberships';
+import { GroupTableName } from '../database/entities/groups';
+import { OrganizationMembershipsTableName } from '../database/entities/organizationMemberships';
+import { OrganizationTableName } from '../database/entities/organizations';
 import {
     ResourceGroupAccessTableName,
     ResourceUserAccessTableName,
@@ -256,5 +259,59 @@ export class ResourceAccessModel {
         ]);
 
         return { users, groups };
+    }
+
+    /**
+     * Whether a user holds a membership in this organization. Used to reject a
+     * grant whose recipient is outside the resource's organization -- without it,
+     * the only constraint is the foreign key to users, which means "some user
+     * exists somewhere in this instance", not "this user is in this org".
+     */
+    async isUserInOrganization(
+        organizationUuid: string,
+        userUuid: string,
+    ): Promise<boolean> {
+        const match = await this.database(OrganizationMembershipsTableName)
+            .innerJoin(
+                OrganizationTableName,
+                `${OrganizationTableName}.organization_id`,
+                `${OrganizationMembershipsTableName}.organization_id`,
+            )
+            .innerJoin(
+                UserTableName,
+                `${UserTableName}.user_id`,
+                `${OrganizationMembershipsTableName}.user_id`,
+            )
+            .where(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .where(`${UserTableName}.user_uuid`, userUuid)
+            .select({ userUuid: `${UserTableName}.user_uuid` })
+            .first();
+
+        return match !== undefined;
+    }
+
+    /** The group counterpart of `isUserInOrganization`. */
+    async isGroupInOrganization(
+        organizationUuid: string,
+        groupUuid: string,
+    ): Promise<boolean> {
+        const match = await this.database(GroupTableName)
+            .innerJoin(
+                OrganizationTableName,
+                `${OrganizationTableName}.organization_id`,
+                `${GroupTableName}.organization_id`,
+            )
+            .where(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .where(`${GroupTableName}.group_uuid`, groupUuid)
+            .select({ groupUuid: `${GroupTableName}.group_uuid` })
+            .first();
+
+        return match !== undefined;
     }
 }
