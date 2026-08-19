@@ -80,6 +80,9 @@ const buildMocks = (): Mocks => ({
             level: 'project',
             scopes: ['view:Dashboard'],
         }),
+        // No scoped_roles row to prefer -- forces the literal-map fallback,
+        // matching this suite's existing expectations.
+        getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
     } as AnyType,
     analytics: { track: vi.fn() } as AnyType,
     commercialFeatureFlagModel: {} as AnyType,

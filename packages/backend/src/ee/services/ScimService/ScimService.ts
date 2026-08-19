@@ -4,10 +4,10 @@ import {
     AlreadyExistsError,
     ForbiddenError,
     getErrorMessage,
-    getSystemRoles,
+    getSystemRoleNames,
     GroupWithMembers,
     isOrganizationMemberRole,
-    isSystemRole,
+    isSystemRoleName,
     isValidEmailAddress,
     LightdashUser,
     NotFoundError,
@@ -2058,7 +2058,7 @@ export class ScimService extends BaseService {
         const allScimRoles: ScimRole[] = [];
 
         // Get system roles
-        const systemRoles = getSystemRoles();
+        const systemRoles = getSystemRoleNames();
 
         // Get custom roles for organization
         const customRoles = await this.rolesModel.getRolesByOrganizationUuid(

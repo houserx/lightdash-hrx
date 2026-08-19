@@ -27,6 +27,7 @@ const adminUser: SessionUser = {
     userUuid: 'user-admin',
     organizationUuid: ORGANIZATION_UUID,
     role: OrganizationMemberRole.ADMIN,
+    // AiAgentService is EE-only -- reaching it at all means the org is licensed.
     ability: defineUserAbility(
         {
             organizationUuid: ORGANIZATION_UUID,
@@ -34,6 +35,8 @@ const adminUser: SessionUser = {
             role: OrganizationMemberRole.ADMIN,
         },
         [],
+        undefined,
+        { isEnterprise: true },
     ),
 } as unknown as SessionUser;
 

@@ -174,7 +174,6 @@ function buildServiceWithCustomSavedChartRole(
         projectProfiles: [],
         permissionsConfig: { pat: { enabled: false, allowedOrgRoles: [] } },
         customRoleScopes: { [customRoleUuid]: ['view:SavedChart'] },
-        customRolesEnabled: true,
     });
     delete (service as unknown as { createAuditedAbility?: unknown })
         .createAuditedAbility;
