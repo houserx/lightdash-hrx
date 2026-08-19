@@ -11,7 +11,7 @@ import {
     ForbiddenError,
     Group,
     GroupWithMembers,
-    isSystemRole,
+    isSystemRoleName,
     isUserWithOrg,
     KnexPaginateArgs,
     KnexPaginatedData,
@@ -618,7 +618,7 @@ export class OrganizationService extends BaseService {
                     // role. Those aren't convertible to an org role, so fall back
                     // to the member's own org role rather than throwing.
                     role:
-                        groupAccess?.role && isSystemRole(groupAccess.role)
+                        groupAccess?.role && isSystemRoleName(groupAccess.role)
                             ? convertProjectRoleToOrganizationRole(
                                   groupAccess.role,
                               )
@@ -780,13 +780,17 @@ export class OrganizationService extends BaseService {
             await validateOrganizationScopesCanBeGranted({
                 user: authenticatedUser,
                 organizationUuid,
-                grantedScopes: getOrganizationSystemRoleScopes(data.role, {
-                    includePersonalAccessToken:
-                        this.lightdashConfig.auth?.pat?.enabled === true &&
-                        this.lightdashConfig.auth.pat.allowedOrgRoles.includes(
-                            data.role,
-                        ),
-                }),
+                grantedScopes: await getOrganizationSystemRoleScopes(
+                    data.role,
+                    this.rolesModel,
+                    {
+                        includePersonalAccessToken:
+                            this.lightdashConfig.auth?.pat?.enabled === true &&
+                            this.lightdashConfig.auth.pat.allowedOrgRoles.includes(
+                                data.role,
+                            ),
+                    },
+                ),
                 rolesModel: this.rolesModel,
             });
             const organization =

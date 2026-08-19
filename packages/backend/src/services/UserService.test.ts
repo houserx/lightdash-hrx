@@ -275,7 +275,13 @@ const createUserService = (
             } as unknown as FeatureFlagModel),
         userAvatarModel: {} as UserAvatarModel,
         userOnboardingModel: {} as UserOnboardingModel,
-        rolesModel: (overrides.rolesModel as RolesModel) ?? ({} as RolesModel),
+        rolesModel:
+            (overrides.rolesModel as RolesModel) ??
+            ({
+                // No scoped_roles row to prefer -- forces the literal-map
+                // fallback, matching this suite's existing expectations.
+                getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
+            } as unknown as RolesModel),
     });
 
 vi.spyOn(analyticsMock, 'track');
@@ -3427,18 +3433,35 @@ describe('UserService', () => {
             // Manages members and invites, but its own scopes stop at
             // organization member level — so it may invite a member and must
             // not mint an admin.
-            const limitedManagerRole = {
-                roleUuid: 'limited-org-manager-role',
-                organizationUuid: sessionUser.organizationUuid,
-                level: 'organization',
-                scopes: [
-                    'manage:OrganizationMemberProfile',
-                    'manage:InviteLink',
-                    ...getOrganizationSystemRoleScopes(
-                        OrganizationMemberRole.MEMBER,
-                    ),
-                ],
+            // getScopesByRoleUuid always resolves undefined here -- this is
+            // purely computing the literal-map fallback (no scoped_roles row
+            // to prefer), matching this test's original intent.
+            const noScopedRolesRow = {
+                getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
+            } as unknown as RolesModel;
+
+            let limitedManagerRole: {
+                roleUuid: string;
+                organizationUuid: string | undefined;
+                level: string;
+                scopes: string[];
             };
+
+            beforeAll(async () => {
+                limitedManagerRole = {
+                    roleUuid: 'limited-org-manager-role',
+                    organizationUuid: sessionUser.organizationUuid,
+                    level: 'organization',
+                    scopes: [
+                        'manage:OrganizationMemberProfile',
+                        'manage:InviteLink',
+                        ...(await getOrganizationSystemRoleScopes(
+                            OrganizationMemberRole.MEMBER,
+                            noScopedRolesRow,
+                        )),
+                    ],
+                };
+            });
 
             const patConfig = (enabled: boolean) => ({
                 enabled,
@@ -3465,7 +3488,6 @@ describe('UserService', () => {
                         [limitedManagerRole.roleUuid]:
                             limitedManagerRole.scopes,
                     },
-                    customRolesEnabled: true,
                 }).builder.build(),
             });
 
@@ -3483,6 +3505,9 @@ describe('UserService', () => {
                             getRoleWithScopesByUuid: vi
                                 .fn()
                                 .mockResolvedValue(limitedManagerRole),
+                            getScopesByRoleUuid: vi
+                                .fn()
+                                .mockResolvedValue(undefined),
                         } as unknown as RolesModel,
                     },
                 );

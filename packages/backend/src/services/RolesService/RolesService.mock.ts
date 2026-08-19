@@ -112,6 +112,7 @@ type MockFn = import('vitest').Mock<(...args: unknown[]) => unknown>;
 type MockRolesModel = {
     getRoleByUuid: MockFn;
     getRoleWithScopesByUuid: MockFn;
+    getScopesByRoleUuid: MockFn;
     createRole: MockFn;
     addScopesToRole: MockFn;
     getRolesByOrganizationUuid: MockFn;
@@ -140,6 +141,10 @@ type MockRolesModel = {
 export const mockRolesModel: MockRolesModel = {
     getRoleByUuid: vi.fn(),
     getRoleWithScopesByUuid: vi.fn(),
+    // No scoped_roles row to prefer by default -- forces the literal-map
+    // fallback, matching this suite's existing expectations. Override per
+    // test to exercise the DB-preferring path.
+    getScopesByRoleUuid: vi.fn().mockResolvedValue(undefined),
     createRole: vi.fn(),
     addScopesToRole: vi.fn(),
     getRolesByOrganizationUuid: vi.fn(),
