@@ -962,6 +962,19 @@ export class SpaceService
             throw new ForbiddenError();
         }
 
+        // Checked after the manage check so this cannot be used to probe
+        // whether a given group uuid belongs to an organization.
+        if (
+            !(await this.spacePermissionService.isGroupInSpaceOrganization(
+                spaceUuid,
+                shareWithGroupUuid,
+            ))
+        ) {
+            throw new ParameterError(
+                'Cannot share a space with a group outside its organization',
+            );
+        }
+
         await this.spaceModel.addSpaceGroupAccess(
             spaceUuid,
             shareWithGroupUuid,

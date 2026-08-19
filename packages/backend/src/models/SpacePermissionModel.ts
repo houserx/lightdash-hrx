@@ -644,6 +644,35 @@ export class SpacePermissionModel {
         );
     }
 
+    /**
+     * Whether a group belongs to the organization that owns this space. The
+     * organization is derived from the space's project, so a group in another
+     * organization can never satisfy it.
+     */
+    async isGroupInSpaceOrganization(
+        spaceUuid: string,
+        groupUuid: string,
+        { trx = this.database }: { trx?: Knex } = {},
+    ): Promise<boolean> {
+        const match = await trx(SpaceTableName)
+            .innerJoin(
+                ProjectTableName,
+                `${ProjectTableName}.project_id`,
+                `${SpaceTableName}.project_id`,
+            )
+            .innerJoin(
+                GroupTableName,
+                `${GroupTableName}.organization_id`,
+                `${ProjectTableName}.organization_id`,
+            )
+            .where(`${SpaceTableName}.space_uuid`, spaceUuid)
+            .andWhere(`${GroupTableName}.group_uuid`, groupUuid)
+            .select(`${GroupTableName}.group_uuid`)
+            .first();
+
+        return match !== undefined;
+    }
+
     async getSpaceInfo(
         spaceUuids: string[],
         { trx = this.database }: { trx?: Knex } = {},
