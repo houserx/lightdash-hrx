@@ -119,6 +119,37 @@ describe('add resource access tables migration', () => {
                 indexes.filter((sql) => sql.includes('resource_uuid')),
             ).toHaveLength(2);
         });
+
+        it('then every foreign key column is indexed', async () => {
+            const statements = await runUp();
+            const indexed = statements
+                .filter(
+                    (sql) =>
+                        sql.includes('create index') ||
+                        (sql.includes('add constraint') &&
+                            sql.includes('unique')),
+                )
+                .join('\n');
+
+            // Postgres does not index a foreign key automatically, and an
+            // unindexed one turns every ON DELETE cascade into a sequential scan
+            // on the child table. granted_by is the easy one to miss: it is
+            // ON DELETE SET NULL, so deleting any user scans both grant tables.
+            ['user_uuid', 'group_uuid', 'project_uuid', 'granted_by'].forEach(
+                (column) => {
+                    expect(indexed).toContain(column);
+                },
+            );
+        });
+
+        it('then a finite lock_timeout is set before requesting locks', async () => {
+            const statements = await runUp();
+
+            // A waiting ALTER can queue every later query behind it.
+            expect(statements.some((sql) => sql.includes('lock_timeout'))).toBe(
+                true,
+            );
+        });
     });
 
     describe('given the migration is rolled back', () => {
