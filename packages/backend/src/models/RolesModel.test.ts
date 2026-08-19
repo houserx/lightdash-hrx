@@ -10,6 +10,7 @@ import { getTracker, MockClient, Tracker } from 'knex-mock-client';
 import { DatabaseError } from 'pg';
 import { OrganizationMembershipCustomRolesTableName } from '../database/entities/organizationMembershipCustomRoles';
 import { OrganizationMembershipsTableName } from '../database/entities/organizationMemberships';
+import { ProjectGroupAccessCustomRolesTableName } from '../database/entities/projectGroupAccessCustomRoles';
 import { ProjectMembershipCustomRolesTableName } from '../database/entities/projectMembershipCustomRoles';
 import { ProjectMembershipsTableName } from '../database/entities/projectMemberships';
 import { RolesTableName } from '../database/entities/roles';
@@ -317,6 +318,73 @@ describe('RolesModel', () => {
                 expect.arrayContaining([3, 7, SECOND]),
             );
             expect(extras.bindings).not.toContain(ORG_ROLE);
+        });
+    });
+
+    describe('assignRoleToGroup', () => {
+        // The insert's column order and its bindings are positional and
+        // must be read together -- a value merely appearing somewhere in
+        // `bindings` doesn't say which column it went to (e.g. a
+        // system-role name legitimately appears as the `role` binding;
+        // the question is whether it also appears as `role_uuid`'s).
+        const bindingForColumn = (
+            statement: { sql: string; bindings: unknown[] },
+            column: string,
+        ) => {
+            const columnList = statement.sql
+                .match(/\(([^)]+)\)/)?.[1]
+                .split(',')
+                .map((c) => c.trim().replace(/"/g, ''));
+            const index = columnList?.indexOf(column) ?? -1;
+            if (index === -1) {
+                throw new Error(`Column ${column} not found in insert`);
+            }
+            return statement.bindings[index];
+        };
+
+        const findInsert = () => {
+            const insertStatement = tracker.history.all.find(({ sql }) =>
+                sql.startsWith('insert into "project_group_access"'),
+            );
+            if (!insertStatement) {
+                throw new Error('Expected an insert into project_group_access');
+            }
+            return insertStatement;
+        };
+
+        // A system-role-name input (e.g. "viewer") must never land in
+        // role_uuid -- that column is real-UUID-or-null, and a future
+        // caller passing a system role here would otherwise silently
+        // write the fake name string into it.
+        it('never writes a system-role name into role_uuid', async () => {
+            tracker.on.insert('project_group_access').responseOnce({});
+            tracker.on
+                .delete(ProjectGroupAccessCustomRolesTableName)
+                .responseOnce(0);
+
+            await model.assignRoleToGroup('group-uuid', 'viewer', 'proj-uuid');
+
+            const insertStatement = findInsert();
+            expect(bindingForColumn(insertStatement, 'role_uuid')).toBeNull();
+            expect(bindingForColumn(insertStatement, 'role')).toBe('viewer');
+        });
+
+        it('still writes a real custom-role uuid into role_uuid', async () => {
+            tracker.on.insert('project_group_access').responseOnce({});
+            tracker.on
+                .delete(ProjectGroupAccessCustomRolesTableName)
+                .responseOnce(0);
+
+            await model.assignRoleToGroup(
+                'group-uuid',
+                'custom-role-uuid',
+                'proj-uuid',
+            );
+
+            const insertStatement = findInsert();
+            expect(bindingForColumn(insertStatement, 'role_uuid')).toBe(
+                'custom-role-uuid',
+            );
         });
     });
 });

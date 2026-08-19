@@ -1,9 +1,9 @@
 import {
     AlreadyExistsError,
-    getSystemRoles,
+    getSystemRoleNames,
     GroupProjectAccess,
     isOrganizationMemberRole,
-    isSystemRole,
+    isSystemRoleName,
     NotFoundError,
     OrganizationMemberRole,
     OrganizationRoleSet,
@@ -158,7 +158,7 @@ export class RolesModel {
         tx?: Knex.Transaction,
     ): Promise<Role[]> {
         if (roleTypeFilter === 'system') {
-            return getSystemRoles();
+            return getSystemRoleNames();
         }
 
         const roles = await (tx || this.database)(RolesTableName)
@@ -171,7 +171,7 @@ export class RolesModel {
             return customRoles;
         }
 
-        const systemRoles = getSystemRoles();
+        const systemRoles = getSystemRoleNames();
         return [...systemRoles, ...customRoles];
     }
 
@@ -181,7 +181,7 @@ export class RolesModel {
         tx?: Knex.Transaction,
     ): Promise<RoleWithScopes[]> {
         if (roleTypeFilter === 'system') {
-            return getSystemRoles();
+            return getSystemRoleNames();
         }
 
         const roles = await (tx || this.database)(RolesTableName)
@@ -207,15 +207,15 @@ export class RolesModel {
             return customRoles;
         }
 
-        return [...getSystemRoles(), ...customRoles];
+        return [...getSystemRoleNames(), ...customRoles];
     }
 
     async getRoleByUuid(
         roleUuid: string,
         tx?: Knex.Transaction,
     ): Promise<Role> {
-        if (isSystemRole(roleUuid)) {
-            return getSystemRoles().find(
+        if (isSystemRoleName(roleUuid)) {
+            return getSystemRoleNames().find(
                 (role) => role.roleUuid === roleUuid,
             ) as Role;
         }
@@ -235,8 +235,8 @@ export class RolesModel {
         roleUuid: string,
         tx?: Knex.Transaction,
     ): Promise<RoleWithScopes> {
-        if (isSystemRole(roleUuid)) {
-            return getSystemRoles().find(
+        if (isSystemRoleName(roleUuid)) {
+            return getSystemRoleNames().find(
                 (role) => role.roleUuid === roleUuid,
             ) as RoleWithScopes;
         }
@@ -262,6 +262,32 @@ export class RolesModel {
         }
 
         return RolesModel.mapDbRoleWithScopesToRoleWithScopes(role);
+    }
+
+    /**
+     * Scopes for a single role_uuid, straight from `scoped_roles` -- no
+     * `isSystemRoleName`/`getSystemRoleNames` fallback, and returns undefined
+     * (rather than throwing) when nothing is found. Built for callers doing
+     * their own DB-first-then-literal-map resolution (see
+     * `resolveRoleScopes` in `@lightdash/common`), where a miss is an
+     * expected input, not an error -- e.g. `organizationRolePermissions.ts`
+     * resolving a well-known system role_uuid that the seed migration may or
+     * may not have run yet in a given environment.
+     *
+     * `undefined` conflates "no role with this uuid" and "role exists but
+     * has zero scopes" -- only safe for callers that fall back to another
+     * source on a miss (as above), not for callers that need to
+     * distinguish those two cases or that fail closed on a miss.
+     */
+    async getScopesByRoleUuid(
+        roleUuid: string,
+        tx?: Knex.Transaction,
+    ): Promise<string[] | undefined> {
+        const rows = await (tx || this.database)(ScopedRolesTableName)
+            .select('scope_name')
+            .where('role_uuid', roleUuid);
+
+        return rows.length > 0 ? rows.map((row) => row.scope_name) : undefined;
     }
 
     async createRole(
@@ -661,36 +687,33 @@ export class RolesModel {
         }, tx);
     }
 
+    /**
+     * Dispatches by role kind the same way `upsertSystemRoleGroupAccess`/
+     * `upsertCustomRoleGroupAccess` do, so a system-role-name `roleUuid`
+     * (e.g. "viewer") never lands in the real `role_uuid` UUID column --
+     * this previously wrote it unconditionally.
+     */
     async assignRoleToGroup(
         groupUuid: string,
         roleUuid: string,
         projectUuid: string,
         tx?: Knex.Transaction,
     ): Promise<void> {
-        await this.runInTransaction(async (trx) => {
-            const existingAccess = await trx('project_group_access')
-                .where('group_uuid', groupUuid)
-                .where('project_uuid', projectUuid)
-                .first();
-
-            if (existingAccess) {
-                await trx('project_group_access')
-                    .where('group_uuid', groupUuid)
-                    .where('project_uuid', projectUuid)
-                    .update({
-                        role_uuid: roleUuid,
-                        role: ProjectMemberRole.VIEWER,
-                    });
-            } else {
-                await trx('project_group_access').insert({
-                    group_uuid: groupUuid,
-                    project_uuid: projectUuid,
-                    role_uuid: roleUuid,
-                    role: 'viewer' as ProjectMemberRole, // Default role when using custom role_uuid
-                });
-            }
-            await clearGroupExtraRoles(trx, projectUuid, groupUuid);
-        }, tx);
+        if (isSystemRoleName(roleUuid)) {
+            await this.upsertSystemRoleGroupAccess(
+                groupUuid,
+                projectUuid,
+                roleUuid,
+                tx,
+            );
+        } else {
+            await this.upsertCustomRoleGroupAccess(
+                groupUuid,
+                projectUuid,
+                roleUuid,
+                tx,
+            );
+        }
     }
 
     async unassignRoleFromGroup(
@@ -1416,7 +1439,7 @@ export class RolesModel {
             // Upsert desired roles
             const upsertPromises: Promise<void>[] = [];
             for (const [projectUuid, roleId] of deduped.entries()) {
-                if (isSystemRole(roleId)) {
+                if (isSystemRoleName(roleId)) {
                     upsertPromises.push(
                         this.upsertSystemRoleProjectAccess(
                             projectUuid,

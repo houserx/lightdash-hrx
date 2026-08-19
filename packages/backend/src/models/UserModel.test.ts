@@ -1,14 +1,26 @@
-import { subject, type AbilityBuilder, type RawRuleOf } from '@casl/ability';
 import {
+    Ability,
+    AbilityBuilder,
+    subject,
+    type RawRuleOf,
+} from '@casl/ability';
+import {
+    buildAbilityFromScopes,
+    collapseAbilityRules,
+    CommercialFeatureFlags,
+    getAllScopesForOrgRole,
+    getAllScopesForRole,
     LightdashMode,
     LightdashUser,
     MemberAbility,
     NotFoundError,
+    ORGANIZATION_SYSTEM_ROLE_UUIDS,
     OrganizationMemberRole,
     PasswordLoginBlockedError,
-    projectMemberAbilities,
+    PROJECT_SYSTEM_ROLE_UUIDS,
     ProjectMemberRole,
     ServiceAccountScope,
+    type ProjectAbilityProfile,
     type SessionUser,
 } from '@lightdash/common';
 import bcrypt from 'bcrypt';
@@ -39,7 +51,7 @@ type TestableUserModel = {
     getUserProjectRoles: (
         userUuid: string,
         options?: { trx?: Knex },
-    ) => Promise<never[]>;
+    ) => Promise<ProjectAbilityProfile[]>;
     getUserGroupProjectRoles: (
         userId: number,
         organizationId: number,
@@ -137,11 +149,14 @@ const createUserModel = (): TestableUserModel => {
         async (_userId, userUuid, builder) => {
             Array.from({ length: 125 }, (_, i) => `project-${i}`).forEach(
                 (projectUuid) => {
-                    projectMemberAbilities[ProjectMemberRole.ADMIN](
+                    buildAbilityFromScopes(
                         {
                             projectUuid,
-                            role: ProjectMemberRole.ADMIN,
                             userUuid,
+                            scopes: getAllScopesForRole(
+                                ProjectMemberRole.ADMIN,
+                            ),
+                            isEnterprise: true,
                         },
                         builder,
                     );
@@ -175,7 +190,9 @@ const expectCollapsedDashboardProjectRule = (
         );
     }
 
-    expect(rules.length).toBeLessThan(100);
+    // Bounded by role-tier scope count, not by the 125 project profiles
+    // above -- that's what collapsing buys us.
+    expect(rules.length).toBeLessThan(150);
     expect(
         (dashboardRule.conditions as Record<string, { $in: string[] }>)
             .projectUuid.$in,
@@ -433,6 +450,307 @@ describe('UserModel', () => {
             expect.anything(),
             trx,
         );
+    });
+
+    describe('given a service account with legacy scopes', () => {
+        // The behavioral effect of buildAbilityFromScopes's output is
+        // covered at the `common` package level
+        // (serviceAccountSystemRoleRouting.test.ts, serviceAccountAbility.test.ts).
+        // This layer's job is confirming `generateUserAbilityBuilder` routes
+        // into it with the right args (org uuid, role).
+        it('builds via buildAbilityFromScopes, matching getAllScopesForOrgRole(role) directly', async () => {
+            const model = createUserModel();
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(userDetails);
+
+            const expectedBuilder = new AbilityBuilder<MemberAbility>(Ability);
+            buildAbilityFromScopes(
+                {
+                    userUuid: userDetails.user_uuid,
+                    organizationUuid: 'org-1',
+                    scopes: getAllScopesForOrgRole(
+                        OrganizationMemberRole.MEMBER,
+                    ),
+                    isEnterprise: false,
+                },
+                expectedBuilder,
+            );
+            expectedBuilder.rules = collapseAbilityRules(expectedBuilder.rules);
+            const expectedRules = expectedBuilder.build().rules;
+            const actualRules = abilityBuilder.build().rules;
+
+            // Actual also carries the (125-project) project-membership
+            // layer applied by `applyServiceAccountProjectMemberships`, so
+            // check containment rather than full-set equality.
+            expectedRules.forEach((expectedRule) => {
+                expect(actualRules).toContainEqual(expectedRule);
+            });
+        });
+
+        describe('and a per-project system-role grant', () => {
+            // applyServiceAccountProjectMemberships is stubbed out by
+            // createUserModel() (see expectCollapsedDashboardProjectRule's
+            // 125-project fixture) -- this test exercises its REAL
+            // implementation instead, since that's the thing being routed.
+            const createModelWithRealProjectMemberships =
+                (): TestableUserModel => {
+                    const model = new UserModel({
+                        database: vi.fn() as unknown as Knex,
+                        lightdashConfig,
+                        featureFlagModel,
+                    }) as unknown as TestableUserModel;
+                    model.hasAuthentication = vi.fn(async () => true);
+                    model.getUserProjectRoles = vi.fn(async () => []);
+                    model.getUserGroupProjectRoles = vi.fn(async () => []);
+                    model.findServiceAccountByUserUuid = vi.fn(async () => ({
+                        uuid: 'service-account',
+                        description: 'Service account',
+                        scopes: [ServiceAccountScope.SYSTEM_MEMBER],
+                        organizationUuid: 'org-1',
+                    }));
+                    model.customRoleScopes = vi.fn(async () => ({}));
+                    return model;
+                };
+
+            const PROJECT_UUID = 'sa-project-1';
+
+            const fakeProjectMembershipsTrx = (rows: unknown[]): Knex => {
+                const builder = {
+                    leftJoin: () => builder,
+                    select: () => builder,
+                    where: () => Promise.resolve(rows),
+                };
+                return vi.fn(() => builder) as unknown as Knex;
+            };
+
+            it('then builds via buildAbilityFromScopes(getAllScopesForRole(role)) for project grants too', async () => {
+                const model = createModelWithRealProjectMemberships();
+                const trx = fakeProjectMembershipsTrx([
+                    {
+                        project_uuid: PROJECT_UUID,
+                        role: ProjectMemberRole.DEVELOPER,
+                        role_uuid: null,
+                        project_type: 'DEFAULT',
+                        created_by_user_uuid: null,
+                    },
+                ]);
+                const { abilityBuilder } =
+                    await model.generateUserAbilityBuilder(userDetails, trx);
+                const actualRules = collapseAbilityRules(abilityBuilder.rules);
+
+                const expectedBuilder = new AbilityBuilder<MemberAbility>(
+                    Ability,
+                );
+                buildAbilityFromScopes(
+                    {
+                        projectUuid: PROJECT_UUID,
+                        userUuid: userDetails.user_uuid,
+                        scopes: getAllScopesForRole(
+                            ProjectMemberRole.DEVELOPER,
+                        ),
+                        isEnterprise: false,
+                    },
+                    expectedBuilder,
+                );
+                // Actual also carries the org-layer SYSTEM_MEMBER rules
+                // applied before this loop runs, so check containment
+                // rather than full-set equality.
+                collapseAbilityRules(expectedBuilder.rules).forEach(
+                    (expectedRule) => {
+                        expect(actualRules).toContainEqual(expectedRule);
+                    },
+                );
+            });
+        });
+    });
+
+    describe('given a human user with a project system role', () => {
+        const humanUserDetails: DbUserDetails = {
+            ...userDetails,
+            is_internal: false,
+        };
+        const DEVELOPER_PROJECT_UUID = 'project-1';
+
+        const createHumanUserModel = () => {
+            const model = createUserModel();
+            model.getUserProjectRoles = vi.fn(async () => [
+                {
+                    projectUuid: DEVELOPER_PROJECT_UUID,
+                    role: ProjectMemberRole.DEVELOPER,
+                    userUuid: humanUserDetails.user_uuid,
+                    roleUuid: undefined,
+                },
+            ]);
+            return model;
+        };
+
+        // The behavioral effect of buildAbilityFromScopes's output is
+        // exhaustively covered at the `common` package level
+        // (projectSystemRoleRouting.test.ts, 5 cases across all project
+        // roles). This layer's job is confirming `generateUserAbilityBuilder`
+        // routes into it with the right args.
+        it('does not disturb the granted abilities', async () => {
+            const model = createHumanUserModel();
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            // Developer's project role grants unconditional manage:DeployProject
+            // -- present regardless of which path built the ability, so
+            // this just confirms the human path produces a normal,
+            // populated project ability.
+            expect(
+                abilityBuilder.build().can(
+                    'manage',
+                    subject('DeployProject', {
+                        projectUuid: DEVELOPER_PROJECT_UUID,
+                    }),
+                ),
+            ).toBe(true);
+        });
+
+        it('builds via buildAbilityFromScopes, matching getAllScopesForRole(role) directly', async () => {
+            const model = createHumanUserModel();
+
+            const { abilityBuilder } =
+                await model.generateUserAbilityBuilder(humanUserDetails);
+
+            const expectedBuilder = new AbilityBuilder<MemberAbility>(Ability);
+            buildAbilityFromScopes(
+                {
+                    userUuid: humanUserDetails.user_uuid,
+                    projectUuid: DEVELOPER_PROJECT_UUID,
+                    scopes: getAllScopesForRole(ProjectMemberRole.DEVELOPER),
+                    isEnterprise: false,
+                },
+                expectedBuilder,
+            );
+            expectedBuilder.rules = collapseAbilityRules(expectedBuilder.rules);
+            const expectedRules = expectedBuilder.build().rules;
+            const actualRules = abilityBuilder.build().rules;
+
+            // Actual also carries the (minimal) org-member layer, so check
+            // containment rather than full-set equality.
+            expectedRules.forEach((expectedRule) => {
+                expect(actualRules).toContainEqual(expectedRule);
+            });
+        });
+    });
+
+    describe('given a system role with scopes seeded in scoped_roles', () => {
+        // The well-known system-role uuid (systemRoleUuids.ts) is looked up
+        // in scoped_roles the same way a real custom role_uuid is -- proving
+        // this is genuinely one path, not a literal-map default with a
+        // bolted-on DB check. Uses a scope absent from MEMBER's literal
+        // list (orgRoleToScopeMapping.ts) so a pass here can only mean the
+        // DB-sourced scopes were used, not the literal fallback.
+        it('org layer: prefers scoped_roles scopes over the literal map for the well-known org role_uuid', async () => {
+            const model = createUserModel();
+            const wellKnownOrgUuid =
+                ORGANIZATION_SYSTEM_ROLE_UUIDS[OrganizationMemberRole.MEMBER];
+            model.customRoleScopes = vi.fn(async (roleUuids) =>
+                roleUuids.includes(wellKnownOrgUuid)
+                    ? { [wellKnownOrgUuid]: ['manage:Organization'] }
+                    : {},
+            );
+
+            const { abilityBuilder } = await model.generateUserAbilityBuilder({
+                ...userDetails,
+                is_internal: false,
+            });
+            const ability = abilityBuilder.build();
+
+            expect(model.customRoleScopes).toHaveBeenCalledWith(
+                expect.arrayContaining([wellKnownOrgUuid]),
+                expect.anything(),
+            );
+            expect(
+                ability.can(
+                    'manage',
+                    subject('Organization', { organizationUuid: 'org-1' }),
+                ),
+            ).toBe(true);
+            // MEMBER's literal-map scopes are absent -- DB scopes replaced
+            // them rather than merging alongside.
+            expect(
+                ability.can(
+                    'view',
+                    subject('OrganizationMemberProfile', {
+                        organizationUuid: 'org-1',
+                    }),
+                ),
+            ).toBe(false);
+        });
+
+        it('project layer (service account): prefers scoped_roles scopes over the literal map for the well-known project role_uuid', async () => {
+            const model = new UserModel({
+                database: vi.fn() as unknown as Knex,
+                lightdashConfig,
+                featureFlagModel,
+            }) as unknown as TestableUserModel;
+            model.hasAuthentication = vi.fn(async () => true);
+            model.getUserProjectRoles = vi.fn(async () => []);
+            model.getUserGroupProjectRoles = vi.fn(async () => []);
+            model.findServiceAccountByUserUuid = vi.fn(async () => ({
+                uuid: 'service-account',
+                description: 'Service account',
+                scopes: [ServiceAccountScope.SYSTEM_MEMBER],
+                organizationUuid: 'org-1',
+            }));
+
+            const wellKnownProjectUuid =
+                PROJECT_SYSTEM_ROLE_UUIDS[ProjectMemberRole.VIEWER];
+            model.customRoleScopes = vi.fn(async (roleUuids) =>
+                roleUuids.includes(wellKnownProjectUuid)
+                    ? { [wellKnownProjectUuid]: ['manage:Space'] }
+                    : {},
+            );
+
+            const PROJECT_UUID = 'sa-project-well-known';
+            const trx = (() => {
+                const builder = {
+                    leftJoin: () => builder,
+                    select: () => builder,
+                    where: () =>
+                        Promise.resolve([
+                            {
+                                project_uuid: PROJECT_UUID,
+                                role: ProjectMemberRole.VIEWER,
+                                role_uuid: null,
+                                project_type: 'DEFAULT',
+                                created_by_user_uuid: null,
+                            },
+                        ]),
+                };
+                return vi.fn(() => builder) as unknown as Knex;
+            })();
+
+            const { abilityBuilder } = await model.generateUserAbilityBuilder(
+                userDetails,
+                trx,
+            );
+            const ability = abilityBuilder.build();
+
+            expect(model.customRoleScopes).toHaveBeenCalledWith(
+                expect.arrayContaining([wellKnownProjectUuid]),
+                expect.anything(),
+            );
+            expect(
+                ability.can(
+                    'manage',
+                    subject('Space', { projectUuid: PROJECT_UUID }),
+                ),
+            ).toBe(true);
+            // VIEWER's literal-map scopes (e.g. view:Dashboard) are absent
+            // -- DB scopes replaced them rather than merging alongside.
+            expect(
+                ability.can(
+                    'view',
+                    subject('Dashboard', { projectUuid: PROJECT_UUID }),
+                ),
+            ).toBe(false);
+        });
     });
 
     describe('getUserByPrimaryEmailAndPassword', () => {
