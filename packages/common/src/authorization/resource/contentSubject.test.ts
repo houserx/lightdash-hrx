@@ -19,7 +19,7 @@ const accessEntry = (overrides: Partial<SpaceAccess> = {}): SpaceAccess => ({
     hasDirectAccess: true,
     projectRole: ProjectMemberRole.VIEWER,
     inheritedRole: OrganizationMemberRole.VIEWER,
-    inheritedFrom: 'direct_resource',
+    inheritedFrom: 'project',
     ...overrides,
 });
 
@@ -156,7 +156,7 @@ describe('dashboardSubject', () => {
             ).toBe(false);
         });
 
-        it('then an editor entry satisfies an editor gate regardless of where it came from', () => {
+        it('then an editor entry satisfies an editor gate', () => {
             const ability = abilityGatedOnAccess(SpaceMemberRole.EDITOR);
 
             expect(
@@ -165,15 +165,42 @@ describe('dashboardSubject', () => {
                     dashboardSubject(
                         context({
                             access: [
-                                accessEntry({
-                                    role: SpaceMemberRole.EDITOR,
-                                    inheritedFrom: 'direct_resource',
-                                }),
+                                accessEntry({ role: SpaceMemberRole.EDITOR }),
                             ],
                         }),
                     ),
                 ),
             ).toBe(true);
+        });
+
+        it('then only the role is consulted, not where the entry came from', () => {
+            const ability = abilityGatedOnAccess(SpaceMemberRole.EDITOR);
+            const provenances: SpaceAccess['inheritedFrom'][] = [
+                'organization',
+                'project',
+                'group',
+                'space_group',
+                'parent_space',
+                undefined,
+            ];
+
+            provenances.forEach((inheritedFrom) => {
+                expect(
+                    ability.can(
+                        'view',
+                        dashboardSubject(
+                            context({
+                                access: [
+                                    accessEntry({
+                                        role: SpaceMemberRole.EDITOR,
+                                        inheritedFrom,
+                                    }),
+                                ],
+                            }),
+                        ),
+                    ),
+                ).toBe(true);
+            });
         });
     });
 });

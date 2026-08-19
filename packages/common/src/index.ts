@@ -58,6 +58,7 @@ export * from './authorization/parseAccount';
 export * from './authorization/roleToScopeMapping';
 export * from './authorization/scopeAbilityBuilder';
 export * from './authorization/scopes';
+export * from './authorization/resource/contentSubject';
 export * from './authorization/serviceAccountAbility';
 export * from './authorization/space/customRoleProjectRole';
 export * from './authorization/space/spaceAccessResolver';
