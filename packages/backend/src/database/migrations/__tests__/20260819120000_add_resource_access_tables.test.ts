@@ -2,15 +2,16 @@ import knex from 'knex';
 import { getTracker, MockClient, Tracker } from 'knex-mock-client';
 import { down, up } from '../20260819120000_add_resource_access_tables';
 
-const runUp = async (tracker: Tracker) => {
-    tracker.on.any(() => true).response({});
-    const database = knex({ client: MockClient, dialect: 'pg' });
-    await up(database);
-    return tracker.history.all.map(({ sql }) => sql);
-};
-
 describe('add resource access tables migration', () => {
+    // Initialised before getTracker(), which throws otherwise.
+    const database = knex({ client: MockClient, dialect: 'pg' });
     let tracker: Tracker;
+
+    const runUp = async () => {
+        tracker.on.any(() => true).response({});
+        await up(database);
+        return tracker.history.all.map(({ sql }) => sql);
+    };
 
     beforeAll(() => {
         tracker = getTracker();
@@ -22,7 +23,7 @@ describe('add resource access tables migration', () => {
 
     describe('given the migration runs forward', () => {
         it('then it creates both grant tables', async () => {
-            const statements = await runUp(tracker);
+            const statements = await runUp();
 
             expect(
                 statements.some(
@@ -41,7 +42,7 @@ describe('add resource access tables migration', () => {
         });
 
         it('then resource_type and action are constrained to literal allowlists', async () => {
-            const statements = await runUp(tracker);
+            const statements = await runUp();
             const checks = statements.filter((sql) => sql.includes('CHECK ('));
 
             // Two per table: widening either allowlist has to be a new
@@ -62,7 +63,7 @@ describe('add resource access tables migration', () => {
         });
 
         it('then each unique constraint leads with its principal column', async () => {
-            const statements = await runUp(tracker);
+            const statements = await runUp();
             const uniques = statements.filter(
                 (sql) =>
                     sql.includes('add constraint') && sql.includes('unique'),
@@ -89,7 +90,7 @@ describe('add resource access tables migration', () => {
         });
 
         it('then grants are removed with their principal and their project', async () => {
-            const statements = await runUp(tracker);
+            const statements = await runUp();
             const cascades = statements.filter((sql) =>
                 sql.includes('on delete CASCADE'),
             );
@@ -99,7 +100,7 @@ describe('add resource access tables migration', () => {
         });
 
         it('then granted_by is nulled rather than cascading', async () => {
-            const statements = await runUp(tracker);
+            const statements = await runUp();
 
             // Offboarding the granter must not silently revoke access that is
             // still legitimately held.
@@ -109,7 +110,7 @@ describe('add resource access tables migration', () => {
         });
 
         it('then resource_uuid is indexed for listing who holds a grant', async () => {
-            const statements = await runUp(tracker);
+            const statements = await runUp();
             const indexes = statements.filter((sql) =>
                 sql.includes('create index'),
             );
@@ -123,7 +124,6 @@ describe('add resource access tables migration', () => {
     describe('given the migration is rolled back', () => {
         it('then both tables are dropped', async () => {
             tracker.on.any(() => true).response({});
-            const database = knex({ client: MockClient, dialect: 'pg' });
 
             await down(database);
 
