@@ -557,29 +557,33 @@ export class DashboardService
             projectUuid,
             chartUuid,
         );
-        const spaceUuids = [
-            ...new Set(dashboards.map((dashboard) => dashboard.spaceUuid)),
-        ];
-        const spaceContexts =
-            await this.spacePermissionService.getSpacesAccessContext(
+        // Keyed by dashboard uuid rather than space uuid: two dashboards in one
+        // space share a space context but not their direct grants. One batched
+        // call, so listing does not scale in round trips.
+        const accessContexts =
+            await this.spacePermissionService.getResourceAccessContexts(
                 user.userUuid,
-                spaceUuids,
+                'Dashboard',
+                dashboards.map((dashboard) => ({
+                    resourceUuid: dashboard.uuid,
+                    spaceUuid: dashboard.spaceUuid,
+                })),
             );
 
         const auditedAbility = this.createAuditedAbility(user);
         return dashboards.filter((dashboard) => {
-            const spaceContext = spaceContexts[dashboard.spaceUuid];
-            if (!spaceContext) return false;
+            const accessContext = accessContexts[dashboard.uuid];
+            if (!accessContext) return false;
             const hasAbility = auditedAbility.can(
                 'view',
                 subject('Dashboard', {
-                    ...spaceContext,
+                    ...accessContext,
                     metadata: { dashboardUuid: dashboard.uuid },
                 }),
             );
             return includePrivate
                 ? hasAbility
-                : hasAbility && hasDirectAccessToSpace(user, spaceContext);
+                : hasAbility && hasDirectAccessToSpace(user, accessContext);
         });
     }
 
@@ -596,9 +600,13 @@ export class DashboardService
         );
 
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                dashboardDao.spaceUuid,
+                'Dashboard',
+                {
+                    resourceUuid: dashboardDao.uuid,
+                    spaceUuid: dashboardDao.spaceUuid,
+                },
             );
         const dashboard = {
             ...dashboardDao,
