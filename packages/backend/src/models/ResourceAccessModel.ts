@@ -1,6 +1,7 @@
 import {
     DirectResourceAccessOrigin,
     type DirectResourceAccess,
+    type ResourceAccessAction,
     type ResourceAccessResourceType,
 } from '@lightdash/common';
 import { Knex } from 'knex';
@@ -115,5 +116,145 @@ export class ResourceAccessModel {
                 );
             },
         );
+    }
+
+    /**
+     * Upserts a user grant. Re-granting the same action is idempotent rather than
+     * an error, matching how space sharing behaves.
+     */
+    async addUserAccess({
+        resourceType,
+        resourceUuid,
+        projectUuid,
+        targetUserUuid,
+        action,
+        grantedByUserUuid,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        projectUuid: string;
+        targetUserUuid: string;
+        action: ResourceAccessAction;
+        grantedByUserUuid: string;
+    }): Promise<void> {
+        await this.database(ResourceUserAccessTableName)
+            .insert({
+                user_uuid: targetUserUuid,
+                resource_uuid: resourceUuid,
+                resource_type: resourceType,
+                project_uuid: projectUuid,
+                action,
+                granted_by: grantedByUserUuid,
+            })
+            .onConflict([
+                'user_uuid',
+                'resource_uuid',
+                'resource_type',
+                'action',
+            ])
+            .merge(['granted_by']);
+    }
+
+    async addGroupAccess({
+        resourceType,
+        resourceUuid,
+        projectUuid,
+        targetGroupUuid,
+        action,
+        grantedByUserUuid,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        projectUuid: string;
+        targetGroupUuid: string;
+        action: ResourceAccessAction;
+        grantedByUserUuid: string;
+    }): Promise<void> {
+        await this.database(ResourceGroupAccessTableName)
+            .insert({
+                group_uuid: targetGroupUuid,
+                resource_uuid: resourceUuid,
+                resource_type: resourceType,
+                project_uuid: projectUuid,
+                action,
+                granted_by: grantedByUserUuid,
+            })
+            .onConflict([
+                'group_uuid',
+                'resource_uuid',
+                'resource_type',
+                'action',
+            ])
+            .merge(['granted_by']);
+    }
+
+    async removeUserAccess({
+        resourceType,
+        resourceUuid,
+        targetUserUuid,
+        action,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        targetUserUuid: string;
+        action: ResourceAccessAction;
+    }): Promise<void> {
+        await this.database(ResourceUserAccessTableName)
+            .where('resource_type', resourceType)
+            .where('resource_uuid', resourceUuid)
+            .where('user_uuid', targetUserUuid)
+            .where('action', action)
+            .delete();
+    }
+
+    async removeGroupAccess({
+        resourceType,
+        resourceUuid,
+        targetGroupUuid,
+        action,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        targetGroupUuid: string;
+        action: ResourceAccessAction;
+    }): Promise<void> {
+        await this.database(ResourceGroupAccessTableName)
+            .where('resource_type', resourceType)
+            .where('resource_uuid', resourceUuid)
+            .where('group_uuid', targetGroupUuid)
+            .where('action', action)
+            .delete();
+    }
+
+    /**
+     * Every grant held on one resource. Read as two focused queries rather than a
+     * UNION: user and group grants carry different metadata, so callers want them
+     * apart.
+     */
+    async listResourceAccess(
+        resourceType: ResourceAccessResourceType,
+        resourceUuid: string,
+    ): Promise<{
+        users: { userUuid: string; action: ResourceAccessAction }[];
+        groups: { groupUuid: string; action: ResourceAccessAction }[];
+    }> {
+        const [users, groups] = await Promise.all([
+            this.database(ResourceUserAccessTableName)
+                .where('resource_type', resourceType)
+                .where('resource_uuid', resourceUuid)
+                .select({
+                    userUuid: 'user_uuid',
+                    action: 'action',
+                }),
+            this.database(ResourceGroupAccessTableName)
+                .where('resource_type', resourceType)
+                .where('resource_uuid', resourceUuid)
+                .select({
+                    groupUuid: 'group_uuid',
+                    action: 'action',
+                }),
+        ]);
+
+        return { users, groups };
     }
 }
