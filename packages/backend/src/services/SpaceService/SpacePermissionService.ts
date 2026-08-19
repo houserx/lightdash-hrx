@@ -125,6 +125,42 @@ export class SpacePermissionService extends BaseService {
     }
 
     /**
+     * Whether a user holds an organization membership in the organization that
+     * owns this space. Resolves the organization from the space rather than from
+     * the caller, so it cannot be satisfied by a membership in some other
+     * organization on a multi-org instance.
+     */
+    async isOrganizationMemberForSpace(
+        spaceUuid: string,
+        userUuid: string,
+        { trx }: { trx?: Knex } = {},
+    ): Promise<boolean> {
+        const organizationAccess =
+            await this.spacePermissionModel.getOrganizationSpaceAccess(
+                [spaceUuid],
+                { userUuid },
+                { trx },
+            );
+        return (organizationAccess[spaceUuid] ?? []).length > 0;
+    }
+
+    /**
+     * Whether a group belongs to the organization that owns this space. The
+     * group counterpart of `isOrganizationMemberForSpace`.
+     */
+    async isGroupInSpaceOrganization(
+        spaceUuid: string,
+        groupUuid: string,
+        { trx }: { trx?: Knex } = {},
+    ): Promise<boolean> {
+        return this.spacePermissionModel.isGroupInSpaceOrganization(
+            spaceUuid,
+            groupUuid,
+            { trx },
+        );
+    }
+
+    /**
      * Returns the CASL context for a space (organizationUuid, projectUuid, inheritsFromOrgOrProject, access)
      * without performing any permission checks. Callers use this to build their own
      * `subject(...)` checks when the resource type is not Space.
