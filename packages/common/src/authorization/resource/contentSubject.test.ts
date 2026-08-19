@@ -13,6 +13,13 @@ const ORGANIZATION_UUID = 'org-1';
 const PROJECT_UUID = 'project-1';
 const USER_UUID = 'user-1';
 
+/** What every migrated call site sources from the resource itself. */
+const resourceFields = (extra: Record<string, unknown> = {}) => ({
+    organizationUuid: ORGANIZATION_UUID,
+    projectUuid: PROJECT_UUID,
+    ...extra,
+});
+
 const accessEntry = (overrides: Partial<SpaceAccess> = {}): SpaceAccess => ({
     userUuid: USER_UUID,
     role: SpaceMemberRole.VIEWER,
@@ -26,8 +33,6 @@ const accessEntry = (overrides: Partial<SpaceAccess> = {}): SpaceAccess => ({
 const context = (
     overrides: Partial<ContentAccessContext> = {},
 ): ContentAccessContext => ({
-    organizationUuid: ORGANIZATION_UUID,
-    projectUuid: PROJECT_UUID,
     inheritsFromOrgOrProject: false,
     access: [],
     ...overrides,
@@ -54,14 +59,17 @@ const abilityGatedOnAccess = (role?: SpaceMemberRole): MemberAbility => {
 };
 
 describe('dashboardSubject', () => {
-    describe('given only an access context', () => {
-        it('then the context fields reach CASL', () => {
+    describe('given a resolved access context', () => {
+        it('then the access entries reach CASL', () => {
             const ability = abilityGatedOnAccess();
 
             expect(
                 ability.can(
                     'view',
-                    dashboardSubject(context({ access: [accessEntry()] })),
+                    dashboardSubject(
+                        context({ access: [accessEntry()] }),
+                        resourceFields(),
+                    ),
                 ),
             ).toBe(true);
         });
@@ -69,9 +77,12 @@ describe('dashboardSubject', () => {
         it('then an empty access array denies an access-gated rule', () => {
             const ability = abilityGatedOnAccess();
 
-            expect(ability.can('view', dashboardSubject(context()))).toBe(
-                false,
-            );
+            expect(
+                ability.can(
+                    'view',
+                    dashboardSubject(context(), resourceFields()),
+                ),
+            ).toBe(false);
         });
 
         it('then it is checked as a Dashboard, not a SavedChart', () => {
@@ -79,9 +90,36 @@ describe('dashboardSubject', () => {
             builder.can('view', 'SavedChart');
             const ability = builder.build();
 
-            expect(ability.can('view', dashboardSubject(context()))).toBe(
-                false,
-            );
+            expect(
+                ability.can(
+                    'view',
+                    dashboardSubject(context(), resourceFields()),
+                ),
+            ).toBe(false);
+        });
+    });
+
+    describe('given a context that also carries organization and project uuids', () => {
+        it('then the resource own uuids are what reach CASL', () => {
+            const ability = abilityGatedOnAccess();
+
+            // SpaceAccessContextForCasl carries organizationUuid/projectUuid
+            // resolved from the space, but call sites source them from the
+            // resource. The builder must not silently re-source them: that would
+            // change which org and project every migrated check is made against.
+            expect(
+                ability.can(
+                    'view',
+                    dashboardSubject(
+                        {
+                            ...context({ access: [accessEntry()] }),
+                            organizationUuid: 'a-different-org',
+                            projectUuid: 'a-different-project',
+                        },
+                        resourceFields(),
+                    ),
+                ),
+            ).toBe(true);
         });
     });
 
@@ -96,9 +134,12 @@ describe('dashboardSubject', () => {
             expect(
                 ability.can(
                     'view',
-                    dashboardSubject(context(), {
-                        metadata: { dashboardUuid: 'dashboard-1' },
-                    }),
+                    dashboardSubject(
+                        context(),
+                        resourceFields({
+                            metadata: { dashboardUuid: 'dashboard-1' },
+                        }),
+                    ),
                 ),
             ).toBe(true);
         });
@@ -106,14 +147,15 @@ describe('dashboardSubject', () => {
         it('then a stale access array on the resource cannot override the context', () => {
             const ability = abilityGatedOnAccess();
 
-            // A resource DAO that already carries an `access` field must not be
-            // able to grant access the resolved context withheld.
+            // getByIdOrSlug merges the context into the DAO it returns, so a DAO
+            // reaching a later check can already carry an `access` field.
             expect(
                 ability.can(
                     'view',
-                    dashboardSubject(context({ access: [] }), {
-                        access: [accessEntry()],
-                    }),
+                    dashboardSubject(
+                        context({ access: [] }),
+                        resourceFields({ access: [accessEntry()] }),
+                    ),
                 ),
             ).toBe(false);
         });
@@ -131,7 +173,7 @@ describe('dashboardSubject', () => {
                     'view',
                     dashboardSubject(
                         context({ inheritsFromOrgOrProject: false }),
-                        { inheritsFromOrgOrProject: true },
+                        resourceFields({ inheritsFromOrgOrProject: true }),
                     ),
                 ),
             ).toBe(false);
@@ -151,6 +193,7 @@ describe('dashboardSubject', () => {
                                 accessEntry({ role: SpaceMemberRole.VIEWER }),
                             ],
                         }),
+                        resourceFields(),
                     ),
                 ),
             ).toBe(false);
@@ -168,6 +211,7 @@ describe('dashboardSubject', () => {
                                 accessEntry({ role: SpaceMemberRole.EDITOR }),
                             ],
                         }),
+                        resourceFields(),
                     ),
                 ),
             ).toBe(true);
@@ -197,6 +241,7 @@ describe('dashboardSubject', () => {
                                     }),
                                 ],
                             }),
+                            resourceFields(),
                         ),
                     ),
                 ).toBe(true);
@@ -212,7 +257,10 @@ describe('savedChartSubject', () => {
         expect(
             ability.can(
                 'view',
-                savedChartSubject(context({ access: [accessEntry()] })),
+                savedChartSubject(
+                    context({ access: [accessEntry()] }),
+                    resourceFields(),
+                ),
             ),
         ).toBe(true);
     });
@@ -220,6 +268,8 @@ describe('savedChartSubject', () => {
     it('given an empty access array, then an access-gated rule denies it', () => {
         const ability = abilityGatedOnAccess();
 
-        expect(ability.can('view', savedChartSubject(context()))).toBe(false);
+        expect(
+            ability.can('view', savedChartSubject(context(), resourceFields())),
+        ).toBe(false);
     });
 });
