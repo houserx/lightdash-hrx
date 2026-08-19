@@ -67,6 +67,7 @@ import { PromptService } from './PromptService/PromptService';
 import { PullRequestsService } from './PullRequestsService/PullRequestsService';
 import type { ReadinessService } from './ReadinessService/ReadinessService';
 import { RenameService } from './RenameService/RenameService';
+import { ResourceAccessService } from './ResourceAccessService/ResourceAccessService';
 import { RolesService } from './RolesService/RolesService';
 import { SavedChartService } from './SavedChartsService/SavedChartService';
 import { SavedSqlService } from './SavedSqlService/SavedSqlService';
@@ -189,6 +190,7 @@ interface ServiceManifest {
     managedAgentService: unknown;
     mcpService: unknown;
     rolesService: RolesService;
+    resourceAccessService: ResourceAccessService;
     slackService: SlackService;
     organizationWarehouseCredentialsService: unknown;
 }
@@ -1566,6 +1568,19 @@ export class ServiceRepository
 
     public getAiRouterService<AiRouterServiceImplT>(): AiRouterServiceImplT {
         return this.getService('aiRouterService');
+    }
+
+    public getResourceAccessService(): ResourceAccessService {
+        return this.getService(
+            'resourceAccessService',
+            () =>
+                new ResourceAccessService({
+                    dashboardModel: this.models.getDashboardModel(),
+                    savedChartModel: this.models.getSavedChartModel(),
+                    resourceAccessModel: this.models.getResourceAccessModel(),
+                    spacePermissionService: this.getSpacePermissionService(),
+                }),
+        );
     }
 
     public getRolesService(): RolesService {
