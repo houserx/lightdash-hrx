@@ -53,7 +53,6 @@ export {
 } from './authorization/index';
 export * from './authorization/jwtAbility';
 export * from './authorization/orgRoleToScopeMapping';
-export { projectMemberAbilities } from './authorization/projectMemberAbility';
 export * from './authorization/parseAccount';
 export * from './authorization/roleToScopeMapping';
 export * from './authorization/scopeAbilityBuilder';
