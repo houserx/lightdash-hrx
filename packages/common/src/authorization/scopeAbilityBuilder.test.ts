@@ -2470,7 +2470,7 @@ describe('scopeAbilityBuilder', () => {
             expect(ability.can('manage', contentAsCodeSubject)).toBe(false);
         });
 
-        it('content as code scopes are gated behind enterprise', () => {
+        it('content as code scopes are available without a license (no service-level gate backs them)', () => {
             const builder = new AbilityBuilder<MemberAbility>(Ability);
             buildAbilityFromScopes(
                 {
@@ -2483,7 +2483,8 @@ describe('scopeAbilityBuilder', () => {
             );
             const ability = builder.build();
 
-            expect(ability.rules.length).toBe(0);
+            expect(ability.can('view', contentAsCodeSubject)).toBe(true);
+            expect(ability.can('manage', contentAsCodeSubject)).toBe(true);
         });
     });
 
