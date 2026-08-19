@@ -1092,6 +1092,8 @@ export class ServiceRepository
                 new SpacePermissionService(
                     this.models.getSpaceModel(),
                     this.models.getSpacePermissionModel(),
+                    this.models.getResourceAccessModel(),
+                    this.lightdashConfig,
                 ),
         );
     }
