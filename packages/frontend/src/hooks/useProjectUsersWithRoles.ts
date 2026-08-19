@@ -4,7 +4,7 @@ import {
     FeatureFlags,
     getHighestProjectRole,
     isGroupWithMembers,
-    isSystemRole,
+    isSystemRoleName,
     ProjectMemberRole,
     type InheritedRoles,
     type KnexPaginateArgs,
@@ -101,7 +101,7 @@ export const useProjectUsersWithRoles = (
                     // A group can carry a custom-role UUID instead of a system role.
                     // Custom roles aren't rankable here, so drop them (undefined) rather
                     // than casting a UUID into ProjectMemberRole, which crashes downstream.
-                    role: isSystemRole(roleString) ? roleString : undefined,
+                    role: isSystemRoleName(roleString) ? roleString : undefined,
                 })),
             );
 

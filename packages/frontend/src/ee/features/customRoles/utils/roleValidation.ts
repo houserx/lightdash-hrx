@@ -1,4 +1,4 @@
-import { isSystemRole } from '@lightdash/common';
+import { isSystemRoleName } from '@lightdash/common';
 
 /**
  * Validates a role name
@@ -12,7 +12,7 @@ export const validateRoleName = (value: string): string | null => {
     if (value.length < 3) {
         return 'Role name must be at least 3 characters';
     }
-    if (isSystemRole(value.toLocaleLowerCase())) {
+    if (isSystemRoleName(value.toLocaleLowerCase())) {
         return 'Role name cannot match a system role';
     }
     return null;

@@ -1,6 +1,6 @@
 import {
     getUncoveredProjectScopes,
-    isSystemRole,
+    isSystemRoleName,
     OrganizationMemberRole,
     type GroupWithMembers,
     type ProjectMemberRole,
@@ -106,12 +106,12 @@ export const getAccessWarning = ({
 
         const typedProjectRole = projectRole as ProjectMemberRole;
 
-        if (isSystemRole(typedProjectRole)) {
+        if (isSystemRoleName(typedProjectRole)) {
             // Group role inheritance warning (consider all groups and pick the highest)
             const groupsWithSystemRoles = (userGroupAccesses || []).filter(
                 (uga) =>
                     uga.access.roleId &&
-                    isSystemRole(uga.access.roleId as ProjectMemberRole),
+                    isSystemRoleName(uga.access.roleId as ProjectMemberRole),
             );
             if (groupsWithSystemRoles.length > 0) {
                 const bestGroup = groupsWithSystemRoles.reduce((best, curr) => {
@@ -162,7 +162,7 @@ export const getAccessWarning = ({
         }
 
         // Custom project role warning: only when other roles grant more
-        if (hasProjectRole && !isSystemRole(typedProjectRole)) {
+        if (hasProjectRole && !isSystemRoleName(typedProjectRole)) {
             const customRoleScopes = roleScopesById?.get(typedProjectRole);
 
             if (!roleScopesById || !customRoleScopes) {
@@ -255,7 +255,7 @@ export const getAccessWarning = ({
         const customGroups = (userGroupAccesses || []).filter(
             (uga) =>
                 uga.access.roleId &&
-                !isSystemRole(uga.access.roleId as ProjectMemberRole),
+                !isSystemRoleName(uga.access.roleId as ProjectMemberRole),
         );
         for (const customGroup of customGroups) {
             const groupRoleScopes = roleScopesById?.get(
