@@ -27,7 +27,20 @@ const ResourceGroupAccessTableName = 'resource_group_access';
  * constraint is what keeps that lookup indexed. `resource_uuid` is indexed
  * separately for the reverse lookup, listing who holds a grant on a resource.
  */
+/**
+ * Purely additive: two new tables, no changes to existing ones, so nothing an
+ * existing deployment reads or writes is affected.
+ */
+export const classification: { kind: 'safe' | 'breaking'; reason: string } = {
+    kind: 'safe',
+    reason: 'Creates two new tables and their constraints; touches no existing table, column or index.',
+};
+
 export async function up(knex: Knex): Promise<void> {
+    // A waiting ALTER can queue every later query behind it. Cheap here (the
+    // tables are new and uncontended) but the gate expects DDL to bound it.
+    await knex.raw('SET lock_timeout = 10000');
+
     await knex.schema.createTable(ResourceUserAccessTableName, (table) => {
         table
             .uuid('resource_user_access_uuid')
@@ -55,7 +68,8 @@ export async function up(knex: Knex): Promise<void> {
             .nullable()
             .references('user_uuid')
             .inTable('users')
-            .onDelete('SET NULL');
+            .onDelete('SET NULL')
+            .index();
         table.timestamp('created_at').notNullable().defaultTo(knex.fn.now());
 
         table.unique(['user_uuid', 'resource_uuid', 'resource_type', 'action']);
@@ -88,7 +102,8 @@ export async function up(knex: Knex): Promise<void> {
             .nullable()
             .references('user_uuid')
             .inTable('users')
-            .onDelete('SET NULL');
+            .onDelete('SET NULL')
+            .index();
         table.timestamp('created_at').notNullable().defaultTo(knex.fn.now());
 
         table.unique([
@@ -121,6 +136,8 @@ export async function up(knex: Knex): Promise<void> {
             ADD CONSTRAINT resource_group_access_action_check
                 CHECK (action IN ('view', 'manage'))
     `);
+
+    await knex.raw('RESET lock_timeout');
 }
 
 export async function down(knex: Knex): Promise<void> {
