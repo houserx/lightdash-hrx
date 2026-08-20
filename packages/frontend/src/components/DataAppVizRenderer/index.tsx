@@ -12,12 +12,12 @@ import useEmbed from '../../ee/providers/Embed/useEmbed';
 import AppIframePreview from '../../features/apps/AppIframePreview';
 import { useChartVersionPreview } from '../../features/apps/ChartVersionPreview/useChartVersionPreview';
 import { getVisiblePreviewTokenError } from '../../features/apps/hooks/previewTokenQueryOptions';
+import { usePreviewOrigin } from '../../features/apps/previewOrigin';
 import {
     useDataAppVizPreviewToken,
     useDataAppVizRenderMetadata,
-} from '../../features/apps/hooks/useDataAppVizRender';
-import { usePreviewOrigin } from '../../features/apps/previewOrigin';
-import { reconcileDataAppVizFieldMapping } from '../../features/apps/utils/autoMapDataAppVizFields';
+} from '../../features/chartTypes/hooks/useDataAppVizRender';
+import { reconcileDataAppVizFieldMapping } from '../../features/chartTypes/utils/autoMapDataAppVizFields';
 import { useContextMenuPermissions } from '../../hooks/useContextMenuPermissions';
 import { useExplore } from '../../hooks/useExplore';
 import MantineIcon from '../common/MantineIcon';
@@ -92,6 +92,7 @@ const DataAppVizRenderer: FC<Props> = ({ onScreenshotReady }) => {
     const fieldMapping = config?.fieldMapping;
     const optionValues = config?.optionValues;
     const rows = resultsData?.rows;
+    const pivotDetails = resultsData?.pivotDetails ?? null;
 
     const chartVersionUuid = useChartVersionPreview();
     const renderTarget = useMemo(
@@ -128,7 +129,8 @@ const DataAppVizRenderer: FC<Props> = ({ onScreenshotReady }) => {
         canViewUnderlyingData &&
         !hasCustomBinDimension(metricQuery) &&
         !embedToken &&
-        !minimal;
+        !minimal &&
+        !pivotDetails;
 
     const { data: explore } = useExplore(metricQuery?.exploreName, {
         refetchOnMount: false,
@@ -209,6 +211,7 @@ const DataAppVizRenderer: FC<Props> = ({ onScreenshotReady }) => {
             // Already resolved through the full palette cascade and dark-mode
             // corrected by the visualization context.
             colorPalette,
+            pivotDetails,
             underlyingData: { enabled: underlyingDataEnabled },
         };
     }, [
@@ -217,6 +220,7 @@ const DataAppVizRenderer: FC<Props> = ({ onScreenshotReady }) => {
         configOptions,
         optionValues,
         colorPalette,
+        pivotDetails,
         underlyingDataEnabled,
     ]);
 

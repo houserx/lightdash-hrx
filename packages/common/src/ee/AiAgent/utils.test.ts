@@ -60,6 +60,57 @@ describe('parseAiArtifactChartConfig', () => {
         });
     });
 
+    it('accepts versioned merge configs', () => {
+        const config = {
+            source: 'merge',
+            schemaVersion: 1,
+            config: {
+                ...semanticConfig,
+                mergeConfig: {
+                    primarySourceId: 'orders',
+                    additionalSources: [
+                        {
+                            id: 'targets',
+                            queryConfig: {
+                                exploreName: 'targets',
+                                dimensions: ['targets_month'],
+                                metrics: ['targets_target'],
+                                sorts: [],
+                                customMetrics: null,
+                                filters: null,
+                            },
+                        },
+                    ],
+                    joinKey: [
+                        {
+                            name: 'month',
+                            fields: [
+                                {
+                                    sourceId: 'orders',
+                                    fieldId: 'orders_created_month',
+                                },
+                                {
+                                    sourceId: 'targets',
+                                    fieldId: 'targets_month',
+                                },
+                            ],
+                        },
+                    ],
+                    joinType: 'full',
+                },
+            },
+        } as const;
+
+        // The V3 schema parse fills defaulted fields the persisted value omits.
+        expect(parseAiArtifactChartConfig(config)).toEqual({
+            ...config,
+            config: {
+                ...config.config,
+                queryConfig: { ...config.config.queryConfig, parameters: null },
+            },
+        });
+    });
+
     it('rejects invalid configs', () => {
         expect(parseAiArtifactChartConfig({ source: 'sql' })).toBeNull();
     });
@@ -134,6 +185,68 @@ describe('parseVizConfig with legacy persisted configs', () => {
 
         expect(parsed?.type).toBe(AiResultType.TABLE_RESULT);
         expect(parsed?.vizTool).not.toHaveProperty('followUpTools');
+    });
+});
+
+describe('parseVizConfig table calculations', () => {
+    const runQueryArgs = (tableCalculations: unknown) => ({
+        title: 'Revenue',
+        description: 'Revenue',
+        queryConfig: {
+            exploreName: 'orders',
+            dimensions: ['orders_created_month'],
+            metrics: ['orders_revenue', 'orders_count'],
+            sorts: [],
+            limit: 500,
+            customMetrics: null,
+            tableCalculations,
+            filters: null,
+        },
+        chartConfig: null,
+    });
+
+    it('parses persisted args with legacy template table calcs', () => {
+        const parsed = parseVizConfig(
+            runQueryArgs([
+                {
+                    type: 'running_total',
+                    name: 'running_revenue',
+                    displayName: 'Running Revenue',
+                    fieldId: 'orders_revenue',
+                },
+            ]),
+        );
+
+        expect(parsed?.type).toBe(AiResultType.QUERY_RESULT);
+        expect(parsed?.metricQuery.tableCalculations).toEqual([
+            expect.objectContaining({
+                name: 'running_revenue',
+                template: expect.objectContaining({ type: 'running_total' }),
+            }),
+        ]);
+    });
+
+    it('parses args with formula table calcs', () => {
+        const parsed = parseVizConfig(
+            runQueryArgs([
+                {
+                    type: 'formula',
+                    name: 'aov',
+                    displayName: 'AOV',
+                    formula: 'orders_revenue / orders_count',
+                    format: null,
+                    resultType: null,
+                },
+            ]),
+        );
+
+        expect(parsed?.type).toBe(AiResultType.QUERY_RESULT);
+        expect(parsed?.metricQuery.tableCalculations).toEqual([
+            expect.objectContaining({
+                name: 'aov',
+                formula: '=orders_revenue / orders_count',
+            }),
+        ]);
     });
 });
 
