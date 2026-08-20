@@ -178,6 +178,29 @@ describe('validateMergeQuery', () => {
             );
         });
 
+        it('rejects "merge" as a source id', () => {
+            const errors = validateMergeQuery(
+                mergeQuery({
+                    sources: [{ ...queryA(), id: 'merge' }, queryB()],
+                    joinKey: [
+                        {
+                            name: 'date_day',
+                            fieldIdBySourceId: {
+                                merge: 'followers_created_date',
+                                b: 'follower_snapshots_date',
+                            },
+                        },
+                    ],
+                }),
+            );
+
+            expect(errors.map((error) => error.kind)).toEqual(
+                expect.arrayContaining([
+                    MergeQueryErrorKind.RESERVED_SOURCE_ID,
+                ]),
+            );
+        });
+
         it('rejects an empty join key', () => {
             const errors = validateMergeQuery(mergeQuery({ joinKey: [] }));
 
@@ -317,6 +340,40 @@ describe('join key comparability', () => {
 
     it('skips the checks when no field types are supplied', () => {
         expect(validateMergeQuery(mergeQuery())).toEqual([]);
+    });
+});
+
+describe('result sources', () => {
+    const resultSource = { id: 'b', queryUuid: 'existing-query-uuid' };
+
+    test('defer structural checks the validator cannot see to the compiler', () => {
+        const errors = validateMergeQuery(
+            mergeQuery({ sources: [queryA(), resultSource] }),
+        );
+        // No fan-out or join-key-not-selected errors for the result source:
+        // its structure lives in stored metadata the compiler resolves.
+        expect(errors).toEqual([]);
+    });
+
+    test('still validates join key coverage for result sources', () => {
+        const errors = validateMergeQuery(
+            mergeQuery({
+                sources: [queryA(), resultSource],
+                joinKey: [
+                    {
+                        name: 'date_day',
+                        fieldIdBySourceId: { a: 'followers_created_date' },
+                    },
+                ],
+            }),
+        );
+        expect(errors.map((error) => error.kind)).toContain(
+            MergeQueryErrorKind.JOIN_KEY_COVERAGE,
+        );
+    });
+
+    test('contribute no unaccounted dimensions', () => {
+        expect(getUnaccountedDimensions(resultSource, dateJoinKey)).toEqual([]);
     });
 });
 

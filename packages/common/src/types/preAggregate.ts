@@ -70,8 +70,10 @@ export enum PreAggregateMissReason {
     NON_ADDITIVE_METRIC_REQUIRES_EXACT_MATCH = 'non_additive_metric_requires_exact_match',
     CUSTOM_SQL_METRIC = 'custom_sql_metric',
     FILTER_DIMENSION_NOT_IN_PRE_AGGREGATE = 'filter_dimension_not_in_pre_aggregate',
+    SQL_FILTER_FIELD_NOT_IN_PRE_AGGREGATE = 'sql_filter_field_not_in_pre_aggregate',
     PRE_AGGREGATE_FILTER_NOT_SATISFIED = 'pre_aggregate_filter_not_satisfied',
     GRANULARITY_TOO_FINE = 'granularity_too_fine',
+    TIME_FRAME_NOT_DERIVABLE = 'time_frame_not_derivable',
     CUSTOM_DIMENSION_PRESENT = 'custom_dimension_present',
     CUSTOM_METRIC_PRESENT = 'custom_metric_present',
     TABLE_CALCULATION_PRESENT = 'table_calculation_present',
@@ -109,11 +111,22 @@ export type PreAggregateMatchMiss =
           fieldId: FieldId;
       }
     | {
+          reason: PreAggregateMissReason.SQL_FILTER_FIELD_NOT_IN_PRE_AGGREGATE;
+          fieldId: FieldId;
+      }
+    | {
           reason: PreAggregateMissReason.PRE_AGGREGATE_FILTER_NOT_SATISFIED;
           fieldId: FieldId;
       }
     | {
           reason: PreAggregateMissReason.GRANULARITY_TOO_FINE;
+          fieldId: FieldId;
+          queryGranularity: TimeFrames;
+          preAggregateGranularity: TimeFrames;
+          preAggregateTimeDimension: string;
+      }
+    | {
+          reason: PreAggregateMissReason.TIME_FRAME_NOT_DERIVABLE;
           fieldId: FieldId;
           queryGranularity: TimeFrames;
           preAggregateGranularity: TimeFrames;
@@ -201,9 +214,13 @@ export const preAggregateMissReasonLabels: Record<
     [PreAggregateMissReason.CUSTOM_SQL_METRIC]: 'Custom SQL metric',
     [PreAggregateMissReason.FILTER_DIMENSION_NOT_IN_PRE_AGGREGATE]:
         'Filter dimension not in pre-aggregate',
+    [PreAggregateMissReason.SQL_FILTER_FIELD_NOT_IN_PRE_AGGREGATE]:
+        'sql_filter field not in pre-aggregate',
     [PreAggregateMissReason.PRE_AGGREGATE_FILTER_NOT_SATISFIED]:
         'Pre-aggregate filter not satisfied',
     [PreAggregateMissReason.GRANULARITY_TOO_FINE]: 'Granularity too fine',
+    [PreAggregateMissReason.TIME_FRAME_NOT_DERIVABLE]:
+        'Time frame not derivable',
     [PreAggregateMissReason.CUSTOM_DIMENSION_PRESENT]:
         'Custom dimension detected',
     [PreAggregateMissReason.CUSTOM_METRIC_PRESENT]: 'Custom metric detected',
@@ -326,9 +343,12 @@ export type PreAggregateDailyStatResult = {
     chartName: string | null;
     dashboardUuid: string | null;
     dashboardName: string | null;
+    dashboardSlug: string | null;
     queryContext: string;
     hitCount: number;
     missCount: number;
+    // Matched queries whose pre-aggregate execution failed and were served from the warehouse
+    fallbackCount: number;
     missReason: string | null;
     preAggregateName: string | null;
     updatedAt: string;

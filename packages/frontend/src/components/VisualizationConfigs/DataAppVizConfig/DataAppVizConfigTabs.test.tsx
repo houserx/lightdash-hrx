@@ -28,11 +28,26 @@ import { ConfigTabs } from './DataAppVizConfigTabs';
 
 type PickerProps = {
     disabled: boolean;
+    onCreateNew: (() => void) | null;
     onSelectProjectType: (dataAppViz: DataAppViz) => void;
 };
 
-const { fieldSelectItems, pickerProps } = vi.hoisted(() => ({
+type FieldSelectProps = {
+    items: Item[];
+    onChange: (item: Item | null) => void;
+};
+
+const {
+    fieldSelectItems,
+    fieldSelectProps,
+    locationSearch,
+    navigate,
+    pickerProps,
+} = vi.hoisted(() => ({
     fieldSelectItems: [] as Item[][],
+    fieldSelectProps: [] as FieldSelectProps[],
+    locationSearch: { current: '' },
+    navigate: vi.fn(),
     pickerProps: [] as PickerProps[],
 }));
 
@@ -42,24 +57,33 @@ vi.mock('../CustomChartType/CustomChartTypePicker', () => ({
         return <div data-testid="viz-picker" />;
     },
 }));
-vi.mock('../../../features/apps/hooks/useDataAppVisualization', () => ({
+vi.mock('../../../features/chartTypes/hooks/useDataAppVisualization', () => ({
     useDataAppVisualization: vi.fn(),
 }));
 // The panel reads the project from the route, which this test does not mount.
 vi.mock('react-router', async (importOriginal) => ({
     ...(await importOriginal<typeof ReactRouter>()),
     useParams: () => ({ projectUuid: 'project-1' }),
+    useLocation: () => ({ search: locationSearch.current }),
     // The panel navigates to the builder; this test does not mount a router.
-    useNavigate: () => vi.fn(),
+    useNavigate: () => navigate,
     Link: ({ to, children, ...rest }: ReactRouter.LinkProps) => (
-        <a href={typeof to === 'string' ? to : ''} {...rest}>
+        <a
+            href={
+                typeof to === 'string'
+                    ? to
+                    : `${to.pathname ?? ''}${to.search ?? ''}`
+            }
+            {...rest}
+        >
             {children}
         </a>
     ),
 }));
 vi.mock('../../common/FieldSelect', () => ({
-    default: ({ items }: { items: Item[] }) => {
-        fieldSelectItems.push(items);
+    default: (props: FieldSelectProps) => {
+        fieldSelectItems.push(props.items);
+        fieldSelectProps.push(props);
         return <div data-testid="field-select" />;
     },
 }));
@@ -71,7 +95,7 @@ vi.mock('../common/ColorPaletteSection', () => ({
     ColorPaletteSection: () => <div data-testid="color-palette-section" />,
 }));
 
-import { useDataAppVisualization } from '../../../features/apps/hooks/useDataAppVisualization';
+import { useDataAppVisualization } from '../../../features/chartTypes/hooks/useDataAppVisualization';
 import { useVisualizationContext } from '../../LightdashVisualization/useVisualizationContext';
 
 const makeDimension = (name: string, hidden: boolean): CompiledDimension => ({
@@ -186,22 +210,26 @@ const queryColumns: ItemsMap = {
 describe('DataAppVizConfigTabs', () => {
     const setOption = vi.fn();
     const setDataAppVizUuid = vi.fn();
+    const setField = vi.fn();
+    const setPivotDimensions = vi.fn();
 
     const mockContext = (
         itemsMap: ItemsMap,
         dataAppVizUuid: string = 'data-app-viz-uuid',
         optionValues: Record<string, boolean | number | string> = {},
+        fieldMapping: Record<string, string> = {},
     ) =>
         vi.mocked(useVisualizationContext).mockReturnValue({
             itemsMap,
+            setPivotDimensions,
             visualizationConfig: {
                 chartType: ChartType.DATA_APP_VIZ,
                 chartConfig: {
                     dataAppVizUuid,
-                    fieldMapping: {},
+                    fieldMapping,
                     optionValues,
                     setDataAppVizUuid,
-                    setField: vi.fn(),
+                    setField,
                     setOption,
                 },
             },
@@ -209,9 +237,14 @@ describe('DataAppVizConfigTabs', () => {
 
     beforeEach(() => {
         fieldSelectItems.length = 0;
+        fieldSelectProps.length = 0;
         pickerProps.length = 0;
+        locationSearch.current = '';
+        navigate.mockClear();
         setOption.mockClear();
         setDataAppVizUuid.mockClear();
+        setField.mockClear();
+        setPivotDimensions.mockClear();
         defaultAbility.update([]);
         mockSchema([]);
         mockContext(queryColumns);
@@ -313,6 +346,41 @@ describe('DataAppVizConfigTabs', () => {
             value: 'orders_visible_metric',
             breakdown: 'custom-dimension',
         });
+        expect(setPivotDimensions).toHaveBeenCalledWith(['custom-dimension']);
+    });
+
+    it('updates pivot dimensions when a series mapping changes', () => {
+        const fields: DataAppVizField[] = [
+            ...declaredFields,
+            {
+                name: 'breakdown',
+                label: 'Breakdown',
+                type: 'series',
+                required: false,
+            },
+        ];
+        mockSchema([], null, {
+            schema: { fields, configOptions: [], colorPalette: null },
+        });
+        mockContext(
+            queryColumns,
+            'data-app-viz-uuid',
+            {},
+            {
+                source: 'orders_visible',
+                value: 'orders_visible_metric',
+            },
+        );
+        renderWithProviders(<ConfigTabs />);
+
+        act(() =>
+            fieldSelectProps[fieldSelectProps.length - 1].onChange(
+                customDimension,
+            ),
+        );
+
+        expect(setField).toHaveBeenCalledWith('breakdown', 'custom-dimension');
+        expect(setPivotDimensions).toHaveBeenCalledWith(['custom-dimension']);
     });
 
     it('will not offer the picker before the query has columns', () => {
@@ -340,6 +408,30 @@ describe('DataAppVizConfigTabs', () => {
         ).toHaveAttribute('href', '/projects/project-1/chart-types/new');
     });
 
+    it('keeps the Explorer query in builder links', async () => {
+        signInAs(OrganizationMemberRole.EDITOR);
+        mockContext(queryColumns, '');
+        locationSearch.current =
+            '?create_saved_chart_version=serialized-query&fromSpace=space-1';
+        vi.mocked(useDataAppVisualization).mockReturnValue({
+            data: undefined,
+        } as unknown as ReturnType<typeof useDataAppVisualization>);
+
+        renderWithProviders(<ConfigTabs />);
+
+        expect(
+            (await screen.findByText('builder')).closest('a'),
+        ).toHaveAttribute(
+            'href',
+            '/projects/project-1/chart-types/new?create_saved_chart_version=serialized-query&fromSpace=space-1',
+        );
+        act(() => pickerProps[pickerProps.length - 1].onCreateNew?.());
+        expect(navigate).toHaveBeenCalledWith({
+            pathname: '/projects/project-1/chart-types/new',
+            search: locationSearch.current,
+        });
+    });
+
     it('offers no builder link to who cannot create chart types', async () => {
         signInAs(OrganizationMemberRole.INTERACTIVE_VIEWER);
         mockContext(queryColumns, '');
@@ -357,6 +449,7 @@ describe('DataAppVizConfigTabs', () => {
 
     it('describes the selected type with a jump into its builder', async () => {
         signInAs(OrganizationMemberRole.EDITOR);
+        locationSearch.current = '?fromDashboard=dashboard-1';
         mockSchema([], null, { description: 'A gauge for KPI progress' });
         renderWithProviders(<ConfigTabs />);
 
@@ -369,7 +462,7 @@ describe('DataAppVizConfigTabs', () => {
             (await screen.findByText('Edit ↗')).closest('a'),
         ).toHaveAttribute(
             'href',
-            '/projects/project-1/chart-types/data-app-viz-uuid',
+            '/projects/project-1/chart-types/data-app-viz-uuid?fromDashboard=dashboard-1',
         );
     });
 

@@ -159,37 +159,37 @@ export class SearchService extends BaseService {
             ),
         ]);
 
+        const contentWithContext = allContent.flatMap((content) => {
+            const accessContext = isDashboard(content)
+                ? dashboardContexts[content.uuid]
+                : chartContexts[content.uuid];
+            return accessContext ? [{ content, accessContext }] : [];
+        });
+        const accessResults = auditedAbility.canBulk(
+            'view',
+            contentWithContext.map(({ content, accessContext }) =>
+                isDashboard(content)
+                    ? subject('Dashboard', {
+                          ...accessContext,
+                          metadata: {
+                              dashboardUuid: content.uuid,
+                              dashboardName: content.name,
+                          },
+                      })
+                    : subject('SavedChart', {
+                          ...accessContext,
+                          metadata: {
+                              savedChartUuid: content.uuid,
+                              savedChartName: content.name,
+                          },
+                      }),
+            ),
+        );
+
         return {
-            content: allContent.filter((content) => {
-                const spaceContext = isDashboard(content)
-                    ? dashboardContexts[content.uuid]
-                    : chartContexts[content.uuid];
-                if (!spaceContext) return false;
-
-                if ('charts' in content) {
-                    return auditedAbility.can(
-                        'view',
-                        subject('Dashboard', {
-                            ...spaceContext,
-                            metadata: {
-                                dashboardUuid: content.uuid,
-                                dashboardName: content.name,
-                            },
-                        }),
-                    );
-                }
-
-                return auditedAbility.can(
-                    'view',
-                    subject('SavedChart', {
-                        ...spaceContext,
-                        metadata: {
-                            savedChartUuid: content.uuid,
-                            savedChartName: content.name,
-                        },
-                    }),
-                );
-            }),
+            content: contentWithContext
+                .filter((_, index) => accessResults[index])
+                .map(({ content }) => content),
         };
     }
 

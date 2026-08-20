@@ -18,6 +18,7 @@ import {
     type Filters,
     type ItemsMap,
     type ParametersValuesMap,
+    type PreAggregateExecutionEngine,
     type QueryExecutionContext,
     type ResultColumns,
     type ResultsPaginationArgs,
@@ -26,6 +27,7 @@ import {
     type SortField,
     type UserAccessControls,
     type UserAttributeValueMap,
+    type UUID,
 } from '@lightdash/common';
 import type { OnboardingFlow } from '../../analytics/LightdashAnalytics';
 import type { DbProjectParameter } from '../../database/entities/projectParameters';
@@ -156,9 +158,7 @@ export type UnboundedRerunFromQueryHistoryResult =
 
 export type PreAggregationRouteMode = 'required' | 'opportunistic';
 
-// duckdb = managed materialization via the DuckDB client override;
-// project_warehouse = external pre-aggregate on the normal project client
-export type PreAggregateExecutionEngine = 'duckdb' | 'project_warehouse';
+export type { PreAggregateExecutionEngine };
 
 export type PreAggregationRoute = {
     sourceExploreName: string;
@@ -172,6 +172,13 @@ export type ExecuteAsyncSqlQueryArgs = CommonAsyncQueryArgs & {
     sql: string;
     limit?: number;
     pivotConfiguration?: PivotConfiguration;
+};
+
+export type ExecuteAsyncComposeSqlQueryArgs = CommonAsyncQueryArgs & {
+    sql: string;
+    limit?: number;
+    /** Table name -> queryUuid of a previous async query to expose as that table. */
+    references?: Record<string, UUID>;
 };
 
 export type ExecuteAsyncMergeQueryArgs = CommonAsyncQueryArgs & {
