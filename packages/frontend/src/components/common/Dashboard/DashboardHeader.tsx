@@ -75,7 +75,7 @@ import MantineIcon from '../MantineIcon';
 import DashboardUpdateModal from '../modal/DashboardUpdateModal';
 import PageHeader from '../Page/PageHeader';
 import DashboardInfoOverlay from '../PageHeader/DashboardInfoOverlay';
-import { ShareLinkButton } from '../ShareLinkButton';
+import ShareShortLinkButton from '../ShareShortLinkButton';
 import SpaceActionModal from '../SpaceActionModal';
 import { ActionType } from '../SpaceActionModal/types';
 import TransferItemsModal from '../TransferItemsModal/TransferItemsModal';
@@ -156,11 +156,12 @@ const DashboardHeader = memo(
         );
         const { search, pathname } = useLocation();
         const navigate = useNavigate();
-        const { projectUuid, dashboardUuid } = useParams<{
+        const { projectUuid } = useParams<{
             projectUuid: string;
-            dashboardUuid: string;
             organizationUuid: string;
         }>();
+        const dashboardUuid = dashboard.uuid;
+        const dashboardIdentifier = dashboard.slug;
 
         const { data: project } = useProject(projectUuid);
 
@@ -678,10 +679,7 @@ const DashboardHeader = memo(
                             )}
 
                         {userCanExportData && !isFullscreen && (
-                            <ShareLinkButton
-                                url={`${window.location.href}`}
-                                label="Copy link to the dashboard"
-                            />
+                            <ShareShortLinkButton />
                         )}
 
                         {!isFullscreen && (
@@ -889,7 +887,7 @@ const DashboardHeader = memo(
                                                 }
                                                 onClick={() =>
                                                     navigate(
-                                                        `/projects/${projectUuid}/dashboards/${dashboardUuid}/history`,
+                                                        `/projects/${projectUuid}/dashboards/${dashboardIdentifier}/history`,
                                                     )
                                                 }
                                             >

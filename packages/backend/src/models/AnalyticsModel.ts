@@ -261,6 +261,7 @@ export class AnalyticsModel {
                 first_name: string;
                 last_name: string;
                 dashboard_uuid: string;
+                dashboard_slug: string;
                 dashboard_name: string;
                 count: number;
             }[];
@@ -298,6 +299,7 @@ export class AnalyticsModel {
                     lastName: row.last_name,
                     count: row.count,
                     dashboardUuid: row.dashboard_uuid,
+                    dashboardSlug: row.dashboard_slug,
                     dashboardName: row.dashboard_name,
                 }),
             ),
@@ -427,11 +429,13 @@ export class AnalyticsModel {
                     this.database.raw(chartsQuery, [
                         projectUuid,
                         options.stalenessChartDays,
+                        options.stalenessChartDays,
                         options.protectRecentDays,
                         options.limit,
                     ]),
                     this.database.raw(dashboardsQuery, [
                         projectUuid,
+                        options.stalenessDashboardDays,
                         options.stalenessDashboardDays,
                         options.protectRecentDays,
                         options.limit,
