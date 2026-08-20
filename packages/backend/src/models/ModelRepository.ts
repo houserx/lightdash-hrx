@@ -47,6 +47,7 @@ import { ProjectModel } from './ProjectModel/ProjectModel';
 import { ProjectParametersModel } from './ProjectParametersModel';
 import { PullRequestsModel } from './PullRequestsModel';
 import { QueryHistoryModel } from './QueryHistoryModel/QueryHistoryModel';
+import { ResourceAccessModel } from './ResourceAccessModel';
 import { ResourceViewItemModel } from './ResourceViewItemModel';
 import { RolesModel } from './RolesModel';
 import { SavedChartModel } from './SavedChartModel';
@@ -130,6 +131,7 @@ export type ModelManifest = {
     slackChannelCacheModel: SlackChannelCacheModel;
     slackUnfurlImageModel: SlackUnfurlImageModel;
     spaceModel: SpaceModel;
+    resourceAccessModel: ResourceAccessModel;
     spacePermissionModel: SpacePermissionModel;
     sshKeyPairModel: SshKeyPairModel;
     userAttributesModel: UserAttributesModel;
@@ -692,6 +694,13 @@ export class ModelRepository
         return this.getModel(
             'spaceModel',
             () => new SpaceModel({ database: this.database }),
+        );
+    }
+
+    public getResourceAccessModel(): ResourceAccessModel {
+        return this.getModel(
+            'resourceAccessModel',
+            () => new ResourceAccessModel(this.database),
         );
     }
 
