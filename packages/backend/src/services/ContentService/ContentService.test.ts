@@ -15,6 +15,7 @@ import type { ContentModel } from '../../models/ContentModel/ContentModel';
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
 import type { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import type { SpaceModel } from '../../models/SpaceModel';
+import type { ValidationModel } from '../../models/ValidationModel/ValidationModel';
 import type { DashboardService } from '../DashboardService/DashboardService';
 import type { SavedChartService } from '../SavedChartsService/SavedChartService';
 import type { SavedSqlService } from '../SavedSqlService/SavedSqlService';
@@ -86,18 +87,26 @@ const createService = ({
     const savedChartService = {
         restore: vi.fn().mockResolvedValue(undefined),
         permanentDelete: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
     };
     const savedSqlService = {
         restore: vi.fn().mockResolvedValue(undefined),
         permanentDelete: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
     };
     const dashboardService = {
         restore: vi.fn().mockResolvedValue(undefined),
         permanentDelete: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
     };
     const spaceService = {
         restore: vi.fn().mockResolvedValue(undefined),
         permanentDelete: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const validationModel = {
+        deleteChartValidations: vi.fn().mockResolvedValue(undefined),
+        deleteDashboardValidations: vi.fn().mockResolvedValue(undefined),
     };
 
     return {
@@ -116,6 +125,7 @@ const createService = ({
                 savedChartService as unknown as SavedChartService,
             savedSqlService: savedSqlService as unknown as SavedSqlService,
             spacePermissionService,
+            validationModel: validationModel as unknown as ValidationModel,
             appMoveService: undefined,
             appGenerateService: undefined,
         }),
@@ -124,6 +134,7 @@ const createService = ({
         savedSqlService,
         dashboardService,
         spaceService,
+        validationModel,
     };
 };
 
@@ -415,6 +426,113 @@ describe('ContentService.find', () => {
     });
 });
 
+describe('ContentService.bulkDelete', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('dispatches deletes per content type and clears validation rows', async () => {
+        const deps = createService();
+        const user = createUser();
+
+        const results = await deps.service.bulkDelete(user, projectUuid, [
+            {
+                uuid: 'chart-uuid',
+                contentType: ContentType.CHART,
+                source: ChartSourceType.DBT_EXPLORE,
+            },
+            {
+                uuid: 'sql-chart-uuid',
+                contentType: ContentType.CHART,
+                source: ChartSourceType.SQL,
+            },
+            { uuid: 'dashboard-uuid', contentType: ContentType.DASHBOARD },
+            { uuid: 'space-uuid', contentType: ContentType.SPACE },
+        ]);
+
+        expect(results).toEqual({ deletedCount: 4, skipped: [] });
+        expect(deps.savedChartService.delete).toHaveBeenCalledWith(
+            user,
+            'chart-uuid',
+            { projectUuid },
+        );
+        expect(
+            deps.validationModel.deleteChartValidations,
+        ).toHaveBeenCalledWith('chart-uuid', projectUuid);
+        expect(deps.savedSqlService.delete).toHaveBeenCalledWith(
+            user,
+            'sql-chart-uuid',
+        );
+        expect(deps.dashboardService.delete).toHaveBeenCalledWith(
+            user,
+            'dashboard-uuid',
+            { projectUuid },
+        );
+        expect(
+            deps.validationModel.deleteDashboardValidations,
+        ).toHaveBeenCalledWith('dashboard-uuid', projectUuid);
+        expect(deps.spaceService.delete).toHaveBeenCalledWith(
+            user,
+            'space-uuid',
+        );
+    });
+
+    it('reports partial success when some items cannot be deleted', async () => {
+        const deps = createService();
+        deps.savedChartService.delete.mockRejectedValueOnce(
+            new ForbiddenError(),
+        );
+        const user = createUser();
+
+        const results = await deps.service.bulkDelete(user, projectUuid, [
+            {
+                uuid: 'forbidden-chart-uuid',
+                contentType: ContentType.CHART,
+                source: ChartSourceType.DBT_EXPLORE,
+            },
+            { uuid: 'dashboard-uuid', contentType: ContentType.DASHBOARD },
+            { uuid: 'app-uuid', contentType: ContentType.DATA_APP },
+        ]);
+
+        expect(results.deletedCount).toBe(1);
+        expect(results.skipped).toHaveLength(2);
+        expect(results.skipped[0]).toMatchObject({
+            uuid: 'forbidden-chart-uuid',
+            contentType: ContentType.CHART,
+        });
+        expect(results.skipped[1]).toMatchObject({
+            uuid: 'app-uuid',
+            contentType: ContentType.DATA_APP,
+        });
+        // Failed chart delete must not clear its validation rows
+        expect(
+            deps.validationModel.deleteChartValidations,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejects a project the user cannot view', async () => {
+        const deps = createService();
+        deps.projectModel.getSummary.mockResolvedValue({
+            organizationUuid: 'another-organization-uuid',
+            name: 'Another project',
+        });
+
+        await expect(
+            deps.service.bulkDelete(
+                createOrganizationAdminUser(),
+                projectUuid,
+                [
+                    {
+                        uuid: 'dashboard-uuid',
+                        contentType: ContentType.DASHBOARD,
+                    },
+                ],
+            ),
+        ).rejects.toThrow(ForbiddenError);
+        expect(deps.dashboardService.delete).not.toHaveBeenCalled();
+    });
+});
+
 describe('ContentService.findDeleted', () => {
     it('rejects a project owned by another organization', async () => {
         const findDeletedContents = vi.fn();
@@ -489,6 +607,8 @@ describe('ContentService content browse grants', () => {
             spacePermissionService: {
                 getAccessibleSpaceUuids: vi.fn().mockResolvedValue([]),
             } as unknown as SpacePermissionService,
+            // Required by ContentServiceArguments on main; nothing here reaches it.
+            validationModel: {} as unknown as ValidationModel,
             appMoveService: undefined,
             appGenerateService: undefined,
         });

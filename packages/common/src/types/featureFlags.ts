@@ -133,9 +133,6 @@ export enum FeatureFlags {
      */
     AiDeepResearch = 'ai-deep-research',
 
-    /** Enable project-scoped AI agent memory runtime. */
-    AiAgentMemory = 'ai-agent-memory',
-
     /**
      * Enable the Hexbin (H3 hexagonal binning) layer type for Map charts.
      * Gates the option in the Map Type segmented control. Existing charts
@@ -229,15 +226,6 @@ export enum FeatureFlags {
     OrganizationRoadmap = 'organization-roadmap',
 
     /**
-     * Replace the discoverFields sub-agent with a deterministic grep over an
-     * in-memory, annotated view of the project's cached explores (explore =
-     * directory, field = file). Connection-agnostic (reads compiled explores,
-     * never the warehouse or git) — lets the main agent navigate fields itself
-     * instead of paying the discoverFields sub-agent round-trip. Experimental.
-     */
-    AiGrepFields = 'ai-grep-fields',
-
-    /**
      * Guard the agent's `searchFieldValues` tool against pathological warehouse
      * scans. When on, an empty/whitespace query — which compiles to
      * `LIKE '%%'`, i.e. "distinct the entire column" — is rejected immediately
@@ -320,6 +308,46 @@ export enum FeatureFlags {
        explorer. Gated because it compiles novel SQL shapes (multi-CTE joins,
        conditional-aggregation widening) that no other path exercises. */
     MergeQueries = 'merge-queries',
+
+    /**
+     * Enable the async compose SQL endpoint
+     * (POST /api/v2/projects/{projectUuid}/query/compose-sql), which runs
+     * DuckDB SQL over other queries' results, exposed as named tables via
+     * the request's references map ({"orders": "<queryUuid>"}).
+     * Off by default; on in preview/dev environments via
+     * PREVIEW_ENABLED_FEATURE_FLAGS.
+     */
+    ComposeSqlRunner = 'compose-sql-runner',
+
+    /**
+     * Enable the multi-source query endpoints
+     * (/api/v2/projects/{projectUuid}/query-sources/*): source discovery,
+     * schema scans, source-query submission and batch status. Off by
+     * default; on in preview/dev environments via
+     * PREVIEW_ENABLED_FEATURE_FLAGS.
+     */
+    MultiSourceQuery = 'multi-source-query',
+
+    /**
+     * Enable the "My query history" page
+     * (/projects/{projectUuid}/query-history) and its listing endpoint
+     * (GET /api/v2/projects/{projectUuid}/query/history). Off by default.
+     */
+    QueryHistory = 'query-history',
+
+    /**
+     * Run merges as composition: each source executes separately against
+     * the warehouse and the DuckDB compose engine joins the results. Falls
+     * back to the single-statement warehouse merge when the compose engine
+     * is unavailable or the merge needs a pivot. Off by default.
+     */
+    MergeOnCompose = 'merge-on-compose',
+
+    /**
+     * Configurable retention for AI agent threads. Off by default; enabled
+     * per-org on demand for enterprise customers.
+     */
+    AiThreadRetention = 'ai-thread-retention',
 }
 
 export type FeatureFlag = {

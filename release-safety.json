@@ -1,18 +1,29 @@
 {
   "schemaVersion": "2",
-  "version": "1.169.1",
-  "previousVersion": "1.169.0",
-  "releaseDate": "2026-08-17T17:59:59.732Z",
+  "version": "1.219.0",
+  "previousVersion": "1.218.0",
+  "releaseDate": "2026-08-20T14:12:01.974Z",
   "migrations": {
-    "present": false,
-    "count": 0,
+    "present": true,
+    "count": 1,
     "coreCount": 0,
-    "eeCount": 0,
-    "files": []
+    "eeCount": 1,
+    "files": [
+      {
+        "name": "20260820150000_add_organization_uuid_index_to_ai_thread.ts",
+        "edition": "ee",
+        "tables": [],
+        "heaviness": {
+          "locksTable": "unknown",
+          "rewritesTable": "unknown",
+          "scansTable": "unknown"
+        }
+      }
+    ]
   },
   "compatibility": {
-    "rollingUpdateSafe": true,
-    "recommendedStrategy": "RollingUpdate"
+    "rollingUpdateSafe": "unknown",
+    "recommendedStrategy": "Recreate"
   },
   "api": {
     "rest": {
