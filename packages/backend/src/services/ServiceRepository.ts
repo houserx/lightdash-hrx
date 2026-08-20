@@ -1096,6 +1096,7 @@ export class ServiceRepository
                     savedChartModel: this.models.getSavedChartModel(),
                     resourceAccessModel: this.models.getResourceAccessModel(),
                     spacePermissionService: this.getSpacePermissionService(),
+                    lightdashConfig: this.context.lightdashConfig,
                 }),
         );
     }

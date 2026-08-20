@@ -5,7 +5,7 @@ import {
     ParameterError,
     type SessionUser,
 } from '@lightdash/common';
-import { type LightdashConfig } from '../../config/parseConfig';
+import { lightdashConfigMock } from '../../config/lightdashConfig.mock';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
@@ -79,8 +79,9 @@ const buildService = ({
         spacePermissionService:
             spacePermissionService as unknown as SpacePermissionService,
         lightdashConfig: {
+            ...lightdashConfigMock,
             resourceGrants: { enabled: resourceGrantsEnabled },
-        } as LightdashConfig,
+        },
     });
     return {
         service,
