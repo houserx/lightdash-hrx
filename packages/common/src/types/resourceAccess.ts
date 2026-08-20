@@ -39,3 +39,28 @@ export type ResourceAccessWithGrantsInput = {
     spaceAccess: SpaceAccess[];
     directResourceAccess: DirectResourceAccess[];
 };
+
+export type AddResourceUserAccess = {
+    userUuid: string;
+    action: ResourceAccessAction;
+};
+
+export type AddResourceGroupAccess = {
+    groupUuid: string;
+    action: ResourceAccessAction;
+};
+
+/**
+ * User and group grants are kept apart rather than flattened into one list with
+ * nullable `userUuid`/`groupUuid` fields -- that shape makes "which kind of grant
+ * is this" a runtime question when it is statically known.
+ */
+export type ResourceAccessList = {
+    users: { userUuid: string; action: ResourceAccessAction }[];
+    groups: { groupUuid: string; action: ResourceAccessAction }[];
+};
+
+export type ApiResourceAccessListResponse = {
+    status: 'ok';
+    results: ResourceAccessList;
+};
