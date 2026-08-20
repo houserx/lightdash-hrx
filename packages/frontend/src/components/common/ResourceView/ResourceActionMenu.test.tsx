@@ -1,5 +1,8 @@
 import {
+    ChartKind,
+    ChartType,
     ResourceViewItemType,
+    type ResourceViewChartItem,
     type ResourceViewDashboardItem,
     type ResourceViewSpaceItem,
 } from '@lightdash/common';
@@ -119,6 +122,27 @@ const dashboardItem: ResourceViewDashboardItem = {
     },
 };
 
+const chartItem: ResourceViewChartItem = {
+    type: ResourceViewItemType.CHART,
+    data: {
+        uuid: 'chart-1',
+        name: 'Revenue by month',
+        chartType: ChartType.CARTESIAN,
+        chartKind: ChartKind.LINE,
+        firstViewedAt: null,
+        views: 0,
+        pinnedListUuid: null,
+        pinnedListOrder: null,
+        spaceUuid: 'space-finance',
+        description: undefined,
+        updatedAt: new Date(0),
+        updatedByUser: undefined,
+        validationErrors: undefined,
+        verification: null,
+        slug: 'revenue-by-month',
+    },
+};
+
 const spaceItem = {
     type: ResourceViewItemType.SPACE,
     data: {
@@ -151,6 +175,31 @@ describe('given an open action menu for a dashboard', () => {
                 <MantineProvider env="test" forceColorScheme="light">
                     <ResourceViewActionMenu
                         item={dashboardItem}
+                        isOpen
+                        onAction={vi.fn()}
+                    />
+                </MantineProvider>,
+            );
+
+            expect(
+                screen.getByRole('menuitem', { name: /Manage access/ }),
+            ).toBeTruthy();
+        });
+    });
+});
+
+describe('given an open action menu for a chart', () => {
+    describe('when its actions are listed', () => {
+        it('then managing its access is one of them', () => {
+            // Asserted separately from the dashboard case rather than trusting
+            // one insertion to cover both. Narrowing the condition to
+            // DASHBOARD alone leaves all of this PR's other specs green while
+            // charts lose the entry point -- the chart spec on the menu item
+            // renders that component directly, so it never notices.
+            render(
+                <MantineProvider env="test" forceColorScheme="light">
+                    <ResourceViewActionMenu
+                        item={chartItem}
                         isOpen
                         onAction={vi.fn()}
                     />
