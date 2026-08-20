@@ -6,7 +6,6 @@ import {
 } from '@lightdash/common';
 import {
     Anchor,
-    Badge,
     Box,
     Button,
     Collapse,
@@ -40,15 +39,16 @@ import {
     useUpdateMutation,
 } from '../../../hooks/useSpaces';
 import useApp from '../../../providers/App/useApp';
-import { LightdashUserAvatar } from '../../Avatar';
+import {
+    AccessOriginBadge,
+    AccessPanel,
+    PrincipalAccessRow,
+} from '../AccessPanel/AccessPanel';
 import Callout from '../Callout';
 import MantineIcon from '../MantineIcon';
 import MantineModal from '../MantineModal';
-import PaginateControl from '../PaginateControl';
 import type { ShareSpaceProps } from './index';
-import { ServiceAccountBadge } from './ServiceAccountBadge';
 import { ShareSpaceAddUser } from './ShareSpaceAddUser';
-import classes from './ShareSpaceModalContent.module.css';
 import {
     AccessModelToggle,
     GroupsAccessList,
@@ -56,23 +56,10 @@ import {
 } from './ShareSpaceModalShared';
 import { getAccessColor } from './ShareSpaceModalUtils';
 import { UserAccessAction, UserAccessOptions } from './ShareSpaceSelect';
-import { getInitials, getUserNameOrEmail } from './Utils';
+import { toUserPrincipal } from './Utils';
 
 const MANAGE_PAGE_SIZE = 5;
 const AUDIT_PAGE_SIZE = 10;
-
-const getOriginLabel = (share: SpaceShare): string => {
-    if (share.inheritedFrom === 'parent_space') return 'Parent';
-    if (share.hasDirectAccess) {
-        return share.inheritedFrom === 'space_group' ? 'Group' : 'Direct';
-    }
-    if (share.inheritedFrom === 'space_group') return 'Group';
-    if (share.inheritedFrom === 'project' || share.inheritedFrom === 'group') {
-        return 'Project';
-    }
-    if (share.inheritedFrom === 'organization') return 'Organization';
-    return 'Direct';
-};
 
 type UserAccessAuditListProps = {
     users: SpaceShare[];
@@ -82,97 +69,39 @@ type UserAccessAuditListProps = {
     onPageChange: (page: number) => void;
 };
 
-const UserAccessAuditList: FC<UserAccessAuditListProps> = ({
+export const UserAccessAuditList: FC<UserAccessAuditListProps> = ({
     users,
     sessionUserUuid,
     page,
     totalPages,
     onPageChange,
-}) => {
-    const handleNextPage = useCallback(() => {
-        if (page < totalPages) onPageChange(page + 1);
-    }, [page, totalPages, onPageChange]);
-
-    const handlePreviousPage = useCallback(() => {
-        if (page > 1) onPageChange(page - 1);
-    }, [page, onPageChange]);
-
-    return (
-        <Stack gap="sm">
-            {users.map((user) => {
-                const isSessionUser = user.userUuid === sessionUserUuid;
-                const [roleColor, roleShade] = getAccessColor(user.role);
-
-                return (
-                    <Group
-                        key={user.userUuid}
-                        gap="sm"
-                        justify="space-between"
-                        wrap="nowrap"
-                        className={classes.auditRow}
-                    >
-                        <Group gap="sm" wrap="nowrap">
-                            <LightdashUserAvatar
-                                size="sm"
-                                tt="uppercase"
-                                userUuid={user.userUuid}
-                                avatarUrl={user.avatarUrl}
-                                avatarGradient={user.avatarGradient}
-                            >
-                                {getInitials(
-                                    user.userUuid,
-                                    user.firstName,
-                                    user.lastName,
-                                    user.email,
-                                    user.isInternal,
-                                )}
-                            </LightdashUserAvatar>
-                            <Text fw={600} fz="sm" truncate>
-                                {getUserNameOrEmail(
-                                    user.userUuid,
-                                    user.firstName,
-                                    user.lastName,
-                                    user.email,
-                                    user.isInternal,
-                                )}
-                                {isSessionUser ? (
-                                    <Text fw={400} fz="sm" span c="ldGray.6">
-                                        {' '}
-                                        (you)
-                                    </Text>
-                                ) : null}
-                            </Text>
-                            {user.isInternal ? <ServiceAccountBadge /> : null}
-                        </Group>
-
-                        <Badge
-                            size="sm"
-                            variant="light"
-                            color={`${roleColor}.${roleShade}`}
-                            radius="xl"
-                        >
-                            {getOriginLabel(user)} &middot;{' '}
-                            {UserAccessOptions.find(
-                                (o) => o.value === user.role,
-                            )?.title ?? user.role}
-                        </Badge>
-                    </Group>
-                );
-            })}
-            {totalPages > 1 && (
-                <PaginateControl
-                    currentPage={page}
-                    totalPages={totalPages}
-                    hasNextPage={page < totalPages}
-                    hasPreviousPage={page > 1}
-                    onNextPage={handleNextPage}
-                    onPreviousPage={handlePreviousPage}
-                    style={{ alignSelf: 'flex-end' }}
-                />
-            )}
-        </Stack>
-    );
-};
+}) => (
+    <AccessPanel
+        page={page}
+        totalPages={totalPages}
+        onPageChange={onPageChange}
+    >
+        {users.map((user) => (
+            <PrincipalAccessRow
+                key={user.userUuid}
+                principal={toUserPrincipal(
+                    user,
+                    user.userUuid === sessionUserUuid,
+                )}
+                control={
+                    <AccessOriginBadge
+                        origin={user}
+                        roleLabel={
+                            UserAccessOptions.find((o) => o.value === user.role)
+                                ?.title ?? user.role
+                        }
+                        color={getAccessColor(user.role).join('.')}
+                    />
+                }
+            />
+        ))}
+    </AccessPanel>
+);
 
 const ShareSpaceModalContent: FC<ShareSpaceProps> = ({
     space,
