@@ -1320,9 +1320,11 @@ describe('DashboardService', () => {
 
     describe('given a dashboard is permanently deleted', () => {
         it('then its direct grants are purged', async () => {
-            await service
-                .permanentDelete(user, dashboard.uuid)
-                .catch(() => undefined);
+            // bypassPermissions is the cascade caller's path; no catch, so a
+            // failure surfaces instead of being mistaken for "purge not called".
+            await service.permanentDelete(user, dashboard.uuid, {
+                bypassPermissions: true,
+            });
 
             // resource_uuid is polymorphic, so the grant tables carry no foreign
             // key and ON DELETE CASCADE cannot reach them. Without this the

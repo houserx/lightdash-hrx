@@ -82,6 +82,7 @@ import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { OrganizationModel } from '../../models/OrganizationModel';
 import { PinnedListModel } from '../../models/PinnedListModel';
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { SavedSqlModel } from '../../models/SavedSqlModel';
 import { SchedulerModel } from '../../models/SchedulerModel';
@@ -119,6 +120,7 @@ type DashboardServiceArguments = {
     organizationModel: OrganizationModel;
     spacePermissionService: SpacePermissionService;
     contentVerificationModel: ContentVerificationModel;
+    resourceAccessModel: ResourceAccessModel;
 };
 
 export class DashboardService
@@ -162,6 +164,8 @@ export class DashboardService
     spacePermissionService: SpacePermissionService;
 
     contentVerificationModel: ContentVerificationModel;
+
+    private readonly resourceAccessModel: ResourceAccessModel;
 
     async scheduleExportContent(
         account: Account,
@@ -277,6 +281,7 @@ export class DashboardService
         organizationModel,
         spacePermissionService,
         contentVerificationModel,
+        resourceAccessModel,
     }: DashboardServiceArguments) {
         super();
         this.lightdashConfig = lightdashConfig;
@@ -298,6 +303,7 @@ export class DashboardService
         this.slackClient = slackClient;
         this.spacePermissionService = spacePermissionService;
         this.contentVerificationModel = contentVerificationModel;
+        this.resourceAccessModel = resourceAccessModel;
     }
 
     async verifyDashboard(
@@ -2137,6 +2143,14 @@ export class DashboardService
                 throw new ForbiddenError();
             }
         }
+
+        // Grant tables carry no foreign key to the resource -- resource_uuid is
+        // polymorphic -- so ON DELETE CASCADE cannot reach them. Purge before the
+        // row goes, or the grants dangle.
+        await this.resourceAccessModel.removeAllForResource(
+            'Dashboard',
+            dashboard.uuid,
+        );
 
         await this.dashboardModel.permanentDelete(dashboard.uuid);
     }
