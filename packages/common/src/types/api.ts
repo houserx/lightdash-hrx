@@ -708,6 +708,14 @@ export type HealthState = {
     preAggregates: {
         enabled: boolean;
     };
+    /**
+     * Direct per-resource grants. While this is off, content permission checks
+     * skip the grant lookup, so a grant changes nobody's access -- the UI has
+     * to know not to offer a surface for managing them.
+     */
+    resourceGrants: {
+        enabled: boolean;
+    };
     dataApps: {
         /**
          * Origin where data-app preview iframes are served (e.g.,

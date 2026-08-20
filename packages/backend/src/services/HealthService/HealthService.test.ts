@@ -309,4 +309,43 @@ describe('health', () => {
             expect(result.pylon.verificationHash).toBe(expectedHash);
         });
     });
+
+    describe('given the direct resource grants gate', () => {
+        describe('when an instance leaves it at its default', () => {
+            it('then health advertises the feature as off', async () => {
+                // The gate is opt-in, and while it is off content permission
+                // checks skip the grant lookup entirely -- so a grant changes
+                // nobody's access. The frontend has to be able to see that, or
+                // it offers an entry point to a surface that cannot work.
+                expect(
+                    (await healthService.getHealthState(undefined))
+                        .resourceGrants,
+                ).toEqual({ enabled: false });
+            });
+        });
+
+        describe('when an instance has turned it on', () => {
+            it('then health advertises the feature as on', async () => {
+                // Asserted separately from the default, which a hardcoded
+                // `false` would satisfy on its own.
+                const grantsService = new HealthService({
+                    organizationModel:
+                        organizationModel as unknown as OrganizationModel,
+                    lightdashConfig: {
+                        ...lightdashConfigMock,
+                        resourceGrants: { enabled: true },
+                    },
+                    licenseService,
+                    migrationModel: migrationModel as unknown as MigrationModel,
+                    organizationSettingsModel:
+                        organizationSettingsModel as unknown as OrganizationSettingsModel,
+                });
+
+                expect(
+                    (await grantsService.getHealthState(undefined))
+                        .resourceGrants,
+                ).toEqual({ enabled: true });
+            });
+        });
+    });
 });
