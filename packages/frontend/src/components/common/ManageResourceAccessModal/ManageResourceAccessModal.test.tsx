@@ -4,7 +4,8 @@ import {
     type ResourceAccessList,
     type ResourceShare,
 } from '@lightdash/common';
-import { act, render } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { type ComponentProps, type ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useOrganizationGroups } from '../../../hooks/useOrganizationGroups';
@@ -215,7 +216,7 @@ describe('given a resource whose access is being managed', () => {
     });
 
     describe('when the modal is closed', () => {
-        it('then neither query runs', () => {
+        it('then none of its queries run', () => {
             render(renderModal(false));
 
             expect(vi.mocked(useResourceAccess).mock.calls[0]?.[4]).toEqual({
@@ -224,6 +225,14 @@ describe('given a resource whose access is being managed', () => {
             expect(vi.mocked(useResourceGrants).mock.calls[0]?.[3]).toEqual({
                 enabled: false,
             });
+            // The group names too. This modal ends up behind every dashboard
+            // and chart action menu, so an ungated query would fetch the
+            // organization's groups every time one of those menus opened.
+            expect(vi.mocked(useOrganizationGroups).mock.calls[0]?.[1]).toEqual(
+                {
+                    enabled: false,
+                },
+            );
         });
     });
 });
@@ -329,6 +338,29 @@ describe('given a list longer than one page', () => {
 
             const lastCall = vi.mocked(useResourceAccess).mock.calls.at(-1);
             expect(lastCall?.[3]).toMatchObject({ page: 3 });
+        });
+    });
+});
+
+describe('given a modal left on a later page', () => {
+    describe('when it is dismissed', () => {
+        it('then the next open starts at the first page', async () => {
+            render(renderModal());
+
+            act(() => contentProps?.onPageChange(3));
+
+            expect(
+                vi.mocked(useResourceAccess).mock.calls.at(-1)?.[3],
+            ).toMatchObject({ page: 3 });
+
+            await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+            // Reset on dismissal rather than on open: reopening onto page 3 of a
+            // list being seen for the first time shows an empty body whenever
+            // the next resource has fewer pages.
+            expect(
+                vi.mocked(useResourceAccess).mock.calls.at(-1)?.[3],
+            ).toMatchObject({ page: 1 });
         });
     });
 });
