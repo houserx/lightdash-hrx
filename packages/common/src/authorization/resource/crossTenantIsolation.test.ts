@@ -69,7 +69,7 @@ describe('cross-tenant isolation of direct grants', () => {
                     userUuid: 'outsider',
                     role: OrganizationMemberRole.ADMIN,
                     organizationUuid: OTHER_ORG,
-                    roleUuid: null,
+                    roleUuid: undefined,
                 },
                 [
                     {
@@ -93,7 +93,7 @@ describe('cross-tenant isolation of direct grants', () => {
                     userUuid: 'outsider',
                     role: OrganizationMemberRole.ADMIN,
                     organizationUuid: OTHER_ORG,
-                    roleUuid: null,
+                    roleUuid: undefined,
                 },
                 [],
             );
@@ -112,7 +112,7 @@ describe('cross-tenant isolation of direct grants', () => {
                     userUuid: 'member',
                     role: OrganizationMemberRole.MEMBER,
                     organizationUuid: HOME_ORG,
-                    roleUuid: null,
+                    roleUuid: undefined,
                 },
                 [],
             );
@@ -130,7 +130,7 @@ describe('cross-tenant isolation of direct grants', () => {
                     userUuid: 'colleague',
                     role: OrganizationMemberRole.MEMBER,
                     organizationUuid: HOME_ORG,
-                    roleUuid: null,
+                    roleUuid: undefined,
                 },
                 [
                     {
@@ -154,7 +154,7 @@ describe('cross-tenant isolation of direct grants', () => {
                     userUuid: 'colleague',
                     role: OrganizationMemberRole.MEMBER,
                     organizationUuid: HOME_ORG,
-                    roleUuid: null,
+                    roleUuid: undefined,
                 },
                 [
                     {

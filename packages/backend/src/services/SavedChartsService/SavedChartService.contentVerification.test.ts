@@ -20,6 +20,7 @@ import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { OrganizationModel } from '../../models/OrganizationModel';
 import { PinnedListModel } from '../../models/PinnedListModel';
 import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { SchedulerModel } from '../../models/SchedulerModel';
 import { SpaceModel } from '../../models/SpaceModel';
@@ -146,6 +147,9 @@ vi.spyOn(analyticsMock, 'track');
 
 describe('SavedChartService - Content Verification', () => {
     const service = new SavedChartService({
+        resourceAccessModel: {
+            removeAllForResource: vi.fn(async () => undefined),
+        } as unknown as ResourceAccessModel,
         analytics: analyticsMock,
         lightdashConfig: lightdashConfigMock,
         projectModel: projectModel as unknown as ProjectModel,
