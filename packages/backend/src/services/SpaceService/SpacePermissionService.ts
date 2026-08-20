@@ -6,6 +6,7 @@ import {
     NotFoundError,
     OrganizationMemberRole,
     ProjectMemberRole,
+    resolveResourceAccess,
     resolveSpaceAccess,
     SpaceMemberRole,
     type AbilityAction,
@@ -13,6 +14,7 @@ import {
     type KnexPaginatedData,
     type OrganizationSpaceAccess,
     type ProjectSpaceAccess,
+    type ResourceAccessResourceType,
     type SessionUser,
     type SpaceAccess,
     type SpaceAccessListFilters,
@@ -21,6 +23,8 @@ import {
     type SpaceShare,
 } from '@lightdash/common';
 import { Knex } from 'knex';
+import { type LightdashConfig } from '../../config/parseConfig';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import {
     SpacePermissionModel,
@@ -44,12 +48,105 @@ export type SpaceAccessContextForCasl = {
     admins: SpaceAdmin[];
 };
 
+/** A resource together with the space it lives in. */
+export type ResourceInSpace = {
+    resourceUuid: string;
+    spaceUuid: string;
+};
+
 export class SpacePermissionService extends BaseService {
     constructor(
         private readonly spaceModel: SpaceModel,
         private readonly spacePermissionModel: SpacePermissionModel,
+        private readonly resourceAccessModel: ResourceAccessModel,
+        private readonly lightdashConfig: Pick<
+            LightdashConfig,
+            'resourceGrants'
+        >,
     ) {
         super();
+    }
+
+    /**
+     * Access context for a single resource: the context of the space it lives in,
+     * with any direct grants on the resource folded into `access`.
+     *
+     * Returns the same shape as `getSpaceAccessContext` on purpose. Every content
+     * check already threads that context into its CASL subject, so callers swap
+     * one method for the other and grants are picked up with no change to how the
+     * subject is built.
+     */
+    async getResourceAccessContext(
+        userUuid: string,
+        resourceType: ResourceAccessResourceType,
+        resource: ResourceInSpace,
+        { trx }: { trx?: Knex } = {},
+    ): Promise<SpaceAccessContextForCasl> {
+        const contexts = await this.getResourceAccessContexts(
+            userUuid,
+            resourceType,
+            [resource],
+            { trx },
+        );
+        const context = contexts[resource.resourceUuid];
+        if (!context) {
+            throw new NotFoundError(
+                `Couldn't find access context for ${resourceType} ${resource.resourceUuid}`,
+            );
+        }
+        return context;
+    }
+
+    /**
+     * Batched form, keyed by resource uuid rather than space uuid: two resources
+     * in one space share a space context but not their grants.
+     *
+     * Costs one space-context resolution for the deduped set of spaces plus a
+     * single grant read for the whole batch, so it does not scale in round trips
+     * with the number of resources. A resource whose space has no context is
+     * omitted, matching how the batched space context already fails closed.
+     */
+    async getResourceAccessContexts(
+        userUuid: string,
+        resourceType: ResourceAccessResourceType,
+        resources: ResourceInSpace[],
+        { trx }: { trx?: Knex } = {},
+    ): Promise<Record<string, SpaceAccessContextForCasl>> {
+        const spaceContexts = await this.getSpacesCaslContext(
+            resources.map(({ spaceUuid }) => spaceUuid),
+            { userUuid },
+            { trx },
+        );
+
+        // Skip the lookup entirely when disabled rather than issuing a query that
+        // can only ever return nothing.
+        const grantsByResource = this.lightdashConfig.resourceGrants.enabled
+            ? await this.resourceAccessModel.getDirectResourceAccess(
+                  resourceType,
+                  resources.map(({ resourceUuid }) => resourceUuid),
+                  { userUuid },
+                  { trx },
+              )
+            : {};
+
+        return resources.reduce<Record<string, SpaceAccessContextForCasl>>(
+            (acc, { resourceUuid, spaceUuid }) => {
+                const spaceContext = spaceContexts[spaceUuid];
+                if (!spaceContext) return acc;
+
+                acc[resourceUuid] = {
+                    ...spaceContext,
+                    access: resolveResourceAccess({
+                        resourceUuid,
+                        spaceAccess: spaceContext.access,
+                        directResourceAccess:
+                            grantsByResource[resourceUuid] ?? [],
+                    }),
+                };
+                return acc;
+            },
+            {},
+        );
     }
 
     /**

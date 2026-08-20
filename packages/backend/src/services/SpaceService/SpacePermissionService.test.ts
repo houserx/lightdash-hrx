@@ -12,6 +12,7 @@ import {
     type SpaceInheritanceChain,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import {
     SpacePermissionModel,
@@ -86,6 +87,10 @@ describe('SpacePermissionService', () => {
     const service = new SpacePermissionService(
         {} as SpaceModel,
         mockPermissionModel as unknown as SpacePermissionModel,
+        {
+            getDirectResourceAccess: vi.fn(async () => ({})),
+        } as unknown as ResourceAccessModel,
+        { resourceGrants: { enabled: false } },
     );
 
     afterEach(() => {

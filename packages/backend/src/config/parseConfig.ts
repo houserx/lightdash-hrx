@@ -1677,6 +1677,14 @@ export type LightdashConfig = {
         enabled: boolean;
         retentionDays: number;
     };
+    /**
+     * Direct per-resource grants. When disabled, content permission checks skip
+     * the grant lookup entirely rather than issuing a query that can only ever
+     * return nothing.
+     */
+    resourceGrants: {
+        enabled: boolean;
+    };
     pgWire: {
         /** TCP port the Postgres wire protocol server listens on. `undefined`
          * disables the feature. */
@@ -3332,6 +3340,9 @@ export const parseConfig = (): LightdashConfig => {
         },
         dashboardComments: {
             enabled: process.env.DISABLE_DASHBOARD_COMMENTS !== 'true',
+        },
+        resourceGrants: {
+            enabled: process.env.RESOURCE_GRANTS_ENABLED === 'true',
         },
         softDelete: {
             enabled: process.env.SOFT_DELETE_ENABLED === 'true',
