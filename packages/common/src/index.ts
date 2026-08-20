@@ -43,6 +43,7 @@ import { timeFrameConfigs } from './utils/timeFrames';
 import type { PivotValuesColumn } from './visualizations/types';
 
 dayjs.extend(utc);
+export { getPermissionsFromAbilityRules } from './authorization/abilityPermissions';
 export * from './authorization/buildAccountHelpers';
 export { collapseAbilityRules } from './authorization/collapseAbilityRules';
 export {
@@ -56,6 +57,7 @@ export { getOrganizationMemberRolePermissions } from './authorization/organizati
 export { projectMemberAbilities } from './authorization/projectMemberAbility';
 export * from './authorization/parseAccount';
 export * from './authorization/roleToScopeMapping';
+export * from './authorization/rolePresets';
 export * from './authorization/scopeAbilityBuilder';
 export * from './authorization/scopes';
 export * from './authorization/resource/resourceAccessResolver';
@@ -68,6 +70,7 @@ export * from './compiler/exploreCompiler';
 export * from './compiler/filtersCompiler';
 export * from './compiler/lightdashModelConverter';
 export * from './compiler/parameters';
+export * from './compiler/referenceLookup';
 export * from './compiler/translator';
 export * from './parameters/reservedParameters';
 export * from './constants/screenshot';
@@ -81,6 +84,7 @@ export * from './dbt/validation';
 export * from './ee';
 export * from './preAggregates';
 export * from './pivot/derivePivotConfigFromChart';
+export * from './pivot/deriveDataAppVizPivotConfig';
 export * from './pivot/pivotConfig';
 export * from './pivot/pivotQueryResults';
 export * from './pivot/utils';
@@ -114,6 +118,7 @@ export * from './types/coder';
 export * from './types/comments';
 export * from './types/conditionalFormatting';
 export * from './types/content';
+export * from './types/contentSlug';
 export * from './types/contentVerification';
 export * from './types/dashboard';
 export * from './types/emailWhitelabel';
@@ -127,6 +132,7 @@ export * from './types/errors';
 export * from './types/explore';
 export * from './types/favorites';
 export * from './featureFlags/previewFeatureFlags';
+export * from './types/dataRetention';
 export * from './types/featureFlags';
 export * from './types/impersonationOrganizationSettings';
 export * from './types/previewExpirationProjectSettings';
@@ -300,6 +306,8 @@ export type {
 } from './types/projects';
 export * from './types/promotion';
 export * from './types/queryHistory';
+export * from './types/queryHistoryList';
+export * from './types/querySources';
 export * from './types/rename';
 export * from './types/resourceAccess';
 export * from './types/resourceViewItem';
@@ -363,6 +371,7 @@ export * from './utils/i18n/merge';
 export * from './utils/i18n/types';
 export * from './utils/item';
 export * from './utils/mergeQueryItems';
+export * from './utils/queryHistoryList';
 export * from './utils/loadLightdashProjectConfig';
 export * from './utils/lightdashSqlVariables';
 export * from './utils/metricsExplorer';
@@ -655,6 +664,7 @@ export const isLightdashMode = (x: string): x is LightdashMode =>
 export enum LightdashInstallType {
     DOCKER_IMAGE = 'docker_image',
     BASH_INSTALL = 'bash_install',
+    HELM = 'helm',
     HEROKU = 'heroku',
     UNKNOWN = 'unknown',
 }

@@ -73,6 +73,18 @@ describe('database probe config', () => {
     });
 });
 
+describe('HTTP server config', () => {
+    it('defaults the keep-alive timeout to 620 seconds', () => {
+        expect(parseConfig().httpServer.keepAliveTimeoutMs).toBe(620_000);
+    });
+
+    it('parses the keep-alive timeout override', () => {
+        process.env.HTTP_KEEP_ALIVE_TIMEOUT_MS = '300000';
+
+        expect(parseConfig().httpServer.keepAliveTimeoutMs).toBe(300_000);
+    });
+});
+
 describe('MotherDuck instance cache config', () => {
     afterEach(() => {
         vi.restoreAllMocks();
@@ -1866,5 +1878,21 @@ describe('SANDBOX_PROVIDER', () => {
     test('normalizes case and whitespace instead of crashing boot', () => {
         process.env.SANDBOX_PROVIDER = ' E2B ';
         expect(parseConfig().appRuntime.sandboxProvider).toBe('e2b');
+    });
+});
+
+describe('APPS_CODING_AGENT', () => {
+    test('defaults to claude when unset', () => {
+        expect(parseConfig().appRuntime.dataAppCodingAgent).toBe('claude');
+    });
+
+    test('parses codex case-insensitively', () => {
+        process.env.APPS_CODING_AGENT = ' Codex ';
+        expect(parseConfig().appRuntime.dataAppCodingAgent).toBe('codex');
+    });
+
+    test('throws on an unknown coding agent', () => {
+        process.env.APPS_CODING_AGENT = 'cursor';
+        expect(() => parseConfig()).toThrowError(ParseError);
     });
 });

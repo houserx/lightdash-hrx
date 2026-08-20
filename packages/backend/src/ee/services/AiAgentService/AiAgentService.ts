@@ -62,20 +62,25 @@ import {
     derivePivotConfigurationFromChart,
     DownloadFileType,
     EmbedArtifactVersionJobPayload,
+    exceedsRetentionCeiling,
     Explore,
     FeatureFlags,
     ForbiddenError,
+    formatMergeQueryRefusal,
     GenerateArtifactQuestionJobPayload,
     getErrorMessage,
     getGroupByDimensions,
     getItemId,
     getItemMap,
+    getValidAiQueryLimit,
     getWebAiChartConfig,
     GITHUB_MCP_SERVER_NAME,
     GITHUB_MCP_SERVER_URL,
     hasAiAgentAccessToSpace,
     InsufficientGitPermissionsError,
+    isAgentToolName,
     isAiDeepResearchRunTerminal,
+    isAiMergeChartArtifactConfig,
     isAiSqlChartArtifactConfig,
     isAiWritebackRunInProgress,
     isGithubMcpServerUrl,
@@ -85,12 +90,14 @@ import {
     KnexPaginateArgs,
     KnexPaginatedData,
     LightdashUser,
+    MetricSourcedMergeQuery,
     NotFoundError,
     NotImplementedError,
     OpenIdIdentity,
     OpenIdIdentityIssuerType,
     ParameterError,
     ParametersValuesMap,
+    parsePersistedRunQueryArgs,
     parseVizConfig,
     PersistentDownloadFileAccessMode,
     ProjectType,
@@ -105,13 +112,14 @@ import {
     ToolDashboardArgs,
     toolDashboardArgsSchema,
     ToolDashboardV2Args,
-    toolDashboardV2ArgsSchema,
+    toolDashboardV2ArgsSchemaPersisted,
     UnexpectedServerError,
     UpdateSlackResponse,
     UpdateWebAppResponse,
     UserAttributeValueMap,
     validateAgentSuggestion,
     type AgentSuggestionTool,
+    type AgentToolName,
     type AiAgentEditDbtProjectPipelineJobPayload,
     type AiAgentModelConfig,
     type AiClonedThreadCreatedFrom,
@@ -124,6 +132,7 @@ import {
     type AiWebAppThreadCreatedFrom,
     type SessionUser,
     type SuggestionValidationCatalog,
+    type ToolRunQueryArgsTransformed,
     type VerifiedContentListItem,
 } from '@lightdash/common';
 import * as Sentry from '@sentry/node';
@@ -154,6 +163,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs/promises';
 import _ from 'lodash';
 import { nanoid as nanoidGenerator } from 'nanoid';
+import pLimit from 'p-limit';
 import slackifyMarkdown from 'slackify-markdown';
 import { Readable } from 'stream';
 import { z } from 'zod';
@@ -174,6 +184,7 @@ import {
     AiAgentSlackChannelLinkedEvent,
     AiAgentSuggestionsGeneratedEvent,
     AiAgentSuggestionSubmitEvent,
+    AiAgentThreadsRetentionCleanedEvent,
     AiAgentToolCallEvent,
     AiAgentUpdatedEvent,
     ContentVerificationEvent,
@@ -226,7 +237,10 @@ import { wrapSentryTransaction } from '../../../utils';
 import { validatePublicHttpUrl } from '../../../utils/ssrfProtection';
 import { type DbAiDeepResearchEvent } from '../../database/entities/aiDeepResearch';
 import { AiAgentDocumentModel } from '../../models/AiAgentDocumentModel';
-import { AiAgentMemoryModel } from '../../models/AiAgentMemoryModel';
+import {
+    AI_AGENT_MEMORY_THREAD_SOURCES,
+    AiAgentMemoryModel,
+} from '../../models/AiAgentMemoryModel';
 import {
     AI_AGENT_MCP_SERVER_TOOL_PERMISSION_MODE_ALWAYS_ALLOW,
     AI_AGENT_MCP_SERVER_TOOL_PERMISSION_MODE_ALWAYS_DENY,
@@ -333,6 +347,10 @@ import {
 } from '../ai/types/aiAgentDependencies';
 import { AiAgentContentValidation } from '../ai/utils/AiAgentContentValidation';
 import { AiCallAttribution } from '../ai/utils/aiCallTelemetry';
+import {
+    buildAiMergeQuery,
+    buildAiMergeSourceConfigs,
+} from '../ai/utils/buildAiMergeQuery';
 import {
     classifyWritebackError,
     GIT_WRITE_PERMISSION_AGENT_MESSAGE,
@@ -2338,6 +2356,61 @@ export class AiAgentService extends BaseService {
         return asyncQuery;
     }
 
+    /** The AI tool's merge shape as the core MergeQuery the engine executes. */
+    private async buildAiMergeQuery(
+        user: SessionUser,
+        projectUuid: string,
+        toolArgs: ToolRunQueryArgsTransformed,
+    ): Promise<MetricSourcedMergeQuery> {
+        const exploreByName = Object.fromEntries(
+            await Promise.all(
+                buildAiMergeSourceConfigs(toolArgs).map(
+                    async ({ queryConfig }) =>
+                        [
+                            queryConfig.exploreName,
+                            await this.getExplore(
+                                user,
+                                projectUuid,
+                                null,
+                                queryConfig.exploreName,
+                            ),
+                        ] as const,
+                ),
+            ),
+        );
+        return buildAiMergeQuery({
+            toolArgs,
+            getExplore: (exploreName) => exploreByName[exploreName],
+            maxQueryLimit: this.lightdashConfig.ai.copilot.maxQueryLimit,
+        });
+    }
+
+    private async executeAsyncAiMergeQuery(
+        user: SessionUser,
+        projectUuid: string,
+        toolArgs: ToolRunQueryArgsTransformed,
+    ) {
+        const mergeQuery = await this.buildAiMergeQuery(
+            user,
+            projectUuid,
+            toolArgs,
+        );
+        const outcome = await this.asyncQueryService.executeAsyncMergeQuery({
+            account: fromSession(user),
+            projectUuid,
+            mergeQuery,
+            context: QueryExecutionContext.AI,
+            parameters: toolArgs.queryConfig.parameters ?? undefined,
+            mode: { type: 'interactive' },
+        });
+        if (outcome.outcome === 'refused') {
+            throw new ParameterError(formatMergeQueryRefusal(outcome.errors), {
+                errors: outcome.errors,
+            });
+        }
+        return { query: outcome.query, mergeQuery };
+    }
+
     public async getAgent(
         user: SessionUser,
         agentUuid: string,
@@ -3135,6 +3208,102 @@ export class AiAgentService extends BaseService {
         });
     }
 
+    async cleanExpiredThreads(batchSize: number): Promise<{
+        threadsDeleted: number;
+        memoriesDeleted: number;
+        hitBatchLimit: boolean;
+    }> {
+        const organizationUuids =
+            await this.aiAgentModel.findOrganizationsWithThreadRetention();
+
+        const flagLimit = pLimit(5);
+        const flags = await Promise.all(
+            organizationUuids.map((organizationUuid) =>
+                flagLimit(async () => ({
+                    organizationUuid,
+                    flag: await this.featureFlagService.get({
+                        user: { userUuid: 'system', organizationUuid },
+                        featureFlagId: FeatureFlags.AiThreadRetention,
+                    }),
+                })),
+            ),
+        );
+        const enabledOrganizationUuids = flags
+            .filter(({ flag }) => flag.enabled)
+            .map(({ organizationUuid }) => organizationUuid);
+
+        // Each deletion is a transaction cascading a full batch of threads, so
+        // keep the concurrency low to bound the load on the database.
+        const deleteLimit = pLimit(3);
+        const results = await Promise.all(
+            enabledOrganizationUuids.map((organizationUuid) =>
+                deleteLimit(async () => {
+                    const { deletedThreadUuids, deletedMemoriesCount } =
+                        await this.aiAgentModel.deleteExpiredThreads(
+                            organizationUuid,
+                            batchSize,
+                        );
+                    if (deletedThreadUuids.length > 0) {
+                        Logger.info(
+                            `AI thread retention: deleted ${deletedThreadUuids.length} threads and ${deletedMemoriesCount} derived memories for organization ${organizationUuid}`,
+                        );
+                        this.analytics.track<AiAgentThreadsRetentionCleanedEvent>(
+                            {
+                                event: 'ai_agent.threads_retention_cleaned',
+                                anonymousId: LightdashAnalytics.anonymousId,
+                                properties: {
+                                    organizationId: organizationUuid,
+                                    threadsDeleted: deletedThreadUuids.length,
+                                    memoriesDeleted: deletedMemoriesCount,
+                                },
+                            },
+                        );
+                    }
+                    return {
+                        threadsDeleted: deletedThreadUuids.length,
+                        memoriesDeleted: deletedMemoriesCount,
+                    };
+                }),
+            ),
+        );
+
+        return {
+            threadsDeleted: results.reduce(
+                (sum, result) => sum + result.threadsDeleted,
+                0,
+            ),
+            memoriesDeleted: results.reduce(
+                (sum, result) => sum + result.memoriesDeleted,
+                0,
+            ),
+            hitBatchLimit: results.some(
+                (result) => result.threadsDeleted >= batchSize,
+            ),
+        };
+    }
+
+    private async validateThreadRetentionUpdate(
+        user: SessionUser,
+        threadRetentionHours: number | null,
+    ): Promise<void> {
+        if (!user.organizationUuid) {
+            throw new ForbiddenError('Organization not found');
+        }
+        await this.aiOrganizationSettingsService.assertThreadRetentionWriteAllowed(
+            user,
+            threadRetentionHours,
+        );
+        const ceiling =
+            await this.aiOrganizationSettingsService.getThreadRetentionCeiling(
+                user.organizationUuid,
+            );
+        if (exceedsRetentionCeiling(threadRetentionHours, ceiling)) {
+            throw new ParameterError(
+                `Agent thread retention cannot exceed the organization limit of ${ceiling} hours`,
+            );
+        }
+    }
+
     public async createAgent(
         user: SessionUser,
         body: ApiCreateAiAgent,
@@ -3166,6 +3335,13 @@ export class AiAgentService extends BaseService {
             throw new ForbiddenError();
         }
 
+        if (body.threadRetentionHours != null) {
+            await this.validateThreadRetentionUpdate(
+                user,
+                body.threadRetentionHours,
+            );
+        }
+
         const agent = await this.aiAgentModel.createAgent({
             name: body.name,
             description: body.description,
@@ -3190,6 +3366,7 @@ export class AiAgentService extends BaseService {
             adminOnly: body.adminOnly ?? false,
             modelConfig: body.modelConfig ?? null,
             version: body.version,
+            threadRetentionHours: body.threadRetentionHours ?? null,
         });
 
         this.analytics.track<AiAgentCreatedEvent>({
@@ -4787,6 +4964,16 @@ export class AiAgentService extends BaseService {
             nextImageUrlSource = body.imageUrl ? 'url' : null;
         }
 
+        if (
+            body.threadRetentionHours !== undefined &&
+            body.threadRetentionHours !== agent.threadRetentionHours
+        ) {
+            await this.validateThreadRetentionUpdate(
+                user,
+                body.threadRetentionHours,
+            );
+        }
+
         const updatedAgent = await this.aiAgentModel.updateAgent({
             agentUuid,
             name: body.name,
@@ -4814,6 +5001,7 @@ export class AiAgentService extends BaseService {
             adminOnly: body.adminOnly,
             modelConfig: body.modelConfig,
             version: body.version,
+            threadRetentionHours: body.threadRetentionHours,
         });
 
         this.analytics.track<AiAgentUpdatedEvent>({
@@ -5125,7 +5313,7 @@ export class AiAgentService extends BaseService {
                 modelName: prompt.modelConfig?.modelName,
             });
 
-        if (!supportsCompaction || contextWindowTokens === null) {
+        if (!supportsCompaction) {
             Logger.debug(
                 `${compactionLogContext} skipped reason=unsupported-model provider=${prompt.modelConfig?.modelProvider ?? 'default'} model=${prompt.modelConfig?.modelName ?? 'default'}`,
             );
@@ -6460,6 +6648,52 @@ export class AiAgentService extends BaseService {
             );
         }
 
+        if (isAiMergeChartArtifactConfig(artifact.chartConfig)) {
+            const { enabled: mergeQueriesEnabled } =
+                await this.featureFlagService.get({
+                    user,
+                    featureFlagId: FeatureFlags.MergeQueries,
+                });
+            if (!mergeQueriesEnabled) {
+                throw new ForbiddenError('Merge queries are not enabled');
+            }
+            const parsed = parsePersistedRunQueryArgs(
+                artifact.chartConfig.config,
+            );
+            if (!parsed?.mergeConfig) {
+                throw new ParameterError('Invalid merge visualization config');
+            }
+            const { query, mergeQuery } = await this.executeAsyncAiMergeQuery(
+                user,
+                projectUuid,
+                parsed,
+            );
+            this.analytics.track({
+                event: 'ai_agent.artifact_viz_query',
+                userId: user.userUuid,
+                properties: {
+                    projectId: projectUuid,
+                    organizationId: organizationUuid,
+                    agentId: agent.uuid,
+                    agentName: agent.name,
+                    artifactId: artifactUuid,
+                    artifactVersionId: versionUuid,
+                    vizType: AiResultType.QUERY_RESULT,
+                    source: 'semantic',
+                },
+            });
+            return {
+                source: 'semantic',
+                type: AiResultType.QUERY_RESULT,
+                query,
+                mergeQuery,
+                metadata: {
+                    title: artifact.title,
+                    description: artifact.description,
+                },
+            };
+        }
+
         if (isAiSqlChartArtifactConfig(artifact.chartConfig)) {
             // Embed viewers are scoped by user attributes, which raw SQL bypasses.
             if (runtimeOptions) {
@@ -6548,6 +6782,7 @@ export class AiAgentService extends BaseService {
             source: 'semantic',
             type: parsedVizConfig.type,
             query,
+            mergeQuery: null,
             metadata,
         };
     }
@@ -6613,10 +6848,12 @@ export class AiAgentService extends BaseService {
         }
 
         // We use base schema here because later we call `parseVizConfig` that uses transformed schem which takes base schema output as input
-        // Try to parse with v2 schema first, then fall back to v1
-        const dashboardConfigV2Parsed = toolDashboardV2ArgsSchema.safeParse(
-            artifact.dashboardConfig,
-        );
+        // Try to parse with v2 schema first, then fall back to v1. The wide
+        // persisted variant accepts legacy template table calcs.
+        const dashboardConfigV2Parsed =
+            toolDashboardV2ArgsSchemaPersisted.safeParse(
+                artifact.dashboardConfig,
+            );
         let dashboardConfig: ToolDashboardArgs | ToolDashboardV2Args;
         if (dashboardConfigV2Parsed.success) {
             dashboardConfig = dashboardConfigV2Parsed.data;
@@ -6689,6 +6926,7 @@ export class AiAgentService extends BaseService {
             source: 'semantic',
             type: parsedVizConfig.type,
             query,
+            mergeQuery: null,
             metadata,
         };
     }
@@ -8658,7 +8896,8 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
     /**
      * A memory belongs to the owner of the thread it came from, so every memory
      * read in a turn resolves to that owner rather than the current prompter.
-     * Null means the thread has no owner — such a thread sees no memories.
+     * Null means the thread sees no memories: it has no owner, its owner is a
+     * service account, or its source (evals/scheduler) is outside memory.
      */
     private async findThreadMemoryOwnerUuid(args: {
         organizationUuid: string;
@@ -8671,9 +8910,17 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             organizationUuid: args.organizationUuid,
             threadUuid: args.threadUuid,
         });
-        return ownership?.projectUuid === args.projectUuid
-            ? ownership.ownerUserUuid
-            : null;
+        if (
+            !ownership ||
+            ownership.projectUuid !== args.projectUuid ||
+            ownership.ownerIsServiceAccount ||
+            !AI_AGENT_MEMORY_THREAD_SOURCES.some(
+                (createdFrom) => createdFrom === ownership.createdFrom,
+            )
+        ) {
+            return null;
+        }
+        return ownership.ownerUserUuid;
     }
 
     // Memoizes the owner lookup for the life of one agent run.
@@ -9397,7 +9644,6 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             getAiAgentMemoryContextEntries,
             incrementAiAgentMemoryPulls,
             resolveThreadMemoryOwnerUuid,
-            getExplore: toolsRuntime.getExplore,
             listContent: toolsRuntime.listContent,
             findContent: toolsRuntime.findContent,
             readContent: toolsRuntime.readContent,
@@ -9408,7 +9654,6 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             updateUserName: toolsRuntime.updateUserName,
             validateContent: toolsRuntime.validateContent,
             getDashboardCharts: toolsRuntime.getDashboardCharts,
-            findFields: toolsRuntime.findFields,
             findExplores: toolsRuntime.findExplores,
             getVerifiedFieldUsage: toolsRuntime.getVerifiedFieldUsage,
             searchSemanticLayer: toolsRuntime.searchSemanticLayer,
@@ -9417,6 +9662,7 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             updateProgress,
             getPrompt,
             runAsyncQuery: toolsRuntime.runAsyncQuery,
+            runAsyncMergeQuery: toolsRuntime.runAsyncMergeQuery,
             runSavedChartQuery: toolsRuntime.runSavedChartQuery,
             runSqlJob: toolsRuntime.runSqlJob,
             listWarehouseTables: toolsRuntime.listWarehouseTables,
@@ -9600,7 +9846,6 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             getAiAgentMemoryContextEntries,
             incrementAiAgentMemoryPulls,
             resolveThreadMemoryOwnerUuid,
-            getExplore,
             listContent,
             findContent,
             readContent,
@@ -9611,7 +9856,6 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             updateUserName,
             validateContent,
             getDashboardCharts,
-            findFields,
             findExplores,
             getVerifiedFieldUsage,
             searchSemanticLayer,
@@ -9620,6 +9864,7 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             updateProgress,
             getPrompt,
             runAsyncQuery,
+            runAsyncMergeQuery,
             runSavedChartQuery,
             runSqlJob,
             listWarehouseTables,
@@ -9806,10 +10051,10 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
                     : undefined,
             ),
         });
-        const { enabled: grepFieldsEnabled } =
+        const { enabled: mergeQueriesEnabled } =
             await this.featureFlagService.get({
                 user,
-                featureFlagId: FeatureFlags.AiGrepFields,
+                featureFlagId: FeatureFlags.MergeQueries,
             });
         let aiWritebackEnabled = hasTrustedPromptUserIdentity;
         if (!aiWritebackEnabled) {
@@ -10072,7 +10317,7 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             enableCodingAgent: codingAgentEnabled,
             enablePreviewDeploySetup: aiPreviewDeploySetupEnabled,
             enableRepoDiscovery: repoDiscoveryEnabled,
-            enableGrepFields: grepFieldsEnabled,
+            enableMergeQueries: mergeQueriesEnabled,
             repoFsRoot,
             repoFsSupportsCodeSearch,
             canRunSql,
@@ -10091,8 +10336,6 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             availableSkills,
             modelReasoningEnabled: prompt.modelConfig?.reasoning ?? null,
 
-            findExploresFieldSearchSize: 200,
-            findFieldsPageSize: 30,
             toolDescriptionMaxChars:
                 this.lightdashConfig.ai.copilot.toolDescriptionMaxChars,
             getDashboardChartsPageSize: 20,
@@ -10156,7 +10399,6 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             getProjectContextDocument,
             getAiAgentMemoryContextEntries,
             incrementAiAgentMemoryPulls,
-            getExplore,
             listContent,
             findContent,
             readContent,
@@ -10167,13 +10409,13 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
             updateUserName,
             validateContent,
             getDashboardCharts,
-            findFields,
             findExplores,
             getVerifiedFieldUsage,
             searchSemanticLayer,
             analyzeFieldImpact,
             syncDbtProject,
             runAsyncQuery,
+            runAsyncMergeQuery,
             runSavedChartQuery,
             runSqlJob,
             listWarehouseTables,
@@ -11552,38 +11794,85 @@ Use your existing tools to inspect them when relevant to the user's question. Wh
                 });
         };
 
-        const getSlackReasoningDetails = (toolName?: string): string => {
+        const getBuiltInSlackReasoningDetails = (
+            toolName: AgentToolName,
+        ): string => {
             switch (toolName) {
+                case 'grepFields':
                 case 'discoverFields':
                 case 'findFields':
                 case 'findExplores':
+                case 'getMetadata':
+                case 'analyzeFieldImpact':
+                case 'searchFieldValues':
                     return 'Analyzing the available fields...';
                 case 'searchSemanticLayer':
+                case 'listWarehouseTables':
+                case 'describeWarehouseTable':
                     return 'Reviewing the semantic layer...';
                 case 'generateVisualization':
                 case 'generateDashboard':
+                case 'generateBarVizConfig':
+                case 'generateTableVizConfig':
+                case 'generateTimeSeriesVizConfig':
                     return 'Preparing the answer...';
                 case 'runSql':
                 case 'runContentQuery':
                 case 'runSavedChart':
+                case 'runQuery':
                     return 'Reviewing the results...';
                 case 'editDbtProject':
+                case 'editProjectContext':
+                case 'syncDbtProject':
                     return 'Preparing the semantic-layer changes...';
                 case 'setupPreviewDeploy':
                     return 'Setting up the preview...';
-                case 'repoShell':
+                case 'exploreRepo':
+                case 'discoverRepos':
+                case 'getPullRequestDiff':
+                case 'listWorkstreams':
                     return 'Inspecting the project files...';
+                case 'editRepo':
+                case 'closePullRequest':
                 case 'editContent':
                 case 'createContent':
+                case 'createScheduledDelivery':
                     return 'Saving the changes...';
                 case 'loadProjectContext':
                     return 'Reviewing the project context...';
-                case 'validateContent':
-                    return 'Validating the changes...';
-                default:
+                case 'findContent':
+                case 'findCharts':
+                case 'findDashboards':
+                case 'generateHashes':
+                case 'generateUuids':
+                case 'getDashboardCharts':
+                case 'getKnowledgeDocumentContent':
+                case 'getProjectInfo':
+                case 'listContent':
+                case 'listKnowledgeDocuments':
+                case 'listProjects':
+                case 'loadMcpTools':
+                case 'loadSkill':
+                case 'readContent':
+                case 'readPinnedThread':
+                case 'resolveUrl':
+                case 'submitResearchReport':
+                case 'delegateResearchTask':
+                case 'submitWorkerFindings':
+                case 'updateUserName':
                     return 'Answering your question';
+                default:
+                    return assertUnreachable(
+                        toolName,
+                        `Unhandled agent tool: ${toolName}`,
+                    );
             }
         };
+
+        const getSlackReasoningDetails = (toolName?: string): string =>
+            toolName && isAgentToolName(toolName)
+                ? getBuiltInSlackReasoningDetails(toolName)
+                : 'Answering your question';
 
         const appendTaskUpdate = (
             progress: string,
