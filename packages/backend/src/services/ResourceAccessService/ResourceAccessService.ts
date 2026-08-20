@@ -433,12 +433,18 @@ export class ResourceAccessService extends BaseService {
             filters?: ResourceAccessListFilters;
         },
     ): Promise<KnexPaginatedData<ResourceShare[]>> {
+        this.throwIfDisabled();
+
         const context = await this.getResourceContext(
             projectUuid,
             resourceType,
             resourceUuid,
         );
-        await this.assertRequesterCan(requester, 'view', resourceType, context);
+        await this.assertRequesterCanAdministerGrants(
+            requester,
+            resourceType,
+            context,
+        );
 
         if (filters?.userUuids && filters.userUuids.length > 100) {
             throw new ParameterError('userUuids accepts at most 100 values');
