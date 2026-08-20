@@ -109,6 +109,7 @@ const dashboardItem: ResourceViewDashboardItem = {
     data: {
         uuid: 'dashboard-1',
         name: 'Q3 Revenue',
+        slug: 'q3-revenue',
         description: undefined,
         views: 0,
         firstViewedAt: null,

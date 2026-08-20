@@ -374,7 +374,7 @@
                 "openWorldHint": false,
                 "readOnlyHint": true
             },
-            "description": "Tool: \"find_content\"\nPurpose:\nFinds spaces, charts, or dashboards by name or description within a project, returning detailed information about each.\n\nUsage tips:\n- IMPORTANT: Pass the user's full query or relevant portion directly (e.g., \"revenue based on campaigns\" instead of just \"campaigns\").\n- The search engine understands natural language and context — more descriptive queries yield better results.\n- You can provide multiple search queries to look for different topics simultaneously (e.g., [\"monthly revenue\", \"user acquisition trends\"]).\n- Pass spaceSlug to search only inside that space and its descendants.\n- verifiedOnly=true searches only admin-verified charts/dashboards (spaces omitted). Verification is a status, not text — search topic keywords, never the word \"verified\". If nothing verified matches, the result is empty; verified content may still exist under other terms, so never claim the project has none from one query. Re-run with verifiedOnly=false only if unverified content is acceptable.\n- If results aren't relevant, retry with the full user query or more specific terms.\n- Dashboards with validation errors will be deprioritized.\n- Returns space breadcrumb/path metadata and chart/dashboard URLs when available.\n- Dashboards show a preview of the first 5 charts and the total chart count. Use \"getDashboardCharts\" to see all charts for a specific dashboard.\n- It doesn't provide summaries for dashboards yet, so don't suggest this capability.",
+            "description": "Tool: \"find_content\"\nPurpose:\nFinds spaces, charts, or dashboards by name or description within a project, returning detailed information about each.\n\nUsage tips:\n- IMPORTANT: Pass the user's full query or relevant portion directly (e.g., \"revenue based on campaigns\" instead of just \"campaigns\").\n- The search engine understands natural language and context — more descriptive queries yield better results.\n- You can provide multiple search queries to look for different topics simultaneously (e.g., [\"monthly revenue\", \"user acquisition trends\"]).\n- Pass spaceSlug to search only inside that space and its descendants.\n- verifiedOnly=true searches only admin-verified charts/dashboards (spaces omitted). Verification is a status, not text — search topic keywords, never the word \"verified\". If nothing verified matches, the result is empty; verified content may still exist under other terms, so never claim the project has none from one query. Re-run with verifiedOnly=false only if unverified content is acceptable.\n- If results aren't relevant, retry with the full user query or more specific terms.\n- Dashboards with validation errors will be deprioritized.\n- Returns space breadcrumb/path metadata and chart/dashboard URLs when available.\n- Dashboards show a preview of the first 5 charts and the total chart count. Use \"read_content\" to see all charts for a specific dashboard.\n- It doesn't provide summaries for dashboards yet, so don't suggest this capability.",
             "inputSchema": {
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "additionalProperties": false,
@@ -416,241 +416,42 @@
                 "openWorldHint": false,
                 "readOnlyHint": true
             },
-            "description": "Tool: find_explores\n\nPurpose:\nReturns explores matching the query with their joined tables, required filters, AI hints and descriptions, plus the top 50 matching fields across ALL explores. Search matches explore and field name, label, and description. A follow-up query runs against a single explore, so this tool is meant to identify the explore whose fields can answer the user's question.\nIMPORTANT: Each explore may include fields from multiple joined tables. Check the \"joinedTables\" elements to see which tables are included in the explore.\n\nParameters:\n- searchQuery: Keyword terms for finding relevant explores\n\nOutput:\n- Matching explores with searchRank scores\n- Top matching fields with their explore names and searchRank scores\n- Required filters set on matching explores, including default values\n",
+            "description": "Generate deterministic base-36 hashes for input strings.",
             "inputSchema": {
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "additionalProperties": false,
                 "properties": {
-                    "searchQuery": {
-                        "description": "set of high-signal keyword terms for query. Search uses PostgreSQL websearch_to_tsquery after joining whitespace-separated terms with OR. It searches explore and field name, label, and description. Prefer metric/entity/dimension nouns that capture the user's analytical intent.",
-                        "type": "string"
+                    "inputs": {
+                        "description": "Input strings to hash.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "maxItems": 20,
+                        "minItems": 1,
+                        "type": "array"
                     }
                 },
-                "required": ["searchQuery"],
+                "required": ["inputs"],
                 "type": "object"
             },
-            "name": "find_explores",
+            "name": "generate_hashes",
             "outputSchema": {
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "additionalProperties": false,
                 "properties": {
-                    "description": {
-                        "type": "string"
-                    },
-                    "relevantVerifiedAnswers": {
+                    "hashes": {
+                        "description": "Base-36 hashes in the same order as the input strings.",
                         "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                                "artifactType": {
-                                    "enum": ["chart", "dashboard"],
-                                    "type": "string"
-                                },
-                                "artifactVersionUuid": {
-                                    "type": "string"
-                                },
-                                "chartConfig": {
-                                    "additionalProperties": {},
-                                    "type": "object"
-                                },
-                                "description": {
-                                    "type": ["string", "null"]
-                                },
-                                "similarity": {
-                                    "type": "number"
-                                },
-                                "title": {
-                                    "type": ["string", "null"]
-                                },
-                                "verifiedQuestion": {
-                                    "type": ["string", "null"]
-                                }
-                            },
-                            "required": [
-                                "artifactVersionUuid",
-                                "chartConfig",
-                                "artifactType",
-                                "verifiedQuestion",
-                                "title",
-                                "description",
-                                "similarity"
-                            ],
-                            "type": "object"
+                            "pattern": "^[0-9a-z]{6}$",
+                            "type": "string"
                         },
                         "type": "array"
-                    },
-                    "searchQuery": {
-                        "type": "string"
-                    },
-                    "searchResults": {
-                        "additionalProperties": false,
-                        "properties": {
-                            "count": {
-                                "type": "number"
-                            },
-                            "note": {
-                                "type": "string"
-                            },
-                            "results": {
-                                "items": {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                        "aiHints": {
-                                            "items": {
-                                                "type": "string"
-                                            },
-                                            "type": "array"
-                                        },
-                                        "description": {
-                                            "type": ["string", "null"]
-                                        },
-                                        "joinedTables": {
-                                            "additionalProperties": false,
-                                            "properties": {
-                                                "count": {
-                                                    "type": "number"
-                                                },
-                                                "note": {
-                                                    "type": ["string", "null"]
-                                                },
-                                                "tables": {
-                                                    "items": {
-                                                        "type": "string"
-                                                    },
-                                                    "type": "array"
-                                                }
-                                            },
-                                            "required": [
-                                                "count",
-                                                "note",
-                                                "tables"
-                                            ],
-                                            "type": "object"
-                                        },
-                                        "label": {
-                                            "type": "string"
-                                        },
-                                        "name": {
-                                            "type": "string"
-                                        },
-                                        "requiredFilters": {
-                                            "items": {
-                                                "additionalProperties": false,
-                                                "properties": {
-                                                    "fieldId": {
-                                                        "type": "string"
-                                                    },
-                                                    "fieldRef": {
-                                                        "type": "string"
-                                                    },
-                                                    "operator": {
-                                                        "type": "string"
-                                                    },
-                                                    "required": {
-                                                        "type": "boolean"
-                                                    },
-                                                    "settings": {},
-                                                    "tableName": {
-                                                        "type": "string"
-                                                    },
-                                                    "values": {
-                                                        "items": {},
-                                                        "type": "array"
-                                                    }
-                                                },
-                                                "required": [
-                                                    "fieldId",
-                                                    "fieldRef",
-                                                    "tableName",
-                                                    "operator",
-                                                    "required"
-                                                ],
-                                                "type": "object"
-                                            },
-                                            "type": "array"
-                                        },
-                                        "searchRank": {
-                                            "type": ["number", "null"]
-                                        }
-                                    },
-                                    "required": [
-                                        "name",
-                                        "label",
-                                        "searchRank",
-                                        "description",
-                                        "aiHints",
-                                        "joinedTables",
-                                        "requiredFilters"
-                                    ],
-                                    "type": "object"
-                                },
-                                "type": "array"
-                            }
-                        },
-                        "required": ["count", "note", "results"],
-                        "type": "object"
-                    },
-                    "topMatchingFields": {
-                        "additionalProperties": false,
-                        "properties": {
-                            "count": {
-                                "type": "number"
-                            },
-                            "fields": {
-                                "items": {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                        "exploreName": {
-                                            "type": "string"
-                                        },
-                                        "fieldType": {
-                                            "type": "string"
-                                        },
-                                        "label": {
-                                            "type": "string"
-                                        },
-                                        "name": {
-                                            "type": "string"
-                                        },
-                                        "searchRank": {
-                                            "type": ["number", "null"]
-                                        },
-                                        "usageInCharts": {
-                                            "type": "number"
-                                        },
-                                        "usageInVerifiedCharts": {
-                                            "type": "number"
-                                        }
-                                    },
-                                    "required": [
-                                        "name",
-                                        "label",
-                                        "exploreName",
-                                        "fieldType",
-                                        "searchRank",
-                                        "usageInCharts",
-                                        "usageInVerifiedCharts"
-                                    ],
-                                    "type": "object"
-                                },
-                                "type": "array"
-                            },
-                            "note": {
-                                "type": "string"
-                            }
-                        },
-                        "required": ["count", "note", "fields"],
-                        "type": "object"
                     }
                 },
-                "required": [
-                    "searchQuery",
-                    "description",
-                    "searchResults",
-                    "topMatchingFields"
-                ],
+                "required": ["hashes"],
                 "type": "object"
             },
-            "title": "Find explores"
+            "title": "Generate hashes"
         },
         {
             "annotations": {
@@ -659,211 +460,42 @@
                 "openWorldHint": false,
                 "readOnlyHint": true
             },
-            "description": "Tool: \"find_fields\"\n\nPurpose:\nFinds the most relevant Fields (Metrics & Dimensions) within Explores, returning detailed info about each.\n\nUsage tips:\n- Use \"find_explores\" first to discover available Explores and their field labels.\n- Use full field labels in search terms (e.g. \"Total Revenue\", \"Order Date\").\n- Pass all needed fields in one request.\n- Fields are sorted by relevance, with a maximum score of 1 and a minimum of 0, so the top results are the most relevant.\n- If results aren't relevant, retry with clearer or more specific terms.\n- Results are paginated — use the next page token to get more results if needed.\n",
+            "description": "Tool: get_ai_writeback_status\n\nPurpose:\nCheck the status of a writeback run started by run_ai_writeback, and get the pull request URL once it's ready.\n\nImportant:\n- Poll every 10-15 seconds rather than immediately looping — a run typically takes a few minutes.\n- \"status\" is either \"pending\" (not yet picked up), an in-progress pipeline stage (e.g. \"sandbox\", \"agent\", \"pull_request\"), or a terminal value: \"ready\" (finished — check prUrl), \"error\" (finished — check errorMessage; this also covers the \"more than one dbt source\" case described in run_ai_writeback), or \"cancelled\" (stopped before finishing).\n\nParameters:\n- aiWritebackRunUuid: The id returned by run_ai_writeback.\n\nResponse shape (MCP CallToolResult):\n- content: [{ type: \"text\", text: \"<human-readable status summary>\" }]\n- structuredContent: {\n    status:       string,        // \"pending\" | a pipeline stage | \"ready\" | \"error\" | \"cancelled\"\n    prUrl:        string | null, // set once status is \"ready\" and a PR was opened\n    errorMessage: string | null  // set once status is \"error\"\n  }\n",
             "inputSchema": {
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "additionalProperties": false,
                 "properties": {
-                    "fieldSearchQueries": {
-                        "items": {
-                            "additionalProperties": false,
-                            "properties": {
-                                "label": {
-                                    "description": "Full field label",
-                                    "type": "string"
-                                }
-                            },
-                            "required": ["label"],
-                            "type": "object"
-                        },
-                        "type": "array"
-                    },
-                    "page": {
-                        "description": "Use this to paginate through the results. Starts at 1., ",
-                        "exclusiveMinimum": 0,
-                        "type": "number"
-                    },
-                    "table": {
-                        "description": "The table to search in.",
+                    "aiWritebackRunUuid": {
+                        "description": "The id returned by run_ai_writeback.",
+                        "format": "uuid",
                         "type": "string"
                     }
                 },
-                "required": ["table", "fieldSearchQueries"],
+                "required": ["aiWritebackRunUuid"],
                 "type": "object"
             },
-            "name": "find_fields",
+            "name": "get_ai_writeback_status",
             "outputSchema": {
                 "$schema": "http://json-schema.org/draft-07/schema#",
                 "additionalProperties": false,
                 "properties": {
-                    "searchResults": {
-                        "items": {
-                            "anyOf": [
-                                {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                        "fields": {
-                                            "items": {
-                                                "additionalProperties": false,
-                                                "properties": {
-                                                    "aiHints": {
-                                                        "items": {
-                                                            "type": "string"
-                                                        },
-                                                        "type": "array"
-                                                    },
-                                                    "baseTable": {
-                                                        "type": "string"
-                                                    },
-                                                    "caseSensitiveFilters": {
-                                                        "type": [
-                                                            "boolean",
-                                                            "null"
-                                                        ]
-                                                    },
-                                                    "categories": {
-                                                        "items": {
-                                                            "type": "string"
-                                                        },
-                                                        "type": "array"
-                                                    },
-                                                    "chartUsage": {
-                                                        "type": [
-                                                            "number",
-                                                            "null"
-                                                        ]
-                                                    },
-                                                    "description": {
-                                                        "type": [
-                                                            "string",
-                                                            "null"
-                                                        ]
-                                                    },
-                                                    "emoji": {
-                                                        "type": [
-                                                            "string",
-                                                            "null"
-                                                        ]
-                                                    },
-                                                    "fieldFilterType": {
-                                                        "type": "string"
-                                                    },
-                                                    "fieldId": {
-                                                        "type": "string"
-                                                    },
-                                                    "fieldType": {
-                                                        "type": "string"
-                                                    },
-                                                    "isFromJoinedTable": {
-                                                        "type": "boolean"
-                                                    },
-                                                    "label": {
-                                                        "type": "string"
-                                                    },
-                                                    "name": {
-                                                        "type": "string"
-                                                    },
-                                                    "note": {
-                                                        "type": [
-                                                            "string",
-                                                            "null"
-                                                        ]
-                                                    },
-                                                    "searchRank": {
-                                                        "type": [
-                                                            "number",
-                                                            "null"
-                                                        ]
-                                                    },
-                                                    "type": {
-                                                        "type": "string"
-                                                    },
-                                                    "usageInVerifiedCharts": {
-                                                        "type": "number"
-                                                    }
-                                                },
-                                                "required": [
-                                                    "type",
-                                                    "baseTable",
-                                                    "name",
-                                                    "fieldId",
-                                                    "fieldType",
-                                                    "fieldFilterType",
-                                                    "usageInVerifiedCharts",
-                                                    "isFromJoinedTable",
-                                                    "caseSensitiveFilters",
-                                                    "note",
-                                                    "label",
-                                                    "aiHints",
-                                                    "description",
-                                                    "categories",
-                                                    "emoji"
-                                                ],
-                                                "type": "object"
-                                            },
-                                            "type": "array"
-                                        },
-                                        "page": {
-                                            "type": ["number", "null"]
-                                        },
-                                        "pageSize": {
-                                            "type": ["number", "null"]
-                                        },
-                                        "searchQuery": {
-                                            "type": "string"
-                                        },
-                                        "status": {
-                                            "const": "success",
-                                            "type": "string"
-                                        },
-                                        "totalPageCount": {
-                                            "type": ["number", "null"]
-                                        },
-                                        "totalResults": {
-                                            "type": ["number", "null"]
-                                        }
-                                    },
-                                    "required": [
-                                        "status",
-                                        "searchQuery",
-                                        "page",
-                                        "pageSize",
-                                        "totalPageCount",
-                                        "totalResults",
-                                        "fields"
-                                    ],
-                                    "type": "object"
-                                },
-                                {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                        "error": {
-                                            "type": "string"
-                                        },
-                                        "searchQuery": {
-                                            "type": "string"
-                                        },
-                                        "status": {
-                                            "const": "error",
-                                            "type": "string"
-                                        }
-                                    },
-                                    "required": [
-                                        "status",
-                                        "searchQuery",
-                                        "error"
-                                    ],
-                                    "type": "object"
-                                }
-                            ]
-                        },
-                        "type": "array"
+                    "errorMessage": {
+                        "description": "Set once status is \"error\"; null otherwise.",
+                        "type": ["string", "null"]
+                    },
+                    "prUrl": {
+                        "description": "URL of the pull request opened from the agent changes, set once status is \"ready\"; null if the agent made no file changes or the run has not finished yet.",
+                        "type": ["string", "null"]
+                    },
+                    "status": {
+                        "description": "\"pending\" | a pipeline stage (e.g. \"sandbox\", \"agent\", \"pull_request\") | \"ready\" | \"error\" | \"cancelled\".",
+                        "type": "string"
                     }
                 },
-                "required": ["searchResults"],
+                "required": ["status", "prUrl", "errorMessage"],
                 "type": "object"
             },
-            "title": "Find fields"
+            "title": "Get AI writeback status"
         },
         {
             "annotations": {
@@ -5625,9 +5257,56 @@
                                 "type": "array"
                             },
                             "tableCalculations": {
-                                "description": "\nTable calculations perform row-by-row calculations on query results without collapsing rows. Similar to SQL window functions.\n\n**Available Types:**\n- Simple calculations: percent_change_from_previous, percent_of_previous_value, percent_of_column_total, rank_in_column, running_total\n- Advanced window_function: Supports row_number, percent_rank, sum, avg, count, min, max with optional partitioning, ordering, and frame clauses\n\n**Technical Requirements:**\n- Appear as additional columns in query results\n- Can be used in sorts and filters alongside dimensions/metrics\n- Multiple calculations can be combined in a single query\n- All fields referenced must exist in the query (dimensions, metrics, or other table calculations)\n, ",
+                                "description": "\nTable calculations perform row-by-row calculations on query results without collapsing rows. Similar to SQL window functions.\n\n**Prefer type \"formula\"** — it expresses arithmetic across fields, ratios, comparisons, conditionals, and partitioned window calculations. The other types are legacy single-field templates kept for backwards compatibility.\n\n**Technical Requirements:**\n- Appear as additional columns in query results\n- Can be used in sorts and filters alongside dimensions/metrics\n- Multiple calculations can be combined in a single query\n- All fields referenced must exist in the query (dimensions, metrics, or other table calculations)\n, ",
                                 "items": {
                                     "anyOf": [
+                                        {
+                                            "additionalProperties": false,
+                                            "properties": {
+                                                "displayName": {
+                                                    "description": "Display name for the table calculation, e.g. \"MoM revenue change\"",
+                                                    "type": "string"
+                                                },
+                                                "format": {
+                                                    "description": "Display format. Use \"percent\" for ratios/shares/percent changes (value 0.12 renders as 12%). null defaults to \"number\"., ",
+                                                    "enum": [
+                                                        "number",
+                                                        "percent"
+                                                    ],
+                                                    "type": "string"
+                                                },
+                                                "formula": {
+                                                    "description": "Spreadsheet-like formula evaluated row-by-row over the query results (after aggregation).\nReference fields by their field id directly, e.g. `orders_total_revenue / orders_order_count`. No prefix, no braces, no leading `=`.\nAny selected dimension, metric, custom metric (`<table>_<name>`), or another table calculation name can be referenced.\nOperators: + - * / % ^, comparisons = < > <= >= <>, boolean AND/OR/NOT, string literals in double quotes, parentheses for grouping.\nFunctions include IF, COALESCE, ROUND, ABS, CONCAT, date functions (YEAR, DATE_TRUNC, DATE_DIFF, DATE_ADD), aggregates over the whole result (SUM, AVG, MIN, MAX, COUNT, SUMIF), and window functions (RUNNING_TOTAL, MOVING_SUM, MOVING_AVG, LAG, LEAD, RANK, DENSE_RANK, ROW_NUMBER, FIRST, LAST).\nWindow functions accept optional PARTITION BY / ORDER BY clauses as trailing arguments, e.g. `LAG(orders_total_revenue, PARTITION BY orders_status, ORDER BY orders_order_date)`.\nMOVING_SUM and MOVING_AVG take the count of preceding rows as second argument; the current row is always included, so a trailing 3-period average is `MOVING_AVG(orders_total_revenue, 2, ORDER BY orders_order_month)`.\nAll branches of an IF must return the same type.",
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "description": "Unique name for the table calculation, e.g. \"percent_change_from_previous\"",
+                                                    "type": "string"
+                                                },
+                                                "resultType": {
+                                                    "description": "Data type the formula evaluates to. null defaults to \"number\"., ",
+                                                    "enum": [
+                                                        "number",
+                                                        "string",
+                                                        "date",
+                                                        "timestamp",
+                                                        "boolean"
+                                                    ],
+                                                    "type": "string"
+                                                },
+                                                "type": {
+                                                    "const": "formula",
+                                                    "type": "string"
+                                                }
+                                            },
+                                            "required": [
+                                                "name",
+                                                "displayName",
+                                                "type",
+                                                "formula"
+                                            ],
+                                            "type": "object"
+                                        },
                                         {
                                             "additionalProperties": false,
                                             "properties": {

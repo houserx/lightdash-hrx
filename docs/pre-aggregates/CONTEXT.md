@@ -65,8 +65,10 @@ _Avoid_: static filters, pre-filters
 
 **Time dimension / Granularity**:
 The optional time dimension a pre-aggregate is grouped by, and the grain
-(hour–year) it is stored at. Queries at equal or coarser grain can be served;
-finer grain misses.
+(hour–year) it is stored at. Queries can be served only when their requested
+time frame is safely derivable from the stored grain. For example, day can
+serve month, but week cannot serve calendar month because weeks cross month
+boundaries.
 
 **Materialization role**:
 A fixed identity (email plus user attributes) that materialization runs under,
@@ -92,6 +94,14 @@ _Avoid_: fallback, cache miss
 The recorded explanation for a miss (e.g. dimension not in pre-aggregate,
 granularity too fine, non-additive metric).
 
+**Execution fallback**:
+A matched query whose pre-aggregate execution failed (unreadable
+materialization, DuckDB error, external table issue), so results were served
+from the source warehouse. Distinct from a miss: the match succeeded but the
+serve did not. Recorded as a fallback reason on query history, exposed on
+results metadata, and counted in pre-aggregate analytics.
+_Avoid_: miss, retry, cache miss
+
 **Ineligible**:
 A dashboard tile that cannot use pre-aggregates at all (markdown tile, SQL
 chart, broken explore). Distinct from a miss: ineligible tiles never count
@@ -113,7 +123,9 @@ A match where the query's selected dimensions equal the pre-aggregate's
 dimensions, with the time dimension at exactly the pre-aggregate's
 granularity — so each result row is served from a single materialization row
 and no re-aggregation occurs. The only kind of match that can serve
-non-additive metrics. A definition dimension referenced only by a query
+non-additive metrics. Fields that group identically are interchangeable: a
+date-type base field counts as day grain, and the day alias of a date-type
+dimension counts as its stored raw values. A definition dimension referenced only by a query
 filter, or reached through a custom bin, does not count as selected.
 
 **Audit**:
