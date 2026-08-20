@@ -1,3 +1,4 @@
+import { fc, test } from '@fast-check/vitest';
 import {
     DirectResourceAccessOrigin,
     OrganizationMemberRole,
@@ -410,6 +411,42 @@ describe('SpacePermissionService paginated resource access', () => {
             );
         });
     });
+
+    // The single-grant scenarios above pin the ordering for one shape. This
+    // generalises them: however many principals hold a grant, and whoever they
+    // are, all of them must be present in the uuid set pagination counts over.
+    // Folding grants in after that call would satisfy every example test above
+    // and still fail this one as soon as a second grant holder exists.
+    test.prop([
+        fc.uniqueArray(
+            fc
+                .string({ minLength: 1, maxLength: 12 })
+                .map((s) => `grantee-${s}`),
+            { minLength: 1, maxLength: 15 },
+        ),
+    ])(
+        'counts every grant holder, whoever and however many they are',
+        async (granteeUuids) => {
+            const { service, permissionModel } = buildPaginatedService({
+                enabled: true,
+                grants: granteeUuids.map((userUuid) => ({
+                    ...grant(DASHBOARD_A, 'view'),
+                    userUuid,
+                })),
+            });
+
+            await list(service);
+
+            const [paginatedUuids] =
+                permissionModel.getPaginatedUserMetadata.mock.calls[0];
+
+            expect(
+                granteeUuids.every((uuid) => paginatedUuids.includes(uuid)),
+            ).toBe(true);
+            // And nobody is counted twice, or the totals overstate the page.
+            expect(new Set(paginatedUuids).size).toBe(paginatedUuids.length);
+        },
+    );
 
     describe('given every entry that comes back', () => {
         it('then each one carries a recognised provenance', async () => {
