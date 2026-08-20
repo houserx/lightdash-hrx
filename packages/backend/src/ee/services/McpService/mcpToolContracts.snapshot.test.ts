@@ -164,13 +164,23 @@ describe('MCP tool contracts', () => {
         expect(sharedMcpToolDefinitionNames).toMatchSnapshot();
     });
 
-    it('uses the grep-fields MCP analyst prompt when ai-grep-fields is enabled', () => {
-        const prompt = getMcpAnalystPrompt({ enableGrepFields: true });
+    it('uses the grep-fields MCP analyst prompt', () => {
+        const prompt = getMcpAnalystPrompt();
 
         expect(prompt).toContain('grep_fields');
         expect(prompt).toContain('get_metadata');
         expect(prompt).not.toContain('find_explores');
         expect(prompt).not.toContain('find_fields');
+    });
+
+    it('skips semantic discovery for complete raw SQL', () => {
+        const guidance =
+            'follow step 0, then skip steps 1–3 and call `run_sql`';
+
+        expect(getMcpAnalystPrompt()).toContain(guidance);
+        expect(getMcpAnalystPrompt({ runSqlEnabled: false })).not.toContain(
+            guidance,
+        );
     });
 
     it('matches the current MCP tool and prompt contract snapshot', async () => {
@@ -215,17 +225,22 @@ describe('MCP tool contracts', () => {
         expect({ prompts, tools }).toMatchSnapshot();
     });
 
+    it('registers generate_hashes without project scope', async () => {
+        const mcpService = makeMcpService();
+
+        await mcpService.createServer();
+
+        expect(mockRegisteredMcpTools.map(({ name }) => name)).toContain(
+            McpToolName.GENERATE_HASHES,
+        );
+        expect(isProjectScopedMcpTool(McpToolName.GENERATE_HASHES)).toBe(false);
+    });
+
     it('requires projectUuid on every project-scoped tool', async () => {
         const mcpService = makeMcpService();
 
         await mcpService.createServer({
             aiWritebackEnabled: true,
-            grepFieldsEnabled: false,
-            runSqlEnabled: true,
-        });
-        await mcpService.createServer({
-            aiWritebackEnabled: true,
-            grepFieldsEnabled: true,
             runSqlEnabled: true,
         });
 
