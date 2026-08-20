@@ -59,6 +59,7 @@ const buildService = ({
             access: [],
             admins: [],
         })),
+        getPaginatedResourceAccess: vi.fn(async () => ({ data: [] })),
     };
     const service = new ResourceAccessService({
         dashboardModel: {
@@ -364,5 +365,100 @@ describe('ResourceAccessService', () => {
 
             expect(resourceAccessModel.removeUserAccess).not.toHaveBeenCalled();
         });
+    });
+});
+
+/**
+ * The resolved access list behind the sharing UI. Mirrors getSpaceAccessList so
+ * the two share a contract: same guards, same filters, same paginated shape.
+ */
+describe('ResourceAccessService getResourceAccessList', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('given more than a hundred user uuids, then it is refused', async () => {
+        const { service, granter } = buildService();
+
+        await expect(
+            service.getResourceAccessList(granter, {
+                projectUuid: PROJECT_UUID,
+                resourceType: 'Dashboard',
+                resourceUuid: DASHBOARD_UUID,
+                filters: {
+                    userUuids: Array.from(
+                        { length: 101 },
+                        (_, index) => `user-${index}`,
+                    ),
+                },
+            }),
+        ).rejects.toThrow(ParameterError);
+    });
+
+    it('given an empty user uuid filter, then it returns an empty page without resolving access', async () => {
+        // Asking about nobody is not the same as asking about everybody.
+        const { service, spacePermissionService, granter } = buildService();
+
+        const result = await service.getResourceAccessList(granter, {
+            projectUuid: PROJECT_UUID,
+            resourceType: 'Dashboard',
+            resourceUuid: DASHBOARD_UUID,
+            filters: { userUuids: [] },
+        });
+
+        expect(result.data).toEqual([]);
+        expect(
+            spacePermissionService.getPaginatedResourceAccess,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('given no pagination args, then the response carries no pagination key', async () => {
+        const { service, granter } = buildService();
+
+        const result = await service.getResourceAccessList(granter, {
+            projectUuid: PROJECT_UUID,
+            resourceType: 'Dashboard',
+            resourceUuid: DASHBOARD_UUID,
+            filters: { userUuids: [] },
+        });
+
+        expect(result).not.toHaveProperty('pagination');
+    });
+
+    it('given pagination args, then an empty page still reports its shape', async () => {
+        const { service, granter } = buildService();
+
+        const result = await service.getResourceAccessList(granter, {
+            projectUuid: PROJECT_UUID,
+            resourceType: 'Dashboard',
+            resourceUuid: DASHBOARD_UUID,
+            paginateArgs: { page: 1, pageSize: 10 },
+            filters: { userUuids: [] },
+        });
+
+        expect(result.pagination).toEqual({
+            page: 1,
+            pageSize: 10,
+            totalPageCount: 0,
+            totalResults: 0,
+        });
+    });
+
+    it('then the list is resolved against the resource and the space it lives in', async () => {
+        const { service, spacePermissionService, granter } = buildService();
+
+        await service.getResourceAccessList(granter, {
+            projectUuid: PROJECT_UUID,
+            resourceType: 'Dashboard',
+            resourceUuid: DASHBOARD_UUID,
+        });
+
+        expect(
+            spacePermissionService.getPaginatedResourceAccess,
+        ).toHaveBeenCalledWith(
+            'Dashboard',
+            { resourceUuid: DASHBOARD_UUID, spaceUuid: SPACE_UUID },
+            expect.objectContaining({ currentUserUuid: granter.userUuid }),
+        );
     });
 });

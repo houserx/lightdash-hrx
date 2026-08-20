@@ -394,4 +394,74 @@ describe('ResourceAccessModel', () => {
             },
         );
     });
+
+    describe('getAllDirectResourceAccess', () => {
+        it('given grants on the resource, then every principal is returned', async () => {
+            tracker.on
+                .any(() => true)
+                .response([
+                    {
+                        userUuid: USER_UUID,
+                        resourceUuid: DASHBOARD_A,
+                        groupUuid: null,
+                        action: 'view',
+                        from: DirectResourceAccessOrigin.USER_ACCESS,
+                    },
+                    {
+                        userUuid: 'user-2',
+                        resourceUuid: DASHBOARD_A,
+                        groupUuid: 'group-1',
+                        action: 'manage',
+                        from: DirectResourceAccessOrigin.GROUP_ACCESS,
+                    },
+                ]);
+
+            // Group grants arrive already expanded to one row per member, the
+            // same shape getDirectResourceAccess returns -- so the resolver does
+            // not have to know a group was involved.
+            await expect(
+                model.getAllDirectResourceAccess('Dashboard', DASHBOARD_A),
+            ).resolves.toEqual([
+                {
+                    userUuid: USER_UUID,
+                    resourceUuid: DASHBOARD_A,
+                    groupUuid: null,
+                    action: 'view',
+                    from: DirectResourceAccessOrigin.USER_ACCESS,
+                },
+                {
+                    userUuid: 'user-2',
+                    resourceUuid: DASHBOARD_A,
+                    groupUuid: 'group-1',
+                    action: 'manage',
+                    from: DirectResourceAccessOrigin.GROUP_ACCESS,
+                },
+            ]);
+        });
+
+        it('given the lookup runs, then it costs one query', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.getAllDirectResourceAccess('Dashboard', DASHBOARD_A);
+
+            expect(tracker.history.all).toHaveLength(1);
+        });
+
+        it('given the lookup runs, then it is scoped to the resource and its type', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.getAllDirectResourceAccess('Dashboard', DASHBOARD_A);
+
+            const [{ sql, bindings }] = tracker.history.all;
+            expect(sql).toContain('resource_user_access');
+            expect(sql).toContain('resource_group_access');
+            expect(bindings).toContain(DASHBOARD_A);
+            expect(
+                bindings.filter((binding) => binding === 'Dashboard'),
+            ).toHaveLength(2);
+            // Unlike the per-user read, this one is deliberately not scoped to a
+            // principal -- it answers "who can see this", not "can I see this".
+            expect(bindings).not.toContain(USER_UUID);
+        });
+    });
 });

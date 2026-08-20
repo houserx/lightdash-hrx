@@ -242,3 +242,158 @@ describe('SpacePermissionService resource access context', () => {
         });
     });
 });
+
+/**
+ * The resolved, paginated access list behind the sharing UI.
+ *
+ * Pagination runs over user metadata scoped to an already-resolved uuid set, not
+ * over space-access rows -- so grant-derived principals must be folded in BEFORE
+ * that call, or page counts describe a different population than the page does.
+ */
+describe('SpacePermissionService paginated resource access', () => {
+    afterEach(() => {
+        vi.resetAllMocks();
+    });
+
+    const SPACE_USER = 'space-user';
+    const GRANT_USER = 'grant-user';
+
+    const buildPaginatedService = ({
+        enabled,
+        grants = [],
+        spaceUsers = [SPACE_USER],
+    }: {
+        enabled: boolean;
+        grants?: ReturnType<typeof grant>[];
+        spaceUsers?: string[];
+    }) => {
+        const permissionModel = {
+            ...createMockPermissionModel([SPACE_UUID]),
+            getPaginatedUserMetadata: vi.fn(async (userUuids: string[]) => ({
+                data: userUuids.map((userUuid) => ({
+                    userUuid,
+                    firstName: 'A',
+                    lastName: 'B',
+                    email: `${userUuid}@example.com`,
+                })),
+            })),
+        };
+        const getAllDirectResourceAccess = vi.fn(async () => grants);
+        const service = new SpacePermissionService(
+            {} as SpaceModel,
+            permissionModel as unknown as SpacePermissionModel,
+            {
+                getAllDirectResourceAccess,
+            } as unknown as ResourceAccessModel,
+            {
+                ...lightdashConfigMock,
+                resourceGrants: { enabled },
+            },
+        );
+        return { service, permissionModel, getAllDirectResourceAccess };
+    };
+
+    const list = (
+        service: SpacePermissionService,
+        filters?: { userUuids?: string[]; directOnly?: boolean },
+    ) =>
+        service.getPaginatedResourceAccess(
+            'Dashboard',
+            { resourceUuid: DASHBOARD_A, spaceUuid: SPACE_UUID },
+            { filters },
+        );
+
+    describe('given resource grants are disabled', () => {
+        it('then no grant lookup is issued', async () => {
+            const { service, getAllDirectResourceAccess } =
+                buildPaginatedService({ enabled: false });
+
+            await list(service);
+
+            expect(getAllDirectResourceAccess).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('given a grant to someone with no access to the space', () => {
+        it('then they appear in the list', async () => {
+            const { service } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'view')],
+            });
+
+            const { data } = await list(service);
+
+            expect(data.map(({ userUuid }) => userUuid)).toContain(USER_UUID);
+        });
+
+        it('then the entry is attributed to the resource, not the space', async () => {
+            const { service } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'view')],
+            });
+
+            const { data } = await list(service);
+            const entry = data.find(({ userUuid }) => userUuid === USER_UUID);
+
+            // The field the sharing UI reads to label where access came from.
+            expect(entry?.inheritedFrom).toBe('direct_resource');
+            expect(entry?.hasDirectAccess).toBe(true);
+        });
+
+        it('then they are counted before metadata is paginated', async () => {
+            const { service, permissionModel } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'view')],
+            });
+
+            await list(service);
+
+            const [paginatedUuids] =
+                permissionModel.getPaginatedUserMetadata.mock.calls[0];
+            expect(paginatedUuids).toContain(USER_UUID);
+        });
+    });
+
+    describe('given a userUuids filter', () => {
+        it('then a grant holder outside it does not leak in', async () => {
+            // The space side is filtered in SQL, but grants are read for the
+            // whole resource -- so the filter has to be re-applied after merging.
+            const { service } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'view')],
+            });
+
+            const { data } = await list(service, {
+                userUuids: [GRANT_USER],
+            });
+
+            expect(data.map(({ userUuid }) => userUuid)).not.toContain(
+                USER_UUID,
+            );
+        });
+    });
+
+    describe('given every entry that comes back', () => {
+        it('then each one carries a recognised provenance', async () => {
+            const { service } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'manage')],
+            });
+
+            const { data } = await list(service);
+
+            const known = [
+                'organization',
+                'project',
+                'group',
+                'space_group',
+                'parent_space',
+                'direct_resource',
+                undefined,
+            ];
+            expect(
+                data.every((entry) => known.includes(entry.inheritedFrom)),
+            ).toBe(true);
+        });
+    });
+});
