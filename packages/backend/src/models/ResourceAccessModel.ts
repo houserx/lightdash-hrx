@@ -1,10 +1,14 @@
 import {
     DirectResourceAccessOrigin,
     type DirectResourceAccess,
+    type ResourceAccessAction,
     type ResourceAccessResourceType,
 } from '@lightdash/common';
 import { Knex } from 'knex';
 import { GroupMembershipTableName } from '../database/entities/groupMemberships';
+import { GroupTableName } from '../database/entities/groups';
+import { OrganizationMembershipsTableName } from '../database/entities/organizationMemberships';
+import { OrganizationTableName } from '../database/entities/organizations';
 import {
     ResourceGroupAccessTableName,
     ResourceUserAccessTableName,
@@ -120,5 +124,199 @@ export class ResourceAccessModel {
                 );
             },
         );
+    }
+
+    /**
+     * Upserts a user grant. Re-granting the same action is idempotent rather than
+     * an error, matching how space sharing behaves.
+     */
+    async addUserAccess({
+        resourceType,
+        resourceUuid,
+        projectUuid,
+        targetUserUuid,
+        action,
+        grantedByUserUuid,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        projectUuid: string;
+        targetUserUuid: string;
+        action: ResourceAccessAction;
+        grantedByUserUuid: string;
+    }): Promise<void> {
+        await this.database(ResourceUserAccessTableName)
+            .insert({
+                user_uuid: targetUserUuid,
+                resource_uuid: resourceUuid,
+                resource_type: resourceType,
+                project_uuid: projectUuid,
+                action,
+                granted_by: grantedByUserUuid,
+            })
+            .onConflict([
+                'user_uuid',
+                'resource_uuid',
+                'resource_type',
+                'action',
+            ])
+            .merge(['granted_by']);
+    }
+
+    async addGroupAccess({
+        resourceType,
+        resourceUuid,
+        projectUuid,
+        targetGroupUuid,
+        action,
+        grantedByUserUuid,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        projectUuid: string;
+        targetGroupUuid: string;
+        action: ResourceAccessAction;
+        grantedByUserUuid: string;
+    }): Promise<void> {
+        await this.database(ResourceGroupAccessTableName)
+            .insert({
+                group_uuid: targetGroupUuid,
+                resource_uuid: resourceUuid,
+                resource_type: resourceType,
+                project_uuid: projectUuid,
+                action,
+                granted_by: grantedByUserUuid,
+            })
+            .onConflict([
+                'group_uuid',
+                'resource_uuid',
+                'resource_type',
+                'action',
+            ])
+            .merge(['granted_by']);
+    }
+
+    async removeUserAccess({
+        resourceType,
+        resourceUuid,
+        targetUserUuid,
+        action,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        targetUserUuid: string;
+        action: ResourceAccessAction;
+    }): Promise<void> {
+        await this.database(ResourceUserAccessTableName)
+            .where('resource_type', resourceType)
+            .where('resource_uuid', resourceUuid)
+            .where('user_uuid', targetUserUuid)
+            .where('action', action)
+            .delete();
+    }
+
+    async removeGroupAccess({
+        resourceType,
+        resourceUuid,
+        targetGroupUuid,
+        action,
+    }: {
+        resourceType: ResourceAccessResourceType;
+        resourceUuid: string;
+        targetGroupUuid: string;
+        action: ResourceAccessAction;
+    }): Promise<void> {
+        await this.database(ResourceGroupAccessTableName)
+            .where('resource_type', resourceType)
+            .where('resource_uuid', resourceUuid)
+            .where('group_uuid', targetGroupUuid)
+            .where('action', action)
+            .delete();
+    }
+
+    /**
+     * Every grant held on one resource. Read as two focused queries rather than a
+     * UNION: user and group grants carry different metadata, so callers want them
+     * apart.
+     */
+    async listResourceAccess(
+        resourceType: ResourceAccessResourceType,
+        resourceUuid: string,
+    ): Promise<{
+        users: { userUuid: string; action: ResourceAccessAction }[];
+        groups: { groupUuid: string; action: ResourceAccessAction }[];
+    }> {
+        const [users, groups] = await Promise.all([
+            this.database(ResourceUserAccessTableName)
+                .where('resource_type', resourceType)
+                .where('resource_uuid', resourceUuid)
+                .select({
+                    userUuid: 'user_uuid',
+                    action: 'action',
+                }),
+            this.database(ResourceGroupAccessTableName)
+                .where('resource_type', resourceType)
+                .where('resource_uuid', resourceUuid)
+                .select({
+                    groupUuid: 'group_uuid',
+                    action: 'action',
+                }),
+        ]);
+
+        return { users, groups };
+    }
+
+    /**
+     * Whether a user holds a membership in this organization. Used to reject a
+     * grant whose recipient is outside the resource's organization -- without it,
+     * the only constraint is the foreign key to users, which means "some user
+     * exists somewhere in this instance", not "this user is in this org".
+     */
+    async isUserInOrganization(
+        organizationUuid: string,
+        userUuid: string,
+    ): Promise<boolean> {
+        const match = await this.database(OrganizationMembershipsTableName)
+            .innerJoin(
+                OrganizationTableName,
+                `${OrganizationTableName}.organization_id`,
+                `${OrganizationMembershipsTableName}.organization_id`,
+            )
+            .innerJoin(
+                UserTableName,
+                `${UserTableName}.user_id`,
+                `${OrganizationMembershipsTableName}.user_id`,
+            )
+            .where(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .where(`${UserTableName}.user_uuid`, userUuid)
+            .select({ userUuid: `${UserTableName}.user_uuid` })
+            .first();
+
+        return match !== undefined;
+    }
+
+    /** The group counterpart of `isUserInOrganization`. */
+    async isGroupInOrganization(
+        organizationUuid: string,
+        groupUuid: string,
+    ): Promise<boolean> {
+        const match = await this.database(GroupTableName)
+            .innerJoin(
+                OrganizationTableName,
+                `${OrganizationTableName}.organization_id`,
+                `${GroupTableName}.organization_id`,
+            )
+            .where(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .where(`${GroupTableName}.group_uuid`, groupUuid)
+            .select({ groupUuid: `${GroupTableName}.group_uuid` })
+            .first();
+
+        return match !== undefined;
     }
 }

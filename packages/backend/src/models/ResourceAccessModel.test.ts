@@ -165,5 +165,116 @@ describe('ResourceAccessModel', () => {
                 ).toHaveLength(2);
             });
         });
+
+        describe('write path', () => {
+            it('given a user grant, then it is upserted with the granter recorded', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await model.addUserAccess({
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_A,
+                    projectUuid: 'project-1',
+                    targetUserUuid: 'grantee-1',
+                    action: 'view',
+                    grantedByUserUuid: USER_UUID,
+                });
+
+                const [{ sql, bindings }] = tracker.history.all;
+                expect(sql).toContain('resource_user_access');
+                expect(sql.toLowerCase()).toContain('on conflict');
+                expect(bindings).toContain('grantee-1');
+                expect(bindings).toContain(USER_UUID);
+            });
+
+            it('given a group grant, then it is upserted against the group table', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await model.addGroupAccess({
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_A,
+                    projectUuid: 'project-1',
+                    targetGroupUuid: 'group-1',
+                    action: 'manage',
+                    grantedByUserUuid: USER_UUID,
+                });
+
+                const [{ sql, bindings }] = tracker.history.all;
+                expect(sql).toContain('resource_group_access');
+                expect(bindings).toContain('group-1');
+            });
+
+            it('given a revoke, then it deletes only that principal action pair', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await model.removeUserAccess({
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_A,
+                    targetUserUuid: 'grantee-1',
+                    action: 'view',
+                });
+
+                const [{ sql, bindings }] = tracker.history.all;
+                expect(sql.toLowerCase()).toContain('delete');
+                expect(bindings).toContain('grantee-1');
+                expect(bindings).toContain('view');
+                expect(bindings).toContain('Dashboard');
+            });
+
+            it('given a listing, then both tables are read for the resource', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await model.listResourceAccess('Dashboard', DASHBOARD_A);
+
+                // Two focused reads rather than a UNION: users and groups carry
+                // different metadata, so callers want them separately.
+                expect(tracker.history.all).toHaveLength(2);
+            });
+        });
+
+        describe('grantee organization validation', () => {
+            it('given the user holds a membership, then it reports true', async () => {
+                tracker.on
+                    .any(() => true)
+                    .response([{ userUuid: 'grantee-1' }]);
+
+                await expect(
+                    model.isUserInOrganization('org-1', 'grantee-1'),
+                ).resolves.toBe(true);
+            });
+
+            it('given the user holds no membership, then it reports false', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await expect(
+                    model.isUserInOrganization('org-1', 'grantee-1'),
+                ).resolves.toBe(false);
+            });
+
+            it('given the user is checked, then the organization is part of the filter', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await model.isUserInOrganization('org-1', 'grantee-1');
+
+                const [{ bindings }] = tracker.history.all;
+                expect(bindings).toContain('org-1');
+                expect(bindings).toContain('grantee-1');
+            });
+
+            it('given a group in the organization, then it reports true', async () => {
+                tracker.on.any(() => true).response([{ groupUuid: 'group-1' }]);
+
+                await expect(
+                    model.isGroupInOrganization('org-1', 'group-1'),
+                ).resolves.toBe(true);
+            });
+
+            it('given a group outside the organization, then it reports false', async () => {
+                tracker.on.any(() => true).response([]);
+
+                await expect(
+                    model.isGroupInOrganization('org-1', 'group-1'),
+                ).resolves.toBe(false);
+            });
+        });
     });
 });
