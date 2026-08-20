@@ -27,7 +27,7 @@ const user = {
             userUuid: 'user-1',
             role: OrganizationMemberRole.ADMIN,
             organizationUuid: ORGANIZATION_UUID,
-            roleUuid: null,
+            roleUuid: undefined,
         },
         [],
     ),
