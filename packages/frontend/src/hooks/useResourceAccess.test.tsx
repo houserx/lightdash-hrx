@@ -219,7 +219,12 @@ describe('given a dashboard that may have been shared directly', () => {
     describe('when the persisted grant rows are requested', () => {
         it('then both the user and group grants come back', async () => {
             const grants = {
-                users: [{ userUuid: 'alice', action: 'view' }],
+                // Alice holds both actions -- the shape the revoke-all path
+                // exists for, and what item I derives its `actions` array from
+                users: [
+                    { userUuid: 'alice', action: 'view' },
+                    { userUuid: 'alice', action: 'manage' },
+                ],
                 groups: [{ groupUuid: 'analysts', action: 'manage' }],
             };
             lightdashApi.mockResolvedValue(grants);
@@ -390,6 +395,47 @@ describe('given a principal whose grant is being taken away', () => {
                 `${BASE_URL}/user/alice/view`,
                 `${BASE_URL}/user/alice/manage`,
             ]);
+        });
+    });
+
+    /**
+     * Sequencing bounds the damage but does not prevent it: two grants with one
+     * deleted is still half revoked. If invalidation only ran on full success, the
+     * list would keep showing the principal at their old role while the server had
+     * already dropped one of their grants -- an error toast over a list that looks
+     * untouched.
+     */
+    describe('when an earlier delete succeeds and a later one fails', () => {
+        it('then the cache is still refreshed, because part of the revoke landed', async () => {
+            lightdashApi.mockResolvedValueOnce(null).mockRejectedValueOnce({
+                error: { message: 'nope', name: 'ForbiddenError' },
+            });
+            const { wrapper, queryClient } = createWrapper();
+            const invalidateQueries = vi.spyOn(
+                queryClient,
+                'invalidateQueries',
+            );
+
+            const { result } = renderHook(
+                () =>
+                    useRevokeResourceUserAccessMutation(
+                        PROJECT_UUID,
+                        'Dashboard',
+                        DASHBOARD_UUID,
+                    ),
+                { wrapper },
+            );
+            result.current.mutate({
+                userUuid: 'alice',
+                actions: ['view', 'manage'],
+            });
+
+            await waitFor(() => expect(result.current.isError).toBe(true));
+            await waitFor(() =>
+                expect(
+                    invalidateQueries.mock.calls.map(([key]) => key),
+                ).toEqual([RESOLVED_LIST_KEY, GRANT_ROWS_KEY]),
+            );
         });
     });
 
