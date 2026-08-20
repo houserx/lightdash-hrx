@@ -121,13 +121,16 @@ const contentVerificationModel = {
     getByContent: vi.fn(async () => verificationInfo),
 };
 
+const accessContext = {
+    organizationUuid: 'org-uuid',
+    projectUuid: 'project-uuid',
+    inheritsFromOrgOrProject: true,
+    access: [],
+};
+
 const spacePermissionService = {
-    getSpaceAccessContext: vi.fn(async () => ({
-        organizationUuid: 'org-uuid',
-        projectUuid: 'project-uuid',
-        inheritsFromOrgOrProject: true,
-        access: [],
-    })),
+    getSpaceAccessContext: vi.fn(async () => accessContext),
+    getResourceAccessContext: vi.fn(async () => accessContext),
     getFirstViewableSpaceUuid: vi.fn(async () => 'space-uuid'),
 };
 
