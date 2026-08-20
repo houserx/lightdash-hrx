@@ -1531,6 +1531,10 @@ const upsertAiAgents = async (
         throw error;
     }
 
+    (results.warnings ?? []).forEach((warning) =>
+        GlobalState.log(styles.warning(`  ⚠ ${warning}`)),
+    );
+
     const counts = {
         'AI agents created': results.created.length,
         'AI agents updated': results.updated.length,
@@ -3328,7 +3332,7 @@ export const uploadHandler = async (
             output.startItem('Data apps');
             GlobalState.log(
                 styles.warning(
-                    `Skipping data apps: create:DataApp or manage:DataApp permission is required. Dashboard tiles will resolve only if their apps already exist in this project.`,
+                    `Skipping data apps: create:DataApp or manage:DataApp permission is required for this project (the create:DataApp@preview and manage:DataApp@preview scopes only cover preview projects you created). Dashboard tiles will resolve only if their apps already exist in this project.`,
                 ),
             );
             output.completeItem('permission denied', 'warning');

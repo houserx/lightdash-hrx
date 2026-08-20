@@ -757,7 +757,7 @@ export class MetricQueryBuilder {
             return this.isFilterOnPopComparisonTimeDimension(
                 item,
                 timeDimensionId,
-            )
+            ) && item.operator !== FilterOperator.IN_PERIOD_TO_DATE
                 ? acc
                 : [...acc, item];
         }, []);
@@ -2403,8 +2403,11 @@ export class MetricQueryBuilder {
                 requiresQueryInCTE = true;
 
                 fieldSort = sortMonthName(
-                    sortedDimension,
-                    warehouseSqlBuilder.getFieldQuoteChar(),
+                    quoteFieldReference(
+                        getItemId(sortedDimension),
+                        warehouseSqlBuilder.getFieldQuoteChar(),
+                        warehouseSqlBuilder.getAdapterType(),
+                    ),
                     sort.descending,
                 );
             } else if (
@@ -2416,9 +2419,12 @@ export class MetricQueryBuilder {
                 // for consistency, we do it for all warehouses
                 requiresQueryInCTE = true;
                 fieldSort = sortDayOfWeekName(
-                    sortedDimension,
+                    quoteFieldReference(
+                        getItemId(sortedDimension),
+                        warehouseSqlBuilder.getFieldQuoteChar(),
+                        warehouseSqlBuilder.getAdapterType(),
+                    ),
                     startOfWeek,
-                    warehouseSqlBuilder.getFieldQuoteChar(),
                     sort.descending,
                 );
             } else if (

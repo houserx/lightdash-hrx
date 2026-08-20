@@ -25,6 +25,7 @@ import type {
     ApiAiAgentReviewItemPrDiffResponse,
     ApiAiAgentReviewItemWritebackPreviewResponse,
     ApiAiAgentThreadCreateResponse,
+    ApiAiAgentThreadDumpResponse,
     ApiAiAgentThreadGenerateTitleResponse,
     ApiAiAgentThreadMessageCreateResponse,
     ApiAiAgentThreadMessageInterruptResponse,
@@ -101,6 +102,7 @@ import type { DashboardPreAggregateAudit } from '../ee/preAggregates/audit';
 import type { PivotValuesColumn } from '../visualizations/types';
 import {
     type ApiUserActivityDownloadCsv,
+    type QueryExecutionContext,
     type UserActivity,
     type ViewStatistics,
 } from './analytics';
@@ -204,6 +206,7 @@ import { type ApiImpersonationOrganizationSettingsResponse } from './impersonati
 import {
     type ApiCompiledMergeQueryResults,
     type MergeFieldOrigins,
+    type MergeQuery,
     type MergeQueryError,
 } from './mergeQuery';
 import { type MetricQuery, type QueryWarning } from './metricQuery';
@@ -280,7 +283,18 @@ import {
     type WarehouseCredentials,
 } from './projects';
 import { type ApiPromotionChangesResponse } from './promotion';
-import { type QueryHistoryStatus } from './queryHistory';
+import {
+    type PreAggregateExecutionEngine,
+    type PreAggregateFallbackReason,
+    type QueryHistoryStatus,
+} from './queryHistory';
+import { type ApiQueryHistoryListResponse } from './queryHistoryList';
+import {
+    type ApiExecuteSourceQueriesResults,
+    type ApiGetSourceQueryStatusResults,
+    type ApiListQuerySourcesResults,
+    type ApiScanQuerySourceSchemaResults,
+} from './querySources';
 import { type ApiRenameFieldsResponse, type ApiRenameResponse } from './rename';
 import { type ApiResourceAccessListResponse } from './resourceAccess';
 import { type MostPopularAndRecentlyUpdated } from './resourceViewItem';
@@ -289,6 +303,8 @@ import { type ApiRoadmapResponse } from './roadmap';
 import {
     type ApiCustomRoleAsCodeListResponse,
     type ApiCustomRoleAsCodeUpsertResponse,
+    type ApiOrganizationRoleSetResponse,
+    type ApiProjectRoleSetResponse,
 } from './roles';
 import {
     type ApiCalculateSubtotalsResponse,
@@ -352,6 +368,7 @@ import {
     type ApiDashboardValidationResponse,
     type ApiPaginatedValidateResponse,
     type ApiSingleValidationResponse,
+    type ApiValidationSummaryResponse,
     type ValidationResponse,
 } from './validation';
 import {
@@ -673,6 +690,7 @@ export type HealthState = {
         analyticsProjectUuid?: string;
         analyticsDashboardUuid?: string;
         isAmbientAiEnabled: boolean;
+        threadDumpEnabled: boolean;
     };
     echarts6: {
         enabled: boolean;
@@ -916,6 +934,21 @@ export type ApiExecuteAsyncMergeQueryRequest = Omit<
     chart?: MergeQueryChart;
 };
 
+/**
+ * Merge execution request for the compose endpoint, which accepts the full
+ * MergeQuerySource union (including references to existing query results).
+ * A separate endpoint keeps the original merge-query contract untouched for
+ * existing clients while compose-only capabilities evolve on their own path.
+ */
+export type ApiExecuteAsyncComposeMergeQueryRequest = {
+    context?: QueryExecutionContext;
+    invalidateCache?: boolean;
+    parameters?: ParametersValuesMap;
+    mergeQuery: MergeQuery;
+    mode?: MergeQueryExecutionMode;
+    chart?: MergeQueryChart;
+};
+
 export type ApiExecuteAsyncDashboardChartQueryResults =
     ApiExecuteAsyncQueryResultsCommon & {
         metricQuery: MetricQuery;
@@ -947,8 +980,16 @@ export type QueryResultsPerformance = {
     queueTimeMs: number | null;
 };
 
+// Post-execution truth for pre-aggregate queries: which engine was planned and
+// whether execution failed and the results were served from the source warehouse.
+export type QueryResultsPreAggregate = {
+    execution: PreAggregateExecutionEngine;
+    fallbackReason: PreAggregateFallbackReason | null;
+};
+
 export type QueryResultsMetadata = {
     performance: QueryResultsPerformance;
+    preAggregate: QueryResultsPreAggregate | null;
 };
 
 export type ReadyQueryResultsPage = ResultsPaginationMetadata<ResultRow> & {
@@ -1202,6 +1243,7 @@ type ApiResults =
     | SchedulerWithLogs
     | ValidationResponse[]
     | ApiPaginatedValidateResponse['results']
+    | ApiValidationSummaryResponse['results']
     | ApiRoadmapResponse['results']
     | ChartHistory
     | ChartVersion
@@ -1273,6 +1315,8 @@ type ApiResults =
     | ApiAgentAsCodeUpsertResponse['results']
     | ApiCustomRoleAsCodeListResponse['results']
     | ApiCustomRoleAsCodeUpsertResponse['results']
+    | ApiOrganizationRoleSetResponse['results']
+    | ApiProjectRoleSetResponse['results']
     | ApiUserAsCodeListResponse['results']
     | ApiUserAsCodeUpsertResponse['results']
     | ApiAlertAsCodeListResponse['results']
@@ -1301,8 +1345,13 @@ type ApiResults =
     | ApiCalculateSubtotalsResponse['results']
     | ApiExecuteAsyncFieldValueSearchResults
     | ApiExecuteAsyncSqlQueryResults
+    | ApiExecuteSourceQueriesResults
+    | ApiGetSourceQueryStatusResults
+    | ApiListQuerySourcesResults
+    | ApiScanQuerySourceSchemaResults
     | ApiExecuteAsyncDashboardSqlChartQueryResults
     | ApiExecuteAsyncMetricQueryResults
+    | ApiQueryHistoryListResponse['results']
     | ApiExecuteAsyncDashboardChartQueryResults
     | ApiGetAsyncQueryResults
     | ApiSchedulersResponse['results']
@@ -1336,6 +1385,7 @@ type ApiResults =
     | ApiAiAgentProjectThreadSummaryListResponse['results']
     | Account
     | ApiAiAgentAdminConversationsResponse['results']
+    | ApiAiAgentThreadDumpResponse['results']
     | ApiAiAgentAdminEvalPromptsResponse['results']
     | ApiAiAgentAdminEvalsResponse['results']
     | ApiAiAgentAdminMemoriesResponse['results']
