@@ -598,8 +598,11 @@ const PROJECT_LAYOUT_ROUTES: RouteObject[] = [
     {
         path: 'autopilot',
         lazy: async () => {
-            const { ManagedAgentActivityPage } =
-                await import('./ee/features/managedAgent/ManagedAgentActivityPage');
+            const ManagedAgentActivityPage = await loadLazyRouteDefault(
+                './ee/features/managedAgent/ManagedAgentActivityPage',
+                () =>
+                    import('./ee/features/managedAgent/ManagedAgentActivityPage'),
+            );
             return { Component: ManagedAgentActivityPage };
         },
     },
@@ -720,6 +723,22 @@ const PROJECT_LAYOUT_ROUTES: RouteObject[] = [
                 Component: () => (
                     <TrackPage name={PageName.USER_ACTIVITY}>
                         <UserActivity />
+                    </TrackPage>
+                ),
+            };
+        },
+    },
+    {
+        path: 'query-history',
+        lazy: async () => {
+            const QueryHistory = await loadLazyRouteDefault(
+                './pages/QueryHistory',
+                () => import('./pages/QueryHistory'),
+            );
+            return {
+                Component: () => (
+                    <TrackPage name={PageName.QUERY_HISTORY}>
+                        <QueryHistory />
                     </TrackPage>
                 ),
             };
