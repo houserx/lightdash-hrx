@@ -43,8 +43,13 @@ export class ResourceAccessModel {
             'ResourceAccessModel.getDirectResourceAccess',
             { resourceType, resourceUuidsCount: uniqueResourceUuids.length },
             async () => {
-                const rows = await trx(ResourceUserAccessTableName)
-                    .select<DirectResourceAccess[]>({
+                // Annotated rather than parameterising `.select`, which no
+                // longer matches an overload now the table is registered in
+                // knex's Tables interface.
+                const rows: DirectResourceAccess[] = await trx(
+                    ResourceUserAccessTableName,
+                )
+                    .select({
                         userUuid: `${ResourceUserAccessTableName}.user_uuid`,
                         resourceUuid: `${ResourceUserAccessTableName}.resource_uuid`,
                         groupUuid: trx.raw('NULL'),
