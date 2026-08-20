@@ -102,7 +102,6 @@ describe('ResourceAccessService', () => {
             });
 
             expect(resourceAccessModel.addUserAccess).toHaveBeenCalledWith({
-                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 projectUuid: PROJECT_UUID,
