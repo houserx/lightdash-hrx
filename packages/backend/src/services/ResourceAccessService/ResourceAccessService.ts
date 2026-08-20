@@ -99,27 +99,47 @@ export class ResourceAccessService extends BaseService {
         }
     }
 
+    /**
+     * Resolves the resource and confirms the route's project actually owns it.
+     *
+     * Every endpoint is declared project-scoped, so without this the path
+     * parameter is decorative: a caller could address a resource in one project
+     * through another project's url. The authorization decision would still be
+     * safe -- assertRequesterCan checks the resource's own context, not the url --
+     * but anything keyed off the route's project would be misattributed.
+     */
     private async getResourceContext(
+        projectUuid: string,
         resourceType: ResourceAccessResourceType,
         resourceUuid: string,
     ): Promise<ResourceContext> {
-        if (resourceType === 'Dashboard') {
-            const dashboard =
-                await this.dashboardModel.getByIdOrSlug(resourceUuid);
+        const context = await (async (): Promise<ResourceContext> => {
+            if (resourceType === 'Dashboard') {
+                const dashboard =
+                    await this.dashboardModel.getByIdOrSlug(resourceUuid);
+                return {
+                    organizationUuid: dashboard.organizationUuid,
+                    projectUuid: dashboard.projectUuid,
+                    spaceUuid: dashboard.spaceUuid,
+                    resourceUuid: dashboard.uuid,
+                };
+            }
+            const chart = await this.savedChartModel.getSummary(resourceUuid);
             return {
-                organizationUuid: dashboard.organizationUuid,
-                projectUuid: dashboard.projectUuid,
-                spaceUuid: dashboard.spaceUuid,
-                resourceUuid: dashboard.uuid,
+                organizationUuid: chart.organizationUuid,
+                projectUuid: chart.projectUuid,
+                spaceUuid: chart.spaceUuid,
+                resourceUuid: chart.uuid,
             };
+        })();
+
+        if (context.projectUuid !== projectUuid) {
+            throw new ParameterError(
+                `This ${resourceType} does not belong to project ${projectUuid}`,
+            );
         }
-        const chart = await this.savedChartModel.getSummary(resourceUuid);
-        return {
-            organizationUuid: chart.organizationUuid,
-            projectUuid: chart.projectUuid,
-            spaceUuid: chart.spaceUuid,
-            resourceUuid: chart.uuid,
-        };
+
+        return context;
     }
 
     /**
@@ -200,11 +220,13 @@ export class ResourceAccessService extends BaseService {
     async grantUserAccess(
         granter: SessionUser,
         {
+            projectUuid,
             resourceType,
             resourceUuid,
             targetUserUuid,
             action,
         }: {
+            projectUuid: string;
             resourceType: ResourceAccessResourceType;
             resourceUuid: string;
             targetUserUuid: string;
@@ -214,6 +236,7 @@ export class ResourceAccessService extends BaseService {
         this.throwIfDisabled();
 
         const context = await this.getResourceContext(
+            projectUuid,
             resourceType,
             resourceUuid,
         );
@@ -239,11 +262,13 @@ export class ResourceAccessService extends BaseService {
     async grantGroupAccess(
         granter: SessionUser,
         {
+            projectUuid,
             resourceType,
             resourceUuid,
             targetGroupUuid,
             action,
         }: {
+            projectUuid: string;
             resourceType: ResourceAccessResourceType;
             resourceUuid: string;
             targetGroupUuid: string;
@@ -253,6 +278,7 @@ export class ResourceAccessService extends BaseService {
         this.throwIfDisabled();
 
         const context = await this.getResourceContext(
+            projectUuid,
             resourceType,
             resourceUuid,
         );
@@ -283,11 +309,13 @@ export class ResourceAccessService extends BaseService {
     async revokeUserAccess(
         revoker: SessionUser,
         {
+            projectUuid,
             resourceType,
             resourceUuid,
             targetUserUuid,
             action,
         }: {
+            projectUuid: string;
             resourceType: ResourceAccessResourceType;
             resourceUuid: string;
             targetUserUuid: string;
@@ -297,6 +325,7 @@ export class ResourceAccessService extends BaseService {
         this.throwIfDisabled();
 
         const context = await this.getResourceContext(
+            projectUuid,
             resourceType,
             resourceUuid,
         );
@@ -317,11 +346,13 @@ export class ResourceAccessService extends BaseService {
     async revokeGroupAccess(
         revoker: SessionUser,
         {
+            projectUuid,
             resourceType,
             resourceUuid,
             targetGroupUuid,
             action,
         }: {
+            projectUuid: string;
             resourceType: ResourceAccessResourceType;
             resourceUuid: string;
             targetGroupUuid: string;
@@ -331,6 +362,7 @@ export class ResourceAccessService extends BaseService {
         this.throwIfDisabled();
 
         const context = await this.getResourceContext(
+            projectUuid,
             resourceType,
             resourceUuid,
         );
@@ -350,12 +382,14 @@ export class ResourceAccessService extends BaseService {
 
     async listResourceAccess(
         requester: SessionUser,
+        projectUuid: string,
         resourceType: ResourceAccessResourceType,
         resourceUuid: string,
     ) {
         this.throwIfDisabled();
 
         const context = await this.getResourceContext(
+            projectUuid,
             resourceType,
             resourceUuid,
         );

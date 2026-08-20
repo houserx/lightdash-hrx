@@ -101,6 +101,7 @@ describe('ResourceAccessService', () => {
             const { service, resourceAccessModel, granter } = buildService();
 
             await service.grantUserAccess(granter, {
+                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 targetUserUuid: GRANTEE_UUID,
@@ -121,6 +122,7 @@ describe('ResourceAccessService', () => {
             const { service, spacePermissionService, granter } = buildService();
 
             await service.grantUserAccess(granter, {
+                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 targetUserUuid: GRANTEE_UUID,
@@ -154,6 +156,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -169,6 +172,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -189,6 +193,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantGroupAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetGroupUuid: GROUP_UUID,
@@ -208,6 +213,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.revokeUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -230,6 +236,7 @@ describe('ResourceAccessService', () => {
             await expect(
                 service.listResourceAccess(
                     granter,
+                    PROJECT_UUID,
                     'Dashboard',
                     DASHBOARD_UUID,
                 ),
@@ -245,6 +252,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -260,6 +268,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -284,6 +293,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -298,6 +308,7 @@ describe('ResourceAccessService', () => {
             const { service, resourceAccessModel, granter } = buildService();
 
             await service.grantUserAccess(granter, {
+                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 targetUserUuid: GRANTEE_UUID,
@@ -316,6 +327,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantGroupAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetGroupUuid: GROUP_UUID,
@@ -332,6 +344,7 @@ describe('ResourceAccessService', () => {
             const { service, resourceAccessModel, granter } = buildService();
 
             await service.revokeUserAccess(granter, {
+                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 targetUserUuid: GRANTEE_UUID,
@@ -353,6 +366,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.revokeUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -368,6 +382,7 @@ describe('ResourceAccessService', () => {
             });
 
             await service.revokeUserAccess(granter, {
+                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 targetUserUuid: GRANTEE_UUID,
@@ -387,6 +402,7 @@ describe('ResourceAccessService', () => {
             await expect(
                 service.listResourceAccess(
                     granter,
+                    PROJECT_UUID,
                     'Dashboard',
                     DASHBOARD_UUID,
                 ),
@@ -398,6 +414,7 @@ describe('ResourceAccessService', () => {
 
             const result = await service.listResourceAccess(
                 granter,
+                PROJECT_UUID,
                 'Dashboard',
                 DASHBOARD_UUID,
             );
@@ -407,6 +424,54 @@ describe('ResourceAccessService', () => {
                 DASHBOARD_UUID,
             );
             expect(result).toEqual({ users: [], groups: [] });
+        });
+    });
+
+    describe('given the route project does not own the resource', () => {
+        it('then the request is rejected', async () => {
+            const { service, granter } = buildService();
+
+            await expect(
+                service.grantUserAccess(granter, {
+                    projectUuid: 'a-different-project',
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ParameterError);
+        });
+
+        it('then nothing is persisted', async () => {
+            const { service, resourceAccessModel, granter } = buildService();
+
+            await expect(
+                service.grantUserAccess(granter, {
+                    projectUuid: 'a-different-project',
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ParameterError);
+
+            expect(resourceAccessModel.addUserAccess).not.toHaveBeenCalled();
+        });
+
+        it('then a revoke is rejected too', async () => {
+            const { service, resourceAccessModel, granter } = buildService();
+
+            await expect(
+                service.revokeUserAccess(granter, {
+                    projectUuid: 'a-different-project',
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ParameterError);
+
+            expect(resourceAccessModel.removeUserAccess).not.toHaveBeenCalled();
         });
     });
 
@@ -423,6 +488,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -440,6 +506,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.grantGroupAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetGroupUuid: GROUP_UUID,
@@ -459,6 +526,7 @@ describe('ResourceAccessService', () => {
 
             await expect(
                 service.revokeUserAccess(granter, {
+                    projectUuid: PROJECT_UUID,
                     resourceType: 'Dashboard',
                     resourceUuid: DASHBOARD_UUID,
                     targetUserUuid: GRANTEE_UUID,
@@ -477,6 +545,7 @@ describe('ResourceAccessService', () => {
             await expect(
                 service.listResourceAccess(
                     granter,
+                    PROJECT_UUID,
                     'Dashboard',
                     DASHBOARD_UUID,
                 ),
