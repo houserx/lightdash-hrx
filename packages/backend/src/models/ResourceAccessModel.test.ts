@@ -307,4 +307,56 @@ describe('ResourceAccessModel', () => {
             });
         });
     });
+
+    describe('getGrantedResourceUuids', () => {
+        it('given grants in the project, then it returns their resource uuids', async () => {
+            tracker.on
+                .any(() => true)
+                .response([
+                    { resourceUuid: DASHBOARD_A },
+                    { resourceUuid: DASHBOARD_B },
+                ]);
+
+            await expect(
+                model.getGrantedResourceUuids(
+                    USER_UUID,
+                    'project-1',
+                    'Dashboard',
+                ),
+            ).resolves.toEqual([DASHBOARD_A, DASHBOARD_B]);
+        });
+
+        it('given the lookup runs, then it costs one query', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.getGrantedResourceUuids(
+                USER_UUID,
+                'project-1',
+                'Dashboard',
+            );
+
+            // Content browse cannot know the resource uuids up front, so this is
+            // keyed on the project instead -- and must stay a single query.
+            expect(tracker.history.all).toHaveLength(1);
+        });
+
+        it('given the lookup runs, then it is scoped by principal, project and resource type', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.getGrantedResourceUuids(
+                USER_UUID,
+                'project-1',
+                'Dashboard',
+            );
+
+            const [{ sql, bindings }] = tracker.history.all;
+            expect(sql).toContain('resource_user_access');
+            expect(sql).toContain('resource_group_access');
+            expect(bindings).toContain(USER_UUID);
+            expect(bindings).toContain('project-1');
+            expect(
+                bindings.filter((binding) => binding === 'Dashboard'),
+            ).toHaveLength(2);
+        });
+    });
 });
