@@ -326,8 +326,10 @@ export const useRevokeResourceUserAccessMutation = (
                 resourceType,
                 resourceUuid,
             ],
-            onSuccess: async () => {
-                await invalidate();
+            // On settle rather than success: a revoke that fails partway has
+            // already deleted the earlier grants, so the cache is stale either way
+            onSettled: invalidate,
+            onSuccess: () => {
                 showToastSuccess({ title: 'Success! Access updated.' });
             },
             onError: ({ error }) => {
@@ -378,8 +380,8 @@ export const useRevokeResourceGroupAccessMutation = (
                 resourceType,
                 resourceUuid,
             ],
-            onSuccess: async () => {
-                await invalidate();
+            onSettled: invalidate,
+            onSuccess: () => {
                 showToastSuccess({ title: 'Success! Group access updated.' });
             },
             onError: ({ error }) => {
