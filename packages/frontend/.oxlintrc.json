@@ -222,6 +222,12 @@
         "vitest-js/valid-expect-in-promise": "error",
         "vitest-js/valid-title": ["error", { "allowArguments": true }]
       }
+    },
+    {
+      "files": ["**/*.property.test.ts"],
+      "rules": {
+        "vitest-js/no-standalone-expect": "off"
+      }
     }
   ]
 }
