@@ -131,18 +131,39 @@ export class SearchService extends BaseService {
             return { content: [] };
         }
 
-        const spaceUuids = [
-            ...new Set(allContent.map((content) => content.spaceUuid)),
-        ];
-        const spaceContexts =
-            await this.spacePermissionService.getSpacesAccessContext(
+        // Dashboards and charts are separate lookups because resource_type is
+        // part of the grant key, but each is batched -- so search costs a fixed
+        // two resolutions regardless of how many hits it returns.
+        const isDashboard = (
+            content: DashboardSearchResult | AllChartsSearchResult,
+        ): content is DashboardSearchResult => 'charts' in content;
+
+        const [dashboardContexts, chartContexts] = await Promise.all([
+            this.spacePermissionService.getResourceAccessContexts(
                 user.userUuid,
-                spaceUuids,
-            );
+                'Dashboard',
+                allContent.filter(isDashboard).map((content) => ({
+                    resourceUuid: content.uuid,
+                    spaceUuid: content.spaceUuid,
+                })),
+            ),
+            this.spacePermissionService.getResourceAccessContexts(
+                user.userUuid,
+                'SavedChart',
+                allContent
+                    .filter((content) => !isDashboard(content))
+                    .map((content) => ({
+                        resourceUuid: content.uuid,
+                        spaceUuid: content.spaceUuid,
+                    })),
+            ),
+        ]);
 
         return {
             content: allContent.filter((content) => {
-                const spaceContext = spaceContexts[content.spaceUuid];
+                const spaceContext = isDashboard(content)
+                    ? dashboardContexts[content.uuid]
+                    : chartContexts[content.uuid];
                 if (!spaceContext) return false;
 
                 if ('charts' in content) {
