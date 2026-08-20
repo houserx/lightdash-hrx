@@ -28,7 +28,7 @@ const userUuid = 'user-uuid';
 const ability = {
     can: vi.fn(() => true),
     cannot: vi.fn(() => false),
-    relevantRuleFor: vi.fn(() => undefined),
+    relevantRuleFor: vi.fn(() => ({ inverted: false })),
     rules: [],
 };
 
@@ -125,6 +125,7 @@ const createCandidate = (
     adminOnly: false,
     modelConfig: null,
     version: 1,
+    threadRetentionHours: null,
     context: overrides.context ?? {
         uuid: overrides.uuid,
         projectUuid,

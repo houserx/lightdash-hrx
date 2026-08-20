@@ -9,8 +9,10 @@ import {
     FeatureFlags,
     ForbiddenError,
     getVisibleDataAppClaudeModels,
+    isValidRetentionWindowHours,
     LightdashUser,
     ParameterError,
+    RETENTION_WINDOW_HOURS_ERROR,
     UpdateAiOrganizationSettings,
     UpdateAiProviderApiKeys,
     type AiAgentModelConfig,
@@ -23,7 +25,6 @@ import {
 import { LightdashConfig } from '../../config/parseConfig';
 import { OrganizationModel } from '../../models/OrganizationModel';
 import { BaseService } from '../../services/BaseService';
-import { FeatureFlagService } from '../../services/FeatureFlag/FeatureFlagService';
 import { AiOrganizationSettingsModel } from '../models/AiOrganizationSettingsModel';
 import { CommercialFeatureFlagModel } from '../models/CommercialFeatureFlagModel';
 import {
@@ -137,7 +138,6 @@ type AiOrganizationSettingsServiceDependencies = {
     aiOrganizationSettingsModel: AiOrganizationSettingsModel;
     organizationModel: OrganizationModel;
     commercialFeatureFlagModel: CommercialFeatureFlagModel;
-    featureFlagService: FeatureFlagService;
     lightdashConfig: LightdashConfig;
     orgAiCopilotConfigResolver: OrgAiCopilotConfigResolver;
 };
@@ -148,8 +148,6 @@ export class AiOrganizationSettingsService extends BaseService {
     private readonly organizationModel: OrganizationModel;
 
     private readonly commercialFeatureFlagModel: CommercialFeatureFlagModel;
-
-    private readonly featureFlagService: FeatureFlagService;
 
     private readonly lightdashConfig: LightdashConfig;
 
@@ -165,7 +163,6 @@ export class AiOrganizationSettingsService extends BaseService {
         this.organizationModel = dependencies.organizationModel;
         this.commercialFeatureFlagModel =
             dependencies.commercialFeatureFlagModel;
-        this.featureFlagService = dependencies.featureFlagService;
         this.lightdashConfig = dependencies.lightdashConfig;
         this.orgAiCopilotConfigResolver =
             dependencies.orgAiCopilotConfigResolver;
@@ -320,12 +317,7 @@ export class AiOrganizationSettingsService extends BaseService {
             await this.organizationModel.getAiAgentMemoryEnabled(
                 user.organizationUuid,
             );
-        if (settingEnabled !== null) return settingEnabled;
-        const flag = await this.featureFlagService.get({
-            user,
-            featureFlagId: FeatureFlags.AiAgentMemory,
-        });
-        return flag.enabled;
+        return settingEnabled ?? false;
     }
 
     private async resolveSettings(
@@ -378,6 +370,7 @@ export class AiOrganizationSettingsService extends BaseService {
                 dataAppModelVisibility: null,
                 providerApiKeysSet: { anthropic: false, openai: false },
                 providerApiKeyHints: { anthropic: null, openai: null },
+                threadRetentionHours: null,
                 defaultAiAgentModelOptions: effectiveOptions,
                 configurableModelOptions: configurableOptions,
                 aiAgentReviewsPausedByByok,
@@ -440,9 +433,12 @@ export class AiOrganizationSettingsService extends BaseService {
                 aiAgentReviewsAvailable: false,
                 defaultAiAgentModelConfig: null,
                 defaultAiAgentModelOptions: [],
+                dataAppCodingAgent:
+                    this.lightdashConfig.appRuntime.dataAppCodingAgent,
                 visibleDataAppModels: getVisibleDataAppClaudeModels(
                     dataAppModelVisibility,
                 ),
+                threadRetentionHours: null,
             };
         }
 
@@ -457,9 +453,12 @@ export class AiOrganizationSettingsService extends BaseService {
                 settings.aiAgentReviewsPausedByByok !== true,
             defaultAiAgentModelConfig: settings.defaultAiAgentModelConfig,
             defaultAiAgentModelOptions: settings.defaultAiAgentModelOptions,
+            dataAppCodingAgent:
+                this.lightdashConfig.appRuntime.dataAppCodingAgent,
             visibleDataAppModels: getVisibleDataAppClaudeModels(
                 settings.dataAppModelVisibility,
             ),
+            threadRetentionHours: settings.threadRetentionHours ?? null,
         };
     }
 
@@ -481,6 +480,40 @@ export class AiOrganizationSettingsService extends BaseService {
                 organizationUuid,
             );
         return settings?.deepResearchRawSqlEnabled ?? false;
+    }
+
+    async isThreadRetentionEnabled(
+        user: Pick<LightdashUser, 'userUuid' | 'organizationUuid'>,
+    ): Promise<boolean> {
+        const flag = await this.commercialFeatureFlagModel.get({
+            user,
+            featureFlagId: FeatureFlags.AiThreadRetention,
+        });
+        return flag.enabled;
+    }
+
+    async assertThreadRetentionWriteAllowed(
+        user: Pick<LightdashUser, 'userUuid' | 'organizationUuid'>,
+        threadRetentionHours: number | null,
+    ): Promise<void> {
+        if (!(await this.isThreadRetentionEnabled(user))) {
+            throw new ForbiddenError(
+                'AI thread retention is not enabled for this organization',
+            );
+        }
+        if (!isValidRetentionWindowHours(threadRetentionHours)) {
+            throw new ParameterError(RETENTION_WINDOW_HOURS_ERROR);
+        }
+    }
+
+    async getThreadRetentionCeiling(
+        organizationUuid: string,
+    ): Promise<number | null> {
+        const settings =
+            await this.aiOrganizationSettingsModel.findByOrganizationUuid(
+                organizationUuid,
+            );
+        return settings?.threadRetentionHours ?? null;
     }
 
     async upsertSettings(
@@ -509,6 +542,19 @@ export class AiOrganizationSettingsService extends BaseService {
 
         if (aiSettingsUpdate.deepResearchLimits !== undefined) {
             validateDeepResearchLimits(aiSettingsUpdate.deepResearchLimits);
+        }
+
+        if (aiSettingsUpdate.threadRetentionHours !== undefined) {
+            // No-op writes stay allowed: clients that round-trip the settings
+            // object must not be rejected while the flag is off.
+            const storedRetention =
+                await this.getThreadRetentionCeiling(organizationUuid);
+            if (aiSettingsUpdate.threadRetentionHours !== storedRetention) {
+                await this.assertThreadRetentionWriteAllowed(
+                    user,
+                    aiSettingsUpdate.threadRetentionHours,
+                );
+            }
         }
 
         // Set when hiding models orphans the org's configured default, so the
