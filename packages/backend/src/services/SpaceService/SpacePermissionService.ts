@@ -14,7 +14,9 @@ import {
     type KnexPaginatedData,
     type OrganizationSpaceAccess,
     type ProjectSpaceAccess,
+    type ResourceAccessListFilters,
     type ResourceAccessResourceType,
+    type ResourceShare,
     type SessionUser,
     type SpaceAccess,
     type SpaceAccessListFilters,
@@ -307,6 +309,99 @@ export class SpacePermissionService extends BaseService {
             }));
 
         return [...ctx.access, ...adminAccess];
+    }
+
+    /**
+     * The resolved access list for one resource: everyone who reaches it through
+     * its space, plus everyone holding a direct grant on the resource itself,
+     * merged most-permissive-wins into a single list.
+     *
+     * Grants are folded in before metadata is paginated, not after. Pagination
+     * runs over the users table scoped to an already-resolved uuid set, so a
+     * grant holder appended afterwards would be missing from the counts the page
+     * reports -- and, if they landed past the page boundary, from the page too.
+     */
+    async getPaginatedResourceAccess(
+        resourceType: ResourceAccessResourceType,
+        resource: ResourceInSpace,
+        {
+            paginateArgs,
+            filters,
+            currentUserUuid,
+        }: {
+            paginateArgs?: KnexPaginateArgs;
+            filters?: ResourceAccessListFilters;
+            currentUserUuid?: string;
+        },
+    ): Promise<KnexPaginatedData<ResourceShare[]>> {
+        const accessContexts = await this.getSpacesCaslContext(
+            [resource.spaceUuid],
+            filters?.userUuids?.length
+                ? { userUuids: filters.userUuids }
+                : undefined,
+        );
+        const ctx = accessContexts[resource.spaceUuid];
+        if (!ctx) {
+            throw new NotFoundError(
+                `Couldn't find access context for space ${resource.spaceUuid}`,
+            );
+        }
+
+        const directResourceAccess = this.lightdashConfig.resourceGrants.enabled
+            ? await this.resourceAccessModel.getAllDirectResourceAccess(
+                  resourceType,
+                  resource.resourceUuid,
+              )
+            : [];
+
+        const resolved = resolveResourceAccess({
+            resourceUuid: resource.resourceUuid,
+            spaceAccess: this.mergeAdminAccess(ctx),
+            directResourceAccess,
+        });
+
+        // The space side is filtered in SQL, but grants are read for the whole
+        // resource -- so a grant holder outside the filter has to be dropped here
+        // or the filter silently stops meaning what it says.
+        const requestedUserUuids = filters?.userUuids?.length
+            ? new Set(filters.userUuids)
+            : undefined;
+        const scoped = requestedUserUuids
+            ? resolved.filter((access) =>
+                  requestedUserUuids.has(access.userUuid),
+              )
+            : resolved;
+
+        const filteredAccess = filters?.directOnly
+            ? scoped.filter(
+                  (access) =>
+                      access.inheritedFrom !== 'parent_space' &&
+                      (access.hasDirectAccess ||
+                          access.inheritedFrom === 'space_group'),
+              )
+            : scoped;
+
+        const accessByUserUuid = new Map(
+            filteredAccess.map((access) => [access.userUuid, access]),
+        );
+        const { data, pagination } =
+            await this.spacePermissionModel.getPaginatedUserMetadata(
+                filteredAccess.map((access) => access.userUuid),
+                paginateArgs,
+                {
+                    searchQuery: filters?.searchQuery,
+                    currentUserUuidFirst: currentUserUuid,
+                },
+            );
+
+        return {
+            data: data.map(({ userUuid, ...metadata }) => ({
+                ...accessByUserUuid.get(userUuid)!,
+                userUuid,
+                ...metadata,
+            })),
+            ...(pagination ? { pagination } : {}),
+        };
     }
 
     async getPaginatedSpaceAccess(

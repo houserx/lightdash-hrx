@@ -4,6 +4,7 @@ import {
     type AddResourceUserAccess,
     type ApiErrorPayload,
     type ApiResourceAccessListResponse,
+    type ApiResourceShareListResponse,
     type ApiSuccessEmpty,
     type ResourceAccessAction,
     type ResourceAccessResourceType,
@@ -17,6 +18,7 @@ import {
     OperationId,
     Path,
     Post,
+    Query,
     Request,
     Response,
     Route,
@@ -232,5 +234,52 @@ export class ResourceAccessController extends BaseController {
                 resourceUuid,
             );
         return { status: 'ok', results };
+    }
+
+    /**
+     * Get the resolved user access list for a resource
+     *
+     * Everyone who can reach the resource, at what role, and where that came
+     * from -- a direct grant, its space, an ancestor space, the project or the
+     * organization. The sibling endpoint above returns the persisted grant rows
+     * alone, which is enough to reconcile state but not to draw a people list.
+     *
+     * @summary List resolved resource access
+     * @param projectUuid The uuid of the project that owns the resource
+     * @param resourceType The type of resource
+     * @param resourceUuid The uuid of the resource
+     * @param req
+     */
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Get('{resourceType}/{resourceUuid}/access')
+    @OperationId('GetResourceAccessList')
+    async getResourceAccessList(
+        @Path() projectUuid: UUID,
+        @Path() resourceType: ResourceAccessResourceType,
+        @Path() resourceUuid: UUID,
+        @Request() req: express.Request,
+        @Query() page?: number,
+        @Query() pageSize?: number,
+        @Query() searchQuery?: string,
+        @Query() userUuids?: string[],
+        @Query() directOnly?: boolean,
+    ): Promise<ApiResourceShareListResponse> {
+        assertRegisteredAccount(req.account);
+        this.setStatus(200);
+
+        return {
+            status: 'ok',
+            results: await this.services
+                .getResourceAccessService()
+                .getResourceAccessList(toSessionUser(req.account), {
+                    projectUuid,
+                    resourceType,
+                    resourceUuid,
+                    paginateArgs:
+                        page && pageSize ? { page, pageSize } : undefined,
+                    filters: { searchQuery, userUuids, directOnly },
+                }),
+        };
     }
 }
