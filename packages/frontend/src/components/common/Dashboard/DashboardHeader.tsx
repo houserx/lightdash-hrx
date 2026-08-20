@@ -71,10 +71,12 @@ import { type TilePreAggregateStatus } from '../../../providers/Dashboard/types'
 import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
 import AddTileButton from '../../DashboardTiles/AddTileButton';
+import { ManageResourceAccessModal } from '../ManageResourceAccessModal/ManageResourceAccessModal';
 import MantineIcon from '../MantineIcon';
 import DashboardUpdateModal from '../modal/DashboardUpdateModal';
 import PageHeader from '../Page/PageHeader';
 import DashboardInfoOverlay from '../PageHeader/DashboardInfoOverlay';
+import { ManageResourceAccessMenuItem } from '../ResourceView/ManageResourceAccessMenuItem';
 import { ShareLinkButton } from '../ShareLinkButton';
 import SpaceActionModal from '../SpaceActionModal';
 import { ActionType } from '../SpaceActionModal/types';
@@ -176,6 +178,7 @@ const DashboardHeader = memo(
             useDisclosure(false);
         const [isDashboardAsCodeModalOpen, dashboardAsCodeModalHandlers] =
             useDisclosure(false);
+        const [isManagingAccess, manageAccessHandlers] = useDisclosure(false);
 
         const uniquePreAggregateNames = useMemo(() => {
             if (!preAggregateStatuses) return [];
@@ -970,6 +973,12 @@ const DashboardHeader = memo(
                                     )}
 
                                     {userCanManageDashboard && (
+                                        <ManageResourceAccessMenuItem
+                                            onClick={manageAccessHandlers.open}
+                                        />
+                                    )}
+
+                                    {userCanManageDashboard && (
                                         <>
                                             <Menu.Divider />
                                             <Menu.Item
@@ -988,6 +997,21 @@ const DashboardHeader = memo(
                                     )}
                                 </Menu.Dropdown>
                             </Menu>
+                        )}
+
+                        {/* Outside the menu, like every other modal here: the
+                            dropdown unmounts its children when it closes, and
+                            it closes on item click. */}
+                        {isManagingAccess && projectUuid && (
+                            <ManageResourceAccessModal
+                                opened
+                                onClose={manageAccessHandlers.close}
+                                projectUuid={projectUuid}
+                                resourceType="Dashboard"
+                                resourceUuid={dashboard.uuid}
+                                resourceName={dashboard.name}
+                                spaceName={dashboard.spaceName}
+                            />
                         )}
 
                         {isCreatingNewSpace && projectUuid && (
