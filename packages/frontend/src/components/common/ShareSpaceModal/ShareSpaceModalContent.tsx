@@ -69,7 +69,7 @@ type UserAccessAuditListProps = {
     onPageChange: (page: number) => void;
 };
 
-const UserAccessAuditList: FC<UserAccessAuditListProps> = ({
+export const UserAccessAuditList: FC<UserAccessAuditListProps> = ({
     users,
     sessionUserUuid,
     page,
