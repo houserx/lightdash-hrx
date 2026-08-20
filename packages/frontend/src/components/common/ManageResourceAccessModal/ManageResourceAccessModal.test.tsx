@@ -336,8 +336,9 @@ describe('given a list longer than one page', () => {
             // call, not an event, so React has nothing else to batch it into.
             act(() => contentProps?.onPageChange(3));
 
-            const lastCall = vi.mocked(useResourceAccess).mock.calls.at(-1);
-            expect(lastCall?.[3]).toMatchObject({ page: 3 });
+            expect(
+                vi.mocked(useResourceAccess).mock.calls.at(-1)?.[3],
+            ).toMatchObject({ page: 3 });
         });
     });
 });
