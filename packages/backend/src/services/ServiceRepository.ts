@@ -1108,7 +1108,7 @@ export class ServiceRepository
                     this.models.getSpaceModel(),
                     this.models.getSpacePermissionModel(),
                     this.models.getResourceAccessModel(),
-                    this.lightdashConfig,
+                    this.context.lightdashConfig,
                 ),
         );
     }
