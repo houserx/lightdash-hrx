@@ -59,6 +59,9 @@ const createMockPermissionModel = (spaceUuids: string[]) => ({
                         spaceUuid,
                         role: OrganizationMemberRole.VIEWER,
                         roleUuid: null,
+                        // main spreads this when collecting custom-role uuids,
+                        // so omitting it is a TypeError, not a missing field.
+                        extraRoleUuids: [],
                     },
                 ],
             ]),
