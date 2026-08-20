@@ -1,20 +1,21 @@
 import {
     ChartType,
+    deriveDataAppVizPivotConfig,
     getAppDisplayName,
     getEffectiveOptionValues,
     type ItemsMap,
 } from '@lightdash/common';
 import { Anchor, Box, Stack, Text } from '@mantine/core';
 import { memo, useMemo, type FC } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { useCanCreateDataApp } from '../../../features/apps/hooks/useCanCreateDataApp';
 import { useCanEditDataApp } from '../../../features/apps/hooks/useCanEditDataApp';
-import { useDataAppVisualization } from '../../../features/apps/hooks/useDataAppVisualization';
+import { useDataAppVisualization } from '../../../features/chartTypes/hooks/useDataAppVisualization';
 import {
     autoMapDataAppVizFields,
     reconcileDataAppVizFieldMapping,
-} from '../../../features/apps/utils/autoMapDataAppVizFields';
-import { getDataAppVizFieldItems } from '../../../features/apps/utils/getDataAppVizFieldItems';
+} from '../../../features/chartTypes/utils/autoMapDataAppVizFields';
+import { getDataAppVizFieldItems } from '../../../features/chartTypes/utils/getDataAppVizFieldItems';
 import { isDataAppVizVisualizationConfig } from '../../LightdashVisualization/types';
 import { useVisualizationContext } from '../../LightdashVisualization/useVisualizationContext';
 import { ColorPaletteSection } from '../common/ColorPaletteSection';
@@ -29,8 +30,9 @@ const NO_COLUMNS: ItemsMap = {};
 
 export const ConfigTabs: FC = memo(() => {
     const { projectUuid } = useParams<{ projectUuid: string }>();
+    const location = useLocation();
     const navigate = useNavigate();
-    const { visualizationConfig, itemsMap, setChartType } =
+    const { visualizationConfig, itemsMap, setChartType, setPivotDimensions } =
         useVisualizationContext();
 
     const isDataAppViz = isDataAppVizVisualizationConfig(visualizationConfig);
@@ -93,6 +95,23 @@ export const ConfigTabs: FC = memo(() => {
         fieldMapping,
     );
 
+    const setMappingPivotDimensions = (
+        nextFields: typeof fields,
+        nextMapping: typeof effectiveMapping,
+    ) =>
+        setPivotDimensions(
+            deriveDataAppVizPivotConfig(nextFields, nextMapping)?.columns,
+        );
+
+    const handleFieldChange = (fieldName: string, fieldId: string | null) => {
+        const nextMapping = { ...effectiveMapping };
+        if (fieldId) nextMapping[fieldName] = fieldId;
+        else delete nextMapping[fieldName];
+
+        setField(fieldName, fieldId);
+        setMappingPivotDimensions(fields, nextMapping);
+    };
+
     const selectedOption: CustomChartTypeOption | null = dataAppVizUuid
         ? { kind: 'projectType', dataAppVizUuid }
         : null;
@@ -104,7 +123,7 @@ export const ConfigTabs: FC = memo(() => {
                 itemsMap={itemsMap ?? NO_COLUMNS}
                 fields={fields}
                 fieldMapping={effectiveMapping}
-                onFieldChange={setField}
+                onFieldChange={handleFieldChange}
             />
             {dataAppViz && (
                 <Box className={classes.typeCard}>
@@ -120,7 +139,10 @@ export const ConfigTabs: FC = memo(() => {
                     {canEditSelectedType && (
                         <Anchor
                             component={Link}
-                            to={`/projects/${projectUuid}/chart-types/${dataAppViz.dataAppVizUuid}`}
+                            to={{
+                                pathname: `/projects/${projectUuid}/chart-types/${dataAppViz.dataAppVizUuid}`,
+                                search: location.search,
+                            }}
                             fz="xs"
                             fw={500}
                             mt={4}
@@ -143,22 +165,26 @@ export const ConfigTabs: FC = memo(() => {
                     selectedDataAppViz={dataAppViz ?? null}
                     hasColumns={hasColumns}
                     onSelectVega={() => setChartType(ChartType.CUSTOM)}
-                    onSelectProjectType={(picked) =>
-                        setDataAppVizUuid(
-                            picked.dataAppVizUuid,
-                            autoMapDataAppVizFields(
-                                picked.schema?.fields ?? [],
-                                itemsMap ?? NO_COLUMNS,
-                            ),
-                        )
-                    }
-                    onClear={() => setDataAppVizUuid('', {})}
+                    onSelectProjectType={(picked) => {
+                        const pickedFields = picked.schema?.fields ?? [];
+                        const pickedMapping = autoMapDataAppVizFields(
+                            pickedFields,
+                            itemsMap ?? NO_COLUMNS,
+                        );
+                        setDataAppVizUuid(picked.dataAppVizUuid, pickedMapping);
+                        setMappingPivotDimensions(pickedFields, pickedMapping);
+                    }}
+                    onClear={() => {
+                        setDataAppVizUuid('', {});
+                        setPivotDimensions(undefined);
+                    }}
                     onCreateNew={
                         canCreateApp
                             ? () =>
-                                  void navigate(
-                                      `/projects/${projectUuid}/chart-types/new`,
-                                  )
+                                  void navigate({
+                                      pathname: `/projects/${projectUuid}/chart-types/new`,
+                                      search: location.search,
+                                  })
                             : null
                     }
                     onBrowseGallery={() =>
@@ -189,7 +215,10 @@ export const ConfigTabs: FC = memo(() => {
                                 , or create a new one in the{' '}
                                 <Anchor
                                     component={Link}
-                                    to={`/projects/${projectUuid}/chart-types/new`}
+                                    to={{
+                                        pathname: `/projects/${projectUuid}/chart-types/new`,
+                                        search: location.search,
+                                    }}
                                     size="xs"
                                 >
                                     builder

@@ -280,6 +280,7 @@ export type Dashboard = {
 export type DashboardBasicDetails = Pick<
     Dashboard,
     | 'uuid'
+    | 'slug'
     | 'name'
     | 'description'
     | 'updatedAt'
@@ -335,7 +336,10 @@ export type DashboardAvailableFilters = {
     allFilterableFields: FilterableDimension[];
     allFilterableMetrics: Metric[];
     savedQueryMetricFilters: Record<string, number[]>;
-    defaultTimeDimensions: Record<string, DashboardFieldTarget>;
+    // Wire-compat with SDK bundles 1.64.0-1.197.x: those frontends call
+    // Object.entries() on this key unguarded, so it must stay present (empty)
+    // even though the auto-mapping feature it fed was removed in #27619.
+    defaultTimeDimensions?: Record<string, DashboardFieldTarget>;
 };
 
 export type SavedChartsInfoForDashboardAvailableFilters = {
