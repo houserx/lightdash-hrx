@@ -64,7 +64,12 @@ export const ManageResourceAccessModal: FC<ManageResourceAccessModalProps> = ({
 
     // Names only. A group missing from this list is still listed by uuid rather
     // than withheld, so the list never waits on -- or is trimmed by -- this query.
-    const { data: organizationGroups } = useOrganizationGroups({});
+    // Gated like the others: this modal sits behind every dashboard and chart
+    // action menu, and opening one of those should fetch nothing.
+    const { data: organizationGroups } = useOrganizationGroups(
+        {},
+        { enabled: opened },
+    );
 
     const revokeUser = useRevokeResourceUserAccessMutation(
         projectUuid,
@@ -86,6 +91,14 @@ export const ManageResourceAccessModal: FC<ManageResourceAccessModalProps> = ({
         [organizationGroups],
     );
 
+    // Reset here rather than on open, per the frontend guide. Without it the page
+    // survives a close, and reopening asks for a page the next resource may not
+    // have.
+    const handleClose = useCallback(() => {
+        setPage(1);
+        onClose();
+    }, [onClose]);
+
     const handleRevokeUser = useCallback(
         (revoke: { userUuid: string; actions: ResourceAccessAction[] }) =>
             revokeUser.mutate(revoke),
@@ -101,12 +114,17 @@ export const ManageResourceAccessModal: FC<ManageResourceAccessModalProps> = ({
     return (
         <MantineModal
             opened={opened}
-            onClose={onClose}
+            onClose={handleClose}
             title="Manage access"
             subtitle={resourceName}
             icon={IconUsers}
             size="lg"
-            cancelLabel="Done"
+            // Nothing here is staged, so there is nothing to cancel: one button
+            // that closes. As the confirm rather than the cancel, because
+            // MantineModal renders no footer at all without one.
+            onConfirm={handleClose}
+            confirmLabel="Done"
+            cancelLabel={false}
         >
             <ManageResourceAccessModalContent
                 resourceType={resourceType}
