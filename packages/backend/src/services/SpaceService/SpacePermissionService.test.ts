@@ -203,6 +203,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'root-space',
                         role: 'editor' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -214,6 +215,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'root-space',
                         role: 'member' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -268,6 +270,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'root-space',
                         role: 'viewer' as ProjectMemberRole,
                         roleUuid: customRoleUuid,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.GROUP_MEMBERSHIP,
                     },
                 ],
@@ -279,6 +282,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'root-space',
                         role: 'member' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -310,6 +314,68 @@ describe('SpacePermissionService', () => {
             ]);
         });
 
+        test('extra custom roles are unioned with the system role for inherited space access', async () => {
+            const spaceUuid = 'root-space';
+            const extraRoleUuid = 'extra-role-uuid';
+
+            mockPermissionModel.getInheritanceChains.mockResolvedValue({
+                'root-space': {
+                    chain: [
+                        {
+                            spaceUuid: 'root-space',
+                            spaceName: 'Root',
+                            inheritParentPermissions: true,
+                        },
+                    ],
+                    inheritsFromOrgOrProject: true,
+                },
+            });
+            mockPermissionModel.getDirectSpaceAccess.mockResolvedValue({});
+            // System viewer slot + an extra custom role granting manage:Space
+            mockPermissionModel.getProjectSpaceAccess.mockResolvedValue({
+                'root-space': [
+                    {
+                        userUuid,
+                        spaceUuid: 'root-space',
+                        role: 'viewer' as ProjectMemberRole,
+                        roleUuid: null,
+                        extraRoleUuids: [extraRoleUuid],
+                        from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
+                    },
+                ],
+            });
+            mockPermissionModel.getOrganizationSpaceAccess.mockResolvedValue({
+                'root-space': [
+                    {
+                        userUuid,
+                        spaceUuid: 'root-space',
+                        role: 'member' as OrganizationMemberRole,
+                        roleUuid: null,
+                        extraRoleUuids: [],
+                    },
+                ],
+            });
+            mockPermissionModel.getSpaceInfo.mockResolvedValue({
+                [spaceUuid]: { projectUuid, organizationUuid },
+            });
+            mockPermissionModel.getRoleScopes.mockResolvedValue({
+                [extraRoleUuid]: ['manage:Space'],
+            });
+
+            const result = await service.getAllSpaceAccessContext(spaceUuid);
+
+            expect(mockPermissionModel.getRoleScopes).toHaveBeenCalledWith(
+                [extraRoleUuid],
+                { trx: undefined },
+            );
+            expect(result.access).toEqual([
+                expect.objectContaining({
+                    userUuid,
+                    role: SpaceMemberRole.ADMIN,
+                }),
+            ]);
+        });
+
         test('org-level custom-role holders get the space role derived from their scopes, not the member placeholder', async () => {
             const spaceUuid = 'root-space';
             const orgCustomRoleUuid = 'org-custom-role-uuid';
@@ -337,6 +403,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'root-space',
                         role: 'member' as OrganizationMemberRole,
                         roleUuid: orgCustomRoleUuid,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -409,6 +476,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'private-space',
                         role: 'viewer' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -420,6 +488,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'private-space',
                         role: 'member' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -464,6 +533,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'private-space',
                         role: 'admin' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -475,6 +545,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'private-space',
                         role: 'admin' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -617,6 +688,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'root-space',
                         role: 'editor' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -820,6 +892,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'admin' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                     {
@@ -827,6 +900,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'admin' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                     {
@@ -834,6 +908,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'editor' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -845,18 +920,21 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'admin' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                     {
                         userUuid: 'dual-admin',
                         spaceUuid,
                         role: 'admin' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                     {
                         userUuid: 'org-member',
                         spaceUuid,
                         role: 'member' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -1281,6 +1359,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'viewer' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                     {
@@ -1288,6 +1367,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'admin' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -1299,6 +1379,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'admin' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -1444,6 +1525,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'viewer' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                     {
@@ -1451,6 +1533,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'viewer' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -1519,6 +1602,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid: 'parent-space',
                         role: 'viewer' as ProjectMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                         from: ProjectSpaceAccessOrigin.PROJECT_MEMBERSHIP,
                     },
                 ],
@@ -1600,6 +1684,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'viewer' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });
@@ -1645,6 +1730,7 @@ describe('SpacePermissionService', () => {
                         spaceUuid,
                         role: 'viewer' as OrganizationMemberRole,
                         roleUuid: null,
+                        extraRoleUuids: [],
                     },
                 ],
             });

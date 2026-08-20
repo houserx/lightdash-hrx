@@ -671,8 +671,20 @@ export class SchedulerService extends BaseService {
         user: SessionUser,
         appUuid: string,
     ): Promise<SchedulerAndTargets[]> {
-        await this.checkAppScheduledDeliveryAccess(user, appUuid);
-        return this.schedulerModel.getAppSchedulers(appUuid);
+        const app = await this.checkAppScheduledDeliveryAccess(user, appUuid);
+        // Same narrowing as the chart/SQL chart lists — without `manage` you
+        // only see the deliveries you created, not other users' recipients.
+        const canManageAll = this.createAuditedAbility(user).can(
+            'manage',
+            subject('ScheduledDeliveries', {
+                organizationUuid: app.organization_uuid,
+                projectUuid: app.project_uuid,
+            }),
+        );
+        return this.schedulerModel.getAppSchedulers(
+            appUuid,
+            canManageAll ? undefined : user.userUuid,
+        );
     }
 
     async createAppScheduler(
@@ -2056,20 +2068,22 @@ export class SchedulerService extends BaseService {
 
         // Check user can manage scheduled deliveries in all projects
         const auditedAbility = this.createAuditedAbility(user);
-        const projectsWithoutPermission = summary.byProject
-            .filter((project) =>
-                auditedAbility.cannot(
-                    'manage',
-                    subject('ScheduledDeliveries', {
-                        organizationUuid,
+        const accessResults = auditedAbility.canBulk(
+            'manage',
+            summary.byProject.map((project) =>
+                subject('ScheduledDeliveries', {
+                    organizationUuid,
+                    projectUuid: project.projectUuid,
+                    metadata: {
+                        targetUserUuid,
                         projectUuid: project.projectUuid,
-                        metadata: {
-                            targetUserUuid,
-                            projectName: project.projectName,
-                        },
-                    }),
-                ),
-            )
+                        projectName: project.projectName,
+                    },
+                }),
+            ),
+        );
+        const projectsWithoutPermission = summary.byProject
+            .filter((_, index) => !accessResults[index])
             .map((project) => project.projectName);
 
         if (projectsWithoutPermission.length > 0) {
