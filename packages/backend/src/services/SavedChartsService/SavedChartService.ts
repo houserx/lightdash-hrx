@@ -2364,18 +2364,25 @@ export class SavedChartService
             throw new NotFoundError('Space is required');
         }
 
+        // This entry point also serves a bare space, with no chart at all, so the
+        // resource-aware context only applies when there is a chart to resolve.
         const {
             access: spaceAccess,
             inheritsFromOrgOrProject,
             organizationUuid,
-        } = await this.spacePermissionService.getResourceAccessContext(
-            actor.user.userUuid,
-            'SavedChart',
-            {
-                resourceUuid: savedChart.uuid,
-                spaceUuid,
-            },
-        );
+        } = resource.savedChartUuid !== null
+            ? await this.spacePermissionService.getResourceAccessContext(
+                  actor.user.userUuid,
+                  'SavedChart',
+                  {
+                      resourceUuid: resource.savedChartUuid,
+                      spaceUuid,
+                  },
+              )
+            : await this.spacePermissionService.getSpaceAccessContext(
+                  actor.user.userUuid,
+                  spaceUuid,
+              );
 
         const auditedAbility = this.createAuditedAbility(actor.user);
         const hasPermission = auditedAbility.can(
