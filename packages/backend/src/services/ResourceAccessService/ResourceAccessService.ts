@@ -10,6 +10,7 @@ import {
     type ResourceShare,
     type SessionUser,
 } from '@lightdash/common';
+import { type LightdashConfig } from '../../config/parseConfig';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
@@ -21,6 +22,7 @@ type ResourceAccessServiceArguments = {
     savedChartModel: SavedChartModel;
     resourceAccessModel: ResourceAccessModel;
     spacePermissionService: SpacePermissionService;
+    lightdashConfig: LightdashConfig;
 };
 
 type ResourceContext = {
@@ -44,16 +46,21 @@ const METADATA_KEY: Record<ResourceAccessResourceType, string> = {
  * Create, list and revoke direct grants on a single Dashboard or SavedChart,
  * without needing a dedicated Space for it.
  *
- * Confused-deputy-resistant by design: a granter may only grant an action they
- * themselves already hold on that resource, checked by building the same subject
- * shape the real read and update gates build -- so they pass here if and only if
- * they would pass the real check. Being an org admin is not the test.
+ * Administering grants requires `manage` on the resource -- the same bar space
+ * sharing sets on a space, and deliberately not the action being granted. Checked
+ * by building the same subject shape the real read and update gates build, so
+ * being an org admin is not the test: it is whether they could edit this
+ * particular resource.
  *
- * A user holding only a direct grant can therefore grant that same action onward,
- * the transitive property space sharing already has. Two things bound it here
- * that do not bound space sharing: the recipient must already hold the underlying
- * scope from a role for the grant to do anything, and losing that role silently
- * neutralises every grant they hold.
+ * Requiring the action instead would mean anyone who can *see* a resource could
+ * widen access to it, and a user whose own way in was a `view` grant could pass
+ * that grant on -- unbounded, with no manage right anywhere in the chain. A
+ * `manage` grant still confers granting authority, which is the transitive
+ * property space sharing genuinely has.
+ *
+ * Reads sit at the same bar as writes. The list names who was individually
+ * singled out and who granted it, which is administrative rather than
+ * informational.
  */
 export class ResourceAccessService extends BaseService {
     private readonly dashboardModel: DashboardModel;
@@ -64,17 +71,36 @@ export class ResourceAccessService extends BaseService {
 
     private readonly spacePermissionService: SpacePermissionService;
 
+    private readonly lightdashConfig: LightdashConfig;
+
     constructor({
         dashboardModel,
         savedChartModel,
         resourceAccessModel,
         spacePermissionService,
+        lightdashConfig,
     }: ResourceAccessServiceArguments) {
         super();
         this.dashboardModel = dashboardModel;
         this.savedChartModel = savedChartModel;
         this.resourceAccessModel = resourceAccessModel;
         this.spacePermissionService = spacePermissionService;
+        this.lightdashConfig = lightdashConfig;
+    }
+
+    /**
+     * While direct grants are off, permission resolution skips the grant lookup
+     * entirely, so a row written now changes nobody's access. Accepting the write
+     * anyway would report success for something that silently does nothing, and
+     * leave rows behind that start mattering the moment the flag is flipped.
+     *
+     * Called before the resource is resolved, so a disabled instance cannot be
+     * used to probe which uuids exist.
+     */
+    private throwIfDisabled(): void {
+        if (!this.lightdashConfig.resourceGrants.enabled) {
+            throw new ForbiddenError('Direct resource grants are not enabled');
+        }
     }
 
     /**
@@ -122,15 +148,19 @@ export class ResourceAccessService extends BaseService {
 
     /**
      * Mirrors the subject shape DashboardService and SavedChartService build at
-     * their real check sites, so the granter passes if and only if they would pass
-     * the real check for this action on this resource.
+     * their real check sites, so the requester passes if and only if they could
+     * edit this particular resource.
      *
-     * Resolves through the resource-aware context, so a grant the requester holds
-     * counts toward their authority to grant onward.
+     * Takes no action parameter on purpose. Every caller here needs the same
+     * answer, and the previous shape -- passing in the action being granted --
+     * looked correct at each call site while adding up to "anyone who can see it
+     * can share it". There is no longer an argument to get wrong.
+     *
+     * Resolves through the resource-aware context, so a `manage` grant counts
+     * toward the holder's authority to grant onward.
      */
-    private async assertRequesterCan(
+    private async assertRequesterCanAdministerGrants(
         requester: SessionUser,
-        action: ResourceAccessAction,
         resourceType: ResourceAccessResourceType,
         context: ResourceContext,
     ): Promise<void> {
@@ -147,7 +177,7 @@ export class ResourceAccessService extends BaseService {
         const auditedAbility = this.createAuditedAbility(requester);
         if (
             auditedAbility.cannot(
-                action,
+                'manage',
                 subject(resourceType, {
                     organizationUuid: context.organizationUuid,
                     projectUuid: context.projectUuid,
@@ -160,7 +190,7 @@ export class ResourceAccessService extends BaseService {
             )
         ) {
             throw new ForbiddenError(
-                `You don't have ${action} access to this ${resourceType}`,
+                `You don't have permission to manage access to this ${resourceType}`,
             );
         }
     }
@@ -207,12 +237,18 @@ export class ResourceAccessService extends BaseService {
             action: ResourceAccessAction;
         },
     ): Promise<void> {
+        this.throwIfDisabled();
+
         const context = await this.getResourceContext(
             projectUuid,
             resourceType,
             resourceUuid,
         );
-        await this.assertRequesterCan(granter, action, resourceType, context);
+        await this.assertRequesterCanAdministerGrants(
+            granter,
+            resourceType,
+            context,
+        );
         await this.assertRecipientInOrganization(context.organizationUuid, {
             targetUserUuid,
         });
@@ -243,12 +279,18 @@ export class ResourceAccessService extends BaseService {
             action: ResourceAccessAction;
         },
     ): Promise<void> {
+        this.throwIfDisabled();
+
         const context = await this.getResourceContext(
             projectUuid,
             resourceType,
             resourceUuid,
         );
-        await this.assertRequesterCan(granter, action, resourceType, context);
+        await this.assertRequesterCanAdministerGrants(
+            granter,
+            resourceType,
+            context,
+        );
         await this.assertRecipientInOrganization(context.organizationUuid, {
             targetGroupUuid,
         });
@@ -284,12 +326,18 @@ export class ResourceAccessService extends BaseService {
             action: ResourceAccessAction;
         },
     ): Promise<void> {
+        this.throwIfDisabled();
+
         const context = await this.getResourceContext(
             projectUuid,
             resourceType,
             resourceUuid,
         );
-        await this.assertRequesterCan(revoker, action, resourceType, context);
+        await this.assertRequesterCanAdministerGrants(
+            revoker,
+            resourceType,
+            context,
+        );
 
         await this.resourceAccessModel.removeUserAccess({
             resourceType,
@@ -315,12 +363,18 @@ export class ResourceAccessService extends BaseService {
             action: ResourceAccessAction;
         },
     ): Promise<void> {
+        this.throwIfDisabled();
+
         const context = await this.getResourceContext(
             projectUuid,
             resourceType,
             resourceUuid,
         );
-        await this.assertRequesterCan(revoker, action, resourceType, context);
+        await this.assertRequesterCanAdministerGrants(
+            revoker,
+            resourceType,
+            context,
+        );
 
         await this.resourceAccessModel.removeGroupAccess({
             resourceType,
@@ -336,12 +390,18 @@ export class ResourceAccessService extends BaseService {
         resourceType: ResourceAccessResourceType,
         resourceUuid: string,
     ) {
+        this.throwIfDisabled();
+
         const context = await this.getResourceContext(
             projectUuid,
             resourceType,
             resourceUuid,
         );
-        await this.assertRequesterCan(requester, 'view', resourceType, context);
+        await this.assertRequesterCanAdministerGrants(
+            requester,
+            resourceType,
+            context,
+        );
 
         return this.resourceAccessModel.listResourceAccess(
             resourceType,
