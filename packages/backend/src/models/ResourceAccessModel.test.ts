@@ -277,4 +277,34 @@ describe('ResourceAccessModel', () => {
             });
         });
     });
+
+    describe('removeAllForResource', () => {
+        it('given a resource is purged, then both tables are cleared for it', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.removeAllForResource('Dashboard', DASHBOARD_A);
+
+            const statements = tracker.history.all.map(({ sql }) => sql);
+            expect(statements).toHaveLength(2);
+            expect(
+                statements.filter((sql) =>
+                    sql.toLowerCase().startsWith('delete'),
+                ),
+            ).toHaveLength(2);
+        });
+
+        it('given a resource is purged, then cleanup is scoped by resource type', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.removeAllForResource('Dashboard', DASHBOARD_A);
+
+            // A SavedChart grant must survive a Dashboard purge, even on a
+            // colliding uuid -- resource_uuid is polymorphic, so uuid alone is
+            // not a safe key.
+            tracker.history.all.forEach(({ bindings }) => {
+                expect(bindings).toContain('Dashboard');
+                expect(bindings).toContain(DASHBOARD_A);
+            });
+        });
+    });
 });

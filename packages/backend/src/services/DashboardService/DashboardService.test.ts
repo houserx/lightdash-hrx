@@ -30,6 +30,7 @@ import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { OrganizationModel } from '../../models/OrganizationModel';
 import { PinnedListModel } from '../../models/PinnedListModel';
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { SavedSqlModel } from '../../models/SavedSqlModel';
 import { SchedulerModel } from '../../models/SchedulerModel';
@@ -171,6 +172,10 @@ const contextForSpace = (spaceUuid: string) => {
     return spaceContexts[publicSpace.uuid];
 };
 
+const resourceAccessModel = {
+    removeAllForResource: vi.fn(async () => undefined),
+};
+
 const spacePermissionService = {
     getSpaceAccessContext: vi.fn(async (_userUuid: string, spaceUuid: string) =>
         contextForSpace(spaceUuid),
@@ -229,6 +234,8 @@ describe('DashboardService', () => {
             spacePermissionService as unknown as SpacePermissionService,
         contentVerificationModel:
             contentVerificationModel as unknown as ContentVerificationModel,
+        resourceAccessModel:
+            resourceAccessModel as unknown as ResourceAccessModel,
     });
     afterEach(() => {
         vi.clearAllMocks();
@@ -1308,6 +1315,21 @@ describe('DashboardService', () => {
                     expect.objectContaining({ resourceUuid: dashboard.uuid }),
                 ]),
             );
+        });
+    });
+
+    describe('given a dashboard is permanently deleted', () => {
+        it('then its direct grants are purged', async () => {
+            await service
+                .permanentDelete(user, dashboard.uuid)
+                .catch(() => undefined);
+
+            // resource_uuid is polymorphic, so the grant tables carry no foreign
+            // key and ON DELETE CASCADE cannot reach them. Without this the
+            // grants dangle forever.
+            expect(
+                resourceAccessModel.removeAllForResource,
+            ).toHaveBeenCalledWith('Dashboard', dashboard.uuid);
         });
     });
 });
