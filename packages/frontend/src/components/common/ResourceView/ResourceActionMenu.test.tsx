@@ -4,9 +4,11 @@ import {
     type ResourceViewSpaceItem,
 } from '@lightdash/common';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MantineProvider from '../../../providers/MantineProvider';
 import ResourceViewActionMenu from './ResourceActionMenu';
+import { ResourceViewItemAction } from './types';
 
 /**
  * One spec, for the one thing none of the others can see: that the menu item is
@@ -158,6 +160,38 @@ describe('given an open action menu for a dashboard', () => {
             expect(
                 screen.getByRole('menuitem', { name: /Manage access/ }),
             ).toBeTruthy();
+        });
+    });
+});
+
+describe('given the manage access item in a real dashboard menu', () => {
+    describe('when it is chosen', () => {
+        it('then the menu raises the manage-access action for that dashboard', async () => {
+            // The closest this suite gets to clicking it: the real menu, the
+            // real item, a real click, and the action the handler switches on.
+            // Together with ManageResourceAccessAction's specs -- which cover
+            // action to modal props -- and the compiler forcing the handler
+            // branch to exist, the whole chain is covered bar the browser.
+            const onAction = vi.fn();
+
+            render(
+                <MantineProvider env="test" forceColorScheme="light">
+                    <ResourceViewActionMenu
+                        item={dashboardItem}
+                        isOpen
+                        onAction={onAction}
+                    />
+                </MantineProvider>,
+            );
+
+            await userEvent.click(
+                screen.getByRole('menuitem', { name: /Manage access/ }),
+            );
+
+            expect(onAction).toHaveBeenCalledWith({
+                type: ResourceViewItemAction.MANAGE_ACCESS,
+                item: dashboardItem,
+            });
         });
     });
 });
