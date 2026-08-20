@@ -2,10 +2,11 @@ import {
     assertUnreachable,
     ExploreType,
     getItemId,
+    getParsedReference,
     getPreAggregateExploreName,
     getPreAggregateMetricColumnName,
     getPreAggregateMetricComponentColumnName,
-    getSqlForTruncatedDate,
+    getReferencedDimension,
     lightdashVariablePattern,
     MetricType,
     PRE_AGGREGATE_MATERIALIZED_TABLE_PLACEHOLDER,
@@ -13,7 +14,7 @@ import {
     PreAggregateMetricRepresentationKind,
     preAggregateUtils,
     SupportedDbtAdapter,
-    timeFrameOrder,
+    timeFrameConfigs,
     type CompiledDimension,
     type CompiledMetric,
     type CompiledTable,
@@ -33,18 +34,6 @@ const {
     getSelectedDimension,
     selectPreAggregateMetrics,
 } = preAggregateMaterialization;
-
-const isFinerGranularity = (
-    candidateGranularity: TimeFrames,
-    targetGranularity: TimeFrames,
-): boolean => {
-    const candidateIndex = timeFrameOrder.indexOf(candidateGranularity);
-    const targetIndex = timeFrameOrder.indexOf(targetGranularity);
-    if (candidateIndex === -1 || targetIndex === -1) {
-        return false;
-    }
-    return candidateIndex < targetIndex;
-};
 
 const getMetricAggregateSql = (
     metricType: MetricType.SUM | MetricType.MIN | MetricType.MAX,
@@ -268,14 +257,10 @@ const buildDimensionSql = ({
         preAggregateDef,
     });
     const materializedBaseColumnReference = `${sourceExplore.baseTable}.${materializedBaseColumnName}`;
-    const timeDimensionReference =
-        preAggregateDef.timeDimension &&
-        dimensionBaseName === preAggregateDef.timeDimension
-            ? `CAST(${materializedBaseColumnReference} AS TIMESTAMP)`
-            : materializedBaseColumnReference;
+    const baseDimensionType = getBaseDimensionType(sourceExplore, dimension);
 
     if (!dimension.timeInterval) {
-        return timeDimensionReference;
+        return materializedBaseColumnReference;
     }
 
     if (
@@ -284,14 +269,14 @@ const buildDimensionSql = ({
         dimensionBaseName === preAggregateDef.timeDimension &&
         dimension.timeInterval === preAggregateDef.granularity
     ) {
-        return timeDimensionReference;
+        return materializedBaseColumnReference;
     }
 
-    return getSqlForTruncatedDate(
+    return timeFrameConfigs[dimension.timeInterval].getSql(
         servingAdapter,
         dimension.timeInterval,
-        timeDimensionReference,
-        getBaseDimensionType(sourceExplore, dimension),
+        materializedBaseColumnReference,
+        baseDimensionType,
         startOfWeek,
     );
 };
@@ -367,17 +352,66 @@ const getIncludedDimensions = (
         if (
             !preAggregateDef.timeDimension ||
             !preAggregateDef.granularity ||
-            dimensionBaseName !== preAggregateDef.timeDimension ||
-            !dimension.timeInterval
+            dimensionBaseName !== preAggregateDef.timeDimension
         ) {
             return true;
         }
 
-        return !isFinerGranularity(
-            dimension.timeInterval,
-            preAggregateDef.granularity,
+        return (
+            preAggregateUtils.getTimeFrameDerivability(
+                preAggregateUtils.getEffectiveDimensionTimeFrame(dimension),
+                preAggregateDef.granularity,
+            ) === preAggregateUtils.TimeFrameDerivability.DERIVABLE
         );
     });
+};
+
+// Recompile sql_filter onto materialized columns (${lightdash.*} kept for
+// query-time substitution); unresolved refs keep a missing column: fail closed.
+const rewriteSqlWhereForPreAggregate = ({
+    sourceExplore,
+    preAggregateDef,
+    servingAdapter,
+}: {
+    sourceExplore: Explore;
+    preAggregateDef: PreAggregateDef;
+    servingAdapter: SupportedDbtAdapter;
+}): string | undefined => {
+    const uncompiledSqlWhere =
+        sourceExplore.tables[sourceExplore.baseTable]?.uncompiledSqlWhere;
+    if (!uncompiledSqlWhere) {
+        return undefined;
+    }
+
+    const quoteChar =
+        warehouseSqlBuilderFromType(servingAdapter).getFieldQuoteChar();
+
+    return uncompiledSqlWhere.replace(
+        lightdashVariablePattern,
+        (_, ref: string) => {
+            if (ref === 'TABLE') {
+                return `${quoteChar}${sourceExplore.baseTable}${quoteChar}`;
+            }
+
+            const { refTable, refName } = getParsedReference(
+                ref,
+                sourceExplore.baseTable,
+            );
+            const dimension = getReferencedDimension<
+                CompiledTable,
+                CompiledDimension
+            >(refTable, refName, sourceExplore.tables);
+            const materializedColumnName = dimension
+                ? getMaterializedDimensionColumnName({
+                      sourceExplore,
+                      dimension,
+                      preAggregateDef,
+                  })
+                : getItemId({ table: refTable, name: refName });
+
+            return `${sourceExplore.baseTable}.${materializedColumnName}`;
+        },
+    );
 };
 
 const getEmptyTable = (
@@ -432,6 +466,19 @@ export const buildPreAggregateExplore = (
         acc[tableName] = getEmptyTable(sourceTable, sqlTable);
         return acc;
     }, {});
+
+    const rewrittenSqlWhere = rewriteSqlWhereForPreAggregate({
+        sourceExplore,
+        preAggregateDef,
+        servingAdapter,
+    });
+    if (rewrittenSqlWhere !== undefined) {
+        tables[sourceExplore.baseTable] = {
+            ...tables[sourceExplore.baseTable],
+            sqlWhere: rewrittenSqlWhere,
+            uncompiledSqlWhere: rewrittenSqlWhere,
+        };
+    }
 
     includedDimensions.forEach((dimension) => {
         const compiledSql = buildDimensionSql({

@@ -1,6 +1,9 @@
 import {
+    FilterOperator,
+    MergeQueryErrorKind,
     QueryExecutionContext,
     SEED_PROJECT,
+    type ApiCompiledMergeQueryResults,
     type ApiExecuteAsyncMergeQueryResults,
 } from '@lightdash/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -72,11 +75,22 @@ type QueryResultsBody = Body<{
     totalResults: number;
 }>;
 
-type MergeTestContext = { client: ApiClient; projectUuid: string };
+// hasSubscriptionsModel: whether the warehouse dataset carries a current
+// build of the jaffle `subscriptions` model. The staging datasets reliably
+// mirror only the core models (customers/orders/payments) — BigQuery never
+// built `subscriptions` and Trino's build predates the mrr columns — so the
+// parameterized merge compiles everywhere but executes only where the model
+// exists.
+type MergeTestContext = {
+    client: ApiClient;
+    projectUuid: string;
+    hasSubscriptionsModel: boolean;
+};
 
 function registerMergeQueryTests(getContext: () => MergeTestContext) {
     let admin: ApiClient;
     let projectUuid: string;
+    let hasSubscriptionsModel: boolean;
 
     async function pollQueryResults(
         client: ApiClient,
@@ -105,7 +119,7 @@ function registerMergeQueryTests(getContext: () => MergeTestContext) {
     // The merge-queries flag gates only the frontend entry point; the API
     // endpoints are always available.
     beforeAll(() => {
-        ({ client: admin, projectUuid } = getContext());
+        ({ client: admin, projectUuid, hasSubscriptionsModel } = getContext());
     });
 
     it('compiles the merge for the project warehouse without errors', async () => {
@@ -192,6 +206,12 @@ function registerMergeQueryTests(getContext: () => MergeTestContext) {
         );
     };
 
+    // Raw numeric representation is driver-specific — Postgres stringifies
+    // bigints and numerics, DuckDB (the compose engine) returns JSON
+    // numbers — so the parity bar compares values, not spellings. Formatted
+    // values are engine-independent and asserted elsewhere.
+    const numeric = (raw: unknown) => (raw === null ? null : Number(raw));
+
     // Month starts arrive spelled in different conventions depending on
     // which path truncated and serialised them — a DST month start can even
     // arrive as a date-only string of the *previous* day. Every spelling
@@ -251,8 +271,89 @@ function registerMergeQueryTests(getContext: () => MergeTestContext) {
             const payments = (
                 row[PAYMENTS_FIELD_ID] as { value: { raw: unknown } }
             ).value.raw;
-            expect(orders).toEqual(ordersByKey.get(key) ?? null);
-            expect(payments).toEqual(paymentsByKey.get(key) ?? null);
+            expect(numeric(orders)).toEqual(
+                numeric(ordersByKey.get(key) ?? null),
+            );
+            expect(numeric(payments)).toEqual(
+                numeric(paymentsByKey.get(key) ?? null),
+            );
+        });
+    }, 60_000);
+
+    it('applies each source filter before aggregation and merging', async () => {
+        const completedOnly = {
+            dimensions: {
+                id: 'merge-status-filter-group',
+                and: [
+                    {
+                        id: 'merge-status-filter',
+                        target: { fieldId: 'orders_status' },
+                        operator: FilterOperator.EQUALS,
+                        values: ['completed'],
+                    },
+                ],
+            },
+        };
+        const filteredOrders = {
+            ...ordersByMonth,
+            filters: completedOnly,
+        };
+        const filteredPayments = {
+            ...paymentsByMonth,
+            filters: completedOnly,
+        };
+        const filteredMerge = {
+            ...mergeQuery,
+            sources: [
+                { id: 'orders', metricQuery: filteredOrders },
+                { id: 'payments', metricQuery: filteredPayments },
+            ],
+        };
+
+        const [ordersRows, paymentsRows, runResp] = await Promise.all([
+            runSourceQuery(filteredOrders),
+            runSourceQuery(filteredPayments),
+            admin.post<Body<{ queryUuid: string }>>(
+                `/api/v1/projects/${projectUuid}/mergeQuery/run`,
+                { mergeQuery: filteredMerge },
+            ),
+        ]);
+        const ordersByKey = new Map(
+            ordersRows.map((row) => [
+                monthOf(row.orders_order_date_month),
+                row.orders_total_order_amount,
+            ]),
+        );
+        const paymentsByKey = new Map(
+            paymentsRows.map((row) => [
+                monthOf(row.orders_order_date_month),
+                row.payments_unique_payment_count,
+            ]),
+        );
+        const results = await pollQueryResults(
+            admin,
+            runResp.body.results.queryUuid,
+        );
+
+        expect(results.totalResults).toBe(
+            new Set([...ordersByKey.keys(), ...paymentsByKey.keys()]).size,
+        );
+        results.rows.forEach((row) => {
+            const key = monthOf(
+                (row[KEY_FIELD_ID] as { value: { raw: unknown } }).value.raw,
+            );
+            expect(
+                numeric(
+                    (row[ORDERS_FIELD_ID] as { value: { raw: unknown } }).value
+                        .raw,
+                ),
+            ).toEqual(numeric(ordersByKey.get(key) ?? null));
+            expect(
+                numeric(
+                    (row[PAYMENTS_FIELD_ID] as { value: { raw: unknown } })
+                        .value.raw,
+                ),
+            ).toEqual(numeric(paymentsByKey.get(key) ?? null));
         });
     }, 60_000);
 
@@ -290,15 +391,129 @@ function registerMergeQueryTests(getContext: () => MergeTestContext) {
         expect(await rowCountFor('inner')).toBe(intersection.length);
     }, 90_000);
 
-    // The date-spine fill, generated natively on the project warehouse: every
-    // period between the first and last key exists as a row, so the pages
-    // come back gap-free in key order.
+    // Result sources: an existing query result referenced by queryUuid joins
+    // as the rows it already holds — nothing re-runs. Only the compose
+    // engine can join one, so environments without it must refuse with the
+    // compose_required contract instead of falling back to a warehouse
+    // statement that cannot exist. The same parity bar applies either way:
+    // merged values must equal what the referenced queries returned.
+    it('merges existing query results by queryUuid, or refuses without the compose engine', async () => {
+        const startAndFetch = async (query: Record<string, unknown>) => {
+            const started = await admin.post<Body<{ queryUuid: string }>>(
+                `/api/v2/projects/${projectUuid}/query/metric-query`,
+                { context: 'exploreView', query },
+            );
+            expect(started.status).toBe(200);
+            const results = await pollQueryResults(
+                admin,
+                started.body.results.queryUuid,
+            );
+            return {
+                queryUuid: started.body.results.queryUuid,
+                rows: results.rows.map((row) =>
+                    Object.fromEntries(
+                        Object.entries(row).map(([column, cell]) => [
+                            column,
+                            (cell as { value: { raw: unknown } }).value.raw,
+                        ]),
+                    ),
+                ),
+            };
+        };
+        const [ordersRun, paymentsRun] = await Promise.all([
+            startAndFetch(ordersByMonth),
+            startAndFetch(paymentsByMonth),
+        ]);
+
+        const runResp = await admin.post<
+            Body<ApiExecuteAsyncMergeQueryResults>
+        >(`/api/v2/projects/${projectUuid}/query/compose-merge-query`, {
+            mergeQuery: {
+                ...mergeQuery,
+                sources: [
+                    { id: 'orders', queryUuid: ordersRun.queryUuid },
+                    { id: 'payments', queryUuid: paymentsRun.queryUuid },
+                ],
+            },
+            context: QueryExecutionContext.EXPLORE,
+        });
+        expect(runResp.status).toBe(200);
+        if (runResp.body.results.outcome === 'refused') {
+            expect(
+                runResp.body.results.errors.map((error) => error.kind),
+            ).toContain(MergeQueryErrorKind.COMPOSE_REQUIRED);
+            return;
+        }
+
+        const results = await pollQueryResults(
+            admin,
+            runResp.body.results.query.queryUuid,
+        );
+        const ordersByKey = new Map(
+            ordersRun.rows.map((row) => [
+                monthOf(row.orders_order_date_month),
+                row.orders_total_order_amount,
+            ]),
+        );
+        const paymentsByKey = new Map(
+            paymentsRun.rows.map((row) => [
+                monthOf(row.orders_order_date_month),
+                row.payments_unique_payment_count,
+            ]),
+        );
+        expect(results.totalResults).toBe(
+            new Set([...ordersByKey.keys(), ...paymentsByKey.keys()]).size,
+        );
+        results.rows.forEach((row) => {
+            const key = monthOf(
+                (row[KEY_FIELD_ID] as { value: { raw: unknown } }).value.raw,
+            );
+            expect(
+                numeric(
+                    (row[ORDERS_FIELD_ID] as { value: { raw: unknown } }).value
+                        .raw,
+                ),
+            ).toEqual(numeric(ordersByKey.get(key) ?? null));
+            expect(
+                numeric(
+                    (row[PAYMENTS_FIELD_ID] as { value: { raw: unknown } })
+                        .value.raw,
+                ),
+            ).toEqual(numeric(paymentsByKey.get(key) ?? null));
+        });
+    }, 120_000);
+
+    it('refuses a result source that does not exist, naming the remedy', async () => {
+        const runResp = await admin.post<
+            Body<ApiExecuteAsyncMergeQueryResults>
+        >(`/api/v2/projects/${projectUuid}/query/compose-merge-query`, {
+            mergeQuery: {
+                ...mergeQuery,
+                sources: [
+                    { id: 'orders', metricQuery: ordersByMonth },
+                    {
+                        id: 'payments',
+                        queryUuid: '00000000-0000-4000-8000-000000000000',
+                    },
+                ],
+            },
+            context: QueryExecutionContext.EXPLORE,
+        });
+        expect(runResp.status).toBe(200);
+        expect(runResp.body.results.outcome).toBe('refused');
+        if (runResp.body.results.outcome === 'refused') {
+            expect(
+                runResp.body.results.errors.map((error) => error.kind),
+            ).toContain(MergeQueryErrorKind.RESULT_SOURCE_UNAVAILABLE);
+        }
+    }, 30_000);
+
     // The jaffle subscriptions explore's customers join carries a Lightdash
     // parameter, so selecting orders_status through it forces the
     // parameterized join in. The single-query path refuses to run without a
     // value; the merge must refuse the same way instead of shipping a
     // literal `${ld.parameters...}` placeholder to the warehouse.
-    it('refuses a merge whose source is missing a parameter value, by name', async () => {
+    it('refuses a missing parameter and applies a supplied value', async () => {
         const parameterized = {
             sources: [
                 {
@@ -349,10 +564,7 @@ function registerMergeQueryTests(getContext: () => MergeTestContext) {
             limit: 500,
         };
 
-        type CompileBody = Body<{
-            sql: string | null;
-            errors: { kind: string; sourceId: string | null }[];
-        }>;
+        type CompileBody = Body<ApiCompiledMergeQueryResults>;
         const refused = await admin.post<CompileBody>(
             `/api/v1/projects/${projectUuid}/mergeQuery/compile`,
             { mergeQuery: parameterized },
@@ -375,7 +587,42 @@ function registerMergeQueryTests(getContext: () => MergeTestContext) {
         );
         expect(supplied.body.results.errors).toEqual([]);
         expect(supplied.body.results.sql).not.toContain('${ld.parameters');
-    });
+        expect(supplied.body.results.parameterReferences).toContain(
+            'customers.customer_name',
+        );
+        expect(supplied.body.results.usedParametersValues).toEqual(
+            expect.objectContaining({ 'customers.customer_name': 'Ken' }),
+        );
+
+        // Executing reads the subscriptions model on the warehouse, which
+        // only some staging datasets have built; compiling above does not.
+        if (!hasSubscriptionsModel) return;
+
+        const runResp = await admin.post<
+            Body<ApiExecuteAsyncMergeQueryResults>
+        >(`/api/v2/projects/${projectUuid}/query/merge-query`, {
+            mergeQuery: parameterized,
+            parameters: { 'customers.customer_name': 'Ken' },
+            context: QueryExecutionContext.EXPLORE,
+        });
+        expect(runResp.body.results.outcome).toBe('started');
+        expect(runResp.body.results.parameterReferences).toContain(
+            'customers.customer_name',
+        );
+        if (runResp.body.results.outcome !== 'started') {
+            throw new Error(
+                `Parameterized merge was refused: ${JSON.stringify(runResp.body.results.errors)}`,
+            );
+        }
+        expect(runResp.body.results.query.usedParametersValues).toEqual(
+            expect.objectContaining({ 'customers.customer_name': 'Ken' }),
+        );
+        const results = await pollQueryResults(
+            admin,
+            runResp.body.results.query.queryUuid,
+        );
+        expect(results.totalResults).toBeGreaterThan(0);
+    }, 60_000);
 
     it('runs a pivoted merge through the standard pivot stage', async () => {
         // Widen the key with the order status, shared by both explores, and
@@ -453,6 +700,10 @@ const mergeWarehouseEntries = getAvailableWarehouseConfigs({
     includeDatabricks: false,
 });
 
+// Staging datasets with a current build of the `subscriptions` model; see
+// MergeTestContext.hasSubscriptionsModel.
+const WAREHOUSES_WITH_SUBSCRIPTIONS = new Set(['snowflake']);
+
 describe('Merge queries on the project warehouse', () => {
     // Postgres: reuse the already-seeded project (no create/refresh needed).
     describe('postgres (seed project)', () => {
@@ -465,6 +716,7 @@ describe('Merge queries on the project warehouse', () => {
         registerMergeQueryTests(() => ({
             client: admin,
             projectUuid: SEED_PROJECT.project_uuid,
+            hasSubscriptionsModel: true,
         }));
     });
 
@@ -494,6 +746,7 @@ describe('Merge queries on the project warehouse', () => {
             registerMergeQueryTests(() => ({
                 client: admin,
                 projectUuid,
+                hasSubscriptionsModel: WAREHOUSES_WITH_SUBSCRIPTIONS.has(name),
             }));
         });
     }
