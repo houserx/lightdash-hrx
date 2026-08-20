@@ -72,6 +72,7 @@ import { SemanticLayerQuerySource } from './QuerySourceService/sources/SemanticL
 import { SqlQuerySource } from './QuerySourceService/sources/SqlQuerySource';
 import type { ReadinessService } from './ReadinessService/ReadinessService';
 import { RenameService } from './RenameService/RenameService';
+import { ResourceAccessService } from './ResourceAccessService/ResourceAccessService';
 import { RolesService } from './RolesService/RolesService';
 import { SavedChartService } from './SavedChartsService/SavedChartService';
 import { SavedSqlService } from './SavedSqlService/SavedSqlService';
@@ -136,6 +137,7 @@ interface ServiceManifest {
     shareService: ShareService;
     slackIntegrationService: SlackIntegrationService;
     sshKeyPairService: SshKeyPairService;
+    resourceAccessService: ResourceAccessService;
     spacePermissionService: SpacePermissionService;
     spaceService: SpaceService;
     unfurlService: UnfurlService;
@@ -1115,6 +1117,20 @@ export class ServiceRepository
                     slackAuthenticationModel:
                         this.models.getSlackAuthenticationModel(),
                     slackClient: this.clients.getSlackClient(),
+                }),
+        );
+    }
+
+    public getResourceAccessService(): ResourceAccessService {
+        return this.getService(
+            'resourceAccessService',
+            () =>
+                new ResourceAccessService({
+                    dashboardModel: this.models.getDashboardModel(),
+                    savedChartModel: this.models.getSavedChartModel(),
+                    resourceAccessModel: this.models.getResourceAccessModel(),
+                    spacePermissionService: this.getSpacePermissionService(),
+                    lightdashConfig: this.context.lightdashConfig,
                 }),
         );
     }
