@@ -568,6 +568,37 @@ describe('ResourceAccessService getResourceAccessList', () => {
         vi.clearAllMocks();
     });
 
+    // This method arrives on its own branch, after the one that moved grant
+    // administration to `manage`, so it needs its own coverage: a merge that
+    // brings the new rule in does nothing for a call site added afterwards.
+    it('given a requester who can only view, then the list is refused', async () => {
+        const { service, granter } = buildService({
+            granterRole: OrganizationMemberRole.VIEWER,
+        });
+
+        await expect(
+            service.getResourceAccessList(granter, {
+                projectUuid: PROJECT_UUID,
+                resourceType: 'Dashboard',
+                resourceUuid: DASHBOARD_UUID,
+            }),
+        ).rejects.toThrowError(ForbiddenError);
+    });
+
+    it('given direct resource grants are disabled, then the list is refused', async () => {
+        const { service, granter } = buildService({
+            resourceGrantsEnabled: false,
+        });
+
+        await expect(
+            service.getResourceAccessList(granter, {
+                projectUuid: PROJECT_UUID,
+                resourceType: 'Dashboard',
+                resourceUuid: DASHBOARD_UUID,
+            }),
+        ).rejects.toThrowError(ForbiddenError);
+    });
+
     it('given more than a hundred user uuids, then it is refused', async () => {
         const { service, granter } = buildService();
 
