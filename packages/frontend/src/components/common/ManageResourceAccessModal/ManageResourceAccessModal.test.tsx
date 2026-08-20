@@ -1,9 +1,10 @@
 import {
     SpaceMemberRole,
+    type GroupWithMembers,
     type ResourceAccessList,
     type ResourceShare,
 } from '@lightdash/common';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { type ComponentProps, type ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useOrganizationGroups } from '../../../hooks/useOrganizationGroups';
@@ -73,6 +74,19 @@ const share = (overrides: Partial<ResourceShare>): ResourceShare => ({
     ...overrides,
 });
 
+/** Only the two fields the modal reads; the rest is what the API returns. */
+const group = (uuid: string, name: string): GroupWithMembers => ({
+    uuid,
+    name,
+    createdAt: new Date(0),
+    createdByUserUuid: null,
+    updatedAt: new Date(0),
+    updatedByUserUuid: null,
+    organizationUuid: 'org-1',
+    memberUuids: [],
+    members: [],
+});
+
 const grants: ResourceAccessList = {
     users: [{ userUuid: 'user-ada', action: 'view' }],
     groups: [{ groupUuid: 'group-eng', action: 'manage' }],
@@ -81,7 +95,12 @@ const grants: ResourceAccessList = {
 type AccessQuery = ReturnType<typeof useResourceAccess>;
 type GrantsQuery = ReturnType<typeof useResourceGrants>;
 type GroupsQuery = ReturnType<typeof useOrganizationGroups>;
-type RevokeMutation = ReturnType<typeof useRevokeResourceUserAccessMutation>;
+type RevokeUserMutation = ReturnType<
+    typeof useRevokeResourceUserAccessMutation
+>;
+type RevokeGroupMutation = ReturnType<
+    typeof useRevokeResourceGroupAccessMutation
+>;
 
 const givenQueries = ({
     accessPage,
@@ -110,11 +129,11 @@ const givenQueries = ({
     vi.mocked(useRevokeResourceUserAccessMutation).mockReturnValue({
         mutate: revokeUser,
         isLoading: isRevokingUser,
-    } as unknown as RevokeMutation);
+    } as unknown as RevokeUserMutation);
     vi.mocked(useRevokeResourceGroupAccessMutation).mockReturnValue({
         mutate: revokeGroup,
         isLoading: isRevokingGroup,
-    } as unknown as RevokeMutation);
+    } as unknown as RevokeGroupMutation);
 };
 
 const renderModal = (opened = true): ReactElement => (
@@ -269,14 +288,7 @@ describe('given groups that hold grants', () => {
             givenQueries({
                 accessPage: { data: [share({})], pagination: undefined },
                 grantList: grants,
-                groups: [
-                    {
-                        uuid: 'group-eng',
-                        name: 'Engineering',
-                        createdAt: new Date(),
-                        organizationUuid: 'org-1',
-                    },
-                ],
+                groups: [group('group-eng', 'Engineering')],
             });
 
             render(renderModal());
@@ -311,7 +323,9 @@ describe('given a list longer than one page', () => {
                 vi.mocked(useResourceAccess).mock.calls[0]?.[3],
             ).toMatchObject({ page: 1 });
 
-            contentProps?.onPageChange(3);
+            // Flushed through act: the body reports the change with a plain
+            // call, not an event, so React has nothing else to batch it into.
+            act(() => contentProps?.onPageChange(3));
 
             const lastCall = vi.mocked(useResourceAccess).mock.calls.at(-1);
             expect(lastCall?.[3]).toMatchObject({ page: 3 });
