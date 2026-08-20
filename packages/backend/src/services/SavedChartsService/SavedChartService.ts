@@ -80,6 +80,7 @@ import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { OrganizationModel } from '../../models/OrganizationModel';
 import { PinnedListModel } from '../../models/PinnedListModel';
 import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { SchedulerModel } from '../../models/SchedulerModel';
 import { SpaceModel } from '../../models/SpaceModel';
@@ -113,6 +114,7 @@ type SavedChartServiceArguments = {
     userService: UserService;
     spacePermissionService: SpacePermissionService;
     contentVerificationModel: ContentVerificationModel;
+    resourceAccessModel: ResourceAccessModel;
     organizationModel: OrganizationModel;
 };
 
@@ -171,6 +173,8 @@ export class SavedChartService
 
     private readonly contentVerificationModel: ContentVerificationModel;
 
+    private readonly resourceAccessModel: ResourceAccessModel;
+
     private readonly organizationModel: OrganizationModel;
 
     constructor(args: SavedChartServiceArguments) {
@@ -193,6 +197,7 @@ export class SavedChartService
         this.userService = args.userService;
         this.spacePermissionService = args.spacePermissionService;
         this.contentVerificationModel = args.contentVerificationModel;
+        this.resourceAccessModel = args.resourceAccessModel;
         this.organizationModel = args.organizationModel;
     }
 
@@ -2628,6 +2633,14 @@ export class SavedChartService
                 );
             }
         }
+
+        // Grant tables carry no foreign key to the resource -- resource_uuid is
+        // polymorphic -- so ON DELETE CASCADE cannot reach them. Purge before the
+        // row goes, or the grants dangle.
+        await this.resourceAccessModel.removeAllForResource(
+            'SavedChart',
+            chartUuid,
+        );
 
         await this.savedChartModel.permanentDelete(chartUuid);
     }

@@ -319,4 +319,28 @@ export class ResourceAccessModel {
 
         return match !== undefined;
     }
+
+    /**
+     * Removes every grant held on one resource, for a hard delete.
+     *
+     * `resource_uuid` is polymorphic across resource types, so the grant tables
+     * carry no foreign key to the resource and ON DELETE CASCADE cannot reach
+     * them the way it does for `space_user_access`. Scoped by resource type as
+     * well as uuid, so a SavedChart grant survives a Dashboard purge.
+     */
+    async removeAllForResource(
+        resourceType: ResourceAccessResourceType,
+        resourceUuid: string,
+    ): Promise<void> {
+        await Promise.all([
+            this.database(ResourceUserAccessTableName)
+                .where('resource_type', resourceType)
+                .where('resource_uuid', resourceUuid)
+                .delete(),
+            this.database(ResourceGroupAccessTableName)
+                .where('resource_type', resourceType)
+                .where('resource_uuid', resourceUuid)
+                .delete(),
+        ]);
+    }
 }

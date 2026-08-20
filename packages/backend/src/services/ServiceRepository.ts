@@ -444,6 +444,7 @@ export class ServiceRepository
                     spacePermissionService: this.getSpacePermissionService(),
                     contentVerificationModel:
                         this.models.getContentVerificationModel(),
+                    resourceAccessModel: this.models.getResourceAccessModel(),
                 }),
         );
     }
@@ -1037,6 +1038,7 @@ export class ServiceRepository
                     contentVerificationModel:
                         this.models.getContentVerificationModel(),
                     organizationModel: this.models.getOrganizationModel(),
+                    resourceAccessModel: this.models.getResourceAccessModel(),
                 }),
         );
     }
