@@ -296,6 +296,9 @@ export class HealthService extends BaseService {
             preAggregates: {
                 enabled: this.lightdashConfig.preAggregates.enabled,
             },
+            resourceGrants: {
+                enabled: this.lightdashConfig.resourceGrants.enabled,
+            },
             dataApps: {
                 previewOrigin: this.lightdashConfig.appRuntime.previewOrigin,
                 sampleDataEnabled:
