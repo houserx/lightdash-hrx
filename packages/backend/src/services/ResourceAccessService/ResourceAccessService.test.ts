@@ -5,6 +5,7 @@ import {
     ParameterError,
     type SessionUser,
 } from '@lightdash/common';
+import { type LightdashConfig } from '../../config/parseConfig';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
@@ -37,10 +38,12 @@ const buildService = ({
     granterRole = OrganizationMemberRole.ADMIN,
     userInOrganization = true,
     groupInOrganization = true,
+    resourceGrantsEnabled = true,
 }: {
     granterRole?: OrganizationMemberRole;
     userInOrganization?: boolean;
     groupInOrganization?: boolean;
+    resourceGrantsEnabled?: boolean;
 } = {}) => {
     const resourceAccessModel = {
         addUserAccess: vi.fn(async () => undefined),
@@ -75,6 +78,9 @@ const buildService = ({
             resourceAccessModel as unknown as ResourceAccessModel,
         spacePermissionService:
             spacePermissionService as unknown as SpacePermissionService,
+        lightdashConfig: {
+            resourceGrants: { enabled: resourceGrantsEnabled },
+        } as LightdashConfig,
     });
     return {
         service,
@@ -89,7 +95,7 @@ describe('ResourceAccessService', () => {
         vi.clearAllMocks();
     });
 
-    describe('given the granter holds the action they are granting', () => {
+    describe('given the granter can manage the resource', () => {
         it('then the grant is persisted against the resource own project', async () => {
             const { service, resourceAccessModel, granter } = buildService();
 
@@ -110,7 +116,7 @@ describe('ResourceAccessService', () => {
             });
         });
 
-        it('then their own access is resolved for the resource, so a grant counts toward granting authority', async () => {
+        it('then their own access is resolved for the resource, so a manage grant counts toward granting authority', async () => {
             const { service, spacePermissionService, granter } = buildService();
 
             await service.grantUserAccess(granter, {
@@ -133,7 +139,104 @@ describe('ResourceAccessService', () => {
         });
     });
 
-    describe('given the granter does not hold the action', () => {
+    describe('given the granter can only view the resource', () => {
+        // The case that matters most, and the one this suite did not have. Before
+        // administering grants required `manage`, a viewer passed the check for a
+        // `view` grant simply by being able to see the resource -- so anyone who
+        // could open a dashboard could widen access to it, and a user whose own
+        // way in was a view grant could pass it on. Space sharing has never
+        // allowed that: it requires manage on the space.
+        it('then granting view is forbidden, even though they can view', async () => {
+            const { service, granter } = buildService({
+                granterRole: OrganizationMemberRole.VIEWER,
+            });
+
+            await expect(
+                service.grantUserAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+        });
+
+        it('then nothing is persisted and membership is never probed', async () => {
+            const { service, resourceAccessModel, granter } = buildService({
+                granterRole: OrganizationMemberRole.VIEWER,
+            });
+
+            await expect(
+                service.grantUserAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(resourceAccessModel.addUserAccess).not.toHaveBeenCalled();
+            expect(
+                resourceAccessModel.isUserInOrganization,
+            ).not.toHaveBeenCalled();
+        });
+
+        it('then granting view to a group is forbidden too', async () => {
+            const { service, resourceAccessModel, granter } = buildService({
+                granterRole: OrganizationMemberRole.VIEWER,
+            });
+
+            await expect(
+                service.grantGroupAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetGroupUuid: GROUP_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(resourceAccessModel.addGroupAccess).not.toHaveBeenCalled();
+        });
+
+        it("then revoking somebody else's view grant is forbidden", async () => {
+            // The other half: revoke authority was the action being revoked, so a
+            // viewer could strip other people's access to anything they could see.
+            const { service, resourceAccessModel, granter } = buildService({
+                granterRole: OrganizationMemberRole.VIEWER,
+            });
+
+            await expect(
+                service.revokeUserAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(resourceAccessModel.removeUserAccess).not.toHaveBeenCalled();
+        });
+
+        it('then they cannot read who else has access', async () => {
+            // Reading is held to the same bar as writing: this is a grant
+            // administration surface, and the list names who was individually
+            // singled out plus who granted it. Item J only offers it behind the
+            // same manage check, so there is no product surface this closes.
+            const { service, granter } = buildService({
+                granterRole: OrganizationMemberRole.VIEWER,
+            });
+
+            await expect(
+                service.listResourceAccess(
+                    granter,
+                    'Dashboard',
+                    DASHBOARD_UUID,
+                ),
+            ).rejects.toThrowError(ForbiddenError);
+        });
+    });
+
+    describe('given the granter cannot manage the resource', () => {
         it('then the grant is forbidden', async () => {
             const { service, granter } = buildService({
                 granterRole: OrganizationMemberRole.MEMBER,
@@ -224,7 +327,7 @@ describe('ResourceAccessService', () => {
     });
 
     describe('given a revoke', () => {
-        it('then it requires the same action being revoked, not blanket manage', async () => {
+        it('then a manager may revoke any action, including one they were not granted', async () => {
             const { service, resourceAccessModel, granter } = buildService();
 
             await service.revokeUserAccess(granter, {
@@ -242,7 +345,7 @@ describe('ResourceAccessService', () => {
             });
         });
 
-        it('then a revoker without the action is forbidden', async () => {
+        it('then a revoker who cannot manage the resource is forbidden', async () => {
             const { service, granter } = buildService({
                 granterRole: OrganizationMemberRole.MEMBER,
             });
@@ -275,7 +378,7 @@ describe('ResourceAccessService', () => {
     });
 
     describe('given a listing', () => {
-        it('then it requires view on the resource', async () => {
+        it('then it requires manage on the resource', async () => {
             const { service, granter } = buildService({
                 granterRole: OrganizationMemberRole.MEMBER,
             });
@@ -303,6 +406,84 @@ describe('ResourceAccessService', () => {
                 DASHBOARD_UUID,
             );
             expect(result).toEqual({ users: [], groups: [] });
+        });
+    });
+
+    describe('given direct resource grants are disabled', () => {
+        // While the feature is off, permission resolution skips the grant lookup
+        // entirely -- so a grant written now changes nobody's access. Accepting the
+        // write anyway is worse than refusing it: it reports success for something
+        // that silently does nothing, and leaves rows behind that start mattering
+        // the moment an operator flips the flag.
+        it('then granting is refused even for an admin', async () => {
+            const { service, resourceAccessModel, granter } = buildService({
+                resourceGrantsEnabled: false,
+            });
+
+            await expect(
+                service.grantUserAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(resourceAccessModel.addUserAccess).not.toHaveBeenCalled();
+        });
+
+        it('then granting to a group is refused', async () => {
+            const { service, resourceAccessModel, granter } = buildService({
+                resourceGrantsEnabled: false,
+            });
+
+            await expect(
+                service.grantGroupAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetGroupUuid: GROUP_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(resourceAccessModel.addGroupAccess).not.toHaveBeenCalled();
+        });
+
+        it('then revoking is refused too, and no resource is even resolved', async () => {
+            // Refused before the resource is looked up, so a disabled instance
+            // cannot be used to probe which uuids exist.
+            const { service, resourceAccessModel, granter } = buildService({
+                resourceGrantsEnabled: false,
+            });
+
+            await expect(
+                service.revokeUserAccess(granter, {
+                    resourceType: 'Dashboard',
+                    resourceUuid: DASHBOARD_UUID,
+                    targetUserUuid: GRANTEE_UUID,
+                    action: 'view',
+                }),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(resourceAccessModel.removeUserAccess).not.toHaveBeenCalled();
+        });
+
+        it('then listing is refused', async () => {
+            const { service, resourceAccessModel, granter } = buildService({
+                resourceGrantsEnabled: false,
+            });
+
+            await expect(
+                service.listResourceAccess(
+                    granter,
+                    'Dashboard',
+                    DASHBOARD_UUID,
+                ),
+            ).rejects.toThrowError(ForbiddenError);
+
+            expect(
+                resourceAccessModel.listResourceAccess,
+            ).not.toHaveBeenCalled();
         });
     });
 });
