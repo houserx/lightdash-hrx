@@ -15,6 +15,7 @@ import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { OrganizationModel } from '../../models/OrganizationModel';
 import { PinnedListModel } from '../../models/PinnedListModel';
 import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { SavedSqlModel } from '../../models/SavedSqlModel';
 import { SchedulerModel } from '../../models/SchedulerModel';
@@ -91,6 +92,9 @@ vi.spyOn(analyticsMock, 'track');
 
 describe('DashboardService - Content Verification', () => {
     const service = new DashboardService({
+        resourceAccessModel: {
+            removeAllForResource: vi.fn(async () => undefined),
+        } as unknown as ResourceAccessModel,
         lightdashConfig: lightdashConfigMock,
         analytics: analyticsMock,
         dashboardModel: dashboardModel as unknown as DashboardModel,
