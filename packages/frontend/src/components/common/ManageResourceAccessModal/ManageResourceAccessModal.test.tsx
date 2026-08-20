@@ -58,6 +58,7 @@ vi.mock('./ManageResourceAccessModalContent', () => ({
 
 const revokeUser = vi.fn();
 const revokeGroup = vi.fn();
+const onClose = vi.fn();
 
 const share = (overrides: Partial<ResourceShare>): ResourceShare => ({
     userUuid: 'user-ada',
@@ -141,7 +142,7 @@ const renderModal = (opened = true): ReactElement => (
     <MantineProvider env="test" forceColorScheme="light">
         <ManageResourceAccessModal
             opened={opened}
-            onClose={vi.fn()}
+            onClose={onClose}
             projectUuid="project-1"
             resourceType="Dashboard"
             resourceUuid="dashboard-1"
@@ -339,6 +340,25 @@ describe('given a list longer than one page', () => {
             expect(
                 vi.mocked(useResourceAccess).mock.calls.at(-1)?.[3],
             ).toMatchObject({ page: 3 });
+        });
+    });
+});
+
+describe('given an open modal', () => {
+    describe('when it is dismissed from the footer', () => {
+        it('then the one button there closes it for the caller', async () => {
+            render(renderModal());
+
+            // Asserted separately from the page reset, which observes page 1
+            // whether or not `onClose` ever fires -- and which would be the only
+            // thing keeping this button alive if it were rewritten to dismiss
+            // some other way. `cancelLabel` alone renders no footer at all, so
+            // the button's existence is the claim, not a detail of reaching it.
+            const done = screen.getByRole('button', { name: 'Done' });
+
+            await userEvent.click(done);
+
+            expect(onClose).toHaveBeenCalledTimes(1);
         });
     });
 });
