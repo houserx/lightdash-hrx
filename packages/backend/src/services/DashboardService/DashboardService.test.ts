@@ -1334,4 +1334,39 @@ describe('DashboardService', () => {
             ).toHaveBeenCalledWith('Dashboard', dashboard.uuid);
         });
     });
+
+    describe('given derived dashboard views are read', () => {
+        it('then getDashboardCharts resolves access for the dashboard', async () => {
+            await service.getDashboardCharts(
+                user,
+                projectUuid,
+                dashboard.uuid,
+                1,
+                10,
+            );
+
+            expect(
+                spacePermissionService.getResourceAccessContext,
+            ).toHaveBeenCalledWith(
+                user.userUuid,
+                'Dashboard',
+                expect.objectContaining({ resourceUuid: dashboard.uuid }),
+            );
+        });
+
+        it('then scheduling an export resolves access for the dashboard', async () => {
+            // Reached through getSchedulers; the gate itself is private.
+            await service
+                .getSchedulers(user, dashboard.uuid)
+                .catch(() => undefined);
+
+            expect(
+                spacePermissionService.getResourceAccessContext,
+            ).toHaveBeenCalledWith(
+                user.userUuid,
+                'Dashboard',
+                expect.objectContaining({ resourceUuid: dashboard.uuid }),
+            );
+        });
+    });
 });
