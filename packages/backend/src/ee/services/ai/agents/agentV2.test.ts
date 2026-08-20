@@ -52,6 +52,7 @@ const buildAgentDependencies = (updatePrompt: ReturnType<typeof vi.fn>) =>
     new Proxy(
         {
             listExplores: vi.fn().mockResolvedValue([]),
+            getVerifiedFieldUsage: vi.fn().mockResolvedValue(new Map()),
             getProjectParameterDefinitions: vi.fn().mockResolvedValue({}),
             updatePrompt,
             perf: new Proxy({}, { get: () => vi.fn() }),
@@ -84,12 +85,9 @@ const buildAgentArgs = (
         enableContentTools: false,
         enableDataAccess: false,
         enableEditProjectContext: false,
-        enableGrepFields: false,
         enablePreviewDeploySetup: false,
         enableRepoDiscovery: false,
         execution,
-        findExploresFieldSearchSize: 10,
-        findFieldsPageSize: 10,
         forceToolHints: false,
         getDashboardChartsPageSize: 10,
         keyManagement: 'self-managed',
@@ -950,12 +948,12 @@ describe('withEarlyToolProgress', () => {
         );
         const execute = vi.fn(streamingTool.execute);
         const tools = withEarlyToolProgress(
-            { discoverFields: { execute } } as never,
+            { streamingTool: { execute } } as never,
             updateProgress,
             true,
         );
 
-        const execution = tools.discoverFields.execute?.({}, {
+        const execution = tools.streamingTool.execute?.({}, {
             toolCallId: 'tool-call-1',
         } as never);
         expect(execute).not.toHaveBeenCalled();
@@ -968,12 +966,12 @@ describe('withEarlyToolProgress', () => {
 
     it('preserves async iterable tools in the standard execution path', () => {
         const tools = withEarlyToolProgress(
-            { discoverFields: streamingTool } as never,
+            { streamingTool } as never,
             vi.fn().mockResolvedValue(undefined),
             false,
         );
 
-        const execution = tools.discoverFields.execute?.({}, {
+        const execution = tools.streamingTool.execute?.({}, {
             toolCallId: 'tool-call-1',
         } as never);
 
@@ -1001,12 +999,16 @@ describe('getAgentTools workstream tool gate', () => {
         closeMcpClients: () => Promise.resolve(),
     };
 
-    const buildArgs = (flags: {
+    type ToolFlags = {
         enableCodingAgent: boolean;
         enableAiWriteback: boolean;
         aiAgentMemoryEnabled?: boolean;
         canCreateDashboards?: boolean;
-    }): AiAgentArgs =>
+        enableContentTools?: boolean;
+        enableDataAccess?: boolean;
+    };
+
+    const buildArgs = (flags: ToolFlags): AiAgentArgs =>
         ({
             canCreateDashboards: true,
             agentSettings: { name: 'test-agent' },
@@ -1020,15 +1022,12 @@ describe('getAgentTools workstream tool gate', () => {
             enableContentTools: false,
             enableDataAccess: false,
             enableEditProjectContext: false,
-            enableGrepFields: false,
             enablePreviewDeploySetup: false,
             enableRepoDiscovery: false,
             execution: {
                 mode: 'standard',
                 maxSteps: 10,
             },
-            findExploresFieldSearchSize: 10,
-            findFieldsPageSize: 10,
             getDashboardChartsPageSize: 10,
             maxQueryLimit: 5000,
             model: {},
@@ -1047,22 +1046,10 @@ describe('getAgentTools workstream tool gate', () => {
             ...flags,
         }) as unknown as AiAgentArgs;
 
-    const toolNames = (flags: {
-        enableCodingAgent: boolean;
-        enableAiWriteback: boolean;
-        aiAgentMemoryEnabled?: boolean;
-        canCreateDashboards?: boolean;
-    }) =>
-        Object.keys(
-            getAgentTools(
-                buildArgs(flags),
-                depsStub(),
-                [],
-                mcpStub,
-                new Map(),
-                {},
-            ),
-        );
+    const buildTools = (flags: ToolFlags) =>
+        getAgentTools(buildArgs(flags), depsStub(), [], mcpStub, new Map(), {});
+
+    const toolNames = (flags: ToolFlags) => Object.keys(buildTools(flags));
 
     it('exposes listWorkstreams + closePullRequest when AI writeback is enabled (coding agent off)', () => {
         const names = toolNames({
@@ -1084,6 +1071,47 @@ describe('getAgentTools workstream tool gate', () => {
         });
 
         expect(names).toContain('loadProjectContext');
+    });
+
+    it('uses grepFields and getMetadata as the only field discovery path', () => {
+        const names = toolNames({
+            enableCodingAgent: false,
+            enableAiWriteback: false,
+        });
+
+        expect(names).toContain('grepFields');
+        expect(names).toContain('getMetadata');
+        expect(names).not.toContain('discoverFields');
+    });
+
+    it('matches dashboard detail guidance to the available content tool', () => {
+        const contentTools = buildTools({
+            enableCodingAgent: false,
+            enableAiWriteback: false,
+            enableContentTools: true,
+            enableDataAccess: true,
+        });
+        expect(Object.keys(contentTools)).toContain('readContent');
+        expect(Object.keys(contentTools)).not.toContain('getDashboardCharts');
+        expect(contentTools.findContent.description).toContain('"readContent"');
+        expect(contentTools.findContent.description).not.toContain(
+            '"getDashboardCharts"',
+        );
+
+        const legacyTools = buildTools({
+            enableCodingAgent: false,
+            enableAiWriteback: false,
+            enableContentTools: false,
+            enableDataAccess: true,
+        });
+        expect(Object.keys(legacyTools)).toContain('getDashboardCharts');
+        expect(Object.keys(legacyTools)).not.toContain('readContent');
+        expect(legacyTools.findContent.description).toContain(
+            '"getDashboardCharts"',
+        );
+        expect(legacyTools.findContent.description).not.toContain(
+            '"readContent"',
+        );
     });
 
     it('withholds generateDashboard from users who cannot save one', () => {
@@ -1468,7 +1496,6 @@ describe('scopeAgentConversation', () => {
         args.compactionSummary = 'Coordinator summary';
         args.toolHints = ['runSql'];
         args.forceToolHints = true;
-        args.enableGrepFields = true;
         const messages = getAgentMessages(
             args,
             [],

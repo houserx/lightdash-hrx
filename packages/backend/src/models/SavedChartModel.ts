@@ -1099,6 +1099,103 @@ export class SavedChartModel {
         return this.get(savedChartUuid);
     }
 
+    async renameSlug({
+        projectUuid,
+        savedChartUuid,
+        from,
+        to,
+    }: {
+        projectUuid: string;
+        savedChartUuid: string;
+        from: string;
+        to: string;
+    }): Promise<void> {
+        return this.database.transaction(async (trx) => {
+            const slugsToLock = [...new Set([from, to])].sort();
+            for (const slug of slugsToLock) {
+                // eslint-disable-next-line no-await-in-loop
+                await acquireProjectSlugLock(trx, projectUuid, slug);
+            }
+
+            const sourceOwner = await getSavedChartSlugOwner(
+                trx,
+                projectUuid,
+                from,
+            );
+            if (
+                !sourceOwner ||
+                sourceOwner.deleted_at ||
+                sourceOwner.saved_query_uuid !== savedChartUuid
+            ) {
+                throw new NotFoundError(`Chart slug "${from}" not found`);
+            }
+
+            const chart = await trx(SavedChartsTableName)
+                .where(`${SavedChartsTableName}.project_uuid`, projectUuid)
+                .where(
+                    `${SavedChartsTableName}.saved_query_uuid`,
+                    savedChartUuid,
+                )
+                .whereNull(`${SavedChartsTableName}.deleted_at`)
+                .select(`${SavedChartsTableName}.slug`)
+                .first();
+            if (!chart) {
+                throw new NotFoundError(`Chart slug "${from}" not found`);
+            }
+
+            if (chart.slug === to) {
+                return;
+            }
+
+            if (chart.slug !== from) {
+                throw new ConflictError(
+                    `Chart slug "${from}" is a historical alias. Use the current slug "${chart.slug}" as the source`,
+                );
+            }
+
+            const targetOwner = await getSavedChartSlugOwner(
+                trx,
+                projectUuid,
+                to,
+            );
+            if (
+                targetOwner &&
+                targetOwner.saved_query_uuid !== savedChartUuid
+            ) {
+                throw new ConflictError(
+                    `Chart slug "${to}" is already in use in this project`,
+                );
+            }
+
+            const targetIsAlias = targetOwner !== undefined;
+            if (targetIsAlias) {
+                await trx(SavedChartSlugMappingsTableName)
+                    .where('project_uuid', projectUuid)
+                    .where('saved_query_uuid', savedChartUuid)
+                    .where('slug', to)
+                    .delete();
+            }
+
+            await trx(SavedChartSlugMappingsTableName).insert({
+                project_uuid: projectUuid,
+                saved_query_uuid: savedChartUuid,
+                slug: chart.slug,
+            });
+
+            const updated = await trx(SavedChartsTableName)
+                .where('project_uuid', projectUuid)
+                .where('saved_query_uuid', savedChartUuid)
+                .where('slug', chart.slug)
+                .whereNull('deleted_at')
+                .update({ slug: to });
+            if (updated !== 1) {
+                throw new ConflictError(
+                    `Chart slug "${chart.slug}" changed while it was being renamed`,
+                );
+            }
+        });
+    }
+
     async updateMultiple(
         projectUuid: string,
         data: UpdateMultipleSavedChart[],
@@ -1687,6 +1784,7 @@ export class SavedChartModel {
                             space_uuid: string;
                             spaceName: string;
                             dashboardName: string | null;
+                            dashboardSlug: string | null;
                             slug: string;
                             deleted_at: Date | null;
                             deleted_by_user_uuid: string | null;
@@ -1702,6 +1800,7 @@ export class SavedChartModel {
                         `${SavedChartsTableName}.dashboard_uuid`,
                         `${SavedChartsTableName}.slug`,
                         `${DashboardsTableName}.name as dashboardName`,
+                        `${DashboardsTableName}.slug as dashboardSlug`,
                         'saved_queries_versions.saved_queries_version_id',
                         'saved_queries_versions.explore_name',
                         'saved_queries_versions.filters',
@@ -2058,6 +2157,7 @@ export class SavedChartModel {
                     pinnedListOrder: null,
                     dashboardUuid: savedQuery.dashboard_uuid,
                     dashboardName: savedQuery.dashboardName,
+                    dashboardSlug: savedQuery.dashboardSlug,
                     colorPalette: resolvedPalette.colors,
                     colorPaletteUuid: savedQuery.color_palette_uuid ?? null,
                     resolvedColorPalette: resolvedPalette,
@@ -2321,6 +2421,26 @@ export class SavedChartModel {
         return aliases.map((alias) => alias.slug);
     }
 
+    async getSlugAliasMappingsForUuids(
+        projectUuid: string,
+        uuids: string[],
+    ): Promise<Array<{ slug: string; savedChartUuid: string }>> {
+        if (uuids.length === 0) return [];
+        return this.database(SavedChartSlugMappingsTableName)
+            .where(
+                `${SavedChartSlugMappingsTableName}.project_uuid`,
+                projectUuid,
+            )
+            .whereIn(
+                `${SavedChartSlugMappingsTableName}.saved_query_uuid`,
+                uuids,
+            )
+            .select({
+                slug: `${SavedChartSlugMappingsTableName}.slug`,
+                savedChartUuid: `${SavedChartSlugMappingsTableName}.saved_query_uuid`,
+            });
+    }
+
     async find(filters: {
         projectUuid?: string;
         spaceUuids?: string[];
@@ -2470,6 +2590,7 @@ export class SavedChartModel {
                 chartKind: `${SavedChartsTableName}.last_version_chart_kind`,
                 dashboardUuid: `${DashboardsTableName}.dashboard_uuid`,
                 dashboardName: `${DashboardsTableName}.name`,
+                dashboardSlug: `${DashboardsTableName}.slug`,
                 updatedAt: `${SavedChartsTableName}.last_version_updated_at`,
                 slug: `${SavedChartsTableName}.slug`,
                 viewsCount: `${SavedChartsTableName}.views_count`,
