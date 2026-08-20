@@ -167,6 +167,8 @@ export type SpaceAccess = {
         | 'group'
         | 'space_group'
         | 'parent_space'
+        // A direct grant on the resource itself, not on any space.
+        | 'direct_resource'
         | undefined;
 };
 
