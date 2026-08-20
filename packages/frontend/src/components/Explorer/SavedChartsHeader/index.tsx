@@ -103,8 +103,10 @@ import { ExplorerSection } from '../../../providers/Explorer/types';
 import useNativeFullscreenToggle from '../../../providers/Fullscreen/useNativeFullscreenToggle';
 import { TrackSection } from '../../../providers/Tracking/TrackingProvider';
 import { SectionName } from '../../../types/Events';
+import { ManageResourceAccessModal } from '../../common/ManageResourceAccessModal/ManageResourceAccessModal';
 import MantineIcon from '../../common/MantineIcon';
 import MantineModal from '../../common/MantineModal';
+import { ManageResourceAccessMenuItem } from '../../common/ResourceView/ManageResourceAccessMenuItem';
 const ChangeChartExploreModal = lazy(
     () => import('../../common/modal/ChangeChartExploreModal'),
 );
@@ -215,6 +217,7 @@ const SavedChartsHeader: FC = () => {
     const [isTransferToSpaceModalOpen, transferToSpaceModalHandlers] =
         useDisclosure();
     const [isChartAsCodeModalOpen, chartAsCodeModalHandlers] = useDisclosure();
+    const [isManagingAccess, manageAccessHandlers] = useDisclosure();
 
     const { user, health } = useApp();
     const { mutateAsync: contentAction, isLoading: isContentActionLoading } =
@@ -1003,6 +1006,19 @@ const SavedChartsHeader: FC = () => {
                                         </Can>
                                     )}
 
+                                {/* Not offered for a chart that lives inside a
+                                    dashboard rather than a space: its access
+                                    follows the dashboard, and it is not
+                                    browsable on its own, so a grant made here
+                                    would be one nobody could find again. */}
+                                {userCanManageChart &&
+                                    savedChart &&
+                                    !savedChart.dashboardUuid && (
+                                        <ManageResourceAccessMenuItem
+                                            onClick={manageAccessHandlers.open}
+                                        />
+                                    )}
+
                                 {userCanManageChart && (
                                     <>
                                         <Menu.Divider />
@@ -1047,6 +1063,20 @@ const SavedChartsHeader: FC = () => {
                     uuid={savedChart.uuid}
                     dashboardTileType={DashboardTileTypes.SAVED_CHART}
                     onClose={addToDashboardModalHandlers.close}
+                />
+            )}
+            {/* Outside the menu, like every other modal here: the dropdown
+                unmounts its children when it closes, and it closes on item
+                click. */}
+            {isManagingAccess && savedChart && projectUuid && (
+                <ManageResourceAccessModal
+                    opened
+                    onClose={manageAccessHandlers.close}
+                    projectUuid={projectUuid}
+                    resourceType="SavedChart"
+                    resourceUuid={savedChart.uuid}
+                    resourceName={savedChart.name}
+                    spaceName={savedChart.spaceName}
                 />
             )}
             {isDeleteModalOpen && savedChart?.uuid && (

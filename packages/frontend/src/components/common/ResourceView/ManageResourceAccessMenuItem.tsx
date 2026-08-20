@@ -3,28 +3,26 @@ import { IconUsers } from '@tabler/icons-react';
 import { type FC } from 'react';
 import useApp from '../../../providers/App/useApp';
 import MantineIcon from '../MantineIcon';
-import { type ManageableAccessItem } from './manageResourceAccessTarget';
-import {
-    ResourceViewItemAction,
-    type ResourceViewItemActionState,
-} from './types';
 
 type ManageResourceAccessMenuItemProps = {
-    item: ManageableAccessItem;
-    onAction: (action: ResourceViewItemActionState) => void;
+    onClick: () => void;
 };
 
 /**
- * Own component rather than another branch in ResourceActionMenu because the
- * interesting decision is whether to render at all, and that is worth testing
- * without standing up the fifteen hooks that menu needs.
+ * The gate, the icon and the copy for managing a resource's direct grants, in
+ * one place, so every menu that offers it agrees on all three.
+ *
+ * It takes a plain `onClick` because its callers want different things from a
+ * click: a content list raises an action for its handler to switch on, while a
+ * page header opens the modal from its own state. Knowing which would make this
+ * component the wrong shape for one of them.
  *
  * "Manage access", not "Share": this surface reads grants and removes them.
  * Adding one comes with the principal picker.
  */
 export const ManageResourceAccessMenuItem: FC<
     ManageResourceAccessMenuItemProps
-> = ({ item, onAction }) => {
+> = ({ onClick }) => {
     const { health } = useApp();
 
     // Fail closed, and closed includes "health has not arrived". While the gate
@@ -39,12 +37,7 @@ export const ManageResourceAccessMenuItem: FC<
             component="button"
             role="menuitem"
             leftSection={<MantineIcon icon={IconUsers} size={18} />}
-            onClick={() => {
-                onAction({
-                    type: ResourceViewItemAction.MANAGE_ACCESS,
-                    item,
-                });
-            }}
+            onClick={onClick}
         >
             Manage access
         </Menu.Item>

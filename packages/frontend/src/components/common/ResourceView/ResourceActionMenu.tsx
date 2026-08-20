@@ -688,8 +688,12 @@ const ResourceViewActionMenu: FC<ResourceViewActionMenuProps> = ({
                                 item.type ===
                                     ResourceViewItemType.DASHBOARD) && (
                                 <ManageResourceAccessMenuItem
-                                    item={item}
-                                    onAction={onAction}
+                                    onClick={() => {
+                                        onAction({
+                                            type: ResourceViewItemAction.MANAGE_ACCESS,
+                                            item,
+                                        });
+                                    }}
                                 />
                             )}
 
