@@ -9,6 +9,11 @@ import {
     PrincipalAccessRow,
     type AccessPrincipal,
 } from './AccessPanel';
+import classes from './AccessPanel.module.css';
+
+/** Scoped to the row: the render container also holds Mantine's stylesheet. */
+const rowText = (container: HTMLElement) =>
+    container.querySelector(`.${classes.row}`)?.textContent;
 
 const renderWithMantine = (ui: ReactElement) =>
     render(
@@ -128,19 +133,19 @@ describe('given a row for one principal', () => {
 
     describe('when the surface has more to say about the access', () => {
         it('then what it passes is shown under the principal', () => {
-            renderRow({
+            const { container } = renderRow({
                 disclosure: <Text>Inherited from the Finance space</Text>,
             });
 
-            expect(
-                screen.getByText('Inherited from the Finance space'),
-            ).toBeInTheDocument();
+            expect(rowText(container)).toBe(
+                'ALAda LovelaceCan viewInherited from the Finance space',
+            );
         });
 
         it('then a surface with nothing to add stays a single line', () => {
             const { container } = renderRow();
 
-            expect(container.textContent).toBe('Ada LovelaceCan view');
+            expect(rowText(container)).toBe('ALAda LovelaceCan view');
         });
     });
 });
