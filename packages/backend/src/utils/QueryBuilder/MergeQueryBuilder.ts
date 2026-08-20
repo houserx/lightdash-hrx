@@ -5,7 +5,10 @@ import {
     MERGE_TRUNCATED_COLUMN,
     mergeCalculationReferencePattern,
     MergeJoinType,
+    SupportedDbtAdapter,
     type MergeFieldMeta,
+    type MergeFieldTypes,
+    type MergeJoinKeyPart,
     type MergeQueryColumns,
     type MergeTableCalculation,
     type MergeTerminalWrapper,
@@ -91,6 +94,44 @@ export const getMergeNullPlaceholder = (
     }
 };
 
+/**
+ * Dialect-dependent join-key SQL options for a merge: a typed null
+ * placeholder per key so null keys match each other, and which keys need a
+ * string cast before coalescing. One derivation for every dialect a merge
+ * compiles to — the warehouse statement and the compose join must agree on
+ * what a null key means.
+ */
+export const getMergeJoinKeySqlOptions = (
+    joinKey: MergeJoinKeyPart[],
+    fieldTypes: MergeFieldTypes,
+    warehouseSqlBuilder: WarehouseSqlBuilder,
+): {
+    nullPlaceholderByKeyName: Record<string, string>;
+    stringJoinKeyNames: string[];
+} => {
+    const metaFor = (part: MergeJoinKeyPart): MergeFieldMeta | undefined =>
+        Object.entries(part.fieldIdBySourceId)
+            .map(([sourceId, fieldId]) => fieldTypes[sourceId]?.[fieldId])
+            .find((candidate) => candidate !== undefined);
+    return {
+        nullPlaceholderByKeyName: Object.fromEntries(
+            joinKey.flatMap((part) => {
+                const meta = metaFor(part);
+                if (meta === undefined) return [];
+                return [
+                    [
+                        part.name,
+                        getMergeNullPlaceholder(meta, warehouseSqlBuilder),
+                    ],
+                ];
+            }),
+        ),
+        stringJoinKeyNames: joinKey.flatMap((part) =>
+            metaFor(part)?.type === DimensionType.STRING ? [part.name] : [],
+        ),
+    };
+};
+
 /** One sort term over the merged result, naming a merged column. */
 export type MergeSort = {
     /** Column in the merged result, as `getColumns()` reports it. */
@@ -138,6 +179,8 @@ export class MergeQueryBuilder {
 
     private readonly nullPlaceholderByKeyName: Record<string, string>;
 
+    private readonly stringJoinKeyNames: Set<string>;
+
     private readonly tableCalculations: MergeTableCalculation[];
 
     private readonly sourceRowCap: number | undefined;
@@ -152,6 +195,7 @@ export class MergeQueryBuilder {
         limit,
         tableCalculations,
         nullPlaceholderByKeyName,
+        stringJoinKeyNames,
         sourceRowCap,
         sorts,
     }: {
@@ -175,6 +219,9 @@ export class MergeQueryBuilder {
          * keys match each other; omitting it leaves them unmatched.
          */
         nullPlaceholderByKeyName?: Record<string, string>;
+        /** Keys modeled as strings. Cast source values before coalescing so a
+         * physically numeric column is compatible with the string sentinel. */
+        stringJoinKeyNames?: string[];
     }) {
         this.sources = sources;
         this.joinKeyNames = joinKeyNames;
@@ -182,6 +229,7 @@ export class MergeQueryBuilder {
         this.warehouseSqlBuilder = warehouseSqlBuilder;
         this.limit = limit;
         this.nullPlaceholderByKeyName = nullPlaceholderByKeyName ?? {};
+        this.stringJoinKeyNames = new Set(stringJoinKeyNames ?? []);
         this.tableCalculations = tableCalculations ?? [];
         this.sourceRowCap = sourceRowCap;
         this.sorts = sorts ?? [];
@@ -268,19 +316,52 @@ export class MergeQueryBuilder {
                     return `${this.joinKeyColumnFor(0, keyName)} AS ${alias}`;
                 }
                 const columns = this.sources.map((_, index) =>
-                    this.joinKeyColumnFor(index, keyName),
+                    this.getComparableJoinKeyColumn(index, keyName),
                 );
                 return `COALESCE(${columns.join(', ')}) AS ${alias}`;
             }
             case MergeJoinType.LEFT:
             case MergeJoinType.INNER:
-                return `${this.joinKeyColumnFor(0, keyName)} AS ${alias}`;
+                return `${this.getComparableJoinKeyColumn(0, keyName)} AS ${alias}`;
             default:
                 return assertUnreachable(
                     this.joinType,
                     `Unknown merge join type ${this.joinType}`,
                 );
         }
+    }
+
+    private getComparableJoinKeyColumn(
+        sourceIndex: number,
+        keyName: string,
+    ): string {
+        const column = this.joinKeyColumnFor(sourceIndex, keyName);
+        if (!this.stringJoinKeyNames.has(keyName)) return column;
+
+        const adapter = this.warehouseSqlBuilder.getAdapterType();
+        const stringType = (() => {
+            switch (adapter) {
+                case SupportedDbtAdapter.BIGQUERY:
+                case SupportedDbtAdapter.DATABRICKS:
+                case SupportedDbtAdapter.SPARK:
+                    return 'STRING';
+                case SupportedDbtAdapter.CLICKHOUSE:
+                    return 'String';
+                case SupportedDbtAdapter.POSTGRES:
+                case SupportedDbtAdapter.REDSHIFT:
+                case SupportedDbtAdapter.SNOWFLAKE:
+                case SupportedDbtAdapter.DUCKDB:
+                case SupportedDbtAdapter.TRINO:
+                case SupportedDbtAdapter.ATHENA:
+                    return 'VARCHAR';
+                default:
+                    return assertUnreachable(
+                        adapter,
+                        'Unknown warehouse adapter',
+                    );
+            }
+        })();
+        return `CAST(${column} AS ${stringType})`;
     }
 
     private getJoinKeyword(): string {
@@ -310,21 +391,26 @@ export class MergeQueryBuilder {
      * FULL OUTER JOIN whose condition is not merge- or hash-joinable, which
      * both `(a = b OR (a IS NULL AND b IS NULL))` and `IS NOT DISTINCT FROM`
      * are. Using it only for LEFT and INNER would silently change what a null
-     * key means when the user toggles the include mode. The cost is that null
-     * keys never match: under a FULL join each source contributes its own
-     * null-key row instead of one merged row.
+     * key means when the user toggles the include mode. Callers that want null
+     * keys to match supply a typed placeholder; the separate null-ness
+     * equality keeps that sentinel collision-safe and hash-joinable.
      */
     private getJoinCondition(sourceIndex: number): string {
         return this.joinKeyNames
             .map((keyName) => {
                 const previous = this.sources
                     .slice(0, sourceIndex)
-                    .map((_, index) => this.joinKeyColumnFor(index, keyName));
+                    .map((_, index) =>
+                        this.getComparableJoinKeyColumn(index, keyName),
+                    );
                 const left =
                     this.joinType === MergeJoinType.FULL && previous.length > 1
                         ? `COALESCE(${previous.join(', ')})`
                         : previous[0];
-                const right = this.joinKeyColumnFor(sourceIndex, keyName);
+                const right = this.getComparableJoinKeyColumn(
+                    sourceIndex,
+                    keyName,
+                );
                 const placeholder = this.nullPlaceholderByKeyName[keyName];
                 if (placeholder === undefined) {
                     return `${left} = ${right}`;

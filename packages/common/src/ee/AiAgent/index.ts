@@ -8,13 +8,19 @@ import type {
     CacheMetadata,
     ItemsMap,
     KnexPaginatedData,
+    MetricSourcedMergeQuery,
     ToolDashboardArgs,
     ToolName,
     ToolRunQueryArgs,
+    ToolRunQueryArgsV3,
     ToolTableVizArgs,
     ToolTimeSeriesArgs,
     ToolVerticalBarArgs,
 } from '../..';
+import {
+    MAX_RETENTION_WINDOW_HOURS,
+    MIN_RETENTION_WINDOW_HOURS,
+} from '../../types/dataRetention';
 import assertUnreachable from '../../utils/assertUnreachable';
 import { type AiAgentReviewItemStatus } from './aiAgentReviewClassifierTypes';
 import { type AiEvalRunResultAssessment } from './aiEvalAssessment';
@@ -154,6 +160,12 @@ export const baseAgentSchema = z.object({
     adminOnly: z.boolean(),
     modelConfig: z.custom<AiAgentModelConfig>().nullable(),
     version: z.number(),
+    threadRetentionHours: z
+        .number()
+        .int()
+        .min(MIN_RETENTION_WINDOW_HOURS)
+        .max(MAX_RETENTION_WINDOW_HOURS)
+        .nullable(),
 });
 
 export type BaseAiAgent = z.infer<typeof baseAgentSchema>;
@@ -183,6 +195,7 @@ export type AiAgent = Pick<
     | 'adminOnly'
     | 'modelConfig'
     | 'version'
+    | 'threadRetentionHours'
 >;
 
 export type AiAgentSummary = Pick<
@@ -210,6 +223,7 @@ export type AiAgentSummary = Pick<
     | 'adminOnly'
     | 'modelConfig'
     | 'version'
+    | 'threadRetentionHours'
 >;
 
 // An empty spaceAccess list means the agent is unrestricted (all spaces).
@@ -576,6 +590,7 @@ export type ApiCreateAiAgent = Pick<
     adminOnly?: boolean;
     mcpServerUuids?: string[];
     modelConfig?: AiAgentModelConfig | null;
+    threadRetentionHours?: number | null;
 };
 
 export type ApiUpdateAiAgent = Partial<
@@ -603,6 +618,7 @@ export type ApiUpdateAiAgent = Partial<
     uuid: string;
     enableSqlMode?: boolean;
     mcpServerUuids?: string[];
+    threadRetentionHours?: number | null;
 };
 
 export type ApiCreateAiAgentResponse = {
@@ -867,6 +883,8 @@ export type ApiAiAgentThreadMessageVizQuery = {
     source: 'semantic';
     type: AiResultType;
     query: ApiExecuteAsyncMetricQueryResults;
+    /** The executed merge, so clients need not re-derive it from tool args. */
+    mergeQuery: MetricSourcedMergeQuery | null;
     metadata: AiVizMetadata;
 };
 
@@ -1011,8 +1029,15 @@ export type AiSemanticChartArtifactConfig = {
     config: AiLegacySemanticChartArtifactConfig;
 };
 
+export type AiMergeChartArtifactConfig = {
+    source: 'merge';
+    schemaVersion: 1;
+    config: ToolRunQueryArgsV3;
+};
+
 export type AiChartArtifactConfig =
     | AiSemanticChartArtifactConfig
+    | AiMergeChartArtifactConfig
     | AiSqlChartArtifactConfig;
 
 export type AiArtifact = {
@@ -1046,6 +1071,19 @@ export const isAiSqlChartArtifactConfig = (
     typeof config.sql === 'string' &&
     'limit' in config &&
     typeof config.limit === 'number';
+
+export const isAiMergeChartArtifactConfig = (
+    config: unknown,
+): config is AiMergeChartArtifactConfig =>
+    typeof config === 'object' &&
+    config !== null &&
+    'source' in config &&
+    config.source === 'merge' &&
+    'schemaVersion' in config &&
+    config.schemaVersion === 1 &&
+    'config' in config &&
+    typeof config.config === 'object' &&
+    config.config !== null;
 
 export type AiArtifactTSOACompat = Omit<
     AiArtifact,

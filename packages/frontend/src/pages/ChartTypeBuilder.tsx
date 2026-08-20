@@ -1,7 +1,9 @@
 import {
+    ChartType,
     DATA_APP_VIZ_TEMPLATE,
     FeatureFlags,
     isAppVersionInProgress,
+    type AppClarification,
     type DataAppVizOptionValue,
     type DataAppVizOptionValues,
 } from '@lightdash/common';
@@ -14,29 +16,49 @@ import {
     useState,
     type FC,
 } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import {
+    Link,
+    Navigate,
+    useLocation,
+    useNavigate,
+    useParams,
+} from 'react-router';
 import { validate as isUuidString } from 'uuid';
 import { DocumentTitle } from '../components/common/DocumentTitle';
 import SuboptimalState from '../components/common/SuboptimalState/SuboptimalState';
-import BuilderCanvas from '../features/apps/builder/BuilderCanvas';
-import BuilderPromptBar, {
-    type BuilderPromptBarHandle,
-} from '../features/apps/builder/BuilderPromptBar';
-import ChartTypeBuilderHeader from '../features/apps/builder/ChartTypeBuilderHeader';
-import ConfigurePanel from '../features/apps/builder/ConfigurePanel';
-import VersionHistoryPanel from '../features/apps/builder/VersionHistoryPanel';
 import { getAppVersionFailureMessage } from '../features/apps/getAppVersionFailureMessage';
 import { useAppBuildPoller } from '../features/apps/hooks/useAppBuildPoller';
 import { useAppVersionHistory } from '../features/apps/hooks/useAppVersionHistory';
 import { useCanCreateDataApp } from '../features/apps/hooks/useCanCreateDataApp';
 import { useCanEditDataApp } from '../features/apps/hooks/useCanEditDataApp';
+import {
+    useClarificationRound,
+    type ClarifyParams,
+} from '../features/apps/hooks/useClarificationRound';
 import { useDataAppModelSelection } from '../features/apps/hooks/useDataAppModelSelection';
-import { useDataAppVisualization } from '../features/apps/hooks/useDataAppVisualization';
-import { useDataAppVizBuild } from '../features/apps/hooks/useDataAppVizBuild';
 import { useElapsedClock } from '../features/apps/hooks/useElapsedClock';
 import { useGetApp } from '../features/apps/hooks/useGetApp';
-import { buildSampleVizContext } from '../features/apps/utils/sampleVizContext';
+import { useSdkUpgradeStatus } from '../features/apps/hooks/useSdkUpgradeStatus';
+import { getVersionNarration } from '../features/apps/utils/versionNarration';
+import BuilderCanvas from '../features/chartTypes/builder/BuilderCanvas';
+import BuilderPromptBar, {
+    type BuilderPromptBarHandle,
+} from '../features/chartTypes/builder/BuilderPromptBar';
+import ChartTypeBuilderHeader from '../features/chartTypes/builder/ChartTypeBuilderHeader';
+import ConfigurePanel from '../features/chartTypes/builder/ConfigurePanel';
+import VersionHistoryPanel from '../features/chartTypes/builder/VersionHistoryPanel';
+import { useDataAppVisualization } from '../features/chartTypes/hooks/useDataAppVisualization';
+import {
+    useDataAppVizBuild,
+    type VizBuildRequest,
+} from '../features/chartTypes/hooks/useDataAppVizBuild';
+import { buildSampleVizContext } from '../features/chartTypes/utils/sampleVizContext';
 import { useResolvedColorPalette } from '../hooks/appearance/useResolvedColorPalette';
+import {
+    getExplorerUrlFromCreateSavedChartVersion,
+    parseChartFromExplorerSearchParams,
+} from '../hooks/useExplorerRoute';
 import { useServerFeatureFlag } from '../hooks/useServerOrClientFeatureFlag';
 import classes from './ChartTypeBuilder.module.css';
 
@@ -47,12 +69,27 @@ const noop = () => undefined;
  * (create) and `chart-types/:dataAppVizUuid` (edit); the create flow
  * adopts the new uuid into the URL once the first build is accepted.
  */
+const toVizClarifyParams = (request: VizBuildRequest): ClarifyParams => ({
+    prompt: request.description,
+    template: DATA_APP_VIZ_TEMPLATE,
+    fileIds: request.fileIds.length > 0 ? request.fileIds : undefined,
+});
+
 const ChartTypeBuilder: FC = () => {
     const { projectUuid, dataAppVizUuid: urlVizUuid } = useParams<{
         projectUuid: string;
         dataAppVizUuid?: string;
     }>();
+    const location = useLocation();
     const navigate = useNavigate();
+    const explorerChart = useMemo(() => {
+        try {
+            const chart = parseChartFromExplorerSearchParams(location.search);
+            return chart?.tableName ? chart : null;
+        } catch {
+            return null;
+        }
+    }, [location.search]);
     const dataAppsFlag = useServerFeatureFlag(FeatureFlags.EnableDataApps);
     const canCreate = useCanCreateDataApp(projectUuid);
 
@@ -73,6 +110,25 @@ const ChartTypeBuilder: FC = () => {
         onCreated: noop,
     });
 
+    // Depend on the send function, not on `build` — that is a fresh object
+    // every render, so the memo would never hold.
+    const sendBuild = build.send;
+    const onClarifiedBuild = useCallback(
+        (request: VizBuildRequest, clarifications: AppClarification[]) =>
+            sendBuild({ ...request, clarifications }),
+        [sendBuild],
+    );
+
+    // Questions only before the first build: once a version exists, intent is
+    // grounded in what is on screen.
+    const clarification = useClarificationRound<VizBuildRequest>({
+        projectUuid,
+        isFirstBuild: activeVizUuid === undefined,
+        toClarifyParams: toVizClarifyParams,
+        onBuild: onClarifiedBuild,
+    });
+    const { reset: resetClarification } = clarification;
+
     const historyUuid = activeVizUuid ?? build.appUuid;
     const history = useAppVersionHistory(projectUuid ?? '', historyUuid);
 
@@ -91,7 +147,10 @@ const ChartTypeBuilder: FC = () => {
     // pre-selects it, so reopening a chart type keeps building the way it was.
     const modelSelection = useDataAppModelSelection({
         appUuid: activeVizUuid ?? null,
-        latestVersionModel: history.latest?.resources?.claudeModel ?? null,
+        latestVersionModel:
+            history.latest?.resources?.codexModel ??
+            history.latest?.resources?.claudeModel ??
+            null,
     });
     const { clearPick: clearModelPick } = modelSelection;
 
@@ -100,11 +159,14 @@ const ChartTypeBuilder: FC = () => {
     useEffect(() => {
         if (!urlVizUuid && build.appUuid && projectUuid) {
             void navigate(
-                `/projects/${projectUuid}/chart-types/${build.appUuid}`,
+                {
+                    pathname: `/projects/${projectUuid}/chart-types/${build.appUuid}`,
+                    search: location.search,
+                },
                 { replace: true },
             );
         }
-    }, [urlVizUuid, build.appUuid, projectUuid, navigate]);
+    }, [urlVizUuid, build.appUuid, projectUuid, location.search, navigate]);
 
     // Intentional navigation between vizs resets session state; the
     // post-submit `/new` → uuid replace must not.
@@ -141,9 +203,19 @@ const ChartTypeBuilder: FC = () => {
         setColorPaletteUuid(null);
         setIsHistoryOpen(false);
         clearModelPick();
-    }, [urlVizUuid, clearModelPick]);
+        resetClarification();
+    }, [urlVizUuid, clearModelPick, resetClarification]);
 
     const isBuilding = build.isBuilding || historyLatestInProgress;
+    const liveNarration = useMemo(
+        () =>
+            getVersionNarration(
+                historyLatestInProgress
+                    ? history.latest?.statusHistory
+                    : undefined,
+            ),
+        [history.latest, historyLatestInProgress],
+    );
 
     // A build started elsewhere needs polling here; a build sent from this
     // page already polls inside useDataAppVizBuild.
@@ -173,6 +245,20 @@ const ChartTypeBuilder: FC = () => {
     }, [pin, activeVizUuid, history.latestReadyVersion, history.versions]);
 
     const previewVersion = effectiveViewedVersion ?? history.latestReadyVersion;
+    const { offer: sdkUpgradeOffer, onSdkManifest: handleSdkManifest } =
+        useSdkUpgradeStatus({
+            bundleKey:
+                activeVizUuid && history.latestReadyVersion !== null
+                    ? `${activeVizUuid}:${history.latestReadyVersion}`
+                    : null,
+            renderedKey:
+                activeVizUuid && previewVersion !== null
+                    ? `${activeVizUuid}:${previewVersion}`
+                    : null,
+            isRendering:
+                previewVersion !== null &&
+                previewVersion === history.latestReadyVersion,
+        });
 
     // The schema follows the preview: the options beside a version are the ones
     // that version declares, and the sample data is built from its fields.
@@ -228,6 +314,37 @@ const ChartTypeBuilder: FC = () => {
         (prompt: string) => promptBarRef.current?.setPrompt(prompt),
         [],
     );
+    const explorerDestination = useMemo(() => {
+        if (!explorerChart || !activeVizUuid) return null;
+
+        return getExplorerUrlFromCreateSavedChartVersion(
+            projectUuid,
+            {
+                ...explorerChart,
+                chartConfig: {
+                    type: ChartType.DATA_APP_VIZ,
+                    config: {
+                        dataAppVizUuid: activeVizUuid,
+                        fieldMapping: {},
+                        optionValues: {},
+                    },
+                },
+            },
+            false,
+        );
+    }, [activeVizUuid, explorerChart, projectUuid]);
+    const handlePreviewInExplorer = useCallback(() => {
+        if (!activeVizUuid) return;
+
+        if (explorerDestination) {
+            void navigate(explorerDestination);
+            return;
+        }
+
+        void navigate(
+            `/projects/${projectUuid}/tables?dataAppVizUuid=${activeVizUuid}`,
+        );
+    }, [activeVizUuid, explorerDestination, navigate, projectUuid]);
 
     const canEdit = useCanEditDataApp(projectUuid, {
         spaceUuid: appMeta?.spaceUuid ?? null,
@@ -327,80 +444,120 @@ const ChartTypeBuilder: FC = () => {
     // The composer captures its placeholder at mount, so wait for history
     // before choosing create vs revise wording.
     const isPromptBarMounted = !(activeVizUuid && history.isLoading);
+    const backLink = explorerChart
+        ? {
+              label: 'Explorer',
+              to: explorerDestination ?? {
+                  pathname: `/projects/${projectUuid}/tables/${explorerChart.tableName}`,
+                  search: location.search,
+              },
+          }
+        : {
+              label: 'Gallery',
+              to: `/projects/${projectUuid}/gallery`,
+          };
 
     return (
         <Box className={classes.root}>
             <DocumentTitle title="Chart type builder" />
             <ChartTypeBuilderHeader
                 projectUuid={projectUuid}
+                backLink={backLink}
                 app={appMeta}
                 latestReadyVersion={history.latestReadyVersion}
                 provenanceVersion={provenanceVersion}
                 hasOrigin={history.hasOrigin}
                 hasHistory={hasHistory}
                 isHistoryOpen={isHistoryOpen}
+                upgrade={
+                    activeVizUuid && history.latestReadyVersion !== null
+                        ? { ...sdkUpgradeOffer, disabled: isBuilding }
+                        : null
+                }
+                onUpgradeStarted={() => setIsHistoryOpen(true)}
                 onToggleHistory={() =>
                     isHistoryOpen
                         ? handleCloseHistory()
                         : setIsHistoryOpen(true)
                 }
-                onPreviewInExplorer={() =>
-                    void navigate(
-                        `/projects/${projectUuid}/tables?dataAppVizUuid=${activeVizUuid}`,
-                    )
-                }
+                onPreviewInExplorer={handlePreviewInExplorer}
             />
-            <Box className={classes.main}>
-                <Box className={classes.content}>
-                    <BuilderCanvas
-                        projectUuid={projectUuid}
-                        appUuid={activeVizUuid ?? null}
-                        previewVersion={previewVersion}
-                        isBuilding={isBuilding}
-                        failureMessage={failureMessage}
-                        previewContext={previewContext}
-                        configurePanel={configurePanel}
-                        onPickExample={
-                            isPromptBarMounted ? handlePickExample : null
-                        }
-                    />
-                    {isPromptBarMounted && (
-                        <BuilderPromptBar
-                            ref={promptBarRef}
-                            sessionKey={promptSessionKey}
+            <PanelGroup direction="horizontal" className={classes.main}>
+                <Panel id="chart-type-builder-canvas" order={1} minSize={50}>
+                    <Box className={classes.content}>
+                        <BuilderCanvas
                             projectUuid={projectUuid}
-                            composerAppUuid={
-                                activeVizUuid ??
-                                build.appUuid ??
-                                build.draftAppUuid
-                            }
-                            hasVersions={history.versions.length > 0}
+                            appUuid={activeVizUuid ?? null}
+                            previewVersion={previewVersion}
                             isBuilding={isBuilding}
-                            buildingPrompt={buildingPrompt}
-                            elapsed={elapsed}
-                            latestReadyVersion={history.latestReadyVersion}
-                            build={build}
-                            onCancelBuild={onCancelBuild}
-                            modelSelection={modelSelection}
+                            failureMessage={failureMessage}
+                            isClarifyRoundOpen={
+                                clarification.clarifyingPrompt !== null ||
+                                clarification.pending !== null
+                            }
+                            clarifierUnavailable={clarification.fellThrough}
+                            previewContext={previewContext}
+                            configurePanel={configurePanel}
+                            onPickExample={
+                                isPromptBarMounted ? handlePickExample : null
+                            }
+                            onSdkManifest={handleSdkManifest}
                         />
-                    )}
-                </Box>
+                        {isPromptBarMounted && (
+                            <BuilderPromptBar
+                                ref={promptBarRef}
+                                sessionKey={promptSessionKey}
+                                projectUuid={projectUuid}
+                                composerAppUuid={
+                                    activeVizUuid ??
+                                    build.appUuid ??
+                                    build.draftAppUuid
+                                }
+                                hasVersions={history.versions.length > 0}
+                                isBuilding={isBuilding}
+                                buildingPrompt={buildingPrompt}
+                                elapsed={elapsed}
+                                latestReadyVersion={history.latestReadyVersion}
+                                build={build}
+                                onCancelBuild={onCancelBuild}
+                                narration={liveNarration}
+                                modelSelection={modelSelection}
+                                clarification={clarification}
+                            />
+                        )}
+                    </Box>
+                </Panel>
                 {hasHistory && isHistoryOpen && (
-                    <VersionHistoryPanel
-                        projectUuid={projectUuid}
-                        appUuid={activeVizUuid}
-                        versions={history.versions}
-                        latestReadyVersion={history.latestReadyVersion}
-                        viewedVersion={effectiveViewedVersion}
-                        onView={handleView}
-                        onClose={handleCloseHistory}
-                        build={build}
-                        hasEarlier={history.hasEarlier}
-                        isFetchingEarlier={history.isFetchingEarlier}
-                        fetchEarlier={history.fetchEarlier}
-                    />
+                    <>
+                        <PanelResizeHandle
+                            className={classes.historyResizeHandle}
+                            aria-label="Resize version history"
+                        />
+                        <Panel
+                            id="chart-type-builder-history"
+                            order={2}
+                            defaultSize={20}
+                            minSize={15}
+                            maxSize={50}
+                            className={classes.historyPanel}
+                        >
+                            <VersionHistoryPanel
+                                projectUuid={projectUuid}
+                                appUuid={activeVizUuid}
+                                versions={history.versions}
+                                latestReadyVersion={history.latestReadyVersion}
+                                viewedVersion={effectiveViewedVersion}
+                                onView={handleView}
+                                onClose={handleCloseHistory}
+                                build={build}
+                                hasEarlier={history.hasEarlier}
+                                isFetchingEarlier={history.isFetchingEarlier}
+                                fetchEarlier={history.fetchEarlier}
+                            />
+                        </Panel>
+                    </>
                 )}
-            </Box>
+            </PanelGroup>
         </Box>
     );
 };
