@@ -646,7 +646,7 @@ const DashboardChartTileMain: FC<DashboardChartTileMainProps> = memo(
         const { totalResults, metadata } = resultsData;
         const performance = metadata?.performance;
 
-        const { dashboardUuid } = useParams<{ dashboardUuid: string }>();
+        const dashboardUuid = useDashboardContext((c) => c.dashboard?.uuid);
         const projectUuid = useProjectUuid();
         const { canViewExplore, canViewUnderlyingData, canDrillInto } =
             useContextMenuPermissions({ minimal: false });
@@ -1490,6 +1490,7 @@ const DashboardChartTileMain: FC<DashboardChartTileMainProps> = memo(
                             />
                             <TileExecutionInfo
                                 cacheMetadata={cacheMetadata}
+                                preAggregate={metadata?.preAggregate ?? null}
                                 performance={performance}
                                 totalClientFetchTimeMs={
                                     resultsData.totalClientFetchTimeMs
@@ -1524,7 +1525,7 @@ const DashboardChartTileMain: FC<DashboardChartTileMainProps> = memo(
                     title={title || chart.name || ''}
                     chartName={chart.name}
                     verification={chart.verification ?? null}
-                    titleHref={`/projects/${projectUuid}/saved/${savedChartUuid}/`}
+                    titleHref={`/projects/${projectUuid}/saved/${chart.slug}/`}
                     description={chart.description}
                     belongsToDashboard={belongsToDashboard}
                     extraMenuItems={
@@ -1549,6 +1550,7 @@ const DashboardChartTileMain: FC<DashboardChartTileMainProps> = memo(
                                             <Box>
                                                 <EditChartMenuItem
                                                     tile={props.tile}
+                                                    chartSlug={chart.slug}
                                                     disabled={
                                                         isEditMode ||
                                                         !userCanManageChart
@@ -1870,7 +1872,7 @@ const DashboardChartTileMinimal: FC<DashboardChartTileMainProps> = (props) => {
     const {
         tile: {
             uuid: tileUuid,
-            properties: { savedChartUuid, hideTitle, title },
+            properties: { hideTitle, title },
         },
         dashboardChartReadyQuery,
         resultsData,
@@ -2010,7 +2012,7 @@ const DashboardChartTileMinimal: FC<DashboardChartTileMainProps> = (props) => {
         <>
             <TileBase
                 title={title || chart.name || ''}
-                titleHref={`/projects/${projectUuid}/saved/${savedChartUuid}/`}
+                titleHref={`/projects/${projectUuid}/saved/${chart.slug}/`}
                 description={chart.description}
                 isLoading={false}
                 chartKind={chartKind}
@@ -2298,7 +2300,6 @@ export const GenericDashboardChartTile: FC<
             <TileBase
                 isEditMode={isEditMode}
                 chartName={tile.properties.chartName ?? ''}
-                titleHref={`/projects/${projectUuid}/saved/${tile.properties.savedChartUuid}/`}
                 description={''}
                 belongsToDashboard={tile.properties.belongsToDashboard}
                 tile={tile}

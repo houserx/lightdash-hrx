@@ -1,6 +1,5 @@
 import {
     applyDimensionOverrides,
-    applyDefaultTimeDimensionTileTargets,
     applyMetricOverrides,
     compressDashboardFiltersToParam,
     convertDashboardFiltersParamToDashboardFilters,
@@ -123,7 +122,11 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
     const { showToastWarning, showToastInfo } = useToaster();
     const hasNotifiedLockedOverrideRef = useRef(false);
 
-    const { dashboardUuid, tabUuid, mode } = useParams<{
+    const {
+        dashboardUuid: dashboardIdentifier,
+        tabUuid,
+        mode,
+    } = useParams<{
         dashboardUuid: string;
         tabUuid?: string;
         mode?: string;
@@ -137,13 +140,8 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
     // so each dashboard gets a fresh chance to notify the viewer.
     useEffect(() => {
         hasNotifiedLockedOverrideRef.current = false;
-    }, [dashboardUuid]);
+    }, [dashboardIdentifier]);
     const isEditMode = mode === 'edit';
-
-    const {
-        mutateAsync: versionRefresh,
-        isLoading: isRefreshingDashboardVersion,
-    } = useDashboardVersionRefresh(dashboardUuid, projectUuid);
 
     // Embedded dashboards will not be using this query hook to load the dashboard,
     // so we need to set the dashboard manually
@@ -155,7 +153,7 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
         isInitialLoading: isDashboardLoading,
         error: dashboardError,
     } = useDashboardQuery({
-        uuidOrSlug: dashboardUuid,
+        uuidOrSlug: dashboardIdentifier,
         projectUuid,
         useQueryOptions: {
             select: (d) => {
@@ -184,6 +182,11 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
             },
         },
     });
+    const dashboardUuid = (dashboard ?? embedDashboard)?.uuid;
+    const {
+        mutateAsync: versionRefresh,
+        isLoading: isRefreshingDashboardVersion,
+    } = useDashboardVersionRefresh(dashboardUuid, projectUuid);
 
     // Embedded dashboards populate `embedDashboard` instead of the query hook,
     // so config-derived state must read from whichever holds the dashboard.
@@ -959,7 +962,7 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
     );
 
     // Apply filters on dashboard load in order of precedence:
-    // 1. Start with base dashboard filters
+    // 1. Start with restored dashboard filters, or the saved filters
     // 2. Apply overrides for iframe embed or replace SDK filters in SDK mode
     // 3. Apply interactivity filtering (embedded dashboards only)
     //
@@ -972,8 +975,32 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
         if (dashboardFilters === emptyFilters) {
             let overrides = clone(overridesForSavedDashboardFilters);
 
-            // Step 1: Start with base filters
+            // Step 1: Start with restored filters when returning from the
+            // chart editor. Slug routes only resolve their UUID after the
+            // dashboard loads, so restore the UUID-keyed state here instead
+            // of during the provider's initial mount.
             let updatedDashboardFilters = clone(currentDashboard.filters);
+            const filtersStorageKey = dashboardUuid
+                ? `unsavedDashboardFilters:${dashboardUuid}`
+                : null;
+            const unsavedDashboardFiltersRaw = filtersStorageKey
+                ? sessionStorage.getItem(filtersStorageKey)
+                : null;
+
+            if (unsavedDashboardFiltersRaw && filtersStorageKey) {
+                sessionStorage.removeItem(filtersStorageKey);
+                try {
+                    updatedDashboardFilters = JSON.parse(
+                        unsavedDashboardFiltersRaw,
+                    );
+                } catch {
+                    showToastWarning({
+                        title: 'Could not restore unsaved filters',
+                        subtitle:
+                            'Your previous filter changes could not be loaded',
+                    });
+                }
+            }
 
             let droppedLockedOverrides = 0;
 
@@ -1105,7 +1132,9 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
         savedChartUuidsAndTileUuids,
         filterableFieldsByTileUuid,
         showToastInfo,
+        showToastWarning,
         activeTab,
+        dashboardUuid,
     ]);
 
     // Derive the effective temporary filters by stripping any that would
@@ -1285,33 +1314,6 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
 
         // Temp filters
         const tempFilterSearchParam = searchParams.get('tempFilters');
-        const filtersStorageKey = dashboardUuid
-            ? `unsavedDashboardFilters:${dashboardUuid}`
-            : null;
-        const unsavedDashboardFiltersRaw = filtersStorageKey
-            ? sessionStorage.getItem(filtersStorageKey)
-            : null;
-
-        if (filtersStorageKey) {
-            sessionStorage.removeItem(filtersStorageKey);
-        }
-        if (unsavedDashboardFiltersRaw) {
-            try {
-                const unsavedDashboardFilters = JSON.parse(
-                    unsavedDashboardFiltersRaw,
-                );
-                // TODO: this should probably merge with the filters
-                // from the database. This will break if they diverge,
-                // meaning there is a subtle race condition here
-                setDashboardFilters(unsavedDashboardFilters);
-            } catch {
-                showToastWarning({
-                    title: 'Could not restore unsaved filters',
-                    subtitle:
-                        'Your previous filter changes could not be loaded',
-                });
-            }
-        }
         if (tempFilterSearchParam) {
             try {
                 setDashboardTemporaryFilters(
@@ -1407,7 +1409,7 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
     }, [dashboardAvailableFiltersData]);
 
     const allFilters = useMemo(() => {
-        const filters = {
+        return {
             dimensions: [
                 ...dashboardFilters.dimensions,
                 ...safeTemporaryFilters?.dimensions,
@@ -1421,19 +1423,7 @@ const DashboardProviderInner: React.FC<DashboardProviderProps> = ({
                 ...safeTemporaryFilters?.tableCalculations,
             ],
         };
-        return filterableFieldsByTileUuid && dashboardAvailableFiltersData
-            ? applyDefaultTimeDimensionTileTargets(
-                  filters,
-                  filterableFieldsByTileUuid,
-                  dashboardAvailableFiltersData.defaultTimeDimensions,
-              )
-            : filters;
-    }, [
-        dashboardFilters,
-        safeTemporaryFilters,
-        filterableFieldsByTileUuid,
-        dashboardAvailableFiltersData,
-    ]);
+    }, [dashboardFilters, safeTemporaryFilters]);
 
     // Watch for filter changes and emit events (skip initial render)
     useEffect(() => {
