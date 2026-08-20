@@ -241,6 +241,11 @@ describe('given the manage access item in a real dashboard menu', () => {
                 type: ResourceViewItemAction.MANAGE_ACCESS,
                 item: dashboardItem,
             });
+            // Identity, not equality. The handler acts on `action.item`, so an
+            // item rebuilt on the way through is what gets acted on downstream
+            // -- and a faithful copy would satisfy the assertion above while
+            // still being the wrong object to rely on.
+            expect(onAction.mock.calls[0]?.[0].item).toBe(dashboardItem);
         });
     });
 });
