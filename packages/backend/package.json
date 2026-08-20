@@ -199,6 +199,7 @@
         "zod": "3.25.55"
     },
     "devDependencies": {
+        "@fast-check/vitest": "0.4.1",
         "@tsoa/cli": "6.6.0",
         "@types/archiver": "6.0.2",
         "@types/bcrypt": "5.0.0",

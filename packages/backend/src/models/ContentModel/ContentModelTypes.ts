@@ -19,6 +19,11 @@ export enum ContentTypePriority {
 export type ContentFilters = {
     projectUuids?: string[];
     spaceUuids?: string[];
+    /**
+     * Resources the requester holds a direct grant on. Widens the space filter
+     * rather than replacing it, and only when a space filter is present.
+     */
+    grantedResourceUuids?: string[];
     /** Restrict to specific content uuids (e.g. resolving curated collections) */
     uuids?: string[];
     contentTypes?: ContentType[];

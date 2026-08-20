@@ -204,10 +204,23 @@ export const dbtExploreChartContentConfiguration: ContentConfiguration<SelectSav
                     }
 
                     if (filters.spaceUuids) {
-                        void builder.whereIn(
-                            `${SpaceTableName}.space_uuid`,
-                            filters.spaceUuids,
-                        );
+                        const { spaceUuids } = filters;
+                        const grantedResourceUuids =
+                            filters.grantedResourceUuids ?? [];
+                        // Grouped, so a direct grant widens the space predicate
+                        // rather than escaping it.
+                        void builder.where((scoped) => {
+                            void scoped.whereIn(
+                                `${SpaceTableName}.space_uuid`,
+                                spaceUuids,
+                            );
+                            if (grantedResourceUuids.length > 0) {
+                                void scoped.orWhereIn(
+                                    `${SavedChartsTableName}.saved_query_uuid`,
+                                    grantedResourceUuids,
+                                );
+                            }
+                        });
                     }
                     if (filters.search) {
                         applyContentNameSearch(

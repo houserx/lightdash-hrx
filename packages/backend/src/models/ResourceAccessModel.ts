@@ -343,4 +343,64 @@ export class ResourceAccessModel {
                 .delete(),
         ]);
     }
+
+    /**
+     * Resource uuids this user holds any grant on, directly or through a group,
+     * across the given projects and resource types.
+     *
+     * The inverse of `getDirectResourceAccess`: content browse filters by space
+     * reachability before it knows which resources it will return, so it cannot
+     * ask about specific uuids. `project_uuid` is indexed for this.
+     *
+     * Projects and resource types are matched with `whereIn` rather than looped
+     * over, so browse costs one round trip however many projects are in view.
+     */
+    async getGrantedResourceUuids(
+        userUuid: string,
+        projectUuids: string[],
+        resourceTypes: readonly ResourceAccessResourceType[],
+    ): Promise<string[]> {
+        if (projectUuids.length === 0 || resourceTypes.length === 0) {
+            return [];
+        }
+
+        const rows = await this.database(ResourceUserAccessTableName)
+            .select<{ resourceUuid: string }[]>({
+                resourceUuid: `${ResourceUserAccessTableName}.resource_uuid`,
+            })
+            .whereIn(`${ResourceUserAccessTableName}.resource_type`, [
+                ...resourceTypes,
+            ])
+            .whereIn(
+                `${ResourceUserAccessTableName}.project_uuid`,
+                projectUuids,
+            )
+            .where(`${ResourceUserAccessTableName}.user_uuid`, userUuid)
+            .union(
+                this.database(ResourceGroupAccessTableName)
+                    .innerJoin(
+                        GroupMembershipTableName,
+                        `${GroupMembershipTableName}.group_uuid`,
+                        `${ResourceGroupAccessTableName}.group_uuid`,
+                    )
+                    .innerJoin(
+                        UserTableName,
+                        `${UserTableName}.user_id`,
+                        `${GroupMembershipTableName}.user_id`,
+                    )
+                    .select({
+                        resourceUuid: `${ResourceGroupAccessTableName}.resource_uuid`,
+                    })
+                    .whereIn(`${ResourceGroupAccessTableName}.resource_type`, [
+                        ...resourceTypes,
+                    ])
+                    .whereIn(
+                        `${ResourceGroupAccessTableName}.project_uuid`,
+                        projectUuids,
+                    )
+                    .where(`${UserTableName}.user_uuid`, userUuid),
+            );
+
+        return rows.map((row) => row.resourceUuid);
+    }
 }

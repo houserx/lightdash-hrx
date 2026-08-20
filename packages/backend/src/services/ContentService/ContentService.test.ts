@@ -1,3 +1,4 @@
+import { fc, test } from '@fast-check/vitest';
 import {
     ChartSourceType,
     ContentType,
@@ -12,6 +13,7 @@ import type { DeletedContentItem, SessionUser } from '@lightdash/common';
 import { analyticsMock } from '../../analytics/LightdashAnalytics.mock';
 import type { ContentModel } from '../../models/ContentModel/ContentModel';
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import type { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import type { SpaceModel } from '../../models/SpaceModel';
 import type { ValidationModel } from '../../models/ValidationModel/ValidationModel';
 import type { DashboardService } from '../DashboardService/DashboardService';
@@ -110,6 +112,10 @@ const createService = ({
     return {
         service: new ContentService({
             analytics: analyticsMock,
+            lightdashConfig: { resourceGrants: { enabled: false } },
+            resourceAccessModel: {
+                getGrantedResourceUuids: vi.fn().mockResolvedValue([]),
+            } as unknown as ResourceAccessModel,
             projectModel: projectModel as unknown as ProjectModel,
             contentModel,
             spaceModel,
@@ -547,4 +553,154 @@ describe('ContentService.findDeleted', () => {
         ).rejects.toThrow(ForbiddenError);
         expect(findDeletedContents).not.toHaveBeenCalled();
     });
+});
+
+/**
+ * Browse decides Dashboard and SavedChart visibility by space reachability, so a
+ * resource shared directly -- without access to its space -- is openable by link
+ * and findable in search, but absent from browse. These cover the widening, and
+ * the cost of asking for it.
+ */
+describe('ContentService content browse grants', () => {
+    afterEach(() => {
+        vi.clearAllMocks();
+    });
+
+    const createBrowseService = ({
+        enabled,
+        projectUuids = [projectUuid],
+        granted = [],
+    }: {
+        enabled: boolean;
+        projectUuids?: string[];
+        granted?: string[];
+    }) => {
+        const findSummaryContents = vi
+            .fn()
+            .mockResolvedValue({ data: [], pagination: undefined });
+        const getGrantedResourceUuids = vi.fn().mockResolvedValue(granted);
+
+        const service = new ContentService({
+            analytics: analyticsMock,
+            lightdashConfig: { resourceGrants: { enabled } },
+            resourceAccessModel: {
+                getGrantedResourceUuids,
+            } as unknown as ResourceAccessModel,
+            projectModel: {
+                getAllByOrganizationUuid: vi.fn().mockResolvedValue(
+                    projectUuids.map((uuid) => ({
+                        projectUuid: uuid,
+                        name: uuid,
+                        organizationUuid,
+                    })),
+                ),
+            } as unknown as ProjectModel,
+            contentModel: { findSummaryContents } as unknown as ContentModel,
+            spaceModel: {
+                find: vi.fn().mockResolvedValue([]),
+                getChildSpaceUuidsForParents: vi.fn().mockResolvedValue([]),
+            } as unknown as SpaceModel,
+            spaceService: {} as SpaceService,
+            dashboardService: {} as DashboardService,
+            savedChartService: {} as SavedChartService,
+            savedSqlService: {} as SavedSqlService,
+            spacePermissionService: {
+                getAccessibleSpaceUuids: vi.fn().mockResolvedValue([]),
+            } as unknown as SpacePermissionService,
+            // Required by ContentServiceArguments on main; nothing here reaches it.
+            validationModel: {} as unknown as ValidationModel,
+            appMoveService: undefined,
+            appGenerateService: undefined,
+        });
+
+        return { service, findSummaryContents, getGrantedResourceUuids };
+    };
+
+    const browse = (service: ContentService) =>
+        service.find(
+            createOrganizationAdminUser(),
+            {},
+            {},
+            { page: 1, pageSize: 10 },
+        );
+
+    describe('given resource grants are disabled', () => {
+        it('then no grant lookup is issued', async () => {
+            const { service, getGrantedResourceUuids } = createBrowseService({
+                enabled: false,
+            });
+
+            await browse(service);
+
+            expect(getGrantedResourceUuids).not.toHaveBeenCalled();
+        });
+
+        it('then browse is filtered by space reachability alone', async () => {
+            const { service, findSummaryContents } = createBrowseService({
+                enabled: false,
+            });
+
+            await browse(service);
+
+            expect(findSummaryContents).toHaveBeenCalledWith(
+                expect.objectContaining({ grantedResourceUuids: [] }),
+                expect.anything(),
+                expect.anything(),
+            );
+        });
+    });
+
+    describe('given resource grants are enabled', () => {
+        it('then granted resources widen the browse filter', async () => {
+            const { service, findSummaryContents } = createBrowseService({
+                enabled: true,
+                granted: ['granted-dashboard', 'granted-chart'],
+            });
+
+            await browse(service);
+
+            expect(findSummaryContents).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    grantedResourceUuids: [
+                        'granted-dashboard',
+                        'granted-chart',
+                    ],
+                }),
+                expect.anything(),
+                expect.anything(),
+            );
+        });
+
+        it('then the lookup is scoped to the projects the requester may view', async () => {
+            const { service, getGrantedResourceUuids } = createBrowseService({
+                enabled: true,
+                projectUuids: ['project-a', 'project-b'],
+            });
+
+            await browse(service);
+
+            expect(getGrantedResourceUuids).toHaveBeenCalledWith(
+                userUuid,
+                ['project-a', 'project-b'],
+                ['Dashboard', 'SavedChart'],
+            );
+        });
+    });
+
+    // Browse spans every project the requester can see, so a lookup issued per
+    // project -- or per resource type within it -- grows with the organisation.
+    // This is the read the performance objection is really about.
+    test.prop([fc.uniqueArray(fc.uuid(), { minLength: 1, maxLength: 20 })])(
+        'costs one grant lookup whatever the number of projects in view',
+        async (projectUuids) => {
+            const { service, getGrantedResourceUuids } = createBrowseService({
+                enabled: true,
+                projectUuids,
+            });
+
+            await browse(service);
+
+            expect(getGrantedResourceUuids).toHaveBeenCalledTimes(1);
+        },
+    );
 });

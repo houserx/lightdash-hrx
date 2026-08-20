@@ -196,10 +196,23 @@ export const dashboardContentConfiguration: ContentConfiguration<SummaryContentR
                     }
 
                     if (filters.spaceUuids) {
-                        void builder.whereIn(
-                            `${SpaceTableName}.space_uuid`,
-                            filters.spaceUuids,
-                        );
+                        const { spaceUuids } = filters;
+                        const grantedResourceUuids =
+                            filters.grantedResourceUuids ?? [];
+                        // Grouped, so a direct grant widens the space predicate
+                        // rather than escaping it.
+                        void builder.where((scoped) => {
+                            void scoped.whereIn(
+                                `${SpaceTableName}.space_uuid`,
+                                spaceUuids,
+                            );
+                            if (grantedResourceUuids.length > 0) {
+                                void scoped.orWhereIn(
+                                    `${DashboardsTableName}.dashboard_uuid`,
+                                    grantedResourceUuids,
+                                );
+                            }
+                        });
                     }
                     void builder.where(
                         `last_version.dashboard_version_id`,

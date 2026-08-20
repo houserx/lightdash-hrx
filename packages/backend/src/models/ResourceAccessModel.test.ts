@@ -1,4 +1,8 @@
-import { DirectResourceAccessOrigin } from '@lightdash/common';
+import { fc, test } from '@fast-check/vitest';
+import {
+    DirectResourceAccessOrigin,
+    type ResourceAccessResourceType,
+} from '@lightdash/common';
 import knex from 'knex';
 import { getTracker, MockClient, Tracker } from 'knex-mock-client';
 import { ResourceAccessModel } from './ResourceAccessModel';
@@ -306,5 +310,88 @@ describe('ResourceAccessModel', () => {
                 expect(bindings).toContain(DASHBOARD_A);
             });
         });
+    });
+
+    describe('getGrantedResourceUuids', () => {
+        it('given grants in the projects, then it returns their resource uuids', async () => {
+            tracker.on
+                .any(() => true)
+                .response([
+                    { resourceUuid: DASHBOARD_A },
+                    { resourceUuid: DASHBOARD_B },
+                ]);
+
+            await expect(
+                model.getGrantedResourceUuids(
+                    USER_UUID,
+                    ['project-1'],
+                    ['Dashboard'],
+                ),
+            ).resolves.toEqual([DASHBOARD_A, DASHBOARD_B]);
+        });
+
+        it('given no projects, then it returns nothing without querying', async () => {
+            await expect(
+                model.getGrantedResourceUuids(USER_UUID, [], ['Dashboard']),
+            ).resolves.toEqual([]);
+
+            expect(tracker.history.all).toHaveLength(0);
+        });
+
+        it('given no resource types, then it returns nothing without querying', async () => {
+            await expect(
+                model.getGrantedResourceUuids(USER_UUID, ['project-1'], []),
+            ).resolves.toEqual([]);
+
+            expect(tracker.history.all).toHaveLength(0);
+        });
+
+        it('given the lookup runs, then it is scoped by principal, projects and resource types', async () => {
+            tracker.on.any(() => true).response([]);
+
+            await model.getGrantedResourceUuids(
+                USER_UUID,
+                ['project-1', 'project-2'],
+                ['Dashboard', 'SavedChart'],
+            );
+
+            const [{ sql, bindings }] = tracker.history.all;
+            expect(sql).toContain('resource_user_access');
+            expect(sql).toContain('resource_group_access');
+            expect(bindings).toContain(USER_UUID);
+            expect(bindings).toContain('project-1');
+            expect(bindings).toContain('project-2');
+            expect(bindings).toContain('Dashboard');
+            expect(bindings).toContain('SavedChart');
+        });
+
+        // Content browse is the highest-cardinality read in the product, and it
+        // cannot name the resources it wants up front -- so this lookup is keyed
+        // on the project instead. Asking it per project, or per resource type,
+        // reintroduces exactly the round-trip growth this design answers.
+        test.prop([
+            fc.uniqueArray(fc.uuid(), { minLength: 1, maxLength: 25 }),
+            fc.uniqueArray(
+                fc.constantFrom<ResourceAccessResourceType>(
+                    'Dashboard',
+                    'SavedChart',
+                ),
+                { minLength: 1, maxLength: 2 },
+            ),
+        ])(
+            'costs one query whatever the project and resource-type counts',
+            async (projectUuids, resourceTypes) => {
+                tracker.reset();
+                tracker.on.any(() => true).response([]);
+
+                await model.getGrantedResourceUuids(
+                    USER_UUID,
+                    projectUuids,
+                    resourceTypes,
+                );
+
+                expect(tracker.history.all).toHaveLength(1);
+            },
+        );
     });
 });
