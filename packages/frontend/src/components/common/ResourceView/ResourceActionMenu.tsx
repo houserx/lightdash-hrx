@@ -52,6 +52,7 @@ import { useSpaceSummaries } from '../../../hooks/useSpaces';
 import useApp from '../../../providers/App/useApp';
 import useFavoritesContext from '../../../providers/Favorites/useFavoritesContext';
 import MantineIcon from '../MantineIcon';
+import { ManageResourceAccessMenuItem } from './ManageResourceAccessMenuItem';
 import {
     ResourceViewItemAction,
     type ResourceViewItemActionState,
@@ -676,6 +677,20 @@ const ResourceViewActionMenu: FC<ResourceViewActionMenuProps> = ({
                                 >
                                     Share
                                 </Menu.Item>
+                            )}
+
+                            {/* Narrowed by the discriminant rather than by
+                                `isChartOrDashboard`, which is a plain boolean
+                                and so narrows nothing. Sits inside
+                                `userCanManage`, so a viewer is never offered a
+                                removal the backend would refuse. */}
+                            {(item.type === ResourceViewItemType.CHART ||
+                                item.type ===
+                                    ResourceViewItemType.DASHBOARD) && (
+                                <ManageResourceAccessMenuItem
+                                    item={item}
+                                    onAction={onAction}
+                                />
                             )}
 
                             {allowDelete && (

@@ -36,6 +36,7 @@ import ShareSpaceModal from '../ShareSpaceModal';
 import SpaceActionModal from '../SpaceActionModal';
 import { ActionType } from '../SpaceActionModal/types';
 import TransferItemsModal from '../TransferItemsModal/TransferItemsModal';
+import { ManageResourceAccessAction } from './ManageResourceAccessAction';
 import {
     ResourceViewItemAction,
     type ResourceViewItemActionState,
@@ -403,6 +404,15 @@ const ResourceActionHandlers: FC<ResourceActionHandlersProps> = ({
                 <ShareSpaceAction
                     projectUuid={projectUuid}
                     spaceUuid={action.item.data.uuid}
+                    onClose={handleReset}
+                />
+            );
+
+        case ResourceViewItemAction.MANAGE_ACCESS:
+            return (
+                <ManageResourceAccessAction
+                    projectUuid={projectUuid}
+                    item={action.item}
                     onClose={handleReset}
                 />
             );

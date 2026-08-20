@@ -6,6 +6,7 @@ import {
     type ResourceViewSpaceItem,
 } from '@lightdash/common';
 import { type ReactNode } from 'react';
+import { type ManageableAccessItem } from './manageResourceAccessTarget';
 
 export enum ResourceViewItemAction {
     CLOSE,
@@ -17,6 +18,7 @@ export enum ResourceViewItemAction {
     PIN_TO_HOMEPAGE,
     TRANSFER_TO_SPACE,
     SHARE,
+    MANAGE_ACCESS,
 }
 
 export enum ResourceViewType {
@@ -68,6 +70,17 @@ export type ResourceViewItemActionState =
     | {
           type: ResourceViewItemAction.SHARE;
           item: ResourceViewSpaceItem;
+      }
+    /**
+     * Its own action rather than a widened SHARE. Widening SHARE's item would
+     * compile unchanged -- every view item has a `uuid`, and SHARE's handler
+     * feeds that uuid to `useSpace` -- so a dashboard would have been looked up
+     * as a space and the menu entry would have quietly done nothing. A separate
+     * member makes the handler's `assertUnreachable` catch it instead.
+     */
+    | {
+          type: ResourceViewItemAction.MANAGE_ACCESS;
+          item: ManageableAccessItem;
       };
 
 type TabType = {
