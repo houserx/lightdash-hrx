@@ -296,6 +296,7 @@ import {
     type ApiScanQuerySourceSchemaResults,
 } from './querySources';
 import { type ApiRenameFieldsResponse, type ApiRenameResponse } from './rename';
+import { type ApiResourceAccessListResponse } from './resourceAccess';
 import { type MostPopularAndRecentlyUpdated } from './resourceViewItem';
 import { type ResultColumns, type ResultRow } from './results';
 import { type ApiRoadmapResponse } from './roadmap';
@@ -1423,6 +1424,7 @@ type ApiResults =
     | ApiToggleFavorite['results']
     | ApiSpaceDeleteImpactResponse['results']
     | ApiSpaceAccessListResponse['results']
+    | ApiResourceAccessListResponse['results']
     | ApiGetPreAggregateStatsResponse['results']
     | ApiGetPreAggregateMaterializationsResponse['results']
     | ApiPreAggregateCheckResponse['results']

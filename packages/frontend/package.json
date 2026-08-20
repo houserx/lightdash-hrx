@@ -146,6 +146,7 @@
     },
     "devDependencies": {
         "@chromatic-com/storybook": "5.1.1",
+        "@fast-check/vitest": "0.4.1",
         "@rollup/plugin-commonjs": "29.0.2",
         "@rollup/plugin-json": "6.1.0",
         "@rollup/plugin-node-resolve": "16.0.3",
@@ -180,6 +181,7 @@
         "@vitest/eslint-plugin": "1.6.23",
         "csstype": "3.2.3",
         "eslint-plugin-jest-dom": "5.5.0",
+        "fast-check": "4.9.0",
         "jsdom": "24.0.0",
         "nock": "13.5.1",
         "node-fetch": "2.7.0",
