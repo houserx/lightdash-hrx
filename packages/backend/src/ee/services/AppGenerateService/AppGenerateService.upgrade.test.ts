@@ -1,4 +1,4 @@
-import { ForbiddenError, ParameterError } from '@lightdash/common';
+import { ForbiddenError, ParameterError, ProjectType } from '@lightdash/common';
 import { AppGenerateService } from './AppGenerateService';
 
 vi.mock('e2b', () => ({
@@ -29,19 +29,49 @@ const makeApp = (overrides: Record<string, unknown> = {}) => ({
     created_by_user_uuid: USER_UUID,
     sandbox_id: 'sandbox-registry-uuid',
     design_uuid: null,
+    template: 'data_app',
     ...overrides,
 });
 
-function buildService(opts: { canManage?: boolean } = {}) {
+const VIZ_SCHEMA = {
+    fields: [
+        {
+            name: 'category',
+            label: 'Category',
+            type: 'dimension' as const,
+            required: true,
+        },
+    ],
+    configOptions: [
+        {
+            name: 'showLabels',
+            label: 'Show labels',
+            type: 'boolean' as const,
+            default: true,
+            group: 'Display',
+        },
+    ],
+};
+
+function buildService(
+    opts: { canManage?: boolean; template?: 'data_app' | 'data_app_viz' } = {},
+) {
     const appModel = {
-        getApp: vi.fn().mockResolvedValue(makeApp()),
+        getApp: vi
+            .fn()
+            .mockResolvedValue(
+                makeApp({ template: opts.template ?? 'data_app' }),
+            ),
         getLatestVersion: vi.fn().mockResolvedValue({
             version: 4,
             status: 'ready',
             dependencies: null,
             created_at: new Date(),
         }),
-        getLatestReadyVersion: vi.fn().mockResolvedValue({ version: 4 }),
+        getLatestReadyVersion: vi.fn().mockResolvedValue({
+            version: 4,
+            viz_schema: opts.template === 'data_app_viz' ? VIZ_SCHEMA : null,
+        }),
         getVersionsWithDependencies: vi.fn().mockResolvedValue([]),
         createVersion: vi.fn().mockResolvedValue({ version: 5 }),
         updateSandboxUuid: vi.fn().mockResolvedValue(undefined),
@@ -64,6 +94,7 @@ function buildService(opts: { canManage?: boolean } = {}) {
     const lightdashConfig = {
         appRuntime: {
             dependencyRegistryHosts: ['registry.npmjs.org'],
+            dataAppCodingAgent: 'claude',
         },
     };
 
@@ -76,7 +107,14 @@ function buildService(opts: { canManage?: boolean } = {}) {
         featureFlagModel: featureFlagModel as never,
         organizationDesignModel: {} as never,
         pinnedListModel: {} as never,
-        projectModel: {} as never,
+        projectModel: {
+            getSummary: vi.fn().mockResolvedValue({
+                organizationUuid: USER_ORG_UUID,
+                projectUuid: PROJECT_UUID,
+                type: ProjectType.DEFAULT,
+                createdByUserUuid: USER_UUID,
+            }),
+        } as never,
         projectParametersModel: {} as never,
         spaceModel: {} as never,
         savedChartModel: {} as never,
@@ -99,6 +137,7 @@ function buildService(opts: { canManage?: boolean } = {}) {
     ).mockReturnValue({
         can: () => canManage,
         cannot: () => !canManage,
+        rules: [],
     });
 
     return { service, appModel, schedulerClient, analytics };
@@ -140,6 +179,7 @@ describe('upgradeApp', () => {
             USER_UUID,
             undefined,
             undefined,
+            undefined,
         );
 
         const payload = schedulerClient.appGeneratePipeline.mock.calls[0][0];
@@ -160,6 +200,7 @@ describe('upgradeApp', () => {
         expect(payload.prompt).toContain('cannot run shell commands');
         expect(payload.prompt).toContain('Now active');
         expect(payload.prompt).not.toBe('Upgrade to the latest app template');
+        expect(payload.upgradeStatusMessage).toBeUndefined();
 
         expect(analytics.track).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -172,6 +213,69 @@ describe('upgradeApp', () => {
                     candidateFeatureKeys: ['drill-down', 'lineage'],
                 }),
             }),
+        );
+    });
+
+    it('preserves a chart type schema and queues a durable capability summary', async () => {
+        const { service, appModel, schedulerClient } = buildService({
+            template: 'data_app_viz',
+        });
+
+        await service.upgradeApp(makeUser(), PROJECT_UUID, APP_UUID, {
+            reportedSdkVersion: '1.68.0',
+            reportedFeatures: ['query'],
+            candidateFeatures: [
+                {
+                    key: 'metric-filters',
+                    label: 'Metric filters',
+                    description: 'Filter grouped results by metric values.',
+                    wiring: 'Pass metric filters to the query builder.',
+                },
+                {
+                    key: 'screenshot',
+                    label: 'In-app screenshots',
+                    description: 'Capture this chart for deliveries.',
+                },
+            ],
+        });
+
+        expect(appModel.createVersion).toHaveBeenCalledWith(
+            APP_UUID,
+            { version: 5, prompt: 'Upgrade to the latest app template' },
+            'pending',
+            USER_UUID,
+            undefined,
+            undefined,
+            VIZ_SCHEMA,
+        );
+        expect(
+            schedulerClient.appGeneratePipeline.mock.calls[0][0]
+                .upgradeStatusMessage,
+        ).toBe(
+            'Upgraded to the latest chart SDK.\n\nNow active:\n\n- **In-app screenshots** — Capture this chart for deliveries.\n\nNewly available — ask me to add this in the prompt bar:\n\n- **Metric filters** — Filter grouped results by metric values.',
+        );
+    });
+
+    it('uses a generic chart completion message when a legacy SDK cannot report an exact delta', async () => {
+        const { service, schedulerClient } = buildService({
+            template: 'data_app_viz',
+        });
+
+        await service.upgradeApp(makeUser(), PROJECT_UUID, APP_UUID, {
+            candidateFeatures: [
+                {
+                    key: 'metric-filters',
+                    label: 'Metric filters',
+                    description: 'Filter grouped results by metric values.',
+                },
+            ],
+        });
+
+        expect(
+            schedulerClient.appGeneratePipeline.mock.calls[0][0]
+                .upgradeStatusMessage,
+        ).toBe(
+            'Upgraded to the latest chart SDK.\n\nThis chart came from an older SDK that could not report its capabilities. Ask for a new capability in the prompt bar when you want the builder to add it.',
         );
     });
 

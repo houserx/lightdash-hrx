@@ -10,20 +10,23 @@ import {
     S3ServiceException,
     type ObjectIdentifier,
 } from '@aws-sdk/client-s3';
-import { subject } from '@casl/ability';
+import { subject, type Ability } from '@casl/ability';
 import {
     AlreadyExistsError,
+    APP_UPGRADE_PROMPT_LABEL,
     APP_VERSION_CANCELLED_BY_USER,
     assertEmbeddedAuth,
     assertUnreachable,
     ChartType,
     checkThemeLimits,
     DATA_APP_CLAUDE_MODELS,
+    DATA_APP_CODEX_MODELS,
     DATA_APP_VIZ_TEMPLATE,
     DATA_REFERENCE_EXTRACTOR_VERSION,
     dataAppVizJsonSchema,
     dataAppVizSchema,
     DEFAULT_DATA_APP_CLAUDE_MODEL,
+    DEFAULT_DATA_APP_CODEX_MODEL,
     extractDataAppDataReferences,
     extractLockfilePackages,
     FeatureFlags,
@@ -42,6 +45,7 @@ import {
     MissingConfigError,
     NotFoundError,
     ParameterError,
+    ProjectType,
     QueryExecutionContext,
     resolveDefaultVisibleDataAppClaudeModel,
     sanitizeAppPackageJsonScripts,
@@ -79,9 +83,13 @@ import {
     type DataAppCode,
     type DataAppCodeDownload,
     type DataAppCodeFile,
+    type DataAppCodexModel,
+    type DataAppCodingAgent,
+    type DataAppCodingAgentModel,
     type DataAppContext,
     type DataAppCreationExperience,
     type DataAppDependencies,
+    type DataAppGenerationUsage,
     type DataAppManifestExternalConnection,
     type DataAppTemplate,
     type DataAppViz,
@@ -137,6 +145,7 @@ import {
     type DbAppActivityRow,
     type DbAppVersion,
 } from '../../../database/entities/apps';
+import { type CaslAuditWrapper } from '../../../logging/caslAuditWrapper';
 import { AnalyticsModel } from '../../../models/AnalyticsModel';
 import { AppModel } from '../../../models/AppModel';
 import { CatalogModel } from '../../../models/CatalogModel/CatalogModel';
@@ -191,6 +200,7 @@ import {
 import {
     assertCanViewEmbeddedApp,
     assertCanViewApp as assertUserCanViewApp,
+    type DataAppProjectContext,
 } from './appAuthz';
 import { getBundleServableChecker } from './appBundleStorage';
 import {
@@ -235,6 +245,19 @@ import {
     type ClaudeGenerationTelemetry,
     type ClaudeGenerationUsage,
 } from './ClaudeStreamProcessor';
+import {
+    buildCodexCodeEnv,
+    buildCodexExecCommand,
+    CODEX_PROJECT_INSTRUCTIONS,
+    CODEX_PROJECT_INSTRUCTIONS_PATH,
+    codexCodeAllowedHosts,
+    codexSkillDirective,
+    describeCodexCodeEnv,
+    getCodexCodeProvider,
+    getCodexModelId,
+    PREPARE_CODEX_SKILLS_COMMAND,
+} from './codexCodeEnv';
+import { CodexStreamProcessor } from './CodexStreamProcessor';
 import {
     buildDashboardBlueprint,
     DASHBOARD_BLUEPRINT_PATH,
@@ -329,6 +352,7 @@ type GenerateAppOptions = {
     creationExperience?: DataAppCreationExperience;
     designUuidInput?: string | null;
     externalConnections?: AppExternalConnectionReference[];
+    codexModelInput?: DataAppCodexModel;
 };
 
 type GenerateAppResult = {
@@ -387,7 +411,9 @@ type ModelFile = {
 
 type DataAppVersionFailureTelemetry = {
     wasResumed?: boolean;
-    claudeProvider?: 'anthropic' | 'bedrock';
+    codingAgent?: DataAppCodingAgent;
+    codingAgentModel?: DataAppCodingAgentModel;
+    claudeProvider?: 'anthropic' | 'bedrock' | 'openai';
     keyManagement?: AiKeyManagement;
     schedulerWaitMs?: number;
     generationUsage?: ClaudeGenerationUsage;
@@ -403,6 +429,17 @@ type DataAppBuildFixTelemetry = {
     buildMs: number;
     fixAttempts: number;
     fixGenerationMs: number;
+};
+
+type CodingAgentGenerationResult = {
+    durationMs: number;
+    responseText: string | null;
+    structuredOutput: unknown;
+    toolCallCount: number;
+    usage: ClaudeGenerationUsage;
+    timeToFirstTokenMs: number | null;
+    turnDurationsMs: number[];
+    generationAttemptCount: number;
 };
 
 // Wall-clock heartbeat to bump status_updated_at while the pipeline is
@@ -426,16 +463,16 @@ const DATA_APP_WORKSPACE: PersistentWorkspace = {
     ],
     exclude: ['node_modules'],
 };
-// Kill any in-flight `claude` process before a cancelled sandbox is paused.
+// Kill any in-flight coding-agent process before a cancelled sandbox is paused.
 // Native-pause backends (E2B) freeze running processes into the snapshot, so
 // without this the cancelled generation resumes execution the next time the
 // sandbox is resumed. `[c]laude` keeps pkill from matching this command's own
 // shell; pkill exits 1 when nothing matched, hence the trailing `true`. The
 // prompt file is removed so nothing left in the sandbox can replay the
 // cancelled prompt (the next iteration writes a fresh one).
-const INTERRUPT_CLAUDE_COMMAND =
-    "pkill -TERM -f '[c]laude' 2>/dev/null; sleep 1; " +
-    "pkill -KILL -f '[c]laude' 2>/dev/null; rm -f /tmp/prompt.txt 2>/dev/null; true";
+const INTERRUPT_CODING_AGENT_COMMAND =
+    "pkill -TERM -f '[c]laude|[c]odex' 2>/dev/null; sleep 1; " +
+    "pkill -KILL -f '[c]laude|[c]odex' 2>/dev/null; rm -f /tmp/prompt.txt 2>/dev/null; true";
 
 // Prepended to the prompt when a version since the last ready one was
 // cancelled: the resumed `--continue` session still ends with the cancelled
@@ -553,44 +590,77 @@ export class AppGenerateService extends BaseService {
         this.orgAiCopilotConfigResolver = orgAiCopilotConfigResolver;
     }
 
-    /**
-     * Resolve the organization UUID for a project. Used to derive the CASL
-     * subject's `organizationUuid` from the resource (the project itself)
-     * rather than the user — so cross-org access attempts are denied by
-     * CASL instead of relying only on upstream project scoping.
-     */
-    private async getProjectOrgUuid(projectUuid: string): Promise<string> {
+    private async getDataAppProjectContext(
+        projectUuid: string,
+    ): Promise<DataAppProjectContext> {
         const summary = await this.projectModel.getSummary(projectUuid);
-        return summary.organizationUuid;
+        return {
+            organizationUuid: summary.organizationUuid,
+            projectUuid,
+            projectType: summary.type,
+            projectCreatedByUserUuid: summary.createdByUserUuid,
+            upstreamProjectUuid: summary.upstreamProjectUuid ?? null,
+        };
+    }
+
+    private static isPreviewOnlyDataAppGrant(
+        rules: CaslAuditWrapper<Ability>['rules'],
+        action: 'view' | 'create' | 'manage',
+    ): boolean {
+        const dataAppRules = rules.filter(
+            (rule) =>
+                rule.subject === 'DataApp' &&
+                !rule.inverted &&
+                (rule.action === action || rule.action === 'manage'),
+        );
+        return (
+            dataAppRules.length > 0 &&
+            dataAppRules.every((rule) => {
+                const { conditions } = rule;
+                return (
+                    typeof conditions === 'object' &&
+                    conditions !== null &&
+                    'projectType' in conditions &&
+                    conditions.projectType === ProjectType.PREVIEW
+                );
+            })
+        );
     }
 
     /**
      * Run a CASL check on `DataApp`, throwing `ForbiddenError` if denied.
-     * Callers must pass the resource-derived organizationUuid so that the
-     * check is a genuine cross-org guard, not a tautology on the user's own
-     * org.
      */
-    private assertDataAppAbility(
+    private async assertDataAppAbility(
         user: SessionUser,
         action: 'view' | 'create' | 'manage',
-        organizationUuid: string,
         projectUuid: string,
         errorMessage: string,
         extraContext: Record<string, unknown> = {},
-    ): void {
+    ): Promise<DataAppProjectContext> {
+        const projectContext = await this.getDataAppProjectContext(projectUuid);
         const auditedAbility = this.createAuditedAbility(user);
         if (
             auditedAbility.cannot(
                 action,
                 subject('DataApp', {
-                    organizationUuid,
-                    projectUuid,
+                    ...projectContext,
                     ...extraContext,
                 }),
             )
         ) {
+            if (
+                AppGenerateService.isPreviewOnlyDataAppGrant(
+                    auditedAbility.rules,
+                    action,
+                )
+            ) {
+                throw new ForbiddenError(
+                    `${errorMessage}. Your role only allows data apps in preview projects you created, and this is not one.`,
+                );
+            }
             throw new ForbiddenError(errorMessage);
         }
+        return projectContext;
     }
 
     /**
@@ -646,6 +716,8 @@ export class AppGenerateService extends BaseService {
                         userUuid,
                         spaceUuid,
                     ),
+                getProjectContext: (projectUuid) =>
+                    this.getDataAppProjectContext(projectUuid),
             },
             user,
             app,
@@ -670,17 +742,16 @@ export class AppGenerateService extends BaseService {
         },
         errorMessage: string,
         extraContext: Record<string, unknown> = {},
-    ): Promise<void> {
+    ): Promise<DataAppProjectContext> {
         const spaceContext = app.space_uuid
             ? await this.spacePermissionService.getSpaceAccessContext(
                   user.userUuid,
                   app.space_uuid,
               )
             : {};
-        this.assertDataAppAbility(
+        return this.assertDataAppAbility(
             user,
             'manage',
-            app.organization_uuid,
             app.project_uuid,
             errorMessage,
             {
@@ -714,6 +785,43 @@ export class AppGenerateService extends BaseService {
         return buildClaudeCodeEnv(copilot, () =>
             AppGenerateService.getAnthropicApiKey(copilot),
         );
+    }
+
+    private get dataAppCodingAgent(): DataAppCodingAgent {
+        return this.lightdashConfig.appRuntime?.dataAppCodingAgent ?? 'claude';
+    }
+
+    private getCodingAgentConfig(
+        organizationUuid: string | null | undefined,
+    ): Promise<ResolvedCopilotConfig> {
+        return this.dataAppCodingAgent === 'codex'
+            ? this.orgAiCopilotConfigResolver.getCodexConfig(organizationUuid)
+            : this.orgAiCopilotConfigResolver.getClaudeCodeConfig(
+                  organizationUuid,
+              );
+    }
+
+    private getCodingAgentEnv(copilot: CopilotConfig): Record<string, string> {
+        return this.dataAppCodingAgent === 'codex'
+            ? buildCodexCodeEnv(copilot)
+            : AppGenerateService.getClaudeCodeEnv(copilot);
+    }
+
+    private describeCodingAgentEnv(env: Record<string, string>): string {
+        return this.dataAppCodingAgent === 'codex'
+            ? describeCodexCodeEnv(env)
+            : describeClaudeCodeEnv(env);
+    }
+
+    private getCodingAgentProvider(
+        env: Record<string, string>,
+    ): 'anthropic' | 'bedrock' | 'openai' {
+        if (this.dataAppCodingAgent === 'codex') {
+            return getCodexCodeProvider(env) === 'amazon-bedrock'
+                ? 'bedrock'
+                : 'openai';
+        }
+        return env.CLAUDE_CODE_USE_BEDROCK === '1' ? 'bedrock' : 'anthropic';
     }
 
     /**
@@ -876,16 +984,22 @@ export class AppGenerateService extends BaseService {
         copilot: CopilotConfig,
         extraEgressHosts: string[] = [],
     ): SandboxSpec {
+        const codingAgentHosts =
+            this.dataAppCodingAgent === 'codex'
+                ? codexCodeAllowedHosts(copilot)
+                : claudeCodeAllowedHosts(copilot);
         return {
             templateRef: this.getSandboxTemplateRef(),
             timeoutMs: 60 * 60 * 1000,
             egress: {
                 allow: [
-                    ...claudeCodeAllowedHosts(copilot),
+                    ...codingAgentHosts,
                     ...extraEgressHosts,
-                    ...claudeCodeOtelAllowedHosts(
-                        this.lightdashConfig.appRuntime.otel,
-                    ),
+                    ...(this.dataAppCodingAgent === 'claude'
+                        ? claudeCodeOtelAllowedHosts(
+                              this.lightdashConfig.appRuntime.otel,
+                          )
+                        : []),
                 ],
             },
         };
@@ -1087,19 +1201,22 @@ export class AppGenerateService extends BaseService {
         > & {
             organization_uuid: string;
         },
+        projectContext?: DataAppProjectContext,
     ): Promise<boolean> {
-        const spaceContext = app.space_uuid
-            ? await this.spacePermissionService.getSpaceAccessContext(
-                  user.userUuid,
-                  app.space_uuid,
-              )
-            : {};
+        const [spaceContext, resolvedProjectContext] = await Promise.all([
+            app.space_uuid
+                ? this.spacePermissionService.getSpaceAccessContext(
+                      user.userUuid,
+                      app.space_uuid,
+                  )
+                : Promise.resolve({}),
+            projectContext ?? this.getDataAppProjectContext(app.project_uuid),
+        ]);
         const auditedAbility = this.createAuditedAbility(user);
         return auditedAbility.can(
             'view',
             subject('DataApp', {
-                organizationUuid: app.organization_uuid,
-                projectUuid: app.project_uuid,
+                ...resolvedProjectContext,
                 ...spaceContext,
                 createdByUserUuid: app.created_by_user_uuid,
             }),
@@ -1122,16 +1239,21 @@ export class AppGenerateService extends BaseService {
         projectUuid: string,
         apps: T[],
     ): Promise<T[]> {
+        const projectContext = await this.getDataAppProjectContext(projectUuid);
         const checks = await Promise.all(
             apps.map((app) =>
-                this.canViewApp(user, {
-                    organization_uuid: organizationUuid,
-                    project_uuid: projectUuid,
-                    space_uuid: app.spaceUuid,
-                    // A null createdBy can never match the self rule — coerce
-                    // to a sentinel that won't equal any real userUuid.
-                    created_by_user_uuid: app.createdBy?.userUuid ?? '',
-                }),
+                this.canViewApp(
+                    user,
+                    {
+                        organization_uuid: organizationUuid,
+                        project_uuid: projectUuid,
+                        space_uuid: app.spaceUuid,
+                        // A null createdBy can never match the self rule — coerce
+                        // to a sentinel that won't equal any real userUuid.
+                        created_by_user_uuid: app.createdBy?.userUuid ?? '',
+                    },
+                    projectContext,
+                ),
             ),
         );
         return apps.filter((_, i) => checks[i]);
@@ -1353,6 +1475,23 @@ export class AppGenerateService extends BaseService {
         return claudeModel;
     }
 
+    /** Resolve a Codex picker value without changing Claude's model policy. */
+    private static resolveCodexModel(
+        codexModel: DataAppCodexModel | undefined,
+    ): DataAppCodexModel {
+        if (codexModel === undefined) return DEFAULT_DATA_APP_CODEX_MODEL;
+        if (
+            !(DATA_APP_CODEX_MODELS as readonly string[]).includes(codexModel)
+        ) {
+            throw new ParameterError(
+                `Invalid codexModel: ${codexModel}. Allowed: ${DATA_APP_CODEX_MODELS.join(
+                    ', ',
+                )}`,
+            );
+        }
+        return codexModel;
+    }
+
     /** Reads the app's own template for the pre-field effort fallback. A
      *  failure here must not sink the telemetry event it feeds. */
     private async getTemplateForEffort(
@@ -1493,11 +1632,9 @@ export class AppGenerateService extends BaseService {
                 'Insufficient permissions to upload app files',
             );
         } else {
-            const organizationUuid = await this.getProjectOrgUuid(projectUuid);
-            this.assertDataAppAbility(
+            await this.assertDataAppAbility(
                 user,
                 'create',
-                organizationUuid,
                 projectUuid,
                 'Insufficient permissions to upload app files',
             );
@@ -1793,8 +1930,8 @@ export class AppGenerateService extends BaseService {
 
     private static emitDataAppAiUsage(
         payload: AppGeneratePipelineJobPayload,
-        model: DataAppClaudeModel,
-        provider: 'anthropic' | 'bedrock',
+        model: DataAppCodingAgentModel,
+        provider: 'anthropic' | 'bedrock' | 'openai',
         keyManagement: AiKeyManagement,
         usage: ClaudeGenerationUsage,
     ): void {
@@ -1841,10 +1978,15 @@ export class AppGenerateService extends BaseService {
         usage: ClaudeGenerationUsage,
     ): Promise<void> {
         try {
+            const persistedUsage: DataAppGenerationUsage = {
+                ...usage,
+                costUsd:
+                    this.dataAppCodingAgent === 'codex' ? null : usage.costUsd,
+            };
             await this.appModel.recordVersionGenerationUsage(
                 payload.appUuid,
                 payload.version,
-                usage,
+                persistedUsage,
             );
         } catch (error) {
             this.logger.warn(
@@ -1873,6 +2015,12 @@ export class AppGenerateService extends BaseService {
         const { generationUsage } = telemetry;
         const claudeModel =
             payload.claudeModel ?? DEFAULT_DATA_APP_CLAUDE_MODEL;
+        const codingAgent = telemetry.codingAgent ?? this.dataAppCodingAgent;
+        const codingAgentModel =
+            telemetry.codingAgentModel ??
+            (codingAgent === 'codex'
+                ? (payload.codexModel ?? DEFAULT_DATA_APP_CODEX_MODEL)
+                : claudeModel);
 
         if (
             generationUsage &&
@@ -1885,7 +2033,7 @@ export class AppGenerateService extends BaseService {
         ) {
             AppGenerateService.emitDataAppAiUsage(
                 payload,
-                claudeModel,
+                codingAgentModel,
                 telemetry.claudeProvider ?? 'anthropic',
                 telemetry.keyManagement ?? 'lightdash-managed',
                 generationUsage,
@@ -1908,7 +2056,9 @@ export class AppGenerateService extends BaseService {
                 isIteration: payload.isIteration,
                 isUpgrade: payload.isUpgrade ?? false,
                 creationExperience: payload.creationExperience ?? null,
-                claudeModel,
+                ...(codingAgent === 'claude' ? { claudeModel } : {}),
+                codingAgent,
+                codingAgentModel,
                 claudeProvider: telemetry.claudeProvider,
                 schedulerWaitMs: telemetry.schedulerWaitMs,
                 claudeEffort,
@@ -1941,7 +2091,8 @@ export class AppGenerateService extends BaseService {
                     generationUsage?.cacheCreationInputTokens,
                 numTurns: generationUsage?.numTurns,
                 durationApiMs: generationUsage?.durationApiMs,
-                totalCostUsd: generationUsage?.costUsd,
+                totalCostUsd:
+                    codingAgent === 'codex' ? null : generationUsage?.costUsd,
                 generationAttemptCount: telemetry.generationAttemptCount,
                 timeToFirstTokenMs: telemetry.timeToFirstTokenMs,
                 slowestTurnMs: telemetry.slowestTurnMs,
@@ -2308,14 +2459,18 @@ export class AppGenerateService extends BaseService {
                 copilot,
                 extraEgressHosts,
             );
-            const result = await oldSandbox.commands.run(
-                `tar -cf /tmp/claude-session.tar --ignore-failed-read -C / ${AppGenerateService.CLAUDE_SESSION_PATHS}`,
-                { timeoutMs: 60_000 },
-            );
-            if (result.exitCode === 0) {
-                sessionTar = Buffer.from(
-                    await oldSandbox.files.readBytes('/tmp/claude-session.tar'),
+            if (this.dataAppCodingAgent === 'claude') {
+                const result = await oldSandbox.commands.run(
+                    `tar -cf /tmp/claude-session.tar --ignore-failed-read -C / ${AppGenerateService.CLAUDE_SESSION_PATHS}`,
+                    { timeoutMs: 60_000 },
                 );
+                if (result.exitCode === 0) {
+                    sessionTar = Buffer.from(
+                        await oldSandbox.files.readBytes(
+                            '/tmp/claude-session.tar',
+                        ),
+                    );
+                }
             }
         } catch (error) {
             this.logger.warn(
@@ -2745,6 +2900,10 @@ export class AppGenerateService extends BaseService {
             finalPrompt = `${referenceLines}\n\n${finalPrompt}`;
         }
 
+        if (this.dataAppCodingAgent === 'codex') {
+            finalPrompt = `${codexSkillDirective(isDataAppViz)}\n\n${finalPrompt}`;
+        }
+
         // Write only the latest prompt — Claude is stateless between runs, but
         // the sandbox filesystem preserves all code from previous iterations.
         // Claude can read existing files to understand what was built so far,
@@ -3040,6 +3199,8 @@ export class AppGenerateService extends BaseService {
                 return 'Searching codebase';
             case 'TodoWrite':
                 return 'Updating TODOs';
+            case 'Command':
+                return 'Running command';
             default:
                 return null;
         }
@@ -3049,12 +3210,7 @@ export class AppGenerateService extends BaseService {
 
     private static readonly GENERATION_RETRY_DELAY_MS = 5_000;
 
-    /**
-     * Effective system-prompt file passed to Claude via
-     * `--append-system-prompt-file`. Always assembled fresh at the start of
-     * every pipeline run by `assembleEffectiveSkill`, so the CLI flag can
-     * point at a single stable path regardless of theme.
-     */
+    /** Effective Lightdash reference assembled fresh for every agent run. */
     private static readonly EFFECTIVE_SKILL_PATH = '/app/effective-skill.md';
 
     /**
@@ -3120,6 +3276,18 @@ export class AppGenerateService extends BaseService {
         );
     }
 
+    private static async prepareCodexProjectContext(
+        sandbox: SandboxHandle,
+    ): Promise<void> {
+        await sandbox.commands.run(PREPARE_CODEX_SKILLS_COMMAND, {
+            timeoutMs: 10_000,
+        });
+        await sandbox.files.write(
+            CODEX_PROJECT_INSTRUCTIONS_PATH,
+            CODEX_PROJECT_INSTRUCTIONS,
+        );
+    }
+
     private async runClaudeGeneration(
         sandbox: SandboxHandle,
         appUuid: string,
@@ -3134,16 +3302,7 @@ export class AppGenerateService extends BaseService {
         // for runs that don't collect a structured schema (metadata, builds).
         structuredOutputSchema: string | null,
         onTelemetry?: (telemetry: ClaudeGenerationTelemetry) => void,
-    ): Promise<{
-        durationMs: number;
-        responseText: string | null;
-        structuredOutput: unknown;
-        toolCallCount: number;
-        usage: ClaudeGenerationUsage;
-        timeToFirstTokenMs: number | null;
-        turnDurationsMs: number[];
-        generationAttemptCount: number;
-    }> {
+    ): Promise<CodingAgentGenerationResult> {
         const start = performance.now();
         let telemetry = ZERO_CLAUDE_GENERATION_TELEMETRY;
 
@@ -3181,16 +3340,7 @@ export class AppGenerateService extends BaseService {
         const runAttempt = async (
             attempt: number,
             forceContinue: boolean,
-        ): Promise<{
-            durationMs: number;
-            responseText: string | null;
-            structuredOutput: unknown;
-            toolCallCount: number;
-            usage: ClaudeGenerationUsage;
-            timeToFirstTokenMs: number | null;
-            turnDurationsMs: number[];
-            generationAttemptCount: number;
-        }> => {
+        ): Promise<CodingAgentGenerationResult> => {
             // Bail before spawning claude when the version is no longer in
             // progress (typically cancelled). This gates the retry and
             // build-fix paths, which have no advanceStage check between
@@ -3417,6 +3567,243 @@ export class AppGenerateService extends BaseService {
     }
 
     /**
+     * Codex prototype runner. Each invocation is deliberately ephemeral: app
+     * source is the durable state between iterations and build-fix turns. This
+     * avoids coupling the first usable version to Codex session migration.
+     */
+    private async runCodexGeneration(
+        sandbox: SandboxHandle,
+        appUuid: string,
+        version: number,
+        codexEnv: Record<string, string>,
+        reasoningEffort: DataAppClaudeEffort,
+        structuredOutputSchema: string | null,
+        onTelemetry?: (telemetry: ClaudeGenerationTelemetry) => void,
+    ): Promise<CodingAgentGenerationResult> {
+        const start = performance.now();
+        let telemetry = ZERO_CLAUDE_GENERATION_TELEMETRY;
+
+        if (structuredOutputSchema) {
+            await sandbox.commands.run(
+                'rm -f /tmp/output-schema.json 2>/dev/null; true',
+                { timeoutMs: 10_000 },
+            );
+            await sandbox.files.write(
+                '/tmp/output-schema.json',
+                structuredOutputSchema,
+            );
+        }
+        const provider = getCodexCodeProvider(codexEnv);
+        const codexCommand = buildCodexExecCommand({
+            provider,
+            reasoningEffort,
+            outputSchemaPath: structuredOutputSchema
+                ? '/tmp/output-schema.json'
+                : null,
+        });
+
+        const runAttempt = async (
+            attempt: number,
+        ): Promise<CodingAgentGenerationResult> => {
+            const status = await this.appModel.getVersionStatus(
+                appUuid,
+                version,
+            );
+            if (!isAppVersionInProgress(status)) {
+                throw new Error(
+                    `Codex generation aborted — version ${version} is ${status} (likely cancelled)`,
+                );
+            }
+
+            const attemptStartedAfterMs = AppGenerateService.elapsed(start);
+            const processor = new CodexStreamProcessor();
+            let responseText: string | null = null;
+            const result = await sandbox.commands
+                .run(codexCommand, {
+                    cwd: '/app',
+                    timeoutMs: 55 * 60 * 1000,
+                    envs: codexEnv,
+                    onStdout: (chunk) => {
+                        for (const event of processor.feedChunk(chunk)) {
+                            switch (event.kind) {
+                                case 'thinking_started':
+                                    this.logger.info(
+                                        `App ${appUuid}: codex turn #${event.turn}: thinking`,
+                                    );
+                                    this.updateAppStatus(
+                                        appUuid,
+                                        version,
+                                        'Thinking',
+                                        null,
+                                    );
+                                    break;
+                                case 'thinking_snippet':
+                                    this.updateAppStatus(
+                                        appUuid,
+                                        version,
+                                        event.snippet,
+                                        'thinking',
+                                    );
+                                    break;
+                                case 'tool_use': {
+                                    this.logger.info(
+                                        `App ${appUuid}: codex tool #${event.index}: ${event.description}`,
+                                    );
+                                    const toolStatus =
+                                        AppGenerateService.toolDescriptionToStatusMessage(
+                                            event.description,
+                                        );
+                                    this.updateAppStatus(
+                                        appUuid,
+                                        version,
+                                        toolStatus ??
+                                            AppGenerateService.randomCodingPhrase(),
+                                        toolStatus ? 'tool' : null,
+                                    );
+                                    break;
+                                }
+                                case 'result':
+                                    if (event.text) {
+                                        responseText = event.text;
+                                    }
+                                    break;
+                                default:
+                                    assertUnreachable(
+                                        event,
+                                        'Unhandled Codex stream event',
+                                    );
+                            }
+                        }
+                    },
+                    onStderr: (chunk) => {
+                        this.logger.debug(
+                            `App ${appUuid}: codex stderr: ${chunk.trimEnd()}`,
+                        );
+                    },
+                })
+                .catch((err: unknown) => {
+                    if (!(err instanceof SandboxCommandError)) throw err;
+                    return {
+                        exitCode: err.exitCode,
+                        stdout: err.stdout,
+                        stderr: err.stderr,
+                    };
+                });
+
+            const usage = processor.lastUsage;
+            const toolCallCount = processor.totalToolCalls;
+            const { timeToFirstTokenMs, turnDurationsMs } = processor;
+            telemetry = addClaudeGenerationAttempt(
+                telemetry,
+                {
+                    usage,
+                    toolCallCount,
+                    timeToFirstTokenMs,
+                    turnDurationsMs,
+                },
+                attemptStartedAfterMs,
+            );
+            onTelemetry?.(telemetry);
+            const durationMs = AppGenerateService.elapsed(start);
+            this.logger.info(
+                `App ${appUuid}: Codex generation completed (model=${codexEnv.DATA_APP_CODEX_MODEL}, effort=${reasoningEffort}, exit=${result.exitCode}, toolCalls=${toolCallCount}, outputTokens=${usage?.outputTokens ?? 0}, ${durationMs}ms, attempt ${attempt}/${AppGenerateService.MAX_GENERATION_ATTEMPTS})`,
+            );
+
+            if (result.exitCode === 0) {
+                let structuredOutput: unknown = null;
+                if (structuredOutputSchema && responseText) {
+                    try {
+                        structuredOutput = JSON.parse(responseText);
+                    } catch (error) {
+                        this.logger.warn(
+                            `App ${appUuid}: Codex returned invalid structured output; leaving viz_schema null: ${getErrorMessage(error)}`,
+                        );
+                    }
+                }
+                return {
+                    durationMs,
+                    responseText,
+                    structuredOutput,
+                    toolCallCount: telemetry.toolCallCount,
+                    usage: telemetry.usage,
+                    timeToFirstTokenMs: telemetry.timeToFirstTokenMs,
+                    turnDurationsMs: telemetry.turnDurationsMs,
+                    generationAttemptCount: telemetry.attemptCount,
+                };
+            }
+
+            const stderrTail = AppGenerateService.truncateEnd(
+                result.stderr,
+                4000,
+            );
+            const stdoutTail = AppGenerateService.truncateEnd(
+                result.stdout,
+                4000,
+            );
+            if (attempt >= AppGenerateService.MAX_GENERATION_ATTEMPTS) {
+                this.logger.info(
+                    `App ${appUuid}: Codex stderr (tail): ${stderrTail}`,
+                );
+                this.logger.info(
+                    `App ${appUuid}: Codex stdout (tail): ${stdoutTail}`,
+                );
+                throw new Error(
+                    `Codex generation failed (exit ${result.exitCode}): ${stderrTail || stdoutTail}`,
+                );
+            }
+
+            this.logger.warn(
+                `App ${appUuid}: Codex generation failed (exit ${result.exitCode}), retrying (attempt ${attempt}/${AppGenerateService.MAX_GENERATION_ATTEMPTS})`,
+            );
+            this.updateAppStatus(appUuid, version, 'Hit a snag, retrying');
+            await new Promise<void>((resolve) => {
+                setTimeout(
+                    resolve,
+                    AppGenerateService.GENERATION_RETRY_DELAY_MS,
+                );
+            });
+            return runAttempt(attempt + 1);
+        };
+
+        return runAttempt(1);
+    }
+
+    private runCodingAgentGeneration(
+        sandbox: SandboxHandle,
+        appUuid: string,
+        version: number,
+        continueSession: boolean,
+        codingAgentEnv: Record<string, string>,
+        claudeModel: DataAppClaudeModel,
+        reasoningEffort: DataAppClaudeEffort,
+        structuredOutputSchema: string | null,
+        onTelemetry?: (telemetry: ClaudeGenerationTelemetry) => void,
+    ): Promise<CodingAgentGenerationResult> {
+        if (this.dataAppCodingAgent === 'codex') {
+            return this.runCodexGeneration(
+                sandbox,
+                appUuid,
+                version,
+                codingAgentEnv,
+                reasoningEffort,
+                structuredOutputSchema,
+                onTelemetry,
+            );
+        }
+        return this.runClaudeGeneration(
+            sandbox,
+            appUuid,
+            version,
+            continueSession,
+            codingAgentEnv,
+            claudeModel,
+            reasoningEffort,
+            structuredOutputSchema,
+            onTelemetry,
+        );
+    }
+
+    /**
      * Fire-and-forget app status message update. Logs (but does not propagate)
      * failures so transient DB errors during a long generation don't kill the
      * pipeline. `kind` tags the entry in the narration history; `null` shows
@@ -3590,7 +3977,7 @@ export class AppGenerateService extends BaseService {
         sandbox: SandboxHandle,
         appUuid: string,
         version: number,
-        claudeCodeEnv: Record<string, string>,
+        codingAgentEnv: Record<string, string>,
         claudeModel: DataAppClaudeModel,
         claudeEffort: DataAppClaudeEffort,
         onTelemetry?: (telemetry: DataAppBuildFixTelemetry) => void,
@@ -3679,7 +4066,9 @@ export class AppGenerateService extends BaseService {
             // fail with EPERM. Same reason as in writeCatalogAndPrompt.
             await sandbox.commands.run(
                 'rm -f /tmp/prompt.txt 2>/dev/null; true',
-                { timeoutMs: 10_000 },
+                {
+                    timeoutMs: 10_000,
+                },
             );
             await sandbox.files.write('/tmp/prompt.txt', `${fixPrompt}\n`);
 
@@ -3688,12 +4077,12 @@ export class AppGenerateService extends BaseService {
             const buildMsBeforeAttempt = buildMs;
             const currentFixAttempt = fixAttempts;
             const fixGenerationMsBeforeAttempt = fixGenerationMs;
-            const generation = await this.runClaudeGeneration(
+            const generation = await this.runCodingAgentGeneration(
                 sandbox,
                 appUuid,
                 version,
                 true, // --continue: keep conversation context from generation
-                claudeCodeEnv,
+                codingAgentEnv,
                 claudeModel,
                 claudeEffort,
                 null, // build-fix run collects no structured schema
@@ -3957,15 +4346,22 @@ export class AppGenerateService extends BaseService {
             return;
         }
 
-        let claudeCodeEnv: Record<string, string>;
+        let codingAgentEnv: Record<string, string>;
         let copilot: ResolvedCopilotConfig;
         let s3Client: S3Client;
         let bucket: string;
         try {
-            copilot = await this.orgAiCopilotConfigResolver.getClaudeCodeConfig(
-                payload.organizationUuid,
-            );
-            claudeCodeEnv = AppGenerateService.getClaudeCodeEnv(copilot);
+            copilot = await this.getCodingAgentConfig(payload.organizationUuid);
+            codingAgentEnv = this.getCodingAgentEnv(copilot);
+            if (this.dataAppCodingAgent === 'codex') {
+                const codexModel =
+                    payload.codexModel ?? DEFAULT_DATA_APP_CODEX_MODEL;
+                codingAgentEnv.DATA_APP_CODEX_MODEL = codexModel;
+                codingAgentEnv.DATA_APP_CODEX_MODEL_ID = getCodexModelId(
+                    getCodexCodeProvider(codingAgentEnv),
+                    codexModel,
+                );
+            }
             ({ client: s3Client, bucket } = this.getS3Client());
         } catch (error) {
             // Config errors (missing/incomplete provider, E2B, or S3 setup) carry
@@ -4013,8 +4409,10 @@ export class AppGenerateService extends BaseService {
 
         this.logger.info(
             `App ${appUuid}: pipeline started (version=${version}, status=${currentStatus}, isIteration=${isIteration}, model=${
-                payload.claudeModel ?? DEFAULT_DATA_APP_CLAUDE_MODEL
-            }, designUuid=${payload.designUuid ?? 'none'}, llm=${describeClaudeCodeEnv(claudeCodeEnv)})`,
+                this.dataAppCodingAgent === 'codex'
+                    ? (payload.codexModel ?? DEFAULT_DATA_APP_CODEX_MODEL)
+                    : (payload.claudeModel ?? DEFAULT_DATA_APP_CLAUDE_MODEL)
+            }, designUuid=${payload.designUuid ?? 'none'}, llm=${this.describeCodingAgentEnv(codingAgentEnv)})`,
         );
 
         // --- Stage: sandbox ---
@@ -4197,20 +4595,27 @@ export class AppGenerateService extends BaseService {
                         'app.claude_model':
                             payload.claudeModel ??
                             DEFAULT_DATA_APP_CLAUDE_MODEL,
-                        'app.claude_provider':
-                            claudeCodeEnv.CLAUDE_CODE_USE_BEDROCK === '1'
-                                ? 'bedrock'
-                                : 'anthropic',
+                        'app.coding_agent': this.dataAppCodingAgent,
+                        'app.coding_agent_model':
+                            this.dataAppCodingAgent === 'codex'
+                                ? codingAgentEnv.DATA_APP_CODEX_MODEL
+                                : (payload.claudeModel ??
+                                  DEFAULT_DATA_APP_CLAUDE_MODEL),
+                        'app.coding_agent_provider':
+                            this.getCodingAgentProvider(codingAgentEnv),
                         ...(process.env.LIGHTDASH_INSTALL_ID
                             ? { installId: process.env.LIGHTDASH_INSTALL_ID }
                             : {}),
                     },
                 },
                 async () => {
-                    const otelEnv = await this.resolveSandboxOtelEnv(
-                        appUuid,
-                        getOtelTraceHeaders().traceparent,
-                    );
+                    const otelEnv =
+                        this.dataAppCodingAgent === 'claude'
+                            ? await this.resolveSandboxOtelEnv(
+                                  appUuid,
+                                  getOtelTraceHeaders().traceparent,
+                              )
+                            : {};
                     await this.runPipelineStages(
                         sandbox,
                         payload,
@@ -4220,7 +4625,7 @@ export class AppGenerateService extends BaseService {
                         overallStart,
                         currentStatus,
                         wasResumed,
-                        { ...claudeCodeEnv, ...otelEnv },
+                        { ...codingAgentEnv, ...otelEnv },
                         copilot,
                         fileIds,
                         chartReferences,
@@ -4244,7 +4649,7 @@ export class AppGenerateService extends BaseService {
         overallStart: number,
         currentStatus: AppVersionStatus,
         wasResumed: boolean,
-        claudeCodeEnv: Record<string, string>,
+        codingAgentEnv: Record<string, string>,
         copilot: ResolvedCopilotConfig,
         fileIds: string[] | undefined,
         chartReferences: ChartReference[] | undefined,
@@ -4264,10 +4669,11 @@ export class AppGenerateService extends BaseService {
         const claudeModel: DataAppClaudeModel =
             payload.claudeModel ?? DEFAULT_DATA_APP_CLAUDE_MODEL;
         const claudeEffort = payloadClaudeEffort(payload, pipelineApp.template);
-        const claudeProvider: 'anthropic' | 'bedrock' =
-            claudeCodeEnv.CLAUDE_CODE_USE_BEDROCK === '1'
-                ? 'bedrock'
-                : 'anthropic';
+        const claudeProvider = this.getCodingAgentProvider(codingAgentEnv);
+        const codingAgentModel: DataAppCodingAgentModel =
+            this.dataAppCodingAgent === 'codex'
+                ? (payload.codexModel ?? DEFAULT_DATA_APP_CODEX_MODEL)
+                : claudeModel;
         const claudeKeyManagement = resolveKeyManagement(
             copilot,
             claudeProvider,
@@ -4373,6 +4779,9 @@ export class AppGenerateService extends BaseService {
             logger: this.logger,
         });
         await this.assembleEffectiveSkill(sandbox, designCopy);
+        if (this.dataAppCodingAgent === 'codex') {
+            await AppGenerateService.prepareCodexProjectContext(sandbox);
+        }
 
         let catalogStats = {
             tableCount: 0,
@@ -4408,6 +4817,8 @@ export class AppGenerateService extends BaseService {
         };
         const failureTelemetry = (): DataAppVersionFailureTelemetry => ({
             wasResumed,
+            codingAgent: this.dataAppCodingAgent,
+            codingAgentModel,
             claudeProvider,
             keyManagement: claudeKeyManagement,
             schedulerWaitMs,
@@ -4521,12 +4932,12 @@ export class AppGenerateService extends BaseService {
                 // the conversation where it left off.
                 const continueSession =
                     currentStatus === 'generating' || wasResumed;
-                const generation = await this.runClaudeGeneration(
+                const generation = await this.runCodingAgentGeneration(
                     sandbox,
                     appUuid,
                     version,
                     continueSession,
-                    claudeCodeEnv,
+                    codingAgentEnv,
                     claudeModel,
                     claudeEffort,
                     // Data app vizs collect a validated schema as the run's
@@ -4575,7 +4986,7 @@ export class AppGenerateService extends BaseService {
                         error.providerDetail,
                         500,
                     )}`;
-                } else if (claudeCodeEnv.CLAUDE_CODE_USE_BEDROCK === '1') {
+                } else if (codingAgentEnv.CLAUDE_CODE_USE_BEDROCK === '1') {
                     userMessage =
                         'Failed to generate the app. If this keeps happening, check that the selected model is enabled in your AWS Bedrock region (see server logs).';
                 } else {
@@ -4689,7 +5100,7 @@ export class AppGenerateService extends BaseService {
                     sandbox,
                     appUuid,
                     version,
-                    claudeCodeEnv,
+                    codingAgentEnv,
                     claudeModel,
                     claudeEffort,
                     (telemetry) => {
@@ -4796,8 +5207,12 @@ export class AppGenerateService extends BaseService {
 
         // Data app viz: persist the schema the generator declared as the run's
         // structured output.
-        if (isDataAppViz) {
+        if (isDataAppViz && !payload.isUpgrade) {
             await this.persistSchema(vizStructuredOutput, appUuid, version);
+        } else if (isDataAppViz) {
+            this.logger.info(
+                `Kept the copied schema for SDK upgrade of app ${appUuid} version ${version}; skipped structured schema regeneration`,
+            );
         }
 
         try {
@@ -4807,7 +5222,9 @@ export class AppGenerateService extends BaseService {
                 version,
                 'ready',
                 null,
-                isDataAppViz ? 'Visualization ready' : responseText,
+                isDataAppViz
+                    ? (payload.upgradeStatusMessage ?? 'Visualization ready')
+                    : responseText,
             );
             durations.dbMs = AppGenerateService.elapsed(dbStart);
             if (!updated) {
@@ -4847,7 +5264,7 @@ export class AppGenerateService extends BaseService {
             durations.metadataMs = await metadataPromise;
         }
         this.logger.info(
-            `App ${appUuid}: generation completed successfully in ${totalMs}ms (model=${claudeModel}, ${Object.entries(
+            `App ${appUuid}: generation completed successfully in ${totalMs}ms (agent=${this.dataAppCodingAgent}, model=${codingAgentModel}, ${Object.entries(
                 durations,
             )
                 .map(([k, v]) => `${k}=${v}ms`)
@@ -4861,7 +5278,7 @@ export class AppGenerateService extends BaseService {
         // usage stream and stamps the app/version onto the accompanying span.
         AppGenerateService.emitDataAppAiUsage(
             payload,
-            claudeModel,
+            codingAgentModel,
             claudeProvider,
             claudeKeyManagement,
             generationUsage,
@@ -4879,7 +5296,11 @@ export class AppGenerateService extends BaseService {
                 isIteration: payload.isIteration,
                 isUpgrade: payload.isUpgrade ?? false,
                 creationExperience: payload.creationExperience ?? null,
-                claudeModel,
+                ...(this.dataAppCodingAgent === 'claude'
+                    ? { claudeModel }
+                    : {}),
+                codingAgent: this.dataAppCodingAgent,
+                codingAgentModel,
                 claudeProvider,
                 schedulerWaitMs,
                 claudeEffort,
@@ -4904,7 +5325,10 @@ export class AppGenerateService extends BaseService {
                     generationUsage.cacheCreationInputTokens,
                 numTurns: generationUsage.numTurns,
                 durationApiMs: generationUsage.durationApiMs,
-                totalCostUsd: generationUsage.costUsd,
+                totalCostUsd:
+                    this.dataAppCodingAgent === 'codex'
+                        ? null
+                        : generationUsage.costUsd,
                 generationAttemptCount,
                 timeToFirstTokenMs,
                 slowestTurnMs,
@@ -5201,11 +5625,9 @@ export class AppGenerateService extends BaseService {
         fileIds?: string[],
     ): Promise<{ questions: string[] }> {
         await this.assertDataAppsEnabled(user);
-        const organizationUuid = await this.getProjectOrgUuid(projectUuid);
-        this.assertDataAppAbility(
+        const { organizationUuid } = await this.assertDataAppAbility(
             user,
             'create',
-            organizationUuid,
             projectUuid,
             'Insufficient permissions to create data apps',
         );
@@ -5523,21 +5945,31 @@ export class AppGenerateService extends BaseService {
         claudeModelInput?: DataAppClaudeModel,
         options: GenerateAppOptions = {},
     ): Promise<GenerateAppResult> {
-        const { creationExperience, designUuidInput, externalConnections } =
-            options;
+        const {
+            creationExperience,
+            designUuidInput,
+            externalConnections,
+            codexModelInput,
+        } = options;
         await this.assertDataAppsEnabled(user);
-        const organizationUuid = await this.getProjectOrgUuid(projectUuid);
-        this.assertDataAppAbility(
+        const { organizationUuid } = await this.assertDataAppAbility(
             user,
             'create',
-            organizationUuid,
             projectUuid,
             'Insufficient permissions to create data apps',
         );
-        const claudeModel = await this.resolveClaudeModel(
-            organizationUuid,
-            claudeModelInput,
-        );
+        const claudeModel =
+            this.dataAppCodingAgent === 'claude'
+                ? await this.resolveClaudeModel(
+                      organizationUuid,
+                      claudeModelInput,
+                  )
+                : DEFAULT_DATA_APP_CLAUDE_MODEL;
+        const codexModel =
+            this.dataAppCodingAgent === 'codex'
+                ? AppGenerateService.resolveCodexModel(codexModelInput)
+                : undefined;
+        const codingAgentModel = codexModel ?? claudeModel;
 
         // When the caller wants the app to live in a space directly, also
         // require manage rights on that space — same gate space EDITOR/ADMIN
@@ -5548,10 +5980,9 @@ export class AppGenerateService extends BaseService {
                     user.userUuid,
                     spaceUuid,
                 );
-            this.assertDataAppAbility(
+            await this.assertDataAppAbility(
                 user,
                 'manage',
-                organizationUuid,
                 projectUuid,
                 'Insufficient permissions to create a data app in this space',
                 spaceContext,
@@ -5587,7 +6018,7 @@ export class AppGenerateService extends BaseService {
         );
 
         this.logger.info(
-            `App ${appUuid}: generation started (model=${claudeModel}, promptLength=${prompt.length}, clarifications=${
+            `App ${appUuid}: generation started (model=${codingAgentModel}, promptLength=${prompt.length}, clarifications=${
                 clarifications?.length ?? 0
             })`,
         );
@@ -5659,7 +6090,7 @@ export class AppGenerateService extends BaseService {
             dashboardName,
             dashboardUuid: dashboardBlueprint?.dashboardUuid ?? null,
             clarifications: clarifications ?? [],
-            claudeModel,
+            ...(codexModel ? { codexModel } : { claudeModel }),
             design: designSnapshot,
         };
 
@@ -5705,7 +6136,11 @@ export class AppGenerateService extends BaseService {
                 imageCount: stagedFiles.filter((f) => f.isImage).length,
                 fileCount: stagedFiles.filter((f) => !f.isImage).length,
                 template: template ?? null,
-                claudeModel,
+                ...(this.dataAppCodingAgent === 'claude'
+                    ? { claudeModel }
+                    : {}),
+                codingAgent: this.dataAppCodingAgent,
+                codingAgentModel,
                 claudeEffort,
                 samplesRequested: sampleStats.requested,
                 samplesAvailable: sampleStats.available,
@@ -5729,7 +6164,7 @@ export class AppGenerateService extends BaseService {
             chartReferences:
                 chartReferences.length > 0 ? chartReferences : undefined,
             dashboardBlueprint: dashboardBlueprint ?? undefined,
-            claudeModel,
+            ...(codexModel ? { codexModel } : { claudeModel }),
             designUuid: resolvedDesignUuid,
         });
 
@@ -5747,14 +6182,18 @@ export class AppGenerateService extends BaseService {
         claudeModelInput?: DataAppClaudeModel,
         options: GenerateAppOptions = {},
     ): Promise<GenerateAppResult> {
-        const { creationExperience, designUuidInput, externalConnections } =
-            options;
+        const {
+            creationExperience,
+            designUuidInput,
+            externalConnections,
+            codexModelInput,
+        } = options;
         await this.assertDataAppsEnabled(user);
 
         AppGenerateService.validateFileIds(fileIds);
 
         const app = await this.appModel.getApp(appUuid, projectUuid);
-        await this.assertCanManageApp(
+        const { organizationUuid } = await this.assertCanManageApp(
             user,
             app,
             'Insufficient permissions to modify data apps',
@@ -5776,10 +6215,18 @@ export class AppGenerateService extends BaseService {
         // Resolved after the permission check so an unauthorized caller gets a
         // 403 rather than a model-visibility error. Scoped to the project's
         // organization (not the caller's) to match generateApp.
-        const claudeModel = await this.resolveClaudeModel(
-            await this.getProjectOrgUuid(projectUuid),
-            claudeModelInput,
-        );
+        const claudeModel =
+            this.dataAppCodingAgent === 'claude'
+                ? await this.resolveClaudeModel(
+                      organizationUuid,
+                      claudeModelInput,
+                  )
+                : DEFAULT_DATA_APP_CLAUDE_MODEL;
+        const codexModel =
+            this.dataAppCodingAgent === 'codex'
+                ? AppGenerateService.resolveCodexModel(codexModelInput)
+                : undefined;
+        const codingAgentModel = codexModel ?? claudeModel;
 
         const externalConnectionResources = await this.linkExternalConnections(
             user,
@@ -5801,7 +6248,7 @@ export class AppGenerateService extends BaseService {
         const newVersion = (latestVersion?.version ?? 0) + 1;
         const claudeEffort = resolveClaudeEffort(newVersion, app.template);
         this.logger.info(
-            `App ${appUuid}: iteration started (version=${newVersion}, model=${claudeModel}, promptLength=${prompt.length}, designUuidInput=${
+            `App ${appUuid}: iteration started (version=${newVersion}, model=${codingAgentModel}, promptLength=${prompt.length}, designUuidInput=${
                 designUuidInput === undefined
                     ? 'inherit'
                     : (designUuidInput ?? 'none')
@@ -5871,7 +6318,7 @@ export class AppGenerateService extends BaseService {
             dashboardName,
             dashboardUuid: dashboardBlueprint?.dashboardUuid ?? null,
             clarifications: [],
-            claudeModel,
+            ...(codexModel ? { codexModel } : { claudeModel }),
             design: designSnapshot,
         };
 
@@ -5910,7 +6357,11 @@ export class AppGenerateService extends BaseService {
                 promptLength: prompt.length,
                 imageCount: stagedFiles.filter((f) => f.isImage).length,
                 fileCount: stagedFiles.filter((f) => !f.isImage).length,
-                claudeModel,
+                ...(this.dataAppCodingAgent === 'claude'
+                    ? { claudeModel }
+                    : {}),
+                codingAgent: this.dataAppCodingAgent,
+                codingAgentModel,
                 claudeEffort,
                 themeChanged: isThemeChange,
                 designUuid: effectiveDesignUuid,
@@ -5938,7 +6389,7 @@ export class AppGenerateService extends BaseService {
             chartReferences:
                 chartReferences.length > 0 ? chartReferences : undefined,
             dashboardBlueprint: dashboardBlueprint ?? undefined,
-            claudeModel,
+            ...(codexModel ? { codexModel } : { claudeModel }),
             designUuid: effectiveDesignUuid,
         });
 
@@ -5994,8 +6445,6 @@ export class AppGenerateService extends BaseService {
         return latestDependencies;
     }
 
-    static readonly UPGRADE_PROMPT_LABEL = 'Upgrade to the latest app template';
-
     /**
      * The stored row prompt stays the short label (what chat history shows);
      * this composed instruction is what the pipeline actually sends —
@@ -6040,6 +6489,54 @@ export class AppGenerateService extends BaseService {
             '   It is for a non-technical app owner: never describe what you checked or how, never mention files, code, or APIs, and do not discuss features outside the bullet list.',
             '   Do not implement any of the features now.',
         ].join('\n');
+    }
+
+    private static buildDataAppVizUpgradeStatusMessage(
+        body: UpgradeAppRequestBody,
+    ): string {
+        const candidates = (body.candidateFeatures ?? []).slice(0, 20);
+        if (body.reportedFeatures === undefined) {
+            return [
+                'Upgraded to the latest chart SDK.',
+                '',
+                'This chart came from an older SDK that could not report its capabilities. Ask for a new capability in the prompt bar when you want the builder to add it.',
+            ].join('\n');
+        }
+        if (candidates.length === 0) {
+            return 'Upgraded to the latest chart SDK. This chart already had all currently reported capabilities.';
+        }
+        const nowActive = candidates.filter((feature) => !feature.wiring);
+        const askToAdd = candidates.filter((feature) => feature.wiring);
+        const sections = ['Upgraded to the latest chart SDK.'];
+        if (nowActive.length > 0) {
+            sections.push(
+                [
+                    'Now active:',
+                    '',
+                    ...nowActive.map(
+                        (feature) =>
+                            `- **${feature.label}** — ${feature.description}`,
+                    ),
+                ].join('\n'),
+            );
+        }
+        if (askToAdd.length > 0) {
+            const askCopy =
+                askToAdd.length === 1
+                    ? 'Newly available — ask me to add this in the prompt bar:'
+                    : 'Newly available — ask me to add any of these in the prompt bar:';
+            sections.push(
+                [
+                    askCopy,
+                    '',
+                    ...askToAdd.map(
+                        (feature) =>
+                            `- **${feature.label}** — ${feature.description}`,
+                    ),
+                ].join('\n'),
+            );
+        }
+        return sections.join('\n\n');
     }
 
     /**
@@ -6097,12 +6594,15 @@ export class AppGenerateService extends BaseService {
             appUuid,
             {
                 version: newVersion,
-                prompt: AppGenerateService.UPGRADE_PROMPT_LABEL,
+                prompt: APP_UPGRADE_PROMPT_LABEL,
             },
             'pending',
             user.userUuid,
             undefined,
             carriedDependencies,
+            app.template === DATA_APP_VIZ_TEMPLATE
+                ? (latestReady.viz_schema ?? undefined)
+                : undefined,
         );
 
         this.analytics.track({
@@ -6131,6 +6631,14 @@ export class AppGenerateService extends BaseService {
             prompt: AppGenerateService.buildUpgradePrompt(body),
             isIteration: true,
             isUpgrade: true,
+            ...(app.template === DATA_APP_VIZ_TEMPLATE
+                ? {
+                      upgradeStatusMessage:
+                          AppGenerateService.buildDataAppVizUpgradeStatusMessage(
+                              body,
+                          ),
+                  }
+                : {}),
             claudeEffort,
             designUuid: app.design_uuid,
         });
@@ -6216,10 +6724,9 @@ export class AppGenerateService extends BaseService {
         if (app.sandbox_id) {
             let sandbox: SandboxHandle | null = null;
             try {
-                const copilot =
-                    await this.orgAiCopilotConfigResolver.getClaudeCodeConfig(
-                        app.organization_uuid,
-                    );
+                const copilot = await this.getCodingAgentConfig(
+                    app.organization_uuid,
+                );
                 const resumed = await this.resumeSandbox(
                     app.sandbox_id,
                     appUuid,
@@ -6238,12 +6745,14 @@ export class AppGenerateService extends BaseService {
                 // the working tree was reset and doesn't try to diff
                 // against code we've undone. Failures here don't fail the
                 // restore — worst case the next reply is mildly confused.
-                await this.notifyClaudeOfRestore(
-                    sandbox,
-                    appUuid,
-                    sourceVersion,
-                    copilot,
-                );
+                if (this.dataAppCodingAgent === 'claude') {
+                    await this.notifyClaudeOfRestore(
+                        sandbox,
+                        appUuid,
+                        sourceVersion,
+                        copilot,
+                    );
+                }
             } catch (error) {
                 // A half-synced sandbox would corrupt the next iteration —
                 // surface the failure and roll back the S3 copy.
@@ -6559,6 +7068,9 @@ export class AppGenerateService extends BaseService {
             ...(sourceResources?.claudeModel
                 ? { claudeModel: sourceResources.claudeModel }
                 : {}),
+            ...(sourceResources?.codexModel
+                ? { codexModel: sourceResources.codexModel }
+                : {}),
         };
     }
 
@@ -6689,10 +7201,9 @@ export class AppGenerateService extends BaseService {
 
         // Authoring rights on the upstream project itself — viewers of the
         // preview must not be able to write into production.
-        this.assertDataAppAbility(
+        await this.assertDataAppAbility(
             user,
             'create',
-            upstreamOrganizationUuid,
             upstreamProjectUuid,
             'Insufficient permissions to promote into the upstream project',
         );
@@ -7017,10 +7528,9 @@ export class AppGenerateService extends BaseService {
         // The duplicate lands as a personal app in the same project. We need
         // `create:DataApp` on the project itself — viewers who can read a
         // shared app but can't author new ones must not be able to fork it.
-        this.assertDataAppAbility(
+        await this.assertDataAppAbility(
             user,
             'create',
-            sourceApp.organization_uuid,
             projectUuid,
             'Insufficient permissions to duplicate this data app',
         );
@@ -7449,7 +7959,7 @@ export class AppGenerateService extends BaseService {
                     beforeSuspend: async (handle) => {
                         try {
                             await handle.commands.run(
-                                INTERRUPT_CLAUDE_COMMAND,
+                                INTERRUPT_CODING_AGENT_COMMAND,
                                 {
                                     timeoutMs: 15_000,
                                 },
@@ -7623,6 +8133,7 @@ export class AppGenerateService extends BaseService {
                               dashboardName: v.resources?.dashboardName ?? null,
                               clarifications: v.resources?.clarifications ?? [],
                               claudeModel: v.resources?.claudeModel,
+                              codexModel: v.resources?.codexModel,
                               design: v.resources?.design,
                               vizSchema: v.viz_schema ?? null,
                           }
@@ -7660,15 +8171,9 @@ export class AppGenerateService extends BaseService {
         projectUuid: string,
     ): Promise<EmbedProjectApp[]> {
         await this.assertDataAppsEnabled(user);
-        const { organizationUuid } =
-            await this.projectModel.getSummary(projectUuid);
+        const projectContext = await this.getDataAppProjectContext(projectUuid);
         const auditedAbility = this.createAuditedAbility(user);
-        if (
-            auditedAbility.cannot(
-                'view',
-                subject('DataApp', { organizationUuid, projectUuid }),
-            )
-        ) {
+        if (auditedAbility.cannot('view', subject('DataApp', projectContext))) {
             throw new ForbiddenError('Insufficient permissions');
         }
         const apps = await this.appModel.listAppsByProject(projectUuid);
@@ -8046,6 +8551,10 @@ export class AppGenerateService extends BaseService {
     private static toActivityEvent(
         row: DbAppActivityRow,
     ): DataAppActivityEvent {
+        const codexModel = row.resources?.codexModel;
+        const claudeModel =
+            row.resources?.claudeModel ?? DEFAULT_DATA_APP_CLAUDE_MODEL;
+        const codingAgent = codexModel ? 'codex' : 'claude';
         return {
             appUuid: row.app_id,
             appName: row.app_name,
@@ -8053,8 +8562,9 @@ export class AppGenerateService extends BaseService {
             version: row.version,
             status: row.status,
             prompt: row.prompt,
-            claudeModel:
-                row.resources?.claudeModel ?? DEFAULT_DATA_APP_CLAUDE_MODEL,
+            codingAgent,
+            codingAgentModel: codexModel ?? claudeModel,
+            ...(codingAgent === 'claude' ? { claudeModel } : {}),
             createdAt: row.created_at,
             projectUuid: row.project_uuid,
             projectName: row.project_name,
@@ -8069,7 +8579,16 @@ export class AppGenerateService extends BaseService {
                           firstName: row.created_by_user_first_name,
                           lastName: row.created_by_user_last_name,
                       },
-            usage: row.generation_usage,
+            usage:
+                row.generation_usage === null
+                    ? null
+                    : {
+                          ...row.generation_usage,
+                          costUsd:
+                              codingAgent === 'codex'
+                                  ? null
+                                  : row.generation_usage.costUsd,
+                      },
         };
     }
 
@@ -8323,10 +8842,9 @@ export class AppGenerateService extends BaseService {
             });
         } else {
             await this.assertDataAppsEnabled(user);
-            this.assertDataAppAbility(
+            await this.assertDataAppAbility(
                 user,
                 'manage',
-                app.organization_uuid,
                 projectUuid,
                 'Insufficient permissions to restore data apps',
             );
@@ -8369,10 +8887,9 @@ export class AppGenerateService extends BaseService {
             });
         } else {
             await this.assertDataAppsEnabled(user);
-            this.assertDataAppAbility(
+            await this.assertDataAppAbility(
                 user,
                 'manage',
-                app.organization_uuid,
                 projectUuid,
                 'Insufficient permissions to delete data apps',
             );
@@ -8540,10 +9057,9 @@ export class AppGenerateService extends BaseService {
                     user.userUuid,
                     targetSpaceUuid,
                 );
-            this.assertDataAppAbility(
+            await this.assertDataAppAbility(
                 user,
                 'manage',
-                app.organization_uuid,
                 projectUuid,
                 "You don't have access to the space this data app is being moved to",
                 targetSpaceContext,
@@ -9507,19 +10023,21 @@ export class AppGenerateService extends BaseService {
 
         const app = await this.appModel.findApp(payload.appUuid, projectUuid);
         if (!app || app.organization_uuid !== organizationUuid) return empty();
-        const spaceContext = app.space_uuid
-            ? await this.spacePermissionService.getSpaceAccessContext(
-                  account.user.id,
-                  app.space_uuid,
-              )
-            : {};
+        const [spaceContext, projectContext] = await Promise.all([
+            app.space_uuid
+                ? this.spacePermissionService.getSpaceAccessContext(
+                      account.user.id,
+                      app.space_uuid,
+                  )
+                : Promise.resolve({}),
+            this.getDataAppProjectContext(projectUuid),
+        ]);
         const auditedAbility = this.createAuditedAbility(account);
         if (
             auditedAbility.cannot(
                 'view',
                 subject('DataApp', {
-                    organizationUuid,
-                    projectUuid,
+                    ...projectContext,
                     ...spaceContext,
                     createdByUserUuid: app.created_by_user_uuid,
                 }),
@@ -9811,11 +10329,9 @@ export class AppGenerateService extends BaseService {
         designUuid: string | null,
     ): Promise<DataAppContext> {
         await this.assertDataAppsEnabled(user);
-        const organizationUuid = await this.getProjectOrgUuid(projectUuid);
-        this.assertDataAppAbility(
+        const { organizationUuid } = await this.assertDataAppAbility(
             user,
             'create',
-            organizationUuid,
             projectUuid,
             'Insufficient permissions to create data apps',
         );
@@ -10092,7 +10608,8 @@ export class AppGenerateService extends BaseService {
             );
         }
 
-        const organizationUuid = await this.getProjectOrgUuid(projectUuid);
+        const { organizationUuid } =
+            await this.getDataAppProjectContext(projectUuid);
 
         // Resolve manifest external-connection links up front so a broken
         // bundle rejects before creating anything.
@@ -10443,10 +10960,9 @@ export class AppGenerateService extends BaseService {
                         user.userUuid,
                         manifestSpaceUuid,
                     );
-                this.assertDataAppAbility(
+                await this.assertDataAppAbility(
                     user,
                     'manage',
-                    organizationUuid,
                     projectUuid,
                     'Insufficient permissions to move this data app into the manifest space',
                     spaceContext,
@@ -10476,10 +10992,9 @@ export class AppGenerateService extends BaseService {
                     : undefined,
             );
         } else {
-            this.assertDataAppAbility(
+            await this.assertDataAppAbility(
                 user,
                 'create',
-                organizationUuid,
                 projectUuid,
                 'Insufficient permissions to create data apps',
             );
@@ -10499,10 +11014,9 @@ export class AppGenerateService extends BaseService {
                         user.userUuid,
                         targetSpaceUuid,
                     );
-                this.assertDataAppAbility(
+                await this.assertDataAppAbility(
                     user,
                     'manage',
-                    organizationUuid,
                     projectUuid,
                     'Insufficient permissions to create a data app in this space',
                     spaceContext,
@@ -10667,10 +11181,7 @@ export class AppGenerateService extends BaseService {
     ): Promise<void> {
         const { appUuid, version, organizationUuid, projectUuid } = payload;
         const { client, bucket } = this.getS3Client();
-        const copilot =
-            await this.orgAiCopilotConfigResolver.getClaudeCodeConfig(
-                organizationUuid,
-            );
+        const copilot = await this.getCodingAgentConfig(organizationUuid);
 
         // Look up the version's custom dependency set once — null means the
         // build uses the template set only (no install step).
