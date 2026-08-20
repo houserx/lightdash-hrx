@@ -203,9 +203,13 @@ export class SavedChartService
         const savedChart = await this.savedChartModel.getSummary(chartUuid);
         const { organizationUuid, projectUuid } = savedChart;
         const { access, inheritsFromOrgOrProject } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                savedChart.spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: savedChart.uuid,
+                    spaceUuid: savedChart.spaceUuid,
+                },
             );
         const auditedAbility = this.createAuditedAbility(user);
         if (
@@ -1324,10 +1328,18 @@ export class SavedChartService
                 inheritsFromOrgOrProject = spaceCtx.inheritsFromOrgOrProject;
             }
         } else {
-            const ctx = await this.spacePermissionService.getSpaceAccessContext(
-                account.user.userUuid,
-                savedChart.spaceUuid,
-            );
+            // Session users only. The embed branches above are left on the space
+            // context deliberately: a direct grant is made to a user, and an embed
+            // token is not one.
+            const ctx =
+                await this.spacePermissionService.getResourceAccessContext(
+                    account.user.userUuid,
+                    'SavedChart',
+                    {
+                        resourceUuid: savedChart.uuid,
+                        spaceUuid: savedChart.spaceUuid,
+                    },
+                );
             access = ctx.access;
             inheritsFromOrgOrProject = ctx.inheritsFromOrgOrProject;
         }
