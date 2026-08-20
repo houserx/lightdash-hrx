@@ -244,6 +244,12 @@ import {
     QueryHistoryTableName,
 } from '../database/entities/queryHistory';
 import {
+    ResourceGroupAccessTable,
+    ResourceGroupAccessTableName,
+    ResourceUserAccessTable,
+    ResourceUserAccessTableName,
+} from '../database/entities/resourceAccess';
+import {
     RolesTableName,
     RoleTable,
     ScopedRolesTableName,
@@ -602,6 +608,8 @@ declare module 'knex/types/tables' {
         [ProjectGroupAccessCustomRolesTableName]: ProjectGroupAccessCustomRolesTable;
         [ShareTableName]: ShareTable;
         [SpaceUserAccessTableName]: SpaceUserAccessTable;
+        [ResourceUserAccessTableName]: ResourceUserAccessTable;
+        [ResourceGroupAccessTableName]: ResourceGroupAccessTable;
         [SlackAuthTokensTableName]: SlackAuthTokensTable;
         [SlackChannelsTableName]: SlackChannelsTable;
         [AnalyticsChartViewsTableName]: AnalyticsChartViews;
