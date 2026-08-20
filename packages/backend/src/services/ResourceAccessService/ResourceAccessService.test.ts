@@ -244,7 +244,6 @@ describe('ResourceAccessService', () => {
             });
 
             expect(resourceAccessModel.removeUserAccess).toHaveBeenCalledWith({
-                projectUuid: PROJECT_UUID,
                 resourceType: 'Dashboard',
                 resourceUuid: DASHBOARD_UUID,
                 targetUserUuid: GRANTEE_UUID,
@@ -295,6 +294,7 @@ describe('ResourceAccessService', () => {
             await expect(
                 service.listResourceAccess(
                     granter,
+                    PROJECT_UUID,
                     'Dashboard',
                     DASHBOARD_UUID,
                 ),
