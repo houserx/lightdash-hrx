@@ -1334,4 +1334,32 @@ describe('DashboardService', () => {
             ).toHaveBeenCalledWith('Dashboard', dashboard.uuid);
         });
     });
+
+    describe('given derived dashboard views are read', () => {
+        it('then getDashboardCharts resolves access for the dashboard', async () => {
+            await service.getDashboardCharts(user, dashboard.uuid);
+
+            expect(
+                spacePermissionService.getResourceAccessContext,
+            ).toHaveBeenCalledWith(
+                user.userUuid,
+                'Dashboard',
+                expect.objectContaining({ resourceUuid: dashboard.uuid }),
+            );
+        });
+
+        it('then scheduling an export resolves access for the dashboard', async () => {
+            await service
+                .checkCreateScheduledDeliveryAccess(user, dashboard.uuid)
+                .catch(() => undefined);
+
+            expect(
+                spacePermissionService.getResourceAccessContext,
+            ).toHaveBeenCalledWith(
+                user.userUuid,
+                'Dashboard',
+                expect.objectContaining({ resourceUuid: dashboard.uuid }),
+            );
+        });
+    });
 });
