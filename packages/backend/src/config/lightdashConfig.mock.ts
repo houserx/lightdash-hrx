@@ -6,6 +6,7 @@ import {
 import { LightdashConfig } from './parseConfig';
 
 export const lightdashConfigMock: LightdashConfig = {
+    resourceGrants: { enabled: false },
     allowMultiOrgs: false,
     auth: {
         pat: {
