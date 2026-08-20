@@ -1,4 +1,5 @@
-import { type SpaceAccess } from './space';
+import { type KnexPaginatedData } from './knex-paginate';
+import { type SpaceAccess, type SpaceShare } from './space';
 
 /**
  * Resource types that can carry a direct grant. Deliberately narrow: each one
@@ -63,4 +64,29 @@ export type ResourceAccessList = {
 export type ApiResourceAccessListResponse = {
     status: 'ok';
     results: ResourceAccessList;
+};
+
+/**
+ * One principal's resolved access to a resource, with the display metadata a
+ * people list needs.
+ *
+ * Deliberately the same shape as `SpaceShare`, because it is the same thing: a
+ * grant resolves into an ordinary space-access entry rather than a parallel kind
+ * of access, so `inheritedFrom: 'direct_resource'` sits in one list beside
+ * `'project'` and `'parent_space'`, ordered by the same most-permissive-wins
+ * rule. Two names for one shape would imply two mechanisms.
+ */
+export type ResourceShare = SpaceShare;
+
+/** Mirrors SpaceAccessListFilters, so the two endpoints filter alike. */
+export type ResourceAccessListFilters = {
+    searchQuery?: string;
+    userUuids?: string[];
+    /** Only entries with direct access -- a grant, or a direct space share. */
+    directOnly?: boolean;
+};
+
+export type ApiResourceShareListResponse = {
+    status: 'ok';
+    results: KnexPaginatedData<ResourceShare[]>;
 };

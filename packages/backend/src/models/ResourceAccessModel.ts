@@ -403,4 +403,64 @@ export class ResourceAccessModel {
 
         return rows.map((row) => row.resourceUuid);
     }
+
+    /**
+     * Every principal holding a grant on one resource, group grants already
+     * expanded to a row per member.
+     *
+     * The counterpart to `getDirectResourceAccess`, which answers "can this user
+     * see it". This one answers "who can see this", so it is deliberately not
+     * scoped to a principal -- it backs the sharing list, not a permission check.
+     */
+    async getAllDirectResourceAccess(
+        resourceType: ResourceAccessResourceType,
+        resourceUuid: string,
+    ): Promise<DirectResourceAccess[]> {
+        const rows: DirectResourceAccess[] = await this.database(
+            ResourceUserAccessTableName,
+        )
+            .select({
+                userUuid: `${ResourceUserAccessTableName}.user_uuid`,
+                resourceUuid: `${ResourceUserAccessTableName}.resource_uuid`,
+                groupUuid: this.database.raw('NULL'),
+                action: `${ResourceUserAccessTableName}.action`,
+                from: this.database.raw('?', [
+                    DirectResourceAccessOrigin.USER_ACCESS,
+                ]),
+            })
+            .where(`${ResourceUserAccessTableName}.resource_type`, resourceType)
+            .where(`${ResourceUserAccessTableName}.resource_uuid`, resourceUuid)
+            .union(
+                this.database(ResourceGroupAccessTableName)
+                    .innerJoin(
+                        GroupMembershipTableName,
+                        `${GroupMembershipTableName}.group_uuid`,
+                        `${ResourceGroupAccessTableName}.group_uuid`,
+                    )
+                    .innerJoin(
+                        UserTableName,
+                        `${UserTableName}.user_id`,
+                        `${GroupMembershipTableName}.user_id`,
+                    )
+                    .select({
+                        userUuid: `${UserTableName}.user_uuid`,
+                        resourceUuid: `${ResourceGroupAccessTableName}.resource_uuid`,
+                        groupUuid: `${ResourceGroupAccessTableName}.group_uuid`,
+                        action: `${ResourceGroupAccessTableName}.action`,
+                        from: this.database.raw('?', [
+                            DirectResourceAccessOrigin.GROUP_ACCESS,
+                        ]),
+                    })
+                    .where(
+                        `${ResourceGroupAccessTableName}.resource_type`,
+                        resourceType,
+                    )
+                    .where(
+                        `${ResourceGroupAccessTableName}.resource_uuid`,
+                        resourceUuid,
+                    ),
+            );
+
+        return rows;
+    }
 }

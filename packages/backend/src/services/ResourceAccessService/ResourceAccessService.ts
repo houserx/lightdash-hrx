@@ -2,8 +2,12 @@ import { subject } from '@casl/ability';
 import {
     ForbiddenError,
     ParameterError,
+    type KnexPaginateArgs,
+    type KnexPaginatedData,
     type ResourceAccessAction,
+    type ResourceAccessListFilters,
     type ResourceAccessResourceType,
+    type ResourceShare,
     type SessionUser,
 } from '@lightdash/common';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
@@ -342,6 +346,67 @@ export class ResourceAccessService extends BaseService {
         return this.resourceAccessModel.listResourceAccess(
             resourceType,
             context.resourceUuid,
+        );
+    }
+
+    /**
+     * The resolved access list for a resource -- who can reach it, at what role,
+     * and where that came from -- as opposed to `listResourceAccess`, which
+     * returns the persisted grant rows alone.
+     *
+     * Mirrors `SpaceService.getSpaceAccessList` guard for guard, so the sharing
+     * UI can treat a resource and a space as the same kind of thing.
+     */
+    async getResourceAccessList(
+        requester: SessionUser,
+        {
+            projectUuid,
+            resourceType,
+            resourceUuid,
+            paginateArgs,
+            filters,
+        }: {
+            projectUuid: string;
+            resourceType: ResourceAccessResourceType;
+            resourceUuid: string;
+            paginateArgs?: KnexPaginateArgs;
+            filters?: ResourceAccessListFilters;
+        },
+    ): Promise<KnexPaginatedData<ResourceShare[]>> {
+        const context = await this.getResourceContext(
+            projectUuid,
+            resourceType,
+            resourceUuid,
+        );
+        await this.assertRequesterCan(requester, 'view', resourceType, context);
+
+        if (filters?.userUuids && filters.userUuids.length > 100) {
+            throw new ParameterError('userUuids accepts at most 100 values');
+        }
+
+        // Asking about nobody is not the same as asking about everybody.
+        if (filters?.userUuids?.length === 0) {
+            return {
+                data: [],
+                ...(paginateArgs
+                    ? {
+                          pagination: {
+                              ...paginateArgs,
+                              totalPageCount: 0,
+                              totalResults: 0,
+                          },
+                      }
+                    : {}),
+            };
+        }
+
+        return this.spacePermissionService.getPaginatedResourceAccess(
+            resourceType,
+            {
+                resourceUuid: context.resourceUuid,
+                spaceUuid: context.spaceUuid,
+            },
+            { paginateArgs, filters, currentUserUuid: requester.userUuid },
         );
     }
 }

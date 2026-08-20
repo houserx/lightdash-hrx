@@ -315,25 +315,30 @@ describe('SpacePermissionService paginated resource access', () => {
     });
 
     describe('given a grant to someone with no access to the space', () => {
+        const outsiderGrant = {
+            ...grant(DASHBOARD_A, 'view'),
+            userUuid: GRANT_USER,
+        };
+
         it('then they appear in the list', async () => {
             const { service } = buildPaginatedService({
                 enabled: true,
-                grants: [grant(DASHBOARD_A, 'view')],
+                grants: [outsiderGrant],
             });
 
             const { data } = await list(service);
 
-            expect(data.map(({ userUuid }) => userUuid)).toContain(USER_UUID);
+            expect(data.map(({ userUuid }) => userUuid)).toContain(GRANT_USER);
         });
 
         it('then the entry is attributed to the resource, not the space', async () => {
             const { service } = buildPaginatedService({
                 enabled: true,
-                grants: [grant(DASHBOARD_A, 'view')],
+                grants: [outsiderGrant],
             });
 
             const { data } = await list(service);
-            const entry = data.find(({ userUuid }) => userUuid === USER_UUID);
+            const entry = data.find(({ userUuid }) => userUuid === GRANT_USER);
 
             // The field the sharing UI reads to label where access came from.
             expect(entry?.inheritedFrom).toBe('direct_resource');
@@ -343,14 +348,47 @@ describe('SpacePermissionService paginated resource access', () => {
         it('then they are counted before metadata is paginated', async () => {
             const { service, permissionModel } = buildPaginatedService({
                 enabled: true,
-                grants: [grant(DASHBOARD_A, 'view')],
+                grants: [outsiderGrant],
             });
 
             await list(service);
 
             const [paginatedUuids] =
                 permissionModel.getPaginatedUserMetadata.mock.calls[0];
-            expect(paginatedUuids).toContain(USER_UUID);
+            expect(paginatedUuids).toContain(GRANT_USER);
+        });
+    });
+
+    describe('given a grant to someone who already reaches the resource', () => {
+        it('then they appear once, attributed to whichever source decided the role', async () => {
+            // USER_UUID already resolves to VIEWER through the organisation, so
+            // a `view` grant adds nothing and must not re-label where access
+            // came from -- only a grant that raises the role does that.
+            const { service } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'view')],
+            });
+
+            const { data } = await list(service);
+            const entries = data.filter(
+                ({ userUuid }) => userUuid === USER_UUID,
+            );
+
+            expect(entries).toHaveLength(1);
+            expect(entries[0].inheritedFrom).toBe('organization');
+        });
+
+        it('then a grant that raises their role is attributed to the resource', async () => {
+            const { service } = buildPaginatedService({
+                enabled: true,
+                grants: [grant(DASHBOARD_A, 'manage')],
+            });
+
+            const { data } = await list(service);
+            const entry = data.find(({ userUuid }) => userUuid === USER_UUID);
+
+            expect(entry?.role).toBe(SpaceMemberRole.EDITOR);
+            expect(entry?.inheritedFrom).toBe('direct_resource');
         });
     });
 
