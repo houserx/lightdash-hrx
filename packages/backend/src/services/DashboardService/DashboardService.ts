@@ -557,36 +557,40 @@ export class DashboardService
             projectUuid,
             chartUuid,
         );
-        const spaceUuids = [
-            ...new Set(dashboards.map((dashboard) => dashboard.spaceUuid)),
-        ];
-        const spaceContexts =
-            await this.spacePermissionService.getSpacesAccessContext(
+        // Keyed by dashboard uuid rather than space uuid: two dashboards in one
+        // space share a space context but not their direct grants. One batched
+        // call, so listing does not scale in round trips.
+        const accessContexts =
+            await this.spacePermissionService.getResourceAccessContexts(
                 user.userUuid,
-                spaceUuids,
+                'Dashboard',
+                dashboards.map((dashboard) => ({
+                    resourceUuid: dashboard.uuid,
+                    spaceUuid: dashboard.spaceUuid,
+                })),
             );
 
         const dashboardsWithContext = dashboards.flatMap((dashboard) => {
-            const spaceContext = spaceContexts[dashboard.spaceUuid];
-            return spaceContext ? [{ dashboard, spaceContext }] : [];
+            const accessContext = accessContexts[dashboard.uuid];
+            return accessContext ? [{ dashboard, accessContext }] : [];
         });
         const auditedAbility = this.createAuditedAbility(user);
         const accessResults = auditedAbility.canBulk(
             'view',
-            dashboardsWithContext.map(({ dashboard, spaceContext }) =>
+            dashboardsWithContext.map(({ dashboard, accessContext }) =>
                 subject('Dashboard', {
-                    ...spaceContext,
+                    ...accessContext,
                     metadata: { dashboardUuid: dashboard.uuid },
                 }),
             ),
         );
 
         return dashboardsWithContext
-            .filter(({ spaceContext }, index) =>
+            .filter(({ accessContext }, index) =>
                 includePrivate
                     ? accessResults[index]
                     : accessResults[index] &&
-                      hasDirectAccessToSpace(user, spaceContext),
+                      hasDirectAccessToSpace(user, accessContext),
             )
             .map(({ dashboard }) => dashboard);
     }
@@ -604,9 +608,13 @@ export class DashboardService
         );
 
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                dashboardDao.spaceUuid,
+                'Dashboard',
+                {
+                    resourceUuid: dashboardDao.uuid,
+                    spaceUuid: dashboardDao.spaceUuid,
+                },
             );
         const dashboard = {
             ...dashboardDao,

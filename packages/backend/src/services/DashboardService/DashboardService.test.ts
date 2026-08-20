@@ -161,20 +161,42 @@ const spaceContexts = {
     },
 };
 
+const contextForSpace = (spaceUuid: string) => {
+    if (spaceUuid === space.space_uuid) {
+        return spaceContexts[space.space_uuid];
+    }
+    if (spaceUuid === privateSpace.uuid) {
+        return spaceContexts[privateSpace.uuid];
+    }
+    return spaceContexts[publicSpace.uuid];
+};
+
 const spacePermissionService = {
-    getSpaceAccessContext: vi.fn(
-        async (_userUuid: string, spaceUuid: string) => {
-            if (spaceUuid === space.space_uuid) {
-                return spaceContexts[space.space_uuid];
-            }
-            if (spaceUuid === privateSpace.uuid) {
-                return spaceContexts[privateSpace.uuid];
-            }
-            return spaceContexts[publicSpace.uuid];
-        },
+    getSpaceAccessContext: vi.fn(async (_userUuid: string, spaceUuid: string) =>
+        contextForSpace(spaceUuid),
     ),
     getSpacesAccessContext: vi.fn(
         async (_userUuid: string, spaceUuids: string[]) => spaceContexts,
+    ),
+    getResourceAccessContext: vi.fn(
+        async (
+            _userUuid: string,
+            _resourceType: string,
+            resource: { resourceUuid: string; spaceUuid: string },
+        ) => contextForSpace(resource.spaceUuid),
+    ),
+    getResourceAccessContexts: vi.fn(
+        async (
+            _userUuid: string,
+            _resourceType: string,
+            resources: { resourceUuid: string; spaceUuid: string }[],
+        ) =>
+            Object.fromEntries(
+                resources.map(({ resourceUuid, spaceUuid }) => [
+                    resourceUuid,
+                    contextForSpace(spaceUuid),
+                ]),
+            ),
     ),
     getFirstViewableSpaceUuid: vi.fn(async () => publicSpace.uuid),
 };
@@ -1251,6 +1273,40 @@ describe('DashboardService', () => {
 
             expect(schedulerModel.createScheduler).toHaveBeenCalledWith(
                 expect.objectContaining({ dashboardUuid: dashboard.uuid }),
+            );
+        });
+    });
+
+    describe('given direct resource grants are resolvable', () => {
+        it('then getByIdOrSlug resolves access for the dashboard, not just its space', async () => {
+            await service.getByIdOrSlug(user, dashboard.uuid);
+
+            expect(
+                spacePermissionService.getResourceAccessContext,
+            ).toHaveBeenCalledWith(
+                user.userUuid,
+                'Dashboard',
+                expect.objectContaining({
+                    resourceUuid: dashboard.uuid,
+                    spaceUuid: dashboard.spaceUuid,
+                }),
+            );
+        });
+
+        it('then getAllByProject resolves access per dashboard in one batched call', async () => {
+            await service.getAllByProject(user, projectUuid);
+
+            expect(
+                spacePermissionService.getResourceAccessContexts,
+            ).toHaveBeenCalledTimes(1);
+            expect(
+                spacePermissionService.getResourceAccessContexts,
+            ).toHaveBeenCalledWith(
+                user.userUuid,
+                'Dashboard',
+                expect.arrayContaining([
+                    expect.objectContaining({ resourceUuid: dashboard.uuid }),
+                ]),
             );
         });
     });
