@@ -19,23 +19,16 @@ import {
     Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import {
-    IconAlertCircle,
-    IconLock,
-    IconUsers,
-    IconUsersGroup,
-} from '@tabler/icons-react';
+import { IconAlertCircle, IconLock, IconUsersGroup } from '@tabler/icons-react';
 import chunk from 'lodash/chunk';
-import { useCallback, useMemo, useState, type FC } from 'react';
+import { useMemo, useState, type FC } from 'react';
 import { useUpdateMutation } from '../../../hooks/useSpaces';
 import useApp from '../../../providers/App/useApp';
-import { LightdashUserAvatar } from '../../Avatar';
+import { AccessPanel, PrincipalAccessRow } from '../AccessPanel/AccessPanel';
 import Callout from '../Callout';
 import MantineIcon from '../MantineIcon';
 import MantineModal from '../MantineModal';
-import PaginateControl from '../PaginateControl';
 import { DEFAULT_PAGE_SIZE } from '../Table/constants';
-import { ServiceAccountBadge } from './ServiceAccountBadge';
 import classes from './ShareSpaceModalShared.module.css';
 import {
     getAccessColor,
@@ -44,7 +37,7 @@ import {
     RootInheritanceOptions,
 } from './ShareSpaceModalUtils';
 import { UserAccessAction, UserAccessOptions } from './ShareSpaceSelect';
-import { getInitials, getUserNameOrEmail } from './Utils';
+import { toUserPrincipal } from './Utils';
 
 type UserAccessListProps = {
     inheritParentPermissions: boolean;
@@ -67,16 +60,12 @@ export const UserAccessList: FC<UserAccessListProps> = ({
     totalPages,
     onPageChange,
 }) => {
-    const handleNextPage = useCallback(() => {
-        if (page < totalPages) onPageChange(page + 1);
-    }, [page, totalPages, onPageChange]);
-
-    const handlePreviousPage = useCallback(() => {
-        if (page > 1) onPageChange(page - 1);
-    }, [page, onPageChange]);
-
     return (
-        <Stack gap="sm">
+        <AccessPanel
+            page={page}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+        >
             {accessList.map((sharedUser) => {
                 const needsPromotion =
                     sharedUser.projectRole === ProjectMemberRole.VIEWER &&
@@ -100,137 +89,93 @@ export const UserAccessList: FC<UserAccessListProps> = ({
                 );
 
                 return (
-                    <Group
+                    <PrincipalAccessRow
                         key={sharedUser.userUuid}
-                        gap="sm"
-                        justify="space-between"
-                        wrap="nowrap"
-                        className={classes.userRow}
-                    >
-                        <Group>
-                            <LightdashUserAvatar
-                                size="sm"
-                                tt="uppercase"
-                                userUuid={sharedUser.userUuid}
-                                avatarUrl={sharedUser.avatarUrl}
-                                avatarGradient={sharedUser.avatarGradient}
-                            >
-                                {getInitials(
-                                    sharedUser.userUuid,
-                                    sharedUser.firstName,
-                                    sharedUser.lastName,
-                                    sharedUser.email,
-                                    sharedUser.isInternal,
-                                )}
-                            </LightdashUserAvatar>
-                            <Text fw={600} fz="sm">
-                                {getUserNameOrEmail(
-                                    sharedUser.userUuid,
-                                    sharedUser.firstName,
-                                    sharedUser.lastName,
-                                    sharedUser.email,
-                                    sharedUser.isInternal,
-                                )}
-                                {isSessionUser ? (
-                                    <Text fw={400} fz="sm" span c="ldGray.6">
-                                        {' '}
-                                        (you)
-                                    </Text>
-                                ) : null}
-                            </Text>
-                            {sharedUser.isInternal ? (
-                                <ServiceAccountBadge />
-                            ) : null}
-                        </Group>
-
-                        {isSessionUser || !sharedUser.hasDirectAccess ? (
-                            <Badge
-                                size="sm"
-                                variant="light"
-                                color={getAccessColor(sharedUser.role).join(
-                                    '.',
-                                )}
-                                radius="xl"
-                                mr="xs"
-                            >
-                                {UserAccessOptions.find(
-                                    (o) => o.value === sharedUser.role,
-                                )?.title ?? sharedUser.role}
-                            </Badge>
-                        ) : (
-                            <Tooltip
-                                disabled={!needsPromotion}
-                                withinPortal
-                                label="User needs to be promoted to interactive viewer to have this space access"
-                                maw={350}
-                                multiline
-                            >
-                                <Select
-                                    classNames={{
-                                        input: disabled
-                                            ? undefined
-                                            : classes.selectInput,
-                                    }}
-                                    size="xs"
-                                    variant={disabled ? 'default' : 'unstyled'}
-                                    comboboxProps={{ withinPortal: true }}
-                                    data={userAccessTypes.map((u) => ({
-                                        label: u.title,
-                                        value: u.value,
-                                    }))}
-                                    value={sharedUser.role}
-                                    renderOption={({ option }) => {
-                                        const opt = userAccessTypes.find(
-                                            (u) => u.value === option.value,
-                                        );
-                                        return (
-                                            <Stack gap={1}>
-                                                <Text fz="sm">
-                                                    {opt?.title}
-                                                </Text>
-                                                <Text fz="xs" opacity={0.65}>
-                                                    {opt?.selectDescription}
-                                                </Text>
-                                            </Stack>
-                                        );
-                                    }}
-                                    onChange={(value) => {
-                                        if (value) {
-                                            onAccessChange(
-                                                value as UserAccessAction,
-                                                sharedUser,
-                                            );
+                        principal={toUserPrincipal(sharedUser, isSessionUser)}
+                        control={
+                            isSessionUser || !sharedUser.hasDirectAccess ? (
+                                <Badge
+                                    size="sm"
+                                    variant="light"
+                                    color={getAccessColor(sharedUser.role).join(
+                                        '.',
+                                    )}
+                                    radius="xl"
+                                    mr="xs"
+                                >
+                                    {UserAccessOptions.find(
+                                        (o) => o.value === sharedUser.role,
+                                    )?.title ?? sharedUser.role}
+                                </Badge>
+                            ) : (
+                                <Tooltip
+                                    disabled={!needsPromotion}
+                                    withinPortal
+                                    label="User needs to be promoted to interactive viewer to have this space access"
+                                    maw={350}
+                                    multiline
+                                >
+                                    <Select
+                                        classNames={{
+                                            input: disabled
+                                                ? undefined
+                                                : classes.selectInput,
+                                        }}
+                                        size="xs"
+                                        variant={
+                                            disabled ? 'default' : 'unstyled'
                                         }
-                                    }}
-                                    error={needsPromotion}
-                                    rightSection={
-                                        needsPromotion ? (
-                                            <MantineIcon
-                                                icon={IconAlertCircle}
-                                                size="sm"
-                                                color="red.6"
-                                            />
-                                        ) : null
-                                    }
-                                    disabled={disabled}
-                                />
-                            </Tooltip>
-                        )}
-                    </Group>
+                                        comboboxProps={{ withinPortal: true }}
+                                        data={userAccessTypes.map((u) => ({
+                                            label: u.title,
+                                            value: u.value,
+                                        }))}
+                                        value={sharedUser.role}
+                                        renderOption={({ option }) => {
+                                            const opt = userAccessTypes.find(
+                                                (u) => u.value === option.value,
+                                            );
+                                            return (
+                                                <Stack gap={1}>
+                                                    <Text fz="sm">
+                                                        {opt?.title}
+                                                    </Text>
+                                                    <Text
+                                                        fz="xs"
+                                                        opacity={0.65}
+                                                    >
+                                                        {opt?.selectDescription}
+                                                    </Text>
+                                                </Stack>
+                                            );
+                                        }}
+                                        onChange={(value) => {
+                                            if (value) {
+                                                onAccessChange(
+                                                    value as UserAccessAction,
+                                                    sharedUser,
+                                                );
+                                            }
+                                        }}
+                                        error={needsPromotion}
+                                        rightSection={
+                                            needsPromotion ? (
+                                                <MantineIcon
+                                                    icon={IconAlertCircle}
+                                                    size="sm"
+                                                    color="red.6"
+                                                />
+                                            ) : null
+                                        }
+                                        disabled={disabled}
+                                    />
+                                </Tooltip>
+                            )
+                        }
+                    />
                 );
             })}
-            {totalPages > 1 && (
-                <PaginateControl
-                    currentPage={page}
-                    totalPages={totalPages}
-                    hasNextPage={page < totalPages}
-                    hasPreviousPage={page > 1}
-                    onNextPage={handleNextPage}
-                    onPreviousPage={handlePreviousPage}
-                    style={{ alignSelf: 'flex-end' }}
-                />
-            )}
-        </Stack>
+        </AccessPanel>
     );
 };
 
@@ -258,16 +203,12 @@ export const GroupsAccessList: FC<GroupAccessListProps> = ({
         );
     }, [groupsAccess, pageSize]);
 
-    const handleNextPage = useCallback(() => {
-        if (page < paginatedList.length) setPage((p) => p + 1);
-    }, [page, paginatedList.length]);
-
-    const handlePreviousPage = useCallback(() => {
-        if (page > 1) setPage((p) => p - 1);
-    }, [page]);
-
     return (
-        <Stack gap="sm">
+        <AccessPanel
+            page={page}
+            totalPages={paginatedList.length}
+            onPageChange={setPage}
+        >
             {paginatedList[page - 1]?.map((group) => {
                 const groupAccessTypes = UserAccessOptions.map((t) =>
                     t.value === UserAccessAction.DELETE
@@ -284,74 +225,56 @@ export const GroupsAccessList: FC<GroupAccessListProps> = ({
                 );
 
                 return (
-                    <Group
+                    <PrincipalAccessRow
                         key={group.groupUuid}
-                        gap="sm"
-                        justify="space-between"
-                        wrap="nowrap"
-                        className={classes.userRow}
-                    >
-                        <Group>
-                            <Avatar size="sm" radius="xl" color="blue">
-                                <MantineIcon icon={IconUsers} size="sm" />
-                            </Avatar>
-                            <Text fw={600} fz="sm">
-                                {group.groupName}
-                            </Text>
-                        </Group>
-
-                        <Select
-                            classNames={{
-                                input: disabled
-                                    ? undefined
-                                    : classes.selectInput,
-                            }}
-                            size="xs"
-                            variant={disabled ? 'default' : 'unstyled'}
-                            comboboxProps={{ withinPortal: true }}
-                            data={groupAccessTypes.map((u) => ({
-                                label: u.title,
-                                value: u.value,
-                            }))}
-                            value={group.spaceRole}
-                            renderOption={({ option }) => {
-                                const opt = groupAccessTypes.find(
-                                    (u) => u.value === option.value,
-                                );
-                                return (
-                                    <Stack gap={1}>
-                                        <Text fz="sm">{opt?.title}</Text>
-                                        <Text fz="xs" opacity={0.65}>
-                                            {opt?.selectDescription}
-                                        </Text>
-                                    </Stack>
-                                );
-                            }}
-                            onChange={(value) => {
-                                if (value) {
-                                    onAccessChange(
-                                        value as UserAccessAction,
-                                        group,
+                        principal={{
+                            type: 'group',
+                            groupUuid: group.groupUuid,
+                            name: group.groupName,
+                        }}
+                        control={
+                            <Select
+                                classNames={{
+                                    input: disabled
+                                        ? undefined
+                                        : classes.selectInput,
+                                }}
+                                size="xs"
+                                variant={disabled ? 'default' : 'unstyled'}
+                                comboboxProps={{ withinPortal: true }}
+                                data={groupAccessTypes.map((u) => ({
+                                    label: u.title,
+                                    value: u.value,
+                                }))}
+                                value={group.spaceRole}
+                                renderOption={({ option }) => {
+                                    const opt = groupAccessTypes.find(
+                                        (u) => u.value === option.value,
                                     );
-                                }
-                            }}
-                            disabled={disabled}
-                        />
-                    </Group>
+                                    return (
+                                        <Stack gap={1}>
+                                            <Text fz="sm">{opt?.title}</Text>
+                                            <Text fz="xs" opacity={0.65}>
+                                                {opt?.selectDescription}
+                                            </Text>
+                                        </Stack>
+                                    );
+                                }}
+                                onChange={(value) => {
+                                    if (value) {
+                                        onAccessChange(
+                                            value as UserAccessAction,
+                                            group,
+                                        );
+                                    }
+                                }}
+                                disabled={disabled}
+                            />
+                        }
+                    />
                 );
             })}
-            {paginatedList.length > 1 && (
-                <PaginateControl
-                    currentPage={page}
-                    totalPages={paginatedList.length}
-                    hasNextPage={page < paginatedList.length}
-                    hasPreviousPage={page > 1}
-                    onNextPage={handleNextPage}
-                    onPreviousPage={handlePreviousPage}
-                    style={{ alignSelf: 'flex-end' }}
-                />
-            )}
-        </Stack>
+        </AccessPanel>
     );
 };
 
