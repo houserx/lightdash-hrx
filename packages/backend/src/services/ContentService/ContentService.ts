@@ -22,6 +22,7 @@ import {
 import { Knex } from 'knex';
 import { intersection } from 'lodash';
 import { LightdashAnalytics } from '../../analytics/LightdashAnalytics';
+import type { LightdashConfig } from '../../config/parseConfig';
 import type { AppGenerateService } from '../../ee/services/AppGenerateService/AppGenerateService';
 import { ContentModel } from '../../models/ContentModel/ContentModel';
 import {
@@ -29,6 +30,7 @@ import {
     ContentFilters,
 } from '../../models/ContentModel/ContentModelTypes';
 import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ResourceAccessModel } from '../../models/ResourceAccessModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import { wrapSentryTransaction } from '../../utils';
 import { BaseService } from '../BaseService';
@@ -40,6 +42,8 @@ import { SpaceService } from '../SpaceService/SpaceService';
 
 type ContentServiceArguments = {
     analytics: LightdashAnalytics;
+    lightdashConfig: Pick<LightdashConfig, 'resourceGrants'>;
+    resourceAccessModel: ResourceAccessModel;
     projectModel: ProjectModel;
     contentModel: ContentModel;
     spaceModel: SpaceModel;
@@ -54,6 +58,10 @@ type ContentServiceArguments = {
 
 export class ContentService extends BaseService {
     analytics: LightdashAnalytics;
+
+    lightdashConfig: Pick<LightdashConfig, 'resourceGrants'>;
+
+    resourceAccessModel: ResourceAccessModel;
 
     projectModel: ProjectModel;
 
@@ -78,6 +86,8 @@ export class ContentService extends BaseService {
     constructor(args: ContentServiceArguments) {
         super();
         this.analytics = args.analytics;
+        this.lightdashConfig = args.lightdashConfig;
+        this.resourceAccessModel = args.resourceAccessModel;
         this.projectModel = args.projectModel;
         this.contentModel = args.contentModel;
 
@@ -215,11 +225,24 @@ export class ContentService extends BaseService {
                     : [];
         }
 
+        // Resources shared directly, without access to their space. Asked for in
+        // one round trip across every project in view and both resource types,
+        // then passed as one list: each content configuration applies it against
+        // its own uuid column, so the column is what disambiguates the two.
+        const grantedResourceUuids = this.lightdashConfig.resourceGrants.enabled
+            ? await this.resourceAccessModel.getGrantedResourceUuids(
+                  user.userUuid,
+                  allowedProjectUuids,
+                  ['Dashboard', 'SavedChart'],
+              )
+            : [];
+
         const results = await this.contentModel.findSummaryContents(
             {
                 ...filters,
                 projectUuids: allowedProjectUuids,
                 spaceUuids: allowedSpaceUuids,
+                grantedResourceUuids,
                 space: {
                     rootSpaces: !isInsideSpace,
                     accessibleChildSpaceUuids,

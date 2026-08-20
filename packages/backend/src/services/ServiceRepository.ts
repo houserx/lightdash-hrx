@@ -1393,6 +1393,8 @@ export class ServiceRepository
                     appGenerateService: this.providers.appGenerateService
                         ? this.getAppGenerateService<AppGenerateService>()
                         : undefined,
+                    lightdashConfig: this.context.lightdashConfig,
+                    resourceAccessModel: this.models.getResourceAccessModel(),
                 }),
         );
     }
