@@ -1,3 +1,4 @@
+import { parseAllReferences } from '../../compiler/exploreCompiler';
 import type { Explore } from '../../types/explore';
 import {
     convertFieldRefToFieldId,
@@ -33,7 +34,6 @@ import {
     reduceRequiredDimensionFiltersToFilterRules,
 } from '../../utils/filters';
 import { getItemId } from '../../utils/item';
-import { timeFrameOrder } from '../../utils/timeFrames';
 import {
     getMetricRepresentation,
     PreAggregateMetricRepresentationKind,
@@ -43,22 +43,16 @@ import {
     getDimensionReferences,
     getMetricReferences,
 } from './references';
+import {
+    getEffectiveDimensionTimeFrame,
+    getPreAggregateGranularityRank,
+    getTimeFrameDerivability,
+    TimeFrameDerivability,
+} from './timeFrameDerivability';
 
 export type PreAggregateMatchResult =
     | { hit: true; preAggregateName: string; miss: null }
     | { hit: false; preAggregateName: null; miss: PreAggregateMatchMiss };
-
-const isGranularityCoarserOrEqual = (
-    queryGranularity: TimeFrames,
-    preAggregateGranularity: TimeFrames,
-): boolean => {
-    const queryIndex = timeFrameOrder.indexOf(queryGranularity);
-    const preAggregateIndex = timeFrameOrder.indexOf(preAggregateGranularity);
-    if (queryIndex === -1 || preAggregateIndex === -1) {
-        return false;
-    }
-    return queryIndex >= preAggregateIndex;
-};
 
 const getDimensionsByFieldId = (
     explore: Explore,
@@ -127,17 +121,17 @@ const filterDimensionFieldIdMatchesDef = (
         return false;
     }
 
-    const targetsRollupTimeDimension = getDimensionReferences({
+    const targetsPreAggregateTimeDimension = getDimensionReferences({
         dimension,
         baseTable: explore.baseTable,
     }).includes(preAggregateDef.timeDimension);
 
     return (
-        !targetsRollupTimeDimension ||
-        isGranularityCoarserOrEqual(
-            dimension.timeInterval ?? TimeFrames.RAW,
+        !targetsPreAggregateTimeDimension ||
+        getTimeFrameDerivability(
+            getEffectiveDimensionTimeFrame(dimension),
             preAggregateDef.granularity,
-        )
+        ) === TimeFrameDerivability.DERIVABLE
     );
 };
 
@@ -159,6 +153,20 @@ const extractDimensionFilterFieldIds = (
                 typeof target.fieldId === 'string',
         )
         .map((target) => target.fieldId);
+};
+
+// Field ids referenced by the base model's sql_filter. ${TABLE}.col raw
+// references and ${lightdash.*} attributes are not field references.
+const extractSqlFilterFieldIds = (explore: Explore): FieldId[] => {
+    const uncompiledSqlWhere =
+        explore.tables[explore.baseTable]?.uncompiledSqlWhere;
+    if (!uncompiledSqlWhere) {
+        return [];
+    }
+
+    return parseAllReferences(uncompiledSqlWhere, explore.baseTable)
+        .filter((ref) => ref.refName !== 'TABLE')
+        .map((ref) => getItemId({ table: ref.refTable, name: ref.refName }));
 };
 
 const getPreAggregateFilterTargetReferences = (
@@ -837,6 +845,29 @@ const getUnsatisfiedPreAggregateFilterMiss = ({
     };
 };
 
+// Mirrors the check order in getMissForDef: a def that failed a later check
+// came closer to matching, so its miss reason is more actionable.
+const missCloseness: Record<PreAggregateMissReason, number> = {
+    // Query-level reasons resolved before the per-definition loop.
+    [PreAggregateMissReason.NO_PRE_AGGREGATES_DEFINED]: 0,
+    [PreAggregateMissReason.CUSTOM_SQL_METRIC]: 0,
+    [PreAggregateMissReason.CUSTOM_METRIC_PRESENT]: 0,
+    [PreAggregateMissReason.TABLE_CALCULATION_PRESENT]: 0,
+    [PreAggregateMissReason.USER_BYPASS]: 0,
+    [PreAggregateMissReason.EXPLORE_RESOLUTION_ERROR]: 0,
+    [PreAggregateMissReason.NO_ACTIVE_MATERIALIZATION]: 0,
+    [PreAggregateMissReason.METRIC_NOT_IN_PRE_AGGREGATE]: 0,
+    [PreAggregateMissReason.NON_ADDITIVE_METRIC]: 1,
+    [PreAggregateMissReason.NON_ADDITIVE_METRIC_REQUIRES_EXACT_MATCH]: 1,
+    [PreAggregateMissReason.CUSTOM_DIMENSION_PRESENT]: 2,
+    [PreAggregateMissReason.DIMENSION_NOT_IN_PRE_AGGREGATE]: 2,
+    [PreAggregateMissReason.FILTER_DIMENSION_NOT_IN_PRE_AGGREGATE]: 3,
+    [PreAggregateMissReason.SQL_FILTER_FIELD_NOT_IN_PRE_AGGREGATE]: 4,
+    [PreAggregateMissReason.PRE_AGGREGATE_FILTER_NOT_SATISFIED]: 5,
+    [PreAggregateMissReason.GRANULARITY_TOO_FINE]: 6,
+    [PreAggregateMissReason.TIME_FRAME_NOT_DERIVABLE]: 6,
+};
+
 const isRawTimeInterval = (timeInterval: TimeFrames | undefined): boolean =>
     !timeInterval || timeInterval === TimeFrames.RAW;
 
@@ -886,12 +917,28 @@ const isExactDimensionSetMatch = ({
             !!preAggregateDef.granularity &&
             getDimensionBaseName(dimension) === preAggregateDef.timeDimension;
         if (isDefTimeDimension) {
-            if (dimension.timeInterval !== preAggregateDef.granularity) {
+            if (
+                getEffectiveDimensionTimeFrame(dimension) !==
+                preAggregateDef.granularity
+            ) {
                 return false;
             }
         } else if (!isRawTimeInterval(dimension.timeInterval)) {
-            // A truncated variant collapses the stored raw values.
-            return false;
+            // A truncated variant is exact only when truncation is an
+            // identity on the stored raw values (e.g. day alias of a DATE).
+            const baseDimension = dimensionsByFieldId.get(
+                convertFieldRefToFieldId(
+                    `${dimension.table}.${getDimensionBaseName(dimension)}`,
+                    explore.baseTable,
+                ),
+            );
+            if (
+                !baseDimension ||
+                getEffectiveDimensionTimeFrame(dimension) !==
+                    getEffectiveDimensionTimeFrame(baseDimension)
+            ) {
+                return false;
+            }
         }
 
         matchedReferences.forEach((reference) =>
@@ -914,7 +961,11 @@ const getGranularityMissForDef = (
     >,
 ): Extract<
     PreAggregateMatchMiss,
-    { reason: PreAggregateMissReason.GRANULARITY_TOO_FINE }
+    {
+        reason:
+            | PreAggregateMissReason.GRANULARITY_TOO_FINE
+            | PreAggregateMissReason.TIME_FRAME_NOT_DERIVABLE;
+    }
 > | null => {
     if (!preAggregateDef.timeDimension || !preAggregateDef.granularity) {
         return null;
@@ -922,22 +973,39 @@ const getGranularityMissForDef = (
 
     for (const dimensionFieldId of metricQuery.dimensions) {
         const dimension = dimensionsByFieldId.get(dimensionFieldId);
-        const queryGranularity = dimension?.timeInterval;
-        const matchesRollupTimeDimension =
+        const queryGranularity = dimension
+            ? getEffectiveDimensionTimeFrame(dimension)
+            : undefined;
+        const matchesPreAggregateTimeDimension =
             !!dimension &&
             !!queryGranularity &&
-            (dimension.timeIntervalBaseDimensionName ?? dimension.name) ===
-                preAggregateDef.timeDimension;
+            getDimensionBaseName(dimension) === preAggregateDef.timeDimension;
+        const derivability = queryGranularity
+            ? getTimeFrameDerivability(
+                  queryGranularity,
+                  preAggregateDef.granularity,
+              )
+            : TimeFrameDerivability.DERIVABLE;
 
         if (
-            matchesRollupTimeDimension &&
-            !isGranularityCoarserOrEqual(
-                queryGranularity,
-                preAggregateDef.granularity,
-            )
+            matchesPreAggregateTimeDimension &&
+            derivability !== TimeFrameDerivability.DERIVABLE
         ) {
+            if (
+                derivability ===
+                TimeFrameDerivability.QUERY_GRANULARITY_TOO_FINE
+            ) {
+                return {
+                    reason: PreAggregateMissReason.GRANULARITY_TOO_FINE,
+                    fieldId: dimensionFieldId,
+                    queryGranularity,
+                    preAggregateGranularity: preAggregateDef.granularity,
+                    preAggregateTimeDimension: preAggregateDef.timeDimension,
+                };
+            }
+
             return {
-                reason: PreAggregateMissReason.GRANULARITY_TOO_FINE,
+                reason: PreAggregateMissReason.TIME_FRAME_NOT_DERIVABLE,
                 fieldId: dimensionFieldId,
                 queryGranularity,
                 preAggregateGranularity: preAggregateDef.granularity,
@@ -957,6 +1025,7 @@ const getMissForDef = ({
     metricsByFieldId,
     unoverriddenRequiredFilterTargetFieldIds,
     requiredFilterTargetFieldIds,
+    sqlFilterFieldIds,
 }: {
     metricQuery: MetricQuery;
     explore: Explore;
@@ -968,6 +1037,7 @@ const getMissForDef = ({
     metricsByFieldId: ReturnType<typeof getMetricsMapFromTables>;
     unoverriddenRequiredFilterTargetFieldIds: readonly FieldId[];
     requiredFilterTargetFieldIds: ReadonlySet<FieldId>;
+    sqlFilterFieldIds: readonly FieldId[];
 }): PreAggregateMatchMiss | null => {
     const defDimensions = new Set(preAggregateDef.dimensions);
     if (
@@ -1115,6 +1185,25 @@ const getMissForDef = ({
         };
     }
 
+    // The model's sql_filter is applied at serve time against materialized
+    // columns, so every field it references must be a covered dimension.
+    const uncoveredSqlFilterFieldId = sqlFilterFieldIds.find(
+        (fieldId) =>
+            !filterDimensionFieldIdMatchesDef(
+                fieldId,
+                explore,
+                preAggregateDef,
+                defDimensions,
+                dimensionsByFieldId,
+            ),
+    );
+    if (uncoveredSqlFilterFieldId) {
+        return {
+            reason: PreAggregateMissReason.SQL_FILTER_FIELD_NOT_IN_PRE_AGGREGATE,
+            fieldId: uncoveredSqlFilterFieldId,
+        };
+    }
+
     const overlappingRequiredFilter = preAggregateDef.filters?.find((filter) =>
         [...requiredFilterTargetFieldIds].some((fieldId) => {
             const dimension = dimensionsByFieldId.get(fieldId);
@@ -1225,11 +1314,13 @@ export const findMatch = (
         ),
     );
 
+    const sqlFilterFieldIds = extractSqlFilterFieldIds(explore);
+
     const matchedDefs: PreAggregateDef[] = [];
-    let firstMiss: PreAggregateMatchMiss | null = null;
-    // A miss from a def that covers the queried metrics is more actionable
-    // than "metric not in pre-aggregate" from an unrelated def.
-    let firstSpecificMiss: PreAggregateMatchMiss | null = null;
+    // Surface the miss from the def that came closest to matching; ties keep
+    // YAML definition order.
+    let closestMiss: PreAggregateMatchMiss | null = null;
+    let closestMissRank = -1;
 
     explore.preAggregates.forEach((preAggregateDef) => {
         const miss = getMissForDef({
@@ -1240,6 +1331,7 @@ export const findMatch = (
             metricsByFieldId,
             unoverriddenRequiredFilterTargetFieldIds,
             requiredFilterTargetFieldIds,
+            sqlFilterFieldIds,
         });
 
         if (!miss) {
@@ -1247,14 +1339,10 @@ export const findMatch = (
             return;
         }
 
-        if (!firstMiss) {
-            firstMiss = miss;
-        }
-        if (
-            !firstSpecificMiss &&
-            miss.reason !== PreAggregateMissReason.METRIC_NOT_IN_PRE_AGGREGATE
-        ) {
-            firstSpecificMiss = miss;
+        const missRank = missCloseness[miss.reason];
+        if (missRank > closestMissRank) {
+            closestMiss = miss;
+            closestMissRank = missRank;
         }
     });
 
@@ -1262,21 +1350,20 @@ export const findMatch = (
         return {
             hit: false,
             preAggregateName: null,
-            miss: firstSpecificMiss ??
-                firstMiss ?? {
-                    reason: PreAggregateMissReason.DIMENSION_NOT_IN_PRE_AGGREGATE,
-                    fieldId:
-                        metricQuery.dimensions[0] ??
-                        metricQuery.metrics[0] ??
-                        'unknown',
-                },
+            miss: closestMiss ?? {
+                reason: PreAggregateMissReason.DIMENSION_NOT_IN_PRE_AGGREGATE,
+                fieldId:
+                    metricQuery.dimensions[0] ??
+                    metricQuery.metrics[0] ??
+                    'unknown',
+            },
         };
     }
 
-    // Defs without a time rollup have no time expansion, so treat them as coarsest.
+    // Defs without a time dimension have no time expansion, so treat them as coarsest.
     const getGranularityCoarseness = (def: PreAggregateDef): number =>
         def.granularity
-            ? timeFrameOrder.indexOf(def.granularity)
+            ? getPreAggregateGranularityRank(def.granularity)
             : Number.MAX_SAFE_INTEGER;
 
     // TODO: Prefer using materialized row count once available.
