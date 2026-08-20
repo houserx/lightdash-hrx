@@ -645,9 +645,13 @@ export class SavedChartService
         }
 
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: savedChartUuid,
+                    spaceUuid,
+                },
             );
 
         const auditedAbility = this.createAuditedAbility(user);
@@ -849,9 +853,13 @@ export class SavedChartService
         } = await this.savedChartModel.getSummary(savedChartUuid);
 
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: savedChartUuid,
+                    spaceUuid,
+                },
             );
 
         const auditedAbility = this.createAuditedAbility(user);
@@ -1093,9 +1101,13 @@ export class SavedChartService
         const savedCharts = await Promise.all(
             savedChartsDaos.map(async (savedChart) => {
                 const { inheritsFromOrgOrProject, access } =
-                    await this.spacePermissionService.getSpaceAccessContext(
+                    await this.spacePermissionService.getResourceAccessContext(
                         user.userUuid,
-                        savedChart.spaceUuid,
+                        'SavedChart',
+                        {
+                            resourceUuid: savedChart.uuid,
+                            spaceUuid: savedChart.spaceUuid,
+                        },
                     );
                 return {
                     ...savedChart,
@@ -1140,9 +1152,13 @@ export class SavedChartService
             });
         } else {
             const { inheritsFromOrgOrProject, access } =
-                await this.spacePermissionService.getSpaceAccessContext(
+                await this.spacePermissionService.getResourceAccessContext(
                     user.userUuid,
-                    spaceUuid,
+                    'SavedChart',
+                    {
+                        resourceUuid: resolvedUuid,
+                        spaceUuid,
+                    },
                 );
             const auditedAbility = this.createAuditedAbility(user);
             if (
@@ -1219,9 +1235,13 @@ export class SavedChartService
         } else {
             const chart = await this.savedChartModel.get(savedChartUuid);
             const { inheritsFromOrgOrProject, access } =
-                await this.spacePermissionService.getSpaceAccessContext(
+                await this.spacePermissionService.getResourceAccessContext(
                     user.userUuid,
-                    chart.spaceUuid,
+                    'SavedChart',
+                    {
+                        resourceUuid: chart.uuid,
+                        spaceUuid: chart.spaceUuid,
+                    },
                 );
             const auditedAbility = this.createAuditedAbility(user);
             if (
@@ -1266,9 +1286,13 @@ export class SavedChartService
         const savedChart =
             await this.savedChartModel.getSummary(savedChartUuid);
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                savedChart.spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: savedChart.uuid,
+                    spaceUuid: savedChart.spaceUuid,
+                },
             );
         const auditedAbility = this.createAuditedAbility(user);
         if (
@@ -1755,9 +1779,13 @@ export class SavedChartService
     ): Promise<SavedChart> {
         const chart = await this.savedChartModel.get(chartUuid);
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                chart.spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: chart.uuid,
+                    spaceUuid: chart.spaceUuid,
+                },
             );
         const auditedAbility = this.createAuditedAbility(user);
         if (
@@ -2132,9 +2160,13 @@ export class SavedChartService
     ): Promise<ChartHistory> {
         const chart = await this.savedChartModel.getSummary(chartUuid);
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                chart.spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: chart.uuid,
+                    spaceUuid: chart.spaceUuid,
+                },
             );
 
         const auditedAbility = this.createAuditedAbility(user);
@@ -2179,9 +2211,13 @@ export class SavedChartService
     ): Promise<ChartVersion> {
         const chart = await this.savedChartModel.getSummary(chartUuid);
         const { inheritsFromOrgOrProject, access } =
-            await this.spacePermissionService.getSpaceAccessContext(
+            await this.spacePermissionService.getResourceAccessContext(
                 user.userUuid,
-                chart.spaceUuid,
+                'SavedChart',
+                {
+                    resourceUuid: chart.uuid,
+                    spaceUuid: chart.spaceUuid,
+                },
             );
         const auditedAbility = this.createAuditedAbility(user);
         if (
@@ -2332,14 +2368,25 @@ export class SavedChartService
             throw new NotFoundError('Space is required');
         }
 
+        // This entry point also serves a bare space, with no chart at all, so the
+        // resource-aware context only applies when there is a chart to resolve.
         const {
             access: spaceAccess,
             inheritsFromOrgOrProject,
             organizationUuid,
-        } = await this.spacePermissionService.getSpaceAccessContext(
-            actor.user.userUuid,
-            spaceUuid,
-        );
+        } = resource.savedChartUuid !== null
+            ? await this.spacePermissionService.getResourceAccessContext(
+                  actor.user.userUuid,
+                  'SavedChart',
+                  {
+                      resourceUuid: resource.savedChartUuid,
+                      spaceUuid,
+                  },
+              )
+            : await this.spacePermissionService.getSpaceAccessContext(
+                  actor.user.userUuid,
+                  spaceUuid,
+              );
 
         const auditedAbility = this.createAuditedAbility(actor.user);
         const hasPermission = auditedAbility.can(
