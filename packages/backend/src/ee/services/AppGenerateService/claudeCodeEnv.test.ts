@@ -2,6 +2,7 @@ import {
     buildClaudeCodeEnv,
     claudeCodeAllowedHosts,
     describeClaudeCodeEnv,
+    redactSandboxEnvSecrets,
 } from './claudeCodeEnv';
 
 describe('buildClaudeCodeEnv', () => {
@@ -158,6 +159,48 @@ describe('describeClaudeCodeEnv', () => {
         expect(
             describeClaudeCodeEnv({ ANTHROPIC_API_KEY: 'super-secret' }),
         ).toBe('Anthropic API');
+    });
+});
+
+describe('redactSandboxEnvSecrets', () => {
+    test('strips a secret env value wherever it appears in the text', () => {
+        expect(
+            redactSandboxEnvSecrets(
+                'auth failed: x-api-key: sk-ant-super-secret-value',
+                { ANTHROPIC_API_KEY: 'sk-ant-super-secret-value' },
+            ),
+        ).toBe('auth failed: x-api-key: [redacted]');
+    });
+
+    test('strips every matching secret when multiple are present', () => {
+        expect(
+            redactSandboxEnvSecrets(
+                'curl -H "x-api-key: sk-ant-abc" -H "Authorization: Bearer tok-123"',
+                {
+                    ANTHROPIC_API_KEY: 'sk-ant-abc',
+                    AWS_BEARER_TOKEN_BEDROCK: 'tok-123',
+                },
+            ),
+        ).toBe(
+            'curl -H "x-api-key: [redacted]" -H "Authorization: Bearer [redacted]"',
+        );
+    });
+
+    test('leaves non-secret env values untouched', () => {
+        expect(
+            redactSandboxEnvSecrets('region is us-east-1, mode is 1', {
+                AWS_REGION: 'us-east-1',
+                CLAUDE_CODE_USE_BEDROCK: '1',
+            }),
+        ).toBe('region is us-east-1, mode is 1');
+    });
+
+    test('is a no-op when the text does not contain any secret value', () => {
+        expect(
+            redactSandboxEnvSecrets('nothing sensitive here', {
+                ANTHROPIC_API_KEY: 'sk-ant-super-secret-value',
+            }),
+        ).toBe('nothing sensitive here');
     });
 });
 

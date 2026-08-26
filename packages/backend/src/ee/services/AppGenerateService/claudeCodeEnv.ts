@@ -112,6 +112,30 @@ export const describeClaudeCodeEnv = (env: Record<string, string>): string => {
     return `Bedrock (${method}, region=${env.AWS_REGION})`;
 };
 
+/** Env var names that hold credential material, matched case-insensitively. */
+const SECRET_ENV_KEY_PATTERN =
+    /API_KEY|AUTH_TOKEN|ACCESS_KEY|SECRET|SESSION_TOKEN|BEARER_TOKEN/i;
+
+/**
+ * Strips the secret values from `buildClaudeCodeEnv`'s output out of sandbox
+ * command output before it reaches a logger. The `claude` CLI holds these
+ * values in its own process env to authenticate itself — its stdout/stderr
+ * (verbose diagnostics, SDK error dumps) is untrusted from our side and can
+ * echo them back, so anything read from the sandboxed run must be sanitized
+ * with the same env this call injected before being logged, thrown, or
+ * otherwise surfaced.
+ */
+export const redactSandboxEnvSecrets = (
+    text: string,
+    env: Record<string, string>,
+): string =>
+    Object.entries(env).reduce((redacted, [key, value]) => {
+        if (!value || !SECRET_ENV_KEY_PATTERN.test(key)) {
+            return redacted;
+        }
+        return redacted.split(value).join('[redacted]');
+    }, text);
+
 /**
  * The egress allowlist for the E2B sandbox firewall. Data apps deny all
  * outbound traffic except the LLM endpoint, so this must follow the same

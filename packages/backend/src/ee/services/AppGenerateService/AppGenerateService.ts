@@ -216,6 +216,7 @@ import {
     buildClaudeCodeEnv,
     claudeCodeAllowedHosts,
     describeClaudeCodeEnv,
+    redactSandboxEnvSecrets,
 } from './claudeCodeEnv';
 import {
     buildClaudeCodeOtelEnv,
@@ -3291,7 +3292,7 @@ export class AppGenerateService extends BaseService {
                         },
                         onStderr: (chunk) => {
                             this.logger.debug(
-                                `App ${appUuid}: claude stderr: ${chunk.trimEnd()}`,
+                                `App ${appUuid}: claude stderr: ${redactSandboxEnvSecrets(chunk, claudeCodeEnv).trimEnd()}`,
                             );
                         },
                     },
@@ -3310,7 +3311,18 @@ export class AppGenerateService extends BaseService {
                         stdout: err.stdout,
                         stderr: err.stderr,
                     };
-                });
+                })
+                .then((raw) => ({
+                    ...raw,
+                    // The claude CLI holds claudeCodeEnv's secrets to
+                    // authenticate itself — its own stdout/stderr (verbose
+                    // diagnostics, SDK error dumps) is untrusted from our
+                    // side and everything downstream (classification,
+                    // logging, thrown error messages) reads from here, so
+                    // this is the one place that needs to sanitize it.
+                    stdout: redactSandboxEnvSecrets(raw.stdout, claudeCodeEnv),
+                    stderr: redactSandboxEnvSecrets(raw.stderr, claudeCodeEnv),
+                }));
             const toolCallCount = processor.totalToolCalls;
             const usage = processor.lastUsage;
             const { timeToFirstTokenMs, turnDurationsMs } = processor;
@@ -6487,7 +6499,7 @@ export class AppGenerateService extends BaseService {
                 // sandbox hasn't generated anything before this restore).
                 // Best-effort: log and move on.
                 this.logger.warn(
-                    `App ${appUuid}: restore FYI to Claude failed (exit ${result.exitCode}): ${AppGenerateService.truncateEnd(result.stderr, 500)}`,
+                    `App ${appUuid}: restore FYI to Claude failed (exit ${result.exitCode}): ${AppGenerateService.truncateEnd(redactSandboxEnvSecrets(result.stderr, claudeCodeEnv), 500)}`,
                 );
                 return;
             }
