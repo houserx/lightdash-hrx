@@ -29,7 +29,7 @@ concurrency:
 jobs:
   snapshot:
     name: Build and snapshot the preview database
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
