@@ -20,7 +20,7 @@ jobs:
     name: Build and Push Images
     outputs:
       image-digest: ${{ steps.build-and-push.outputs.digest }}
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     steps:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -234,7 +234,7 @@ jobs:
   # ============================================================================
   check-cli-changes:
     name: Check if CLI files changed
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
     steps:
@@ -425,7 +425,7 @@ jobs:
     name: Build Linux x64 CLI Binary
     needs: check-cli-changes
     if: needs.check-cli-changes.outputs.should_build == 'true'
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -537,7 +537,7 @@ jobs:
   update-homebrew-formula:
     name: Update Homebrew Formula
     needs: [build-macos-binaries, build-linux-binary]
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     steps:
       - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
@@ -784,7 +784,7 @@ jobs:
   # ============================================================================
   data-app-sandbox-cloud-run-image:
     name: Publish data app Cloud Run sandbox image
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     env:
       IMAGE: lightdash/lightdash-data-app-sandbox-cloud-run
     steps:
@@ -874,7 +874,7 @@ jobs:
   # ============================================================================
   python-sandbox-cloud-run-image:
     name: Publish python Cloud Run sandbox image
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     env:
       IMAGE: lightdash/lightdash-python-sandbox-cloud-run
     steps:
