@@ -257,7 +257,14 @@ jobs:
 
             - name: Notify Slack
               if: always()
+              env:
+                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
               run: |
+                  if [ -z "$SLACK_WEBHOOK_URL" ]; then
+                      echo "SLACK_WEBHOOK_URL not configured for this job -- skipping notification."
+                      exit 0
+                  fi
+
                   TEST_SUMMARY="${{ steps.test_results.outputs.summary }}"
                   PROVIDER="${{ matrix.ai_provider }}"
                   MODEL="${{ matrix.model_name }}"
@@ -271,4 +278,4 @@ jobs:
                       \"username\": \"AI Agent Tests\",
                       \"text\": \"AI Agent Integration Tests completed for *${PROVIDER}* (${MODEL})\\n\\n📊 $TEST_SUMMARY\\n⏱️ Duration: ${MINUTES}m ${SECONDS}s\\n\\n📁 Full reports: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Results & Artifacts>\"
                     }" \
-                    ${{ secrets.SLACK_WEBHOOK_URL}}
+                    "$SLACK_WEBHOOK_URL"
