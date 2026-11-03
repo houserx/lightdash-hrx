@@ -81,6 +81,11 @@ jobs:
               env:
                   PGCONNECTIONURI: postgresql://postgres:password@localhost:5432/lightdash_test
                   LIGHTDASH_SECRET: test-secret-key-for-ci
+                  S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
+                  S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
+                  S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+                  S3_REGION: ${{ secrets.S3_REGION }}
+                  S3_BUCKET: ${{ secrets.S3_BUCKET }}
                   LIGHTDASH_LICENSE_KEY: ${{ secrets.LIGHTDASH_LICENSE_KEY }}
 
             - name: Setup dbt and create tables
