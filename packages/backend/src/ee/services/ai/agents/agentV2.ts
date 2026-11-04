@@ -128,7 +128,7 @@ import { getListWorkstreams } from '../tools/listWorkstreams';
 import { getLoadAgentTools } from '../tools/loadAgentTools';
 import { getLoadMcpTools } from '../tools/loadMcpTools';
 import { getLoadProjectContext } from '../tools/loadProjectContext';
-import { getLoadSkill } from '../tools/loadSkill';
+import { getLoadedSkillKeys, getLoadSkill } from '../tools/loadSkill';
 import { getProjectContextSearchEntries } from '../tools/memoryProjectContext';
 import { getReadAttachments } from '../tools/readAttachments';
 import { getReadContent } from '../tools/readContent';
@@ -1310,6 +1310,13 @@ const getTurnFastResponse = (
     return null;
 };
 
+// The SDK returns invalid tool calls to the model; group per tool so one noisy tool doesn't hide others.
+const captureInvalidToolCall = (error: unknown, toolName: string) =>
+    Sentry.captureException(error, {
+        tags: { errorType: 'AiAgentToolCallInvalid', 'ai.tool': toolName },
+        fingerprint: ['ai-tool-call-invalid', toolName],
+    });
+
 // Raw args of an invalid tool call: may be a parsed object or, when JSON
 // parsing itself failed, the raw string the model produced.
 const serializeRawToolArgs = (input: unknown): string | null => {
@@ -2214,6 +2221,10 @@ export const getAgentTools = (
         visualize: () =>
             getVisualize({
                 getPrompt: dependencies.getPrompt,
+                getExplore: (exploreName) =>
+                    agentContext
+                        .getAvailableExplores()
+                        .find(({ name }) => name === exploreName) ?? null,
                 listThreadComposerQueryNodes:
                     dependencies.listThreadComposerQueryNodes,
                 getThreadComposerNodeColumns:
@@ -2251,6 +2262,7 @@ export const getAgentTools = (
                     listed.has(name.trim().toLowerCase())
                         ? dependencies.loadSkill(name, options)
                         : undefined,
+                loadedSkillKeys: getLoadedSkillKeys(args.messageHistory),
             });
         },
         loadProjectContext: () =>
@@ -2633,6 +2645,7 @@ export const getAgentMessages = (
         repoFsSupportsCodeSearch: args.repoFsSupportsCodeSearch,
         slackLinksOnly: args.slackLinksOnly,
         enableComposerPythonNodes: args.enableComposerQueries,
+        liveSources: args.liveSources,
         unauthenticatedMcpServerNames: getUnauthenticatedMcpServerNames(
             args,
             mcpToolSetup,
@@ -2930,7 +2943,17 @@ const prepareAgentTurn = async ({
     };
 };
 
-export const generateAgentResponse = async ({
+// Forked scope so every capture in the turn, including from tool execute, carries the model.
+const withAgentModelScope = <T>(
+    model: AiAgentArgs['model'],
+    run: () => Promise<T>,
+): Promise<T> =>
+    Sentry.withScope((scope) => {
+        scope.setTag('ai.model', getAiAgentModelName(model));
+        return run();
+    });
+
+const runGenerateAgentResponse = async ({
     args,
     dependencies,
     mcpToolSetup,
@@ -3137,12 +3160,10 @@ export const generateAgentResponse = async ({
                                 // in the error table instead.
                                 if (toolCall.invalid) {
                                     invalidToolCallIds.add(toolCall.toolCallId);
-                                    Sentry.captureException(toolCall.error, {
-                                        tags: {
-                                            errorType: 'AiAgentToolCallInvalid',
-                                            'ai.model': modelName,
-                                        },
-                                    });
+                                    captureInvalidToolCall(
+                                        toolCall.error,
+                                        toolCall.toolName,
+                                    );
                                     await storeInvalidAgentToolCall({
                                         storeToolCallError:
                                             dependencies.storeToolCallError,
@@ -3367,7 +3388,14 @@ export const generateAgentResponse = async ({
     }
 };
 
-export const streamAgentResponse = async ({
+export const generateAgentResponse = (
+    params: Parameters<typeof runGenerateAgentResponse>[0],
+): Promise<string> =>
+    withAgentModelScope(params.args.model, () =>
+        runGenerateAgentResponse(params),
+    );
+
+const runStreamAgentResponse = async ({
     args,
     dependencies,
     mcpToolSetup,
@@ -3522,12 +3550,10 @@ export const streamAgentResponse = async ({
 
                         if (event.chunk.invalid) {
                             invalidToolCallIds.add(event.chunk.toolCallId);
-                            Sentry.captureException(event.chunk.error, {
-                                tags: {
-                                    errorType: 'AiAgentToolCallInvalid',
-                                    'ai.model': modelName,
-                                },
-                            });
+                            captureInvalidToolCall(
+                                event.chunk.error,
+                                event.chunk.toolName,
+                            );
 
                             // Invalid calls are excluded from
                             // ai_agent_tool_call (those rows are replayed into
@@ -4029,3 +4055,10 @@ export const streamAgentResponse = async ({
         throw error;
     }
 };
+
+export const streamAgentResponse = (
+    params: Parameters<typeof runStreamAgentResponse>[0],
+): Promise<AgentStreamTextResult> =>
+    withAgentModelScope(params.args.model, () =>
+        runStreamAgentResponse(params),
+    );

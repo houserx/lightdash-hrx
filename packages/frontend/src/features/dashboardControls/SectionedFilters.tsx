@@ -1,16 +1,17 @@
 import {
-    closestCenter,
     DndContext,
     DragOverlay,
     KeyboardSensor,
     PointerSensor,
-    pointerWithin,
+    useDraggable,
     useDroppable,
     useSensor,
     useSensors,
-    type CollisionDetection,
+    type Active,
     type DragEndEvent,
+    type DragMoveEvent,
     type DragStartEvent,
+    type Over,
 } from '@dnd-kit/core';
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import {
@@ -20,48 +21,122 @@ import {
     type DashboardFilterableField,
     type DashboardFilterRule,
 } from '@lightdash/common';
-import { Box, Group, Text, UnstyledButton } from '@mantine/core';
+import {
+    ActionIcon,
+    Box,
+    Button,
+    Group,
+    Text,
+    Tooltip,
+    UnstyledButton,
+    VisuallyHidden,
+} from '@mantine/core';
 import {
     IconChevronDown,
     IconChevronRight,
     IconFilter,
+    IconPlus,
 } from '@tabler/icons-react';
-import { useCallback, useId, useState, type FC, type ReactNode } from 'react';
+import { isEqual } from 'es-toolkit/compat';
+import {
+    useCallback,
+    useEffect,
+    useId,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+    type FC,
+    type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
+import { v4 as uuidv4 } from 'uuid';
 import FieldIcon from '../../components/common/Filters/FieldIcon';
 import MantineIcon from '../../components/common/MantineIcon';
 import { useUiStrings } from '../../ee/providers/Embed/useUiStrings';
 import useDashboardContext from '../../providers/Dashboard/useDashboardContext';
 import {
+    type DashboardFiltersMovedMethod,
+    type DashboardSectionCreatedSource,
+} from '../../providers/Tracking/types';
+import useTracking from '../../providers/Tracking/useTracking';
+import { EventName } from '../../types/Events';
+import {
+    dashboardEditActions,
     selectControlSections,
     selectDashboardFilters,
     selectSavedFilterOverrides,
+    useDashboardDispatch,
     useDashboardSelector,
 } from '../dashboard/store';
 import {
     isFilterHiddenOnTab,
     useFilterTabPlacement,
 } from '../dashboardFilters/ActiveFilters/useFilterTabPlacement';
-import { AddControl } from './AddControl';
+import { AddControl, InertWhileEditing } from './AddControl';
+import { BarSelectionContext, type BarSelection } from './barSelection';
 import { formatSectionCount } from './fieldLabels';
+import { EditorPopover } from './FilterEditor';
 import { FilterPills } from './FilterPills';
+import pillClasses from './FilterPills.module.css';
+import { focusAfterNaming, useRefocusAfter, type NameExit } from './nameFocus';
 import classes from './SectionedFilters.module.css';
+import { SectionMenu } from './SectionMenu';
+import { SectionNameInput } from './SectionNameInput';
 import {
+    BAR_SPACE_TARGET_ID,
+    countFilters,
+    countSectionChanges,
     getDragAnnouncements,
     groupRulesBySection,
     isRuleInSection,
     moveRuleToSection,
+    moveRulesToSection,
+    NEW_SECTION_TARGET_ID,
+    rangeBetween,
     UNSECTIONED_TARGET_ID,
+    type FilterGroup,
     type SectionRule,
     isCollapsedByDefault,
+    removeSectionFromRules,
+    SECTION_DRAG,
+    underPointerFor,
+    groupSectionsIntoLines,
+    moveSectionBy,
+    placeSection,
+    sectionLineIndexOf,
+    sectionLineTargetId,
+    type SectionPlacement,
 } from './sections';
+import { SelectionBar } from './SelectionBar';
+import { isEditingIn, isNewFilterIn, removeFilterRule } from './sidebarState';
 import { useControlsSidebarSelector } from './useControlsSidebar';
-import { type PillPopoverState } from './ViewerSavedPills';
+import { hasOpenLayer } from './useEditorDismiss';
 
-// The target is what is under the pointer; the keyboard sensor has none,
-// so it falls back to the nearest centre
-const underPointer: CollisionDetection = (args) => {
-    const within = pointerWithin(args);
-    return within.length > 0 ? within : closestCenter(args);
+const ADD_FILTER_SELECTOR =
+    '[data-filter-actions] > button[data-dashboard-filter-control]';
+const NEW_SECTION_SELECTOR = '[data-new-section]';
+const pillSelector = (id: string) => `[data-controls-pill="${id}"]`;
+const sectionNameSelector = (id: string) => `[data-section-name="${id}"]`;
+const sectionAddSelector = (id: string) => `[data-section-add="${id}"]`;
+
+/** An editor's capsule controls; a viewer's capsule has none. */
+type CapsuleActions = {
+    /** A filter is edited: the name, + and menu are inert. */
+    isLocked: boolean;
+    /** Alt with an arrow on the name: along the bar, or to the line above or below */
+    onMove: (direction: 'left' | 'right' | 'up' | 'down') => void;
+    onRename: (name: string) => void;
+    onAddFilter: () => void;
+    onOwnLine: () => void;
+    onRemove: () => void;
+};
+
+const MOVE_KEYS: Record<string, 'left' | 'right' | 'up' | 'down'> = {
+    ArrowLeft: 'left',
+    ArrowRight: 'right',
+    ArrowUp: 'up',
+    ArrowDown: 'down',
 };
 
 type CapsuleProps = {
@@ -73,9 +148,14 @@ type CapsuleProps = {
     /** Whether a member differs from its default, as the bar's reset counts it */
     isChanged: (rule: DashboardFilterRule) => boolean;
     isOpen: boolean;
+    /** Shares its bar line with another section */
+    isSharingLine: boolean;
     onToggle: () => void;
     activeTabUuid: string | undefined;
-    popover: PillPopoverState;
+    triggerClassName: string | undefined;
+    actions: CapsuleActions | null;
+    /** Another capsule dragged over this one: the side it would land on */
+    dropSide: 'before' | 'after' | undefined;
 };
 
 const SectionCapsule: FC<CapsuleProps> = ({
@@ -84,34 +164,67 @@ const SectionCapsule: FC<CapsuleProps> = ({
     visibleRules,
     isChanged,
     isOpen,
+    isSharingLine,
     onToggle,
     activeTabUuid,
-    popover,
+    triggerClassName,
+    actions,
+    dropSide,
 }) => {
     const getUiString = useUiStrings();
     const summaryId = useId();
+    const [isRenaming, setIsRenaming] = useState(false);
+    const { ref: nameRef, exit: renameExit } = useRefocusAfter(isRenaming);
     const changedCount = visibleRules.filter(isChanged).length;
     // A drop anywhere on the outline joins the section: a line after its
     // last pill (`data-over`, a pseudo-element, so nothing changes size);
     // its own pills light nothing
-    const { setNodeRef, isOver, active } = useDroppable({ id: section.id });
+    const { setNodeRef, isOver, active } = useDroppable({
+        id: section.id,
+        data: { kind: SECTION_DRAG },
+    });
+    // An editor drags the capsule by its head to place the section
+    const isDraggable = actions !== null && !actions.isLocked && !isRenaming;
+    const head = useDraggable({
+        id: section.id,
+        data: { kind: SECTION_DRAG },
+        disabled: !isDraggable,
+    });
+    const isSectionDrag = active?.data?.current?.kind === SECTION_DRAG;
     const isForeignOver =
-        isOver && !rules.some(({ rule }) => rule.id === active?.id);
+        isOver &&
+        !isSectionDrag &&
+        !rules.some(({ rule }) => rule.id === active?.id);
+    const chevronLabel = interpolateUiString(
+        getUiString(
+            isOpen
+                ? 'filters.rail.collapseSection'
+                : 'filters.rail.expandSection',
+        ),
+        { section: section.name },
+    );
     // Nothing to show on this tab (an editor's bar only): the member count
     const hasVisible = visibleRules.length > 0;
-    return (
-        <Box
-            ref={setNodeRef}
-            role="group"
-            aria-label={section.name}
-            className={classes.capsule}
-            data-collapsed={!(isOpen && hasVisible) || undefined}
-            data-over={isForeignOver || undefined}
-        >
+    const isFolded = !(isOpen && hasVisible);
+    const isEditorOnAdd = useControlsSidebarSelector(
+        (c) =>
+            isNewFilterIn(c, [section.id]) ||
+            (isFolded && isEditingIn(c, section.id)),
+    );
+    const summary = !hasVisible
+        ? formatSectionCount(getUiString, rules.length)
+        : changedCount > 0
+          ? interpolateUiString(getUiString('filters.sectionChanged'), {
+                changed: changedCount,
+            })
+          : formatSectionCount(getUiString, visibleRules.length);
+
+    const headNode =
+        actions === null ? (
             <UnstyledButton
                 className={`${classes.toggle} mantine-focus-auto`}
                 aria-expanded={isOpen}
-                aria-describedby={isOpen && hasVisible ? undefined : summaryId}
+                aria-describedby={isFolded ? summaryId : undefined}
                 onClick={onToggle}
             >
                 <MantineIcon
@@ -119,46 +232,272 @@ const SectionCapsule: FC<CapsuleProps> = ({
                     size={14}
                     color="dimmed"
                 />
-                <Text span fz="sm" fw={600}>
+                <Text span fz="xs" fw={600}>
                     {section.name}
                 </Text>
             </UnstyledButton>
-            {/* Mounted on expand, so its pills arrive; `contents` keeps them
-                in the capsule's own flow */}
-            {!hasVisible ? (
-                <Text span id={summaryId} fz="sm" c="dimmed">
-                    {formatSectionCount(getUiString, rules.length)}
-                </Text>
-            ) : isOpen ? (
-                <Box display="contents" className={classes.pillsEnter}>
-                    <FilterPills
-                        activeTabUuid={activeTabUuid}
-                        sectionId={section.id}
-                        popover={popover}
+        ) : (
+            // The head drags the capsule (a pointer only: the keys stay the
+            // chevron's and the name's)
+            <Group
+                ref={head.setNodeRef}
+                gap={0}
+                wrap="nowrap"
+                className={classes.head}
+                onPointerDown={(event) =>
+                    head.listeners?.onPointerDown?.(event)
+                }
+            >
+                {/* An editor's chevron only folds; the name renames */}
+                <Tooltip label={chevronLabel}>
+                    <ActionIcon
+                        size="sm"
+                        radius="xl"
+                        aria-label={chevronLabel}
+                        aria-expanded={isOpen}
+                        aria-describedby={isFolded ? summaryId : undefined}
+                        onClick={onToggle}
+                    >
+                        <MantineIcon
+                            icon={isOpen ? IconChevronDown : IconChevronRight}
+                            size={14}
+                        />
+                    </ActionIcon>
+                </Tooltip>
+                {isRenaming ? (
+                    <SectionNameInput
+                        name={section.name}
+                        onCommit={(name, exit) => {
+                            renameExit.current = exit;
+                            setIsRenaming(false);
+                            if (name !== section.name) actions.onRename(name);
+                        }}
+                        onCancel={(exit) => {
+                            renameExit.current = exit;
+                            setIsRenaming(false);
+                        }}
                     />
-                </Box>
-            ) : (
-                <Text span id={summaryId} fz="sm" c="dimmed">
-                    {changedCount > 0
-                        ? interpolateUiString(
-                              getUiString('filters.sectionChanged'),
-                              { changed: changedCount },
-                          )
-                        : formatSectionCount(getUiString, visibleRules.length)}
+                ) : (
+                    <Button
+                        ref={nameRef}
+                        size="xs"
+                        variant="subtle"
+                        color="gray"
+                        radius="xl"
+                        fz="xs"
+                        fw={600}
+                        className={classes.name}
+                        data-section-name={section.id}
+                        inert={actions.isLocked || undefined}
+                        aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
+                        onClick={() => setIsRenaming(true)}
+                        onKeyDown={(event) => {
+                            const direction = MOVE_KEYS[event.key];
+                            if (!event.altKey || direction === undefined)
+                                return;
+                            event.preventDefault();
+                            actions.onMove(direction);
+                        }}
+                    >
+                        {section.name}
+                    </Button>
+                )}
+            </Group>
+        );
+
+    const actionsNode = actions !== null && (
+        <Group
+            gap={2}
+            wrap="nowrap"
+            className={`${classes.actions} ${pillClasses.inert}`}
+            inert={actions.isLocked || undefined}
+        >
+            <EditorPopover isOpen={isEditorOnAdd}>
+                <Tooltip label={`Add filter to ${section.name}`}>
+                    <ActionIcon
+                        size="sm"
+                        radius="xl"
+                        aria-label={`Add filter to ${section.name}`}
+                        data-section-add={section.id}
+                        onClick={actions.onAddFilter}
+                    >
+                        <MantineIcon icon={IconPlus} size={14} />
+                    </ActionIcon>
+                </Tooltip>
+            </EditorPopover>
+            <SectionMenu
+                label={`${section.name} menu`}
+                hasMembers={rules.length > 0}
+                onRename={() => setIsRenaming(true)}
+                isSharingLine={isSharingLine}
+                onOwnLine={actions.onOwnLine}
+                onRemove={actions.onRemove}
+            />
+        </Group>
+    );
+
+    return (
+        <Box
+            ref={setNodeRef}
+            role="group"
+            aria-label={section.name}
+            className={classes.capsule}
+            data-collapsed={isFolded || undefined}
+            data-editable={actions !== null || undefined}
+            data-over={isForeignOver || undefined}
+            data-section-drop={dropSide}
+            data-dragging={head.isDragging || undefined}
+            data-can-drag={isDraggable || undefined}
+        >
+            {headNode}
+            {isFolded ? (
+                // An editor drags the capsule by its count too, the open
+                // hand showing it moves, as a pill's does
+                <Text
+                    span
+                    id={summaryId}
+                    fz="xs"
+                    c="dimmed"
+                    className={classes.summary}
+                    onPointerDown={
+                        isDraggable
+                            ? (event) => head.listeners?.onPointerDown?.(event)
+                            : undefined
+                    }
+                >
+                    {summary}
                 </Text>
+            ) : (
+                <FilterPills
+                    activeTabUuid={activeTabUuid}
+                    sectionId={section.id}
+                    triggerClassName={triggerClassName}
+                />
             )}
+            {actionsNode}
+        </Box>
+    );
+};
+
+// A section's bar line: its capsules, and for an editor the gap above it
+// (and below the last line) that takes a dragged capsule onto a line of its own
+const LineGap: FC<{ index: number; isEnd: boolean; isShown: boolean }> = ({
+    index,
+    isEnd,
+    isShown,
+}) => {
+    const { setNodeRef } = useDroppable({
+        id: sectionLineTargetId(index),
+        data: { kind: SECTION_DRAG, isLineGap: true },
+    });
+    return (
+        <Box
+            ref={setNodeRef}
+            className={classes.lineGap}
+            data-end={isEnd || undefined}
+            data-over={isShown || undefined}
+            aria-hidden
+        />
+    );
+};
+
+// A new section named in place, first, after "Add filter". A cancel hands
+// focus to `cancelFocusSelector`; a commit leaves it to the bar
+const NewSection: FC<{
+    onAdd: (name: string, exit: NameExit) => void;
+    onCancel: () => void;
+    cancelFocusSelector: string;
+}> = ({ onAdd, onCancel, cancelFocusSelector }) => {
+    const cancelExit = useRef<NameExit | null>(null);
+    useEffect(
+        () => () => {
+            if (cancelExit.current === null) return;
+            focusAfterNaming(
+                document.querySelector<HTMLElement>(cancelFocusSelector) ??
+                    document.querySelector<HTMLElement>(ADD_FILTER_SELECTOR),
+                cancelExit.current,
+            );
+        },
+        [cancelFocusSelector],
+    );
+    return (
+        <Box className={classes.capsule} data-collapsed data-editable>
+            <SectionNameInput
+                name=""
+                onCommit={onAdd}
+                onCancel={(exit) => {
+                    cancelExit.current = exit;
+                    onCancel();
+                }}
+            />
         </Box>
     );
 };
 
 // The bar's first button takes a pill out of its section
-const UnsectionTarget: FC<{ children: ReactNode }> = ({ children }) => {
+const UnsectionTarget: FC<{
+    looseEnd: string | undefined;
+    children: ReactNode;
+}> = ({ looseEnd, children }) => {
     const { setNodeRef, isOver } = useDroppable({ id: UNSECTIONED_TARGET_ID });
     return (
         <Box
             ref={setNodeRef}
             className={classes.unsectionTarget}
             data-over={isOver || undefined}
+            data-loose-end={looseEnd}
+        >
+            {children}
+        </Box>
+    );
+};
+
+// The bar's last item in edit mode: a dashed capsule that starts a section,
+// on a click or with a pill dropped on it
+const NewSectionGhost: FC<{ isDisabled: boolean; onClick: () => void }> = ({
+    isDisabled,
+    onClick,
+}) => {
+    const { setNodeRef, isOver } = useDroppable({
+        id: NEW_SECTION_TARGET_ID,
+        disabled: isDisabled,
+    });
+    return (
+        <UnstyledButton
+            ref={setNodeRef}
+            className={`${classes.newSectionGhost} mantine-focus-auto`}
+            data-new-section
+            data-over={isOver || undefined}
+            onClick={onClick}
+        >
+            <MantineIcon icon={IconPlus} size={14} />
+            New section
+        </UnstyledButton>
+    );
+};
+
+// The bar's space outside every capsule and pill also takes a pill out of
+// its section: `data-over` names the leaving pill's kind, and the line shows
+// on the loose item it would land after (`data-loose-end`)
+const BarSpace: FC<{
+    leavingKindOf: (id: string) => FilterGroup | null;
+    isSectioned: boolean;
+    children: ReactNode;
+}> = ({ leavingKindOf, isSectioned, children }) => {
+    const { setNodeRef, isOver, active } = useDroppable({
+        id: BAR_SPACE_TARGET_ID,
+    });
+    return (
+        <Box
+            ref={setNodeRef}
+            className={classes.flow}
+            data-sectioned={isSectioned || undefined}
+            data-over={
+                (isOver &&
+                    active !== null &&
+                    leavingKindOf(String(active.id))) ||
+                undefined
+            }
         >
             {children}
         </Box>
@@ -167,27 +506,111 @@ const UnsectionTarget: FC<{ children: ReactNode }> = ({ children }) => {
 
 type Props = {
     activeTabUuid: string | undefined;
-    /** Rendered last in the flow: the edit bar's requirements button. */
-    children?: ReactNode;
+    /** A viewer's bar before the pills (default: `AddControl`); an embed passes its own. */
+    viewerActions?: ReactNode;
+    /** An embed's class contract hook on each pill (default none). */
+    triggerClassName?: string;
 };
 
-// The filter area of a dashboard with sections: Add, then one outlined
+const LOOSE_START = 'loose-start';
+
+// The filter area of a dashboard with sections: Add, then the unsectioned
+// pass (the unsectioned saved pills, the viewer's own), then one outlined
 // capsule per section with a member on this tab (its toggle, then its pills
-// inline), then the unsectioned pass (the unsectioned saved pills, the
-// viewer's own). Collapsing is local state keyed by section id, as the
-// ids whose state differs from their default; one saved popover is open across
-// every pass. In edit mode one drag context spans the passes: a pill dropped
+// inline), then an editor's entry (the New section capsule, or the new
+// section's name). Collapsing is local state keyed by section id, as the
+// ids whose state differs from their default. In edit mode one drag context spans the passes: a pill dropped
 // on a pill takes its place and section, on a capsule joins that section
-// last, on the first button leaves its section
-export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
+// last, on the first button or the bar's empty space leaves its section
+export const SectionedFilters: FC<Props> = ({
+    activeTabUuid,
+    viewerActions = <AddControl />,
+    triggerClassName,
+}) => {
     const [flippedIds, setFlippedIds] = useState<Set<string>>(() => new Set());
-    const [openPopoverId, setOpenPopoverId] = useState<string>();
     const [draggedId, setDraggedId] = useState<string | null>(null);
-    const onPopoverClose = useCallback(() => setOpenPopoverId(undefined), []);
+    // Where a dragged capsule would land, while that moves something: the
+    // drop line beside a capsule or across the gap between lines
+    const [sectionDrop, setSectionDrop] = useState<SectionPlacement | null>(
+        null,
+    );
+    // An editor's picked pills, and the pill picked last (a range's start)
+    const [picked, setPicked] = useState<{
+        ids: string[];
+        anchorId: string | null;
+    }>({ ids: [], anchorId: null });
+    const selectedIds = picked.ids;
+    // A section being named on the bar, with the pills it takes on commit
+    const [naming, setNaming] = useState<{
+        moveIds: string[];
+        source: DashboardSectionCreatedSource;
+    } | null>(null);
     const getUiString = useUiStrings();
     const isViewer = useControlsSidebarSelector((c) => c.isViewer);
+    // A viewer's flips last for one visit: a mode change starts from the saved state
+    const [flipsMode, setFlipsMode] = useState(isViewer);
+    if (flipsMode !== isViewer) {
+        setFlipsMode(isViewer);
+        setFlippedIds(new Set());
+    }
+    const isEditing = useControlsSidebarSelector((c) => c.isSidebarOpen);
+    // A filter being created is no move: Cancel takes it out
+    const newFilterId = useControlsSidebarSelector((c) =>
+        c.isNew ? (c.editing?.filterId ?? null) : null,
+    );
+    const openNew = useControlsSidebarSelector((c) => c.openNew);
+    // Any edit, however it starts, ends the selection: adjusted in render
+    const [wasEditing, setWasEditing] = useState(isEditing);
+    if (isEditing !== wasEditing) {
+        setWasEditing(isEditing);
+        if (isEditing) setPicked({ ids: [], anchorId: null });
+    }
+    // Focus to hand over once the next render is on screen: the first of
+    // these selectors that finds an element takes it
+    const focusAfter = useRef<string[] | null>(null);
+    useLayoutEffect(() => {
+        if (focusAfter.current === null) return;
+        const element = focusAfter.current
+            .map((selector) => document.querySelector<HTMLElement>(selector))
+            .find((candidate) => candidate !== null);
+        focusAfter.current = null;
+        element?.focus();
+    });
+    // A new section's + (its next step) takes focus once it is on screen,
+    // unless the naming blurred to another element or moved pills (the
+    // first moved pill has focus then)
+    const focusNewSection = useRef<{ id: string; exit: NameExit } | null>(null);
+    useLayoutEffect(() => {
+        const pending = focusNewSection.current;
+        if (pending === null) return;
+        focusNewSection.current = null;
+        const active = document.activeElement;
+        if (active !== null && active !== document.body) return;
+        focusAfterNaming(
+            document.querySelector<HTMLElement>(
+                sectionAddSelector(pending.id),
+            ) ??
+                document.querySelector<HTMLElement>(
+                    sectionNameSelector(pending.id),
+                ) ??
+                document.querySelector<HTMLElement>(ADD_FILTER_SELECTOR),
+            pending.exit,
+        );
+    });
+    const dispatch = useDashboardDispatch();
+    const { track } = useTracking();
+    const dashboardUuid = useDashboardContext((c) => c.dashboard?.uuid);
     const sections = useDashboardSelector(selectControlSections);
+    // A new key per move, so the same words are announced again
+    const [moveStatus, setMoveStatus] = useState({ key: 0, text: '' });
+    const savedSections = useDashboardContext(
+        (c) => c.dashboard?.config?.controlSections,
+    );
     const dashboardFilters = useDashboardSelector(selectDashboardFilters);
+    const eventBase = {
+        dashboardUuid,
+        filtersCount: countFilters(dashboardFilters),
+    };
     const overrides = useDashboardSelector(selectSavedFilterOverrides);
     // A viewer's saved pill is changed once Apply wrote it as an override; an
     // editor's values are the defaults, so nothing of theirs counts
@@ -196,9 +619,8 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
         [...overrides.dimensions, ...overrides.metrics].some(
             (override) => override.id === rule.id,
         );
-    const isLoading = useDashboardContext(
-        (c) => c.isLoadingDashboardFilters || c.isFetchingDashboardFilters,
-    );
+    // The first load only: a refetch keeps the last fields, so the capsules stay
+    const isLoading = useDashboardContext((c) => c.isLoadingDashboardFilters);
     const setDashboardFilters = useDashboardContext(
         (c) => c.setDashboardFilters,
     );
@@ -230,7 +652,7 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
             return next;
         });
 
-    // No groups while loading: the unsectioned pass shows the skeletons. A
+    // No groups on the first load: the unsectioned pass shows the skeletons. A
     // viewer sees only the sections with a member on this tab; an editor
     // every section, so each is a drop target
     const groups = isLoading
@@ -252,56 +674,325 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
                       : [{ section, rules, visibleRules }];
               },
           );
+    // An editor sees the saved way to start; only a viewer's flips are local
     const isOpen = (section: DashboardControlSection, total: number) =>
-        !isCollapsedByDefault(section, total) !== flippedIds.has(section.id);
-    // A popover in a collapsed or hidden section is closed with it
-    const sectionOfOpenPopover = groupRulesBySection(
-        dashboardFilters,
-        sections,
-    ).find(({ rules }) => rules.some(({ rule }) => rule.id === openPopoverId));
-    const isPopoverShown =
-        openPopoverId === undefined ||
-        sectionOfOpenPopover === undefined ||
-        sectionOfOpenPopover.section === null ||
-        groups.some(
-            ({ section, rules }) =>
-                section.id === sectionOfOpenPopover.section?.id &&
-                isOpen(section, rules.length),
-        );
-    const popover: PillPopoverState = {
-        openPopoverId: isPopoverShown ? openPopoverId : undefined,
-        onPopoverOpen: setOpenPopoverId,
-        onPopoverClose,
-    };
+        !isCollapsedByDefault(section, total) !==
+        (isViewer && flippedIds.has(section.id));
+    // The pills on screen in bar order: each open capsule's, then the
+    // unsectioned ones; a folded capsule's are left out. Read when a pill is
+    // picked, so the selection does not change with it
+    const isShownOnTab = (rule: DashboardFilterRule) =>
+        !isFilterHiddenOnTab(getTabsUsingFilter(rule), activeTabUuid);
+    const looseRules = groupRulesBySection(dashboardFilters, sections)
+        .filter(({ section }) => section === null)
+        .flatMap(({ rules }) => rules);
+    const looseOnTab = looseRules.filter(({ rule }) => isShownOnTab(rule));
+    // Where a pill leaving its section lands, by kind: after the last loose
+    // pill of its kind; a metric with none after the last loose dimension;
+    // else first, after "Add filter"
+    const lastLooseOf = (group: FilterGroup) =>
+        looseOnTab.filter((entry) => entry.group === group).at(-1)?.rule.id;
+    const dimensionsEnd = lastLooseOf('dimensions') ?? LOOSE_START;
+    const metricsEnd =
+        lastLooseOf('metrics') ?? lastLooseOf('dimensions') ?? LOOSE_START;
+    const looseEnds: Record<string, string> = {};
+    looseEnds[dimensionsEnd] = 'dimensions';
+    looseEnds[metricsEnd] = [looseEnds[metricsEnd], 'metrics']
+        .filter(Boolean)
+        .join(' ');
+    const barOrder = [
+        ...looseOnTab.map(({ rule }) => rule),
+        ...groups.flatMap(({ section, rules, visibleRules }) =>
+            isOpen(section, rules.length) ? visibleRules : [],
+        ),
+    ].map((rule) => rule.id);
+    const latestBarOrder = useRef(barOrder);
+    useLayoutEffect(() => {
+        latestBarOrder.current = barOrder;
+    });
+    const clearSelection = useCallback(
+        () => setPicked({ ids: [], anchorId: null }),
+        [],
+    );
+    const selection = useMemo<BarSelection>(
+        () => ({
+            selectedIds,
+            pick: (id, isRange) =>
+                setPicked(({ ids, anchorId }) => {
+                    const range = isRange
+                        ? rangeBetween(latestBarOrder.current, anchorId, id)
+                        : null;
+                    return {
+                        anchorId: id,
+                        ids:
+                            range !== null
+                                ? [
+                                      ...ids,
+                                      ...range.filter((r) => !ids.includes(r)),
+                                  ]
+                                : ids.includes(id)
+                                  ? ids.filter((r) => r !== id)
+                                  : [...ids, id],
+                    };
+                }),
+            clear: clearSelection,
+        }),
+        [selectedIds, clearSelection],
+    );
+    // Escape clears the selection, unless something open or focused owns it
+    const hasSelection = selectedIds.length > 0;
+    useEffect(() => {
+        if (!hasSelection) return;
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            if (
+                event.target instanceof Element &&
+                event.target.closest('[data-own-escape]')
+            )
+                return;
+            if (hasOpenLayer()) return;
+            clearSelection();
+        };
+        // Capture: an open menu is still open when this runs
+        document.addEventListener('keydown', handleKeyDown, true);
+        return () =>
+            document.removeEventListener('keydown', handleKeyDown, true);
+    }, [hasSelection, clearSelection]);
 
-    const capsules = groups.map(({ section, rules, visibleRules }) => (
+    // A move writes the sections at once, as a filter's move does; the
+    // section keeps focus on its name, wherever its line now is
+    const arrange = (id: string, next: DashboardControlSection[]) => {
+        if (next === sections) return;
+        focusAfter.current = [sectionNameSelector(id)];
+        dispatch(dashboardEditActions.arrangeControlSections(next));
+    };
+    // The bar's lines: a section shares the line of the one before it when
+    // it is `inline`, else starts its own. A viewer's hidden sections leave
+    // their lines as they are
+    const groupById = new Map(groups.map((group) => [group.section.id, group]));
+    const lines = groupSectionsIntoLines(sections)
+        .map((line) => line.filter(({ id }) => groupById.has(id)))
+        .filter((line) => line.length > 0);
+    const capsuleFor = (
+        { section, rules, visibleRules }: (typeof groups)[number],
+        lineSize: number,
+    ) => (
         <SectionCapsule
             key={section.id}
+            isSharingLine={lineSize > 1}
+            dropSide={
+                sectionDrop !== null &&
+                'overId' in sectionDrop &&
+                sectionDrop.overId === section.id
+                    ? sectionDrop.side
+                    : undefined
+            }
             section={section}
             rules={rules}
             visibleRules={visibleRules}
             isChanged={isChanged}
             isOpen={isOpen(section, rules.length)}
-            onToggle={() => toggle(section.id)}
+            onToggle={() => {
+                // An editor's fold is the saved way to start; back at the size
+                // rule's value with nothing saved, it follows the rule again
+                if (!isViewer) {
+                    const collapsed = isOpen(section, rules.length);
+                    const isSizeDefault =
+                        collapsed ===
+                        isCollapsedByDefault(
+                            { id: section.id, name: section.name },
+                            rules.length,
+                        );
+                    const savedCollapsed = savedSections?.find(
+                        ({ id }) => id === section.id,
+                    )?.collapsed;
+                    dispatch(
+                        dashboardEditActions.setControlSectionCollapsed({
+                            id: section.id,
+                            collapsed:
+                                isSizeDefault && savedCollapsed === undefined
+                                    ? undefined
+                                    : collapsed,
+                        }),
+                    );
+                    return;
+                }
+                track({
+                    name: EventName.DASHBOARD_SECTION_TOGGLED,
+                    properties: {
+                        dashboardUuid,
+                        filtersCount: rules.length,
+                        expanded: !isOpen(section, rules.length),
+                        collapsedByDefault: isCollapsedByDefault(
+                            section,
+                            rules.length,
+                        ),
+                    },
+                });
+                toggle(section.id);
+            }}
             activeTabUuid={activeTabUuid}
-            popover={popover}
+            triggerClassName={triggerClassName}
+            actions={
+                isViewer
+                    ? null
+                    : {
+                          isLocked: isEditing,
+                          onMove: (direction) => {
+                              const next = moveSectionBy(
+                                  sections,
+                                  section.id,
+                                  direction,
+                              );
+                              if (next === sections) return;
+                              const nextLines = groupSectionsIntoLines(next);
+                              const line = nextLines.findIndex((members) =>
+                                  members.some(({ id }) => id === section.id),
+                              );
+                              const place = nextLines[line].findIndex(
+                                  ({ id }) => id === section.id,
+                              );
+                              setMoveStatus(({ key }) => ({
+                                  key: key + 1,
+                                  text: `${section.name} moved to section line ${line + 1}, position ${place + 1}`,
+                              }));
+                              arrange(section.id, next);
+                          },
+                          onOwnLine: () => {
+                              const index = lines.findIndex((line) =>
+                                  line.some(({ id }) => id === section.id),
+                              );
+                              arrange(
+                                  section.id,
+                                  placeSection(sections, section.id, {
+                                      lineIndex: index + 1,
+                                  }),
+                              );
+                          },
+                          onRename: (name) =>
+                              dispatch(
+                                  dashboardEditActions.renameControlSection({
+                                      ...section,
+                                      name,
+                                  }),
+                              ),
+                          onAddFilter: () => openNew(section.id),
+                          onRemove: () => {
+                              // The menu leaves with its capsule
+                              focusAfter.current = [ADD_FILTER_SELECTOR];
+                              dispatch(
+                                  dashboardEditActions.removeControlSection(
+                                      section.id,
+                                  ),
+                              );
+                              if (rules.length === 0) return;
+                              setDashboardFilters((filters) =>
+                                  removeSectionFromRules(filters, section.id),
+                              );
+                              setHaveFiltersChanged(true);
+                          },
+                      }
+            }
         />
+    );
+    const sectionLines = lines.map((line, index) => (
+        <Box key={line[0].id} className={classes.sectionLine}>
+            {!isViewer && (
+                <LineGap
+                    index={index}
+                    isEnd={false}
+                    isShown={
+                        sectionDrop !== null &&
+                        'lineIndex' in sectionDrop &&
+                        sectionDrop.lineIndex === index
+                    }
+                />
+            )}
+            {line.map(({ id }) => {
+                const group = groupById.get(id);
+                return group ? capsuleFor(group, line.length) : null;
+            })}
+            {!isViewer && index === lines.length - 1 && (
+                <LineGap
+                    index={lines.length}
+                    isEnd
+                    isShown={
+                        sectionDrop !== null &&
+                        'lineIndex' in sectionDrop &&
+                        sectionDrop.lineIndex === lines.length
+                    }
+                />
+            )}
+        </Box>
     ));
     const pills = (
         <FilterPills
             activeTabUuid={activeTabUuid}
             sectionId={null}
-            popover={popover}
+            looseEnds={isViewer ? undefined : looseEnds}
+            triggerClassName={triggerClassName}
         />
+    );
+
+    // Sections always sit below the filters outside any section, each new
+    // one on a line of its own
+    const isSectionsOwnLine = lines.length > 0 || naming !== null;
+
+    // Named last, in the entry's place at the bar's end, wherever it was
+    // started, so nothing before it moves
+    const newSection = naming !== null && (
+        <Box className={classes.line} data-own-line>
+            <NewSection
+                onAdd={(name, exit) => {
+                    const section = { id: uuidv4(), name };
+                    focusNewSection.current = { id: section.id, exit };
+                    dispatch(dashboardEditActions.addControlSection(section));
+                    const filtersMoved =
+                        naming.moveIds.length > 0
+                            ? moveToSection(
+                                  naming.moveIds,
+                                  section.id,
+                                  [...sections, section],
+                                  // The creation is the event, with filtersMoved
+                                  null,
+                              )
+                            : 0;
+                    track({
+                        name: EventName.DASHBOARD_SECTION_CREATED,
+                        properties: {
+                            ...eventBase,
+                            source: naming.source,
+                            filtersMoved,
+                        },
+                    });
+                    setNaming(null);
+                }}
+                // A cancelled name moves nothing and keeps the selection
+                onCancel={() => setNaming(null)}
+                cancelFocusSelector={
+                    naming.source === 'new_section_capsule' ||
+                    naming.source === 'new_section_drop'
+                        ? NEW_SECTION_SELECTOR
+                        : ADD_FILTER_SELECTOR
+                }
+            />
+        </Box>
     );
 
     if (isViewer) {
         return (
-            <Box className={classes.flow}>
-                <AddControl />
-                {capsules}
+            <Box
+                className={classes.flow}
+                data-sectioned={sections.length > 0 || undefined}
+            >
+                {viewerActions}
                 {pills}
-                {children}
+                <Box
+                    className={classes.sections}
+                    data-own-line={isSectionsOwnLine || undefined}
+                >
+                    {sectionLines}
+                </Box>
             </Box>
         );
     }
@@ -309,6 +1000,8 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
     const allRules = groupRulesBySection(dashboardFilters, sections).flatMap(
         ({ rules }) => rules,
     );
+    // The bar's end: a capsule that starts a section, once there is a filter
+    const isGhostShown = allRules.length > 0;
     const fieldOf = ({ rule, group }: SectionRule) =>
         getDashboardFilterField<DashboardFilterableField>(
             group === 'metrics'
@@ -318,8 +1011,9 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
             filterableFieldsByTileUuid,
         ) ?? null;
     const nameOf = (id: string) => {
-        if (id === UNSECTIONED_TARGET_ID)
+        if (id === UNSECTIONED_TARGET_ID || id === BAR_SPACE_TARGET_ID)
             return 'the space outside any section';
+        if (id === NEW_SECTION_TARGET_ID) return 'a new section';
         const section = sections.find((s) => s.id === id);
         if (section)
             return `section ${section.name || getUiString('filters.rail.untitledSection')}`;
@@ -330,26 +1024,170 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
                   found.rule.target.fieldId
             : 'a filter';
     };
+    // Picked, in display order, and only what is still a filter
+    const selected = allRules
+        .map(({ rule }) => rule.id)
+        .filter((id) => selectedIds.includes(id));
+    const sectionOfRule = (rule: DashboardFilterRule) =>
+        isRuleInSection(rule, null, sections) ? null : (rule.sectionId ?? null);
+    const selectedSectionIds = [
+        ...new Set(
+            allRules
+                .filter(({ rule }) => selected.includes(rule.id))
+                .map(({ rule }) => sectionOfRule(rule)),
+        ),
+    ];
+    // A bar write that changed sections, tracked with how many filters moved
+    const trackMoved = (count: number, method: DashboardFiltersMovedMethod) => {
+        if (count > 0)
+            track({
+                name: EventName.DASHBOARD_FILTERS_MOVED,
+                properties: {
+                    ...eventBase,
+                    method,
+                    count,
+                    whileEditing: isEditing,
+                },
+            });
+    };
+    // Pills into a section (null: out of theirs), in display order; the
+    // selection ends and the first moved pill takes focus, else "Add filter".
+    // Returns how many changed section; a null method tracks no move
+    const moveToSection = (
+        ids: string[],
+        sectionId: string | null,
+        knownSections: DashboardControlSection[],
+        method: DashboardFiltersMovedMethod | null,
+    ) => {
+        const moved = moveRulesToSection(
+            dashboardFilters,
+            ids,
+            sectionId,
+            knownSections,
+        );
+        clearSelection();
+        focusAfter.current = [
+            ...(ids[0] === undefined ? [] : [pillSelector(ids[0])]),
+            ADD_FILTER_SELECTOR,
+        ];
+        if (moved === dashboardFilters) return 0;
+        setDashboardFilters(moved);
+        setHaveFiltersChanged(true);
+        const count = countSectionChanges(
+            dashboardFilters,
+            moved,
+            knownSections,
+        );
+        if (method !== null) trackMoved(count, method);
+        return count;
+    };
+    const moveSelected = (
+        sectionId: string | null,
+        method: DashboardFiltersMovedMethod,
+    ) => moveToSection(selected, sectionId, sections, method);
+    const removeSelected = () => {
+        setDashboardFilters((filters) =>
+            selected.reduce(removeFilterRule, filters),
+        );
+        setHaveFiltersChanged(true);
+        clearSelection();
+        focusAfter.current = [ADD_FILTER_SELECTOR];
+    };
+    const isUnsectionTarget = (id: string) =>
+        id === UNSECTIONED_TARGET_ID || id === BAR_SPACE_TARGET_ID;
+    const leavingKindOf = (id: string): FilterGroup | null => {
+        const found = allRules.find(({ rule }) => rule.id === id);
+        if (found === undefined) return null;
+        return (selected.length > 1 && selected.includes(id)) ||
+            sectionOfRule(found.rule) !== null
+            ? found.group
+            : null;
+    };
+    const isSelectionDragged =
+        draggedId !== null &&
+        selected.length > 1 &&
+        selected.includes(draggedId);
+    // A capsule over a capsule lands on the side of its centre the dragged
+    // copy's centre is; over the gap between lines, on a line of its own
+    const sectionPlacementOf = (
+        active: Active,
+        over: Over | null,
+    ): SectionPlacement | null => {
+        if (over === null) return null;
+        const overId = String(over.id);
+        const lineIndex = sectionLineIndexOf(overId);
+        if (lineIndex !== null) return { lineIndex };
+        if (overId === String(active.id)) return null;
+        const dragged = active.rect.current.translated;
+        const side =
+            dragged !== null &&
+            dragged.left + dragged.width / 2 <
+                over.rect.left + over.rect.width / 2
+                ? 'before'
+                : 'after';
+        return { overId, side };
+    };
+    const handleDragMove = ({ active, over }: DragMoveEvent) => {
+        if (active.data?.current?.kind !== SECTION_DRAG) return;
+        const placement = sectionPlacementOf(active, over);
+        const next =
+            placement !== null &&
+            placeSection(sections, String(active.id), placement) !== sections
+                ? placement
+                : null;
+        setSectionDrop((previous) =>
+            isEqual(next, previous) ? previous : next,
+        );
+    };
     const handleDragEnd = ({ active, over }: DragEndEvent) => {
         setDraggedId(null);
-        if (!over || active.id === over.id) return;
+        setSectionDrop(null);
         const activeId = String(active.id);
+        if (active.data?.current?.kind === SECTION_DRAG) {
+            const placement = sectionPlacementOf(active, over);
+            if (placement !== null)
+                arrange(activeId, placeSection(sections, activeId, placement));
+            return;
+        }
+        // Onto the New section capsule: name it, then the pill (or the
+        // selection it carries) moves in; no section starts during an edit
+        if (over && String(over.id) === NEW_SECTION_TARGET_ID) {
+            if (isEditing) return;
+            setNaming({
+                moveIds:
+                    selected.length > 1 && selected.includes(activeId)
+                        ? selected
+                        : [activeId],
+                source: 'new_section_drop',
+            });
+            return;
+        }
+        // A picked pill carries the selection: all of them join the target's section
+        if (over && selected.length > 1 && selected.includes(activeId)) {
+            const overId = String(over.id);
+            // Dropped back on itself: nothing moves
+            if (overId === activeId) return;
+            const overRule = allRules.find(({ rule }) => rule.id === overId);
+            moveSelected(
+                isUnsectionTarget(overId)
+                    ? null
+                    : overRule
+                      ? sectionOfRule(overRule.rule)
+                      : overId,
+                'drag',
+            );
+            return;
+        }
+        if (!over || active.id === over.id) return;
         const overId = String(over.id);
         const activeRule = allRules.find(({ rule }) => rule.id === activeId);
         if (!activeRule) return;
-        const currentSectionId = isRuleInSection(
-            activeRule.rule,
-            null,
-            sections,
-        )
-            ? null
-            : (activeRule.rule.sectionId ?? null);
-        const target =
-            overId === UNSECTIONED_TARGET_ID
-                ? { sectionId: null }
-                : sections.some((s) => s.id === overId)
-                  ? { sectionId: overId }
-                  : { ruleId: overId };
+        const currentSectionId = sectionOfRule(activeRule.rule);
+        const target = isUnsectionTarget(overId)
+            ? { sectionId: null }
+            : sections.some((s) => s.id === overId)
+              ? { sectionId: overId }
+              : { ruleId: overId };
         if ('sectionId' in target && target.sectionId === currentSectionId)
             return;
         const moved = moveRuleToSection(
@@ -359,49 +1197,161 @@ export const SectionedFilters: FC<Props> = ({ activeTabUuid, children }) => {
             sections,
         );
         if (moved === dashboardFilters) return;
+        if (selected.includes(activeId)) clearSelection();
         setDashboardFilters(moved);
         setHaveFiltersChanged(true);
+        if (activeId !== newFilterId)
+            trackMoved(
+                countSectionChanges(dashboardFilters, moved, sections),
+                'drag',
+            );
     };
     const dragged = allRules.find(({ rule }) => rule.id === draggedId);
+    const draggedSection = sections.find(({ id }) => id === draggedId);
     const draggedField = dragged ? fieldOf(dragged) : null;
+    const barEnd = (
+        <>
+            {naming === null && isGhostShown && (
+                <Box
+                    className={classes.line}
+                    data-own-line={lines.length > 0 || undefined}
+                >
+                    <InertWhileEditing>
+                        <NewSectionGhost
+                            isDisabled={isEditing}
+                            onClick={() =>
+                                setNaming({
+                                    moveIds: selected,
+                                    source: 'new_section_capsule',
+                                })
+                            }
+                        />
+                    </InertWhileEditing>
+                </Box>
+            )}
+            {newSection}
+        </>
+    );
 
     return (
-        <DndContext
-            sensors={sensors}
-            collisionDetection={underPointer}
-            accessibility={{ announcements: getDragAnnouncements(nameOf) }}
-            onDragStart={({ active }: DragStartEvent) =>
-                setDraggedId(String(active.id))
-            }
-            onDragEnd={handleDragEnd}
-            onDragCancel={() => setDraggedId(null)}
-        >
-            <Box className={classes.flow}>
-                <UnsectionTarget>
-                    <AddControl />
-                </UnsectionTarget>
-                {capsules}
-                {pills}
-                {children}
-            </Box>
-            <DragOverlay>
-                {dragged && (
-                    <Group
-                        gap={6}
-                        wrap="nowrap"
-                        className={classes.dragPreview}
+        <BarSelectionContext.Provider value={selection}>
+            <DndContext
+                sensors={sensors}
+                collisionDetection={underPointerFor}
+                accessibility={{ announcements: getDragAnnouncements(nameOf) }}
+                onDragStart={({ active }: DragStartEvent) =>
+                    setDraggedId(String(active.id))
+                }
+                onDragMove={handleDragMove}
+                onDragEnd={handleDragEnd}
+                onDragCancel={() => {
+                    setDraggedId(null);
+                    setSectionDrop(null);
+                }}
+            >
+                <BarSpace
+                    leavingKindOf={leavingKindOf}
+                    isSectioned={sections.length > 0}
+                >
+                    <UnsectionTarget
+                        looseEnd={isViewer ? undefined : looseEnds[LOOSE_START]}
                     >
-                        {draggedField ? (
-                            <FieldIcon item={draggedField} size={14} />
+                        <AddControl />
+                    </UnsectionTarget>
+                    {pills}
+                    {/* A first section is named where its capsule lands */}
+                    <Box
+                        className={classes.sections}
+                        data-own-line={isSectionsOwnLine || undefined}
+                    >
+                        {sectionLines}
+                        {barEnd}
+                    </Box>
+                </BarSpace>
+                <VisuallyHidden role="status" aria-live="polite">
+                    <span key={moveStatus.key}>{moveStatus.text}</span>
+                </VisuallyHidden>
+                {/* On the body, so the bar's overflow doesn't clip the copy */}
+                {createPortal(
+                    <DragOverlay>
+                        {draggedSection ? (
+                            <Group
+                                gap="xs"
+                                wrap="nowrap"
+                                className={classes.dragPreview}
+                            >
+                                <Text fz="sm" fw={600} truncate>
+                                    {draggedSection.name}
+                                </Text>
+                            </Group>
+                        ) : isSelectionDragged ? (
+                            <Group
+                                gap="xs"
+                                wrap="nowrap"
+                                className={classes.dragPreview}
+                            >
+                                <MantineIcon icon={IconFilter} size={14} />
+                                <Text fz="xs" fw={500}>
+                                    {selected.length} filters
+                                </Text>
+                            </Group>
                         ) : (
-                            <MantineIcon icon={IconFilter} size={14} />
+                            dragged && (
+                                <Group
+                                    gap="xs"
+                                    wrap="nowrap"
+                                    className={classes.dragPreview}
+                                >
+                                    {draggedField ? (
+                                        <FieldIcon
+                                            item={draggedField}
+                                            size={14}
+                                        />
+                                    ) : (
+                                        <MantineIcon
+                                            icon={IconFilter}
+                                            size={14}
+                                        />
+                                    )}
+                                    <Text fz="xs" fw={500} truncate>
+                                        {nameOf(dragged.rule.id)}
+                                    </Text>
+                                </Group>
+                            )
                         )}
-                        <Text fz="xs" fw={500} truncate>
-                            {nameOf(dragged.rule.id)}
-                        </Text>
-                    </Group>
+                    </DragOverlay>,
+                    document.body,
                 )}
-            </DragOverlay>
-        </DndContext>
+                {selected.length > 0 && !isEditing && (
+                    <SelectionBar
+                        count={selected.length}
+                        sections={groupRulesBySection(
+                            dashboardFilters,
+                            sections,
+                        ).flatMap(({ section, rules }) =>
+                            section === null
+                                ? []
+                                : [{ ...section, count: rules.length }],
+                        )}
+                        sharedSectionId={
+                            selectedSectionIds.length === 1
+                                ? selectedSectionIds[0]
+                                : null
+                        }
+                        isAnyInSection={selectedSectionIds.some(
+                            (id) => id !== null,
+                        )}
+                        onMove={(sectionId) =>
+                            moveSelected(sectionId, 'selection_bar')
+                        }
+                        onMoveToNewSection={(source) =>
+                            setNaming({ moveIds: selected, source })
+                        }
+                        onRemove={removeSelected}
+                        onClear={clearSelection}
+                    />
+                )}
+            </DndContext>
+        </BarSelectionContext.Provider>
     );
 };

@@ -134,7 +134,7 @@ const dismissLink = vi.fn();
 
 const setSidebar = (overrides: Record<string, unknown> = {}) => {
     mockSidebar.current = {
-        isRailOpen: false,
+        isSidebarOpen: false,
         newTileUuids: [added.uuid],
         dismissedLinks: [],
         updateFilter,
@@ -253,10 +253,6 @@ describe('LinkPrompts', () => {
         expect(applyButton(added.uuid)).toHaveTextContent('Apply');
         expect(applyButton(added.uuid)).toHaveAccessibleName(
             'Apply 1 filter to Title tile-added',
-        );
-        expect(container(added.uuid).firstElementChild).toHaveAttribute(
-            'data-wave',
-            '0',
         );
 
         await userEvent.click(applyButton(added.uuid));
@@ -485,8 +481,8 @@ describe('LinkPrompts', () => {
         expect(container(saved.uuid)).toBeEmptyDOMElement();
     });
 
-    it('renders nothing while the rail is open, a filter edited or not', () => {
-        setSidebar({ isRailOpen: true });
+    it('renders nothing while a filter is edited', () => {
+        setSidebar({ isSidebarOpen: true });
         renderWithProviders(<LinkPrompts />);
 
         expect(container(added.uuid)).toBeEmptyDOMElement();

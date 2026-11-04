@@ -8,6 +8,8 @@ import {
     assertUnreachable,
     CatalogFilter,
     CatalogType,
+    COMPOSER_NODE_SAMPLE_ROW_LIMIT,
+    COMPOSER_QUERY_PREVIEW_ROW_LIMIT,
     ConflictError,
     ContentType,
     DATA_APP_VIZ_TEMPLATE,
@@ -35,6 +37,7 @@ import {
     isDashboardSqlChartTile,
     isDimension,
     isExploreError,
+    isExploreIncludedInTableSelection,
     isFilterAutocompleteManualOnly,
     isGitProjectType,
     JobStatusType,
@@ -49,10 +52,12 @@ import {
     RequestMethod,
     SessionUser,
     shouldUseStaticFilterAutocomplete,
+    SourceQuerySubmission,
     TimeoutError,
     toMcpCustomChartTypeVizSchema,
     UnexpectedServerError,
     UserAttributeValueMap,
+    UUID,
     WarehouseQueryError,
     type AgentSqlScope,
     type AgentToolName,
@@ -125,6 +130,7 @@ import { SavedChartService } from '../../../services/SavedChartsService/SavedCha
 import { SavedSqlService } from '../../../services/SavedSqlService/SavedSqlService';
 import { SearchService } from '../../../services/SearchService/SearchService';
 import { ShareService } from '../../../services/ShareService/ShareService';
+import { SpacePermissionService } from '../../../services/SpaceService/SpacePermissionService';
 import { SpaceService } from '../../../services/SpaceService/SpaceService';
 import { matchShareUrlNanoid } from '../../../services/UnfurlService/UnfurlService';
 import {
@@ -143,7 +149,10 @@ import type { BuiltInSkills } from '../ai/skills/builtInSkills';
 import type { ApproveSqlFn } from '../ai/tools/sqlApprovals';
 import {
     AnalyzeFieldImpactFn,
+    ComposerNodeStatus,
     ComposerNodeStatusUpdate,
+    ComposerRunningOutcome,
+    ComposerRunOutcome,
     CreateContentFn,
     CreateScheduledDeliveryFn,
     DescribeWarehouseTableFn,
@@ -180,6 +189,7 @@ import {
     ResolveUrlFn,
     RunAsyncQueryFn,
     RunComposerQueriesFn,
+    RunComposerQueriesUntilDeadlineFn,
     RunSavedChartQueryFn,
     RunSqlChartQueryFn,
     RunSqlJobFn,
@@ -341,6 +351,7 @@ export type AiAgentToolsRuntime = {
     runSqlChartQuery: RunSqlChartQueryFn;
     runSqlJob: RunSqlJobFn;
     runComposerQueries: RunComposerQueriesFn;
+    runComposerQueriesUntilDeadline: RunComposerQueriesUntilDeadlineFn;
     listWarehouseTables: ListWarehouseTablesFn;
     describeWarehouseTable: DescribeWarehouseTableFn;
     listContent: ListContentFn;
@@ -390,6 +401,7 @@ const AGENT_RUNTIME_TOOL_NAMES = {
     runSqlChartQuery: 'runSql',
     runSqlJob: 'runSql',
     runComposerQueries: 'query',
+    runComposerQueriesUntilDeadline: 'query',
     listWarehouseTables: 'listWarehouseTables',
     describeWarehouseTable: 'describeWarehouseTable',
     listContent: 'listContent',
@@ -498,6 +510,7 @@ type AiAgentToolsServiceDependencies = {
     searchModel: SearchModel;
     searchService: SearchService;
     spaceService: SpaceService;
+    spacePermissionService: SpacePermissionService;
     spaceModel: SpaceModel;
     dashboardService: DashboardService;
     dashboardModel: DashboardModel;
@@ -563,6 +576,8 @@ export class AiAgentToolsService extends BaseService {
     private readonly searchService: SearchService;
 
     private readonly spaceService: SpaceService;
+
+    private readonly spacePermissionService: SpacePermissionService;
 
     private readonly spaceModel: SpaceModel;
 
@@ -678,6 +693,7 @@ export class AiAgentToolsService extends BaseService {
         searchModel,
         searchService,
         spaceService,
+        spacePermissionService,
         spaceModel,
         dashboardService,
         dashboardModel,
@@ -716,6 +732,7 @@ export class AiAgentToolsService extends BaseService {
         this.searchModel = searchModel;
         this.searchService = searchService;
         this.spaceService = spaceService;
+        this.spacePermissionService = spacePermissionService;
         this.spaceModel = spaceModel;
         this.dashboardService = dashboardService;
         this.dashboardModel = dashboardModel;
@@ -761,30 +778,43 @@ export class AiAgentToolsService extends BaseService {
                     throw new ForbiddenError('Organization not found');
                 }
 
-                const dbAttributes =
-                    await this.userAttributesModel.getAttributeValuesForOrgMember(
-                        {
-                            organizationUuid,
-                            userUuid: user.userUuid,
-                        },
-                    );
+                const [dbAttributes, { tableSelection }, cachedExplores] =
+                    await Promise.all([
+                        this.userAttributesModel.getAttributeValuesForOrgMember(
+                            {
+                                organizationUuid,
+                                userUuid: user.userUuid,
+                            },
+                        ),
+                        this.projectModel.getTablesConfiguration(projectUuid),
+                        this.projectModel.findExploresFromCache(
+                            projectUuid,
+                            'name',
+                            exploreNames,
+                        ),
+                    ]);
                 const userAttributes = mergeUserAttributes(
                     dbAttributes,
                     userAttributeOverrides,
                 );
 
-                const allExplores = Object.values(
-                    await this.projectModel.findExploresFromCache(
-                        projectUuid,
-                        'name',
-                        exploreNames,
-                    ),
-                );
-
-                return allExplores
+                return Object.values(cachedExplores)
                     .filter(
                         (explore): explore is Explore =>
                             !isExploreError(explore),
+                    )
+                    .filter((explore) =>
+                        // Pre-aggregate explores follow their source explore's selection
+                        isExploreIncludedInTableSelection(
+                            {
+                                name:
+                                    explore.preAggregateSource
+                                        ?.sourceExploreName ?? explore.name,
+                                tags: explore.tags,
+                                type: explore.type,
+                            },
+                            tableSelection,
+                        ),
                     )
                     .filter((explore) =>
                         doesExploreMatchRequiredAttributes(
@@ -983,7 +1013,20 @@ export class AiAgentToolsService extends BaseService {
                 this.runSavedChartQuery(context, args),
             runSqlJob: (args) => this.runSqlJob(context, args),
             runSqlChartQuery: (args) => this.runSqlChartQuery(context, args),
-            runComposerQueries: (args) =>
+            runComposerQueries: async (args) => {
+                const run = await this.runComposerQueries(context, {
+                    ...args,
+                    deadlineMs: Date.now() + 5 * 60 * 1000,
+                    timeoutMessage: 'Composer query timed out after 5 minutes.',
+                });
+                if (run.status === 'running') {
+                    throw new UnexpectedServerError(
+                        'Composer query returned running after its timeout',
+                    );
+                }
+                return run;
+            },
+            runComposerQueriesUntilDeadline: (args) =>
                 this.runComposerQueries(context, args),
             listWarehouseTables: (queryContext) =>
                 this.listWarehouseTables(context, queryContext),
@@ -1982,6 +2025,10 @@ export class AiAgentToolsService extends BaseService {
                     },
                 );
 
+                const editableSpaceUuids = await this.getEditableSpaceUuids(
+                    context.user,
+                    spaces.map((space) => space.uuid),
+                );
                 // Spaces cannot be verified, so they are omitted from
                 // verified-only searches.
                 const spaceResults = (verifiedOnly ? [] : spaces)
@@ -2015,6 +2062,7 @@ export class AiAgentToolsService extends BaseService {
                             appCount: space.appCount,
                             directAccess:
                                 space.userAccess?.hasDirectAccess === true,
+                            canEdit: editableSpaceUuids.has(space.uuid),
                             space: AiAgentToolsService.getSpaceMetadata(
                                 space,
                                 spacesByPath,
@@ -2420,6 +2468,65 @@ export class AiAgentToolsService extends BaseService {
                   context.user,
                   context.projectUuid,
               );
+    }
+
+    /** Spaces the user can save charts into, as the app's save modal would list them. */
+    private async getEditableSpaceUuids(
+        user: SessionUser,
+        spaceUuids: string[],
+    ): Promise<Set<string>> {
+        if (spaceUuids.length === 0) {
+            return new Set();
+        }
+        return new Set(
+            await this.spacePermissionService.getAccessibleSpaceUuids(
+                'create',
+                user,
+                spaceUuids,
+                { subjectType: 'SavedChart' },
+            ),
+        );
+    }
+
+    /**
+     * Mirrors the app's save button, not the project role: with a project, a space the user can save into
+     * (or the right to create one) is enough; without one, only the role is known, as before a project is chosen.
+     * `spaceUuids` limits the check to the spaces the run may write to, such as an embed token's write spaces.
+     */
+    async canAuthorContent(context: {
+        user: SessionUser;
+        projectUuid: UUID | undefined;
+        spaceUuids: string[] | null;
+    }): Promise<boolean> {
+        const { user, projectUuid, spaceUuids } = context;
+        const { organizationUuid } = user;
+        const ability = this.createAuditedAbility(user);
+        const roleCanSaveContent =
+            organizationUuid !== undefined &&
+            (ability.can('create', 'SavedChart') ||
+                ability.can('create', 'Dashboard'));
+        if (!roleCanSaveContent || projectUuid === undefined) {
+            return roleCanSaveContent;
+        }
+        if (spaceUuids !== null) {
+            return (
+                (await this.getEditableSpaceUuids(user, spaceUuids)).size > 0
+            );
+        }
+        if (
+            ability.can(
+                'create',
+                subject('Space', { organizationUuid, projectUuid }),
+            )
+        ) {
+            return true;
+        }
+        const spaces = await this.spaceModel.find({ projectUuid });
+        const editableSpaceUuids = await this.getEditableSpaceUuids(
+            user,
+            spaces.map((space) => space.uuid),
+        );
+        return editableSpaceUuids.size > 0;
     }
 
     private async listDataAppThemes(
@@ -3569,7 +3676,11 @@ export class AiAgentToolsService extends BaseService {
                                 context.projectUuid,
                                 slug,
                                 patchedContent,
-                                { force: true },
+                                {
+                                    force: true,
+                                    authorization: 'space_access',
+                                    syncEnabled: false,
+                                },
                             );
                         uuid = promotionChanges.dashboards[0]?.data.uuid;
                         break;
@@ -3616,7 +3727,11 @@ export class AiAgentToolsService extends BaseService {
                                 context.projectUuid,
                                 slug,
                                 patchedContent,
-                                { force: true },
+                                {
+                                    force: true,
+                                    authorization: 'space_access',
+                                    syncEnabled: false,
+                                },
                             );
                         uuid = promotionChanges.charts[0]?.data.uuid;
                         break;
@@ -3756,7 +3871,11 @@ export class AiAgentToolsService extends BaseService {
                                 context.projectUuid,
                                 content.slug,
                                 content,
-                                { mode: 'create' },
+                                {
+                                    mode: 'create',
+                                    authorization: 'space_access',
+                                    syncEnabled: false,
+                                },
                             );
                         const finalSlug =
                             promotionChanges.dashboards[0]?.data.slug ??
@@ -3791,7 +3910,11 @@ export class AiAgentToolsService extends BaseService {
                                 context.projectUuid,
                                 content.slug,
                                 content,
-                                { mode: 'create' },
+                                {
+                                    mode: 'create',
+                                    authorization: 'space_access',
+                                    syncEnabled: false,
+                                },
                             );
                         const finalSlug =
                             promotionChanges.charts[0]?.data.slug ??
@@ -3871,6 +3994,7 @@ export class AiAgentToolsService extends BaseService {
             context.projectUuid,
             slug,
             patched,
+            { authorization: 'space_access' },
         );
         return promotionChanges.charts[0]?.data.uuid;
     }
@@ -3907,7 +4031,7 @@ export class AiAgentToolsService extends BaseService {
             context.projectUuid,
             content.slug,
             content,
-            { mode: 'create' },
+            { mode: 'create', authorization: 'space_access' },
         );
         const created = promotionChanges.charts[0]?.data;
         if (!created?.uuid) {
@@ -4125,6 +4249,11 @@ export class AiAgentToolsService extends BaseService {
         context: AiAgentToolsRuntimeContext,
         args: Parameters<UpdateUserNameFn>[0],
     ): ReturnType<UpdateUserNameFn> {
+        if (context.user.serviceAccount) {
+            throw new ForbiddenError(
+                'A service account name cannot be changed from an agent session',
+            );
+        }
         await this.userService.updateUser(context.user, {
             firstName: args.firstName.trim(),
             lastName: args.lastName.trim(),
@@ -4169,6 +4298,7 @@ export class AiAgentToolsService extends BaseService {
                     (metricQuery.additionalMetrics ?? []) as Parameters<
                         typeof getItemMap
                     >[1],
+                    metricQuery.customDimensions ?? [],
                 );
 
                 const isUnboundedDimensionScan =
@@ -4547,6 +4677,8 @@ export class AiAgentToolsService extends BaseService {
                     page: 1,
                     aiAccessOnly: true,
                     pageSize: limit,
+                    // limit is already validated against the AI row limit
+                    maxPageSize: limit,
                 });
 
             if (queryResults.status === QueryHistoryStatus.READY) {
@@ -4602,9 +4734,16 @@ export class AiAgentToolsService extends BaseService {
         {
             queries,
             terminalNodeId,
+            sampleNodeIds,
             onNodeStatus,
-        }: Parameters<RunComposerQueriesFn>[0],
-    ): ReturnType<RunComposerQueriesFn> {
+            deadlineMs,
+            timeoutMessage,
+        }: Parameters<RunComposerQueriesFn>[0] & {
+            deadlineMs: number;
+            /** Fails the run at the deadline instead of returning running. */
+            timeoutMessage?: string;
+        },
+    ): ReturnType<RunComposerQueriesUntilDeadlineFn> {
         return wrapSentryTransaction(
             `${AiAgentToolsService.transactionPrefix(context)}.runComposerQueries`,
             { projectUuid: context.projectUuid, queryCount: queries.length },
@@ -4651,6 +4790,11 @@ export class AiAgentToolsService extends BaseService {
                                 context.userAttributeOverrides ?? {},
                             invalidateCache:
                                 context.invalidateQueryCache ?? false,
+                            aiAttribution: {
+                                aiAgentUuid: context.agentUuid ?? null,
+                                threadUuid: context.threadUuid ?? null,
+                                promptUuid: context.promptUuid ?? null,
+                            },
                         }));
                 } catch (error) {
                     const message =
@@ -4674,6 +4818,31 @@ export class AiAgentToolsService extends BaseService {
                         errorMessage: null,
                     }),
                 );
+                // Only a ready, errored or cancelled query has settled.
+                const emitSettledNodeStatus = (
+                    { nodeId, queryUuid }: SourceQuerySubmission,
+                    state: QueryHistoryStatus,
+                    error: string | null,
+                ) => {
+                    if (state === QueryHistoryStatus.READY) {
+                        emitNodeStatus({
+                            nodeId,
+                            queryUuid,
+                            status: 'success',
+                            errorMessage: null,
+                        });
+                    } else if (
+                        state === QueryHistoryStatus.ERROR ||
+                        state === QueryHistoryStatus.CANCELLED
+                    ) {
+                        emitNodeStatus({
+                            nodeId,
+                            queryUuid,
+                            status: 'error',
+                            errorMessage: error,
+                        });
+                    }
+                };
                 const pollNodeStatuses = async () => {
                     if (!onNodeStatus) return;
                     const pending = submissions.filter((submission) => {
@@ -4698,24 +4867,11 @@ export class AiAgentToolsService extends BaseService {
                                     candidate.queryUuid === status.queryUuid,
                             );
                             if (!submission) return;
-                            if (status.status === QueryHistoryStatus.READY) {
-                                emitNodeStatus({
-                                    nodeId: submission.nodeId,
-                                    queryUuid: submission.queryUuid,
-                                    status: 'success',
-                                    errorMessage: null,
-                                });
-                            } else if (
-                                status.status === QueryHistoryStatus.ERROR ||
-                                status.status === QueryHistoryStatus.CANCELLED
-                            ) {
-                                emitNodeStatus({
-                                    nodeId: submission.nodeId,
-                                    queryUuid: submission.queryUuid,
-                                    status: 'error',
-                                    errorMessage: status.error ?? null,
-                                });
-                            }
+                            emitSettledNodeStatus(
+                                submission,
+                                status.status,
+                                status.error ?? null,
+                            );
                         });
                     } catch {
                         // status polling is best-effort; keep executing
@@ -4734,23 +4890,19 @@ export class AiAgentToolsService extends BaseService {
                 const terminalQuery = queries.find(
                     (query) => query.nodeId === terminalNodeId,
                 );
+                // Callers read only a preview; rowCount comes from the stored total.
                 const pageSize = Math.min(
                     terminalQuery?.limit ??
                         this.lightdashConfig.ai.copilot.maxQueryLimit,
-                    this.lightdashConfig.ai.copilot.maxQueryLimit,
+                    COMPOSER_QUERY_PREVIEW_ROW_LIMIT,
                 );
 
                 // Polling only the terminal node is sufficient: its execution
                 // waits on every referenced result and fails if any upstream
                 // query fails.
-                const maxWaitMs = 5 * 60 * 1000;
-                const startTime = Date.now();
 
-                // Results fetching throws for errored queries, so any throw
-                // below marks the unfinished nodes failed before propagating.
-                const emitUnfinishedAsError = (error: unknown) => {
-                    const message =
-                        error instanceof Error ? error.message : null;
+                // A failed run marks the nodes its status read did not settle.
+                const emitUnfinishedAsError = (message: string) => {
                     submissions.forEach((submission) => {
                         const emitted = emittedNodeStatuses.get(
                             submission.nodeId,
@@ -4766,22 +4918,142 @@ export class AiAgentToolsService extends BaseService {
                     });
                 };
 
+                const withSamples = async <
+                    T extends { nodeStatuses: ComposerNodeStatus[] },
+                >(
+                    settled: T,
+                ): Promise<T> => ({
+                    ...settled,
+                    nodeStatuses: await this.readComposerNodeSamples(
+                        context,
+                        submissions,
+                        settled.nodeStatuses,
+                        sampleNodeIds,
+                    ),
+                });
+
+                let outcome: ComposerRunOutcome;
                 try {
-                    return await this.pollComposerTerminal({
+                    const polled = await this.pollComposerTerminal({
                         context,
                         submissions,
                         terminalSubmission,
                         pageSize,
-                        maxWaitMs,
-                        startTime,
-                        emitNodeStatus,
+                        deadlineMs,
                         pollNodeStatuses,
                     });
+                    if (polled.status === 'running') {
+                        if (timeoutMessage === undefined)
+                            return await withSamples(polled);
+                        outcome = await this.failComposerRun(
+                            context,
+                            submissions,
+                            timeoutMessage,
+                        );
+                    } else {
+                        outcome = polled;
+                    }
                 } catch (error) {
-                    emitUnfinishedAsError(error);
-                    throw error;
+                    // Results fetching throws for errored queries.
+                    outcome = await this.failComposerRun(
+                        context,
+                        submissions,
+                        getErrorMessage(error),
+                    );
                 }
+                outcome.nodeStatuses.forEach(({ nodeId, state, error }) => {
+                    const submission = submissions.find(
+                        (candidate) => candidate.nodeId === nodeId,
+                    );
+                    if (submission)
+                        emitSettledNodeStatus(submission, state, error);
+                });
+                if (outcome.status === 'failure') {
+                    emitUnfinishedAsError(outcome.error);
+                }
+                return withSamples(outcome);
             },
+        );
+    }
+
+    /** Reads the composer terminal rows and node samples alike, so both get the same AI access checks. */
+    private readComposerResultsPage(
+        context: AiAgentToolsRuntimeContext,
+        queryUuid: string,
+        pageSize: number,
+    ) {
+        return this.asyncQueryService.getAsyncQueryResults({
+            account: context.account,
+            reader: buildResultReader(
+                context.account,
+                context.defaultQueryExecutionContext,
+                context.querySurface ?? null,
+            ),
+            projectUuid: context.projectUuid,
+            queryUuid,
+            page: 1,
+            aiAccessOnly: true,
+            pageSize,
+        });
+    }
+
+    private static unwrapComposerRows(
+        rows: unknown[] | undefined,
+    ): Record<string, AnyType>[] {
+        return ((rows ?? []) as Record<string, AnyType>[]).map((row) =>
+            Object.fromEntries(
+                Object.entries(row).map(([k, v]) => [
+                    k,
+                    AiAgentToolsService.unwrapCell(v),
+                ]),
+            ),
+        );
+    }
+
+    /** A failed sample read gives a null sample and never fails the run. */
+    private async readComposerNodeSamples(
+        context: AiAgentToolsRuntimeContext,
+        submissions: SourceQuerySubmission[],
+        nodeStatuses: ComposerNodeStatus[],
+        sampleNodeIds: string[],
+    ): Promise<ComposerNodeStatus[]> {
+        return Promise.all(
+            nodeStatuses.map(async (status) => {
+                const submission = submissions.find(
+                    ({ nodeId }) => nodeId === status.nodeId,
+                );
+                if (
+                    !submission ||
+                    status.state !== QueryHistoryStatus.READY ||
+                    !sampleNodeIds.includes(status.nodeId)
+                )
+                    return status;
+                try {
+                    const page = await this.readComposerResultsPage(
+                        context,
+                        submission.queryUuid,
+                        COMPOSER_NODE_SAMPLE_ROW_LIMIT,
+                    );
+                    return {
+                        ...status,
+                        sample:
+                            page.status === QueryHistoryStatus.READY
+                                ? AiAgentToolsService.unwrapComposerRows(
+                                      page.rows,
+                                  )
+                                : null,
+                    };
+                } catch (error) {
+                    this.logger.warn(
+                        `Failed to read composer node sample for node ${
+                            status.nodeId
+                        } (query ${submission.queryUuid}): ${getErrorMessage(
+                            error,
+                        )}`,
+                    );
+                    return status;
+                }
+            }),
         );
     }
 
@@ -4790,9 +5062,7 @@ export class AiAgentToolsService extends BaseService {
         submissions,
         terminalSubmission,
         pageSize,
-        maxWaitMs,
-        startTime,
-        emitNodeStatus,
+        deadlineMs,
         pollNodeStatuses,
     }: {
         context: AiAgentToolsRuntimeContext;
@@ -4803,118 +5073,79 @@ export class AiAgentToolsService extends BaseService {
             ReturnType<QuerySourceService['executeSourceQueries']>
         >['queries'][number];
         pageSize: number;
-        maxWaitMs: number;
-        startTime: number;
-        emitNodeStatus: (update: ComposerNodeStatusUpdate) => void;
+        deadlineMs: number;
         pollNodeStatuses: () => Promise<void>;
-    }): ReturnType<RunComposerQueriesFn> {
+    }): Promise<ComposerRunOutcome | ComposerRunningOutcome> {
         let delayMs = 500;
         // eslint-disable-next-line no-constant-condition
         while (true) {
-            if (Date.now() - startTime > maxWaitMs) {
-                throw new TimeoutError(
-                    'Composer query timed out after 5 minutes',
-                );
+            if (Date.now() > deadlineMs) {
+                return {
+                    status: 'running',
+                    submissions,
+                    // eslint-disable-next-line no-await-in-loop
+                    nodeStatuses: await this.readComposerNodeStatuses(
+                        context,
+                        submissions,
+                    ).catch(() => []),
+                };
             }
 
             const queryResults =
                 // eslint-disable-next-line no-await-in-loop
-                await this.asyncQueryService.getAsyncQueryResults({
-                    account: context.account,
-                    reader: buildResultReader(
-                        context.account,
-                        context.defaultQueryExecutionContext,
-                        context.querySurface ?? null,
-                    ),
-                    projectUuid: context.projectUuid,
-                    queryUuid: terminalSubmission.queryUuid,
-                    page: 1,
-                    aiAccessOnly: true,
+                await this.readComposerResultsPage(
+                    context,
+                    terminalSubmission.queryUuid,
                     pageSize,
-                });
+                );
 
             if (queryResults.status === QueryHistoryStatus.READY) {
-                // Terminal ready implies every upstream node finished.
-                submissions.forEach((submission) =>
-                    emitNodeStatus({
-                        nodeId: submission.nodeId,
-                        queryUuid: submission.queryUuid,
-                        status: 'success',
-                        errorMessage: null,
-                    }),
+                // eslint-disable-next-line no-await-in-loop
+                const nodeStatuses = await this.readComposerNodeStatuses(
+                    context,
+                    submissions,
                 );
-                const wrappedRows = (queryResults.rows ?? []) as Record<
-                    string,
-                    AnyType
-                >[];
-                const rows = wrappedRows.map((row) =>
-                    Object.fromEntries(
-                        Object.entries(row).map(([k, v]) => [
-                            k,
-                            AiAgentToolsService.unwrapCell(v),
-                        ]),
-                    ),
+                const rows = AiAgentToolsService.unwrapComposerRows(
+                    queryResults.rows,
                 );
                 return {
+                    status: 'success',
                     submissions,
                     terminal: {
                         queryUuid: terminalSubmission.queryUuid,
                         columns: queryResults.columns,
                         rows,
-                        rowCount: rows.length,
+                        rowCount: queryResults.totalResults,
                     },
+                    nodeStatuses,
                 };
             }
 
             if (queryResults.status === QueryHistoryStatus.ERROR) {
                 // eslint-disable-next-line no-await-in-loop
-                const failedNodes = await this.findFailedComposerNodes(
+                const failed = await this.failComposerRun(
                     context,
                     submissions,
+                    'Composer query failed.',
                 );
-                failedNodes.forEach(({ nodeId, error }) => {
-                    const submission = submissions.find(
-                        (candidate) => candidate.nodeId === nodeId,
-                    );
-                    if (!submission) return;
-                    emitNodeStatus({
-                        nodeId,
-                        queryUuid: submission.queryUuid,
-                        status: 'error',
-                        errorMessage: error,
-                    });
-                });
-                emitNodeStatus({
-                    nodeId: terminalSubmission.nodeId,
-                    queryUuid: terminalSubmission.queryUuid,
-                    status: 'error',
-                    errorMessage: queryResults.error ?? null,
-                });
-                throw new WarehouseQueryError(
-                    `Composer query failed${
-                        failedNodes.length > 0
-                            ? ` on node(s): ${failedNodes
-                                  .map(
-                                      ({ nodeId, error }) =>
-                                          `"${nodeId}" (${error ?? 'Unknown error'})`,
-                                  )
-                                  .join(', ')}`
-                            : `: ${truncateMiddle(
-                                  queryResults.error ?? 'Unknown error',
-                                  COMPOSER_NODE_ERROR_MAX_CHARS,
-                              )}`
-                    }`,
-                );
+                // Node statuses carry each node's error; the terminal's is the fallback.
+                return failed.nodeStatuses.some(({ error }) => error !== null)
+                    ? failed
+                    : {
+                          ...failed,
+                          error: `Composer query failed: ${truncateMiddle(
+                              queryResults.error ?? 'Unknown error',
+                              COMPOSER_NODE_ERROR_MAX_CHARS,
+                          )}`,
+                      };
             }
 
             if (queryResults.status === QueryHistoryStatus.CANCELLED) {
-                emitNodeStatus({
-                    nodeId: terminalSubmission.nodeId,
-                    queryUuid: terminalSubmission.queryUuid,
-                    status: 'error',
-                    errorMessage: 'Query was cancelled',
-                });
-                throw new WarehouseQueryError('Composer query was cancelled');
+                return this.failComposerRun(
+                    context,
+                    submissions,
+                    'Composer query was cancelled.',
+                );
             }
 
             // Terminal still running: surface upstream nodes that have
@@ -4932,29 +5163,41 @@ export class AiAgentToolsService extends BaseService {
         }
     }
 
-    /**
-     * Best-effort per-node failure lookup so composer errors name the failing
-     * node the model should fix. Never throws — falls back to an empty list.
-     */
-    private async findFailedComposerNodes(
+    /** A failure outcome with one status read of every node; an unreadable read yields none. */
+    private async failComposerRun(
         context: AiAgentToolsRuntimeContext,
-        submissions: { nodeId: string; queryUuid: string }[],
-    ): Promise<{ nodeId: string; error: string | null }[]> {
-        try {
-            const { statuses } =
-                await this.querySourceService.getSourceQueryStatuses(
-                    context.account,
-                    context.projectUuid,
-                    submissions.map((submission) => submission.queryUuid),
-                );
-            return statuses
-                .filter((status) => status.status === QueryHistoryStatus.ERROR)
-                .map((status) => ({
-                    nodeId:
-                        submissions.find(
-                            (submission) =>
-                                submission.queryUuid === status.queryUuid,
-                        )?.nodeId ?? status.queryUuid,
+        submissions: SourceQuerySubmission[],
+        error: string,
+    ): Promise<Extract<ComposerRunOutcome, { status: 'failure' }>> {
+        return {
+            status: 'failure',
+            error,
+            nodeStatuses: await this.readComposerNodeStatuses(
+                context,
+                submissions,
+            ).catch(() => []),
+        };
+    }
+
+    private async readComposerNodeStatuses(
+        context: AiAgentToolsRuntimeContext,
+        submissions: SourceQuerySubmission[],
+    ): Promise<ComposerNodeStatus[]> {
+        const { statuses } =
+            await this.querySourceService.getSourceQueryStatuses(
+                context.account,
+                context.projectUuid,
+                submissions.map((submission) => submission.queryUuid),
+            );
+        return submissions.flatMap(({ nodeId, queryUuid }) => {
+            const status = statuses.find(
+                (candidate) => candidate.queryUuid === queryUuid,
+            );
+            if (!status) return [];
+            return [
+                {
+                    nodeId,
+                    state: status.status,
                     error:
                         status.error === null
                             ? null
@@ -4962,10 +5205,12 @@ export class AiAgentToolsService extends BaseService {
                                   status.error,
                                   COMPOSER_NODE_ERROR_MAX_CHARS,
                               ),
-                }));
-        } catch {
-            return [];
-        }
+                    rowCount: status.totalRowCount,
+                    columns: status.columns,
+                    sample: null,
+                },
+            ];
+        });
     }
 
     private listWarehouseTables(
@@ -5036,22 +5281,28 @@ export class AiAgentToolsService extends BaseService {
                     );
                 }
 
-                const fields = await this.projectService.getWarehouseFields(
-                    context.user,
-                    context.projectUuid,
-                    context.defaultQueryExecutionContext,
-                    table,
-                    resolvedSchema ?? undefined,
-                    resolvedDatabase ?? undefined,
-                    context.querySurface,
-                );
+                const { fields, nativeTypes, partitioning, warehouseType } =
+                    await this.projectService.describeWarehouseTable(
+                        context.user,
+                        context.projectUuid,
+                        context.defaultQueryExecutionContext,
+                        {
+                            tableName: table,
+                            schemaName: resolvedSchema ?? undefined,
+                            databaseName: resolvedDatabase ?? undefined,
+                        },
+                        context.querySurface,
+                    );
                 return {
                     columns: Object.entries(fields).map(([name, type]) => ({
                         name,
                         type: String(type),
+                        nativeType: nativeTypes[name] ?? null,
                     })),
                     resolvedSchema,
                     resolvedDatabase,
+                    partitioning,
+                    warehouseType,
                 };
             },
         );
@@ -5656,8 +5907,14 @@ export class AiAgentToolsService extends BaseService {
         explore: Explore,
         fieldIds: string[],
         additionalMetrics: Parameters<typeof getItemMap>[1] = [],
+        customDimensions: Parameters<typeof getItemMap>[3] = [],
     ) {
-        const itemMap = getItemMap(explore, additionalMetrics);
+        const itemMap = getItemMap(
+            explore,
+            additionalMetrics,
+            [],
+            customDimensions,
+        );
         fieldIds.forEach((fieldId) => {
             if (!itemMap[fieldId]) {
                 throw new NotFoundError(`Field not found: ${fieldId}`);
@@ -5711,6 +5968,9 @@ export class AiAgentToolsService extends BaseService {
             ),
         );
         const visibleSpaceUuids = new Set(spaces.map((space) => space.uuid));
+        const editableSpaceUuids = await this.getEditableSpaceUuids(user, [
+            ...visibleSpaceUuids,
+        ]);
         const items = spaces
             .filter(
                 (space) =>
@@ -5728,6 +5988,7 @@ export class AiAgentToolsService extends BaseService {
                     childSpaceCount: space.childSpaceCount,
                     appCount: space.appCount,
                     directAccess: space.userAccess?.hasDirectAccess === true,
+                    canEdit: editableSpaceUuids.has(space.uuid),
                 }),
             );
 
@@ -5781,6 +6042,12 @@ export class AiAgentToolsService extends BaseService {
         )
             ? (await this.projectModel.getSummary(projectUuid)).slug
             : projectUuid;
+        const editableSpaceUuids = await this.getEditableSpaceUuids(
+            user,
+            results.data.flatMap((item) =>
+                item.contentType === ContentType.SPACE ? [item.uuid] : [],
+            ),
+        );
 
         return {
             spaceSlug,
@@ -5814,6 +6081,7 @@ export class AiAgentToolsService extends BaseService {
                             childSpaceCount: item.childSpaceCount,
                             appCount: item.appCount,
                             directAccess: item.access.includes(user.userUuid),
+                            canEdit: editableSpaceUuids.has(item.uuid),
                         };
                     }
 

@@ -1,7 +1,6 @@
 import { subject } from '@casl/ability';
 import {
     ChartKind,
-    getParameterReferences,
     isVizBigNumberConfig,
     isVizCartesianChartConfig,
     isVizPieChartConfig,
@@ -43,7 +42,9 @@ import SuboptimalState from '../common/SuboptimalState/SuboptimalState';
 import BigNumberView from '../DataViz/visualizations/BigNumberView';
 import ChartView from '../DataViz/visualizations/ChartView';
 import { Table } from '../DataViz/visualizations/Table';
+import tileClasses from './DashboardTiles.module.css';
 import ExportDataModal from './ExportDataModal';
+import { getSqlTileParameterReport } from './sqlTileParameterReferences';
 import TileBase from './TileBase';
 
 interface Props extends Pick<
@@ -227,14 +228,19 @@ const SqlChartTile: FC<Props> = ({
     // Report the parameters this chart's SQL needs so the dashboard renders
     // controls for them. Derived from the SQL rather than the query response,
     // so the controls appear before the first (otherwise failing) run.
-    const parameterReferences = useMemo(
-        () => getParameterReferences(chartData?.sql),
-        [chartData?.sql],
+    const parameterReport = useMemo(
+        () =>
+            getSqlTileParameterReport({
+                sql: chartData?.sql,
+                hasError: !!chartError,
+            }),
+        [chartData?.sql, chartError],
     );
 
     useEffect(() => {
-        addParameterReferences(tile.uuid, parameterReferences);
-    }, [addParameterReferences, tile.uuid, parameterReferences]);
+        if (parameterReport === null) return;
+        addParameterReferences(tile.uuid, parameterReport.references);
+    }, [addParameterReferences, tile.uuid, parameterReport]);
 
     // Update SQL chart columns in the dashboard context
     useEffect(() => {
@@ -423,7 +429,11 @@ const SqlChartTile: FC<Props> = ({
             {chartData.config.type === ChartKind.TABLE &&
                 isVizTableConfig(chartData.config) && (
                     // So that the Table tile isn't cropped by the overflow
-                    <Box w="100%" h="100%" style={{ overflow: 'auto' }}>
+                    <Box
+                        w="100%"
+                        h="100%"
+                        className={tileClasses.scrollContainer}
+                    >
                         <Table
                             resultsRunner={chartResultsData.resultsRunner}
                             columnsConfig={chartData.config.columns}
@@ -448,11 +458,7 @@ const SqlChartTile: FC<Props> = ({
                     spec={specWithoutAnimation}
                     isLoading={isChartResultsFetching}
                     error={undefined}
-                    style={{
-                        minHeight: 'inherit',
-                        height: '100%',
-                        width: '100%',
-                    }}
+                    className={tileClasses.chartView}
                 />
             )}
             <ExportDataModal

@@ -14,9 +14,15 @@ egress and no credentials.
   python needs its own gateway service, separate from the data-app one. Build it
   with `./build-cloud-run-image.sh` and point the backend at it with
   `GCP_CLOUD_RUN_PYTHON_SANDBOX_URL` / `GCP_CLOUD_RUN_PYTHON_SANDBOX_SECRET`.
+- Azure Sandboxes: `SANDBOX_PROVIDER=azure-sandboxes`. Build an amd64 image from the
+  `Dockerfile.local` derivation in `./build-local-image.sh` (or
+  `scripts/aks-dev/build-sandbox-image.sh python`, which runs `az acr build`), register
+  it as a disk image in a dedicated python sandbox group, and set
+  `AZURE_SANDBOXES_PYTHON_GROUP` / `AZURE_SANDBOXES_PYTHON_DISK_IMAGE` (the disk image id).
 
 Preinstalled libraries: pandas, numpy, scipy, pyarrow, scikit-learn, polars
 (pinned in `e2b.Dockerfile`). `run()` must still return a pandas DataFrame.
+When bumping a pin, update `PYTHON_SANDBOX_LIBRARIES` in `packages/common/src/ee/AiAgent/schemas/tools/toolComposerQueryArgs.ts`; a backend test fails until they match.
 
 Publishing: `post-release.yml` builds `lightdash-python-runner:<version>` in both
 E2B regions on every release where this directory changed, and retags `:latest`

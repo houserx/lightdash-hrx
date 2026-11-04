@@ -25,11 +25,7 @@ import {
 import { setTileField, type FieldsByTile } from './peers';
 import classes from './TileOverlay.module.css';
 import { getTileTitle } from './tileProps';
-import {
-    getTileSelector,
-    LOCKED_TILE_CLASS,
-    WAVE_BUCKETS,
-} from './tileSelector';
+import { getTileSelector, LOCKED_TILE_CLASS } from './tileSelector';
 import { useControlsSidebarSelector } from './useControlsSidebar';
 import { usePortalTargets } from './usePortalTargets';
 
@@ -216,7 +212,7 @@ const LinkCard: FC<CardProps> = ({
 };
 
 export const LinkPrompts: FC = () => {
-    const isRailOpen = useControlsSidebarSelector((c) => c.isRailOpen);
+    const isSidebarOpen = useControlsSidebarSelector((c) => c.isSidebarOpen);
     const newTileUuids = useControlsSidebarSelector((c) => c.newTileUuids);
     const dismissedLinks = useControlsSidebarSelector((c) => c.dismissedLinks);
     const { mode } = useParams<{ mode?: string }>();
@@ -226,7 +222,7 @@ export const LinkPrompts: FC = () => {
         (c) => c.filterableFieldsByTileUuid,
     );
     const fieldsMap = useDashboardContext((c) => c.allFilterableFieldsMap);
-    const isEnabled = mode === 'edit' && !isRailOpen;
+    const isEnabled = mode === 'edit' && !isSidebarOpen;
 
     const prompts = useMemo(() => {
         const tiles = (dashboardTiles ?? []).filter((tile) =>
@@ -281,14 +277,13 @@ export const LinkPrompts: FC = () => {
 
     return (
         <>
-            {prompts.map(({ tile, rows }, index) => {
+            {prompts.map(({ tile, rows }) => {
                 const element = targets[tile.uuid];
                 if (!element) return null;
                 return createPortal(
                     <div
                         className={`${classes.overlay} ${LOCKED_TILE_CLASS}`}
                         data-controls-overlay
-                        data-wave={index % WAVE_BUCKETS}
                     >
                         <Paper
                             shadow="md"

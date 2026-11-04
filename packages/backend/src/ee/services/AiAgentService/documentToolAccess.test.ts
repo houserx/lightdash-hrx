@@ -13,7 +13,6 @@ vi.mock('../ai/AiAgentMcpRuntimeClient', () => ({
 type PrivateService = {
     getIsCopilotEnabled: () => Promise<boolean>;
     getAgentSettings: (...args: unknown[]) => Promise<unknown>;
-    canCreateDashboardsInProject: (...args: unknown[]) => Promise<boolean>;
     getAgentRuntimeMcpServers: (...args: unknown[]) => Promise<unknown[]>;
     createAuditedAbility: (...args: unknown[]) => { can: () => boolean };
     getAiAgentDependencies: (
@@ -33,8 +32,17 @@ type PrivateService = {
             stream: false;
             canManageAgent: false;
             aiCreditCheck: null;
+            runtimeOptions?: unknown;
         },
     ) => Promise<unknown>;
+};
+
+const embedRuntimeOptions = {
+    writeSpaceUuids: ['write-space'],
+    externalUserId: null,
+    spaceAccess: ['write-space'],
+    readOnlySpaceUuids: [],
+    userAttributeOverrides: {},
 };
 
 describe('Document runtime access', () => {
@@ -54,7 +62,7 @@ describe('Document runtime access', () => {
             expected: false,
         },
         {
-            name: 'denied ContentAsCode',
+            name: 'no space the user can save in',
             slack: false,
             trusted: true,
             authorized: false,
@@ -67,9 +75,26 @@ describe('Document runtime access', () => {
             authorized: true,
             expected: true,
         },
+        {
+            name: 'authorized embed',
+            slack: false,
+            trusted: true,
+            authorized: true,
+            runtimeOptions: embedRuntimeOptions,
+            expected: true,
+        },
+        {
+            name: 'embed actor that cannot save in a write space',
+            slack: false,
+            trusted: true,
+            authorized: false,
+            runtimeOptions: embedRuntimeOptions,
+            expected: false,
+        },
     ])(
         '$name passes effective access to discovery and authoring',
-        async ({ slack, trusted, authorized, expected }) => {
+        async ({ slack, trusted, authorized, runtimeOptions, expected }) => {
+            const canAuthorContent = vi.fn().mockResolvedValue(authorized);
             const service = new AiAgentService({
                 agentPermissionService: {
                     loadRequest: vi.fn().mockResolvedValue({
@@ -121,6 +146,7 @@ describe('Document runtime access', () => {
                 },
                 aiAgentToolsService: {
                     canGenerateDataApp: vi.fn().mockResolvedValue(false),
+                    canAuthorContent,
                 },
             } as unknown as ConstructorParameters<typeof AiAgentService>[0]);
             const privateService = service as unknown as PrivateService;
@@ -135,14 +161,10 @@ describe('Document runtime access', () => {
             });
             vi.spyOn(
                 privateService,
-                'canCreateDashboardsInProject',
-            ).mockResolvedValue(false);
-            vi.spyOn(
-                privateService,
                 'getAgentRuntimeMcpServers',
             ).mockResolvedValue([]);
             vi.spyOn(privateService, 'createAuditedAbility').mockReturnValue({
-                can: () => authorized,
+                can: () => true,
             });
             const stopAtDependencies = new Error('Dependency boundary reached');
             const dependencies = vi
@@ -175,9 +197,17 @@ describe('Document runtime access', () => {
                         stream: false,
                         canManageAgent: false,
                         aiCreditCheck: null,
+                        runtimeOptions,
                     },
                 ),
             ).rejects.toBe(stopAtDependencies);
+            if (!slack || trusted) {
+                expect(canAuthorContent).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        spaceUuids: runtimeOptions?.writeSpaceUuids ?? null,
+                    }),
+                );
+            }
             expect(dependencies).toHaveBeenCalledWith(
                 user,
                 prompt,
