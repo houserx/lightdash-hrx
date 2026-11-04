@@ -2,7 +2,7 @@ name: AI Agent Integration Tests
 
 on:
     schedule:
-        # Runs on Monday to Friday at 8:00 UTC
+        # Runs every Monday at 8:00 UTC
         # Use https://crontab.guru/#0_8_*_*_1 for reference
         - cron: '0 8 * * 1'
     workflow_dispatch: # Allow manual trigger from GitHub Actions UI
@@ -20,6 +20,7 @@ permissions:
 jobs:
     setup:
         runs-on: ubuntu-latest
+        timeout-minutes: 20
         services:
             postgres:
                 image: pgvector/pgvector:pg16
@@ -121,6 +122,7 @@ jobs:
     ai-agent-tests:
         runs-on: ubuntu-latest
         needs: setup
+        timeout-minutes: 30
         strategy:
             matrix:
                 include:
@@ -199,6 +201,27 @@ jobs:
               continue-on-error: true
               run: |
                   set +e
+
+                  REQUIRED_KEY_VAR="OPENAI_API_KEY"
+                  if [ "$AI_DEFAULT_PROVIDER" = "anthropic" ]; then
+                    REQUIRED_KEY_VAR="ANTHROPIC_API_KEY"
+                  fi
+
+                  # IR-3002: these tests need a real provider API key plus
+                  # LIGHTDASH_LICENSE_KEY, neither of which is provisioned for
+                  # this workflow yet. Skip rather than let vitest fail to even
+                  # load the suite (ZodError on missing provider config) stand
+                  # in for "tests ran" -- a missing-secret skip has to look
+                  # different downstream from a real test failure, see the
+                  # "Check test results" step below.
+                  if [ -z "${!REQUIRED_KEY_VAR}" ] || [ -z "$LIGHTDASH_LICENSE_KEY" ]; then
+                    echo "::warning::Skipping AI agent integration tests: $REQUIRED_KEY_VAR and/or LIGHTDASH_LICENSE_KEY is not provisioned for this run (IR-3002). No tests were executed."
+                    echo "summary=Skipped: $REQUIRED_KEY_VAR and/or LIGHTDASH_LICENSE_KEY missing (IR-3002)" >> $GITHUB_OUTPUT
+                    echo "exit_code=skipped" >> $GITHUB_OUTPUT
+                    echo "duration=0" >> $GITHUB_OUTPUT
+                    exit 0
+                  fi
+
                   START_TIME=$(date +%s)
                   pnpm --filter backend exec vitest run --config vitest.config.integration.ts src/ee/services/ai/agents/tests/agent.integration.test.ts 2>&1 | tee test_output.log
                   TEST_EXIT_CODE=${PIPESTATUS[0]}
@@ -230,6 +253,9 @@ jobs:
                   OPENAI_MODEL_NAME: ${{ matrix.ai_provider == 'openai' && matrix.model_name || '' }}
                   ANTHROPIC_MODEL_NAME: ${{ matrix.ai_provider == 'anthropic' && matrix.model_name || '' }}
                   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+                  # Unused while the anthropic matrix rows above are commented
+                  # out; kept so re-enabling them doesn't also require adding
+                  # this back.
                   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
                   LIGHTDASH_LICENSE_KEY: ${{ secrets.LIGHTDASH_LICENSE_KEY }}
                   NODE_ENV: test
@@ -260,16 +286,17 @@ jobs:
               if: always()
               env:
                   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+                  TEST_SUMMARY: ${{ steps.test_results.outputs.summary }}
+                  PROVIDER: ${{ matrix.ai_provider }}
+                  MODEL: ${{ matrix.model_name }}
+                  DURATION: ${{ steps.test_results.outputs.duration }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
               run: |
                   if [ -z "$SLACK_WEBHOOK_URL" ]; then
                       echo "SLACK_WEBHOOK_URL not configured for this job -- skipping notification."
                       exit 0
                   fi
 
-                  TEST_SUMMARY="${{ steps.test_results.outputs.summary }}"
-                  PROVIDER="${{ matrix.ai_provider }}"
-                  MODEL="${{ matrix.model_name }}"
-                  DURATION="${{ steps.test_results.outputs.duration }}"
                   MINUTES=$((DURATION / 60))
                   SECONDS=$((DURATION % 60))
 
@@ -277,6 +304,21 @@ jobs:
                     --data "{
                       \"channel\": \"#ai-agent-tests-feed\",
                       \"username\": \"AI Agent Tests\",
-                      \"text\": \"AI Agent Integration Tests completed for *${PROVIDER}* (${MODEL})\\n\\n📊 $TEST_SUMMARY\\n⏱️ Duration: ${MINUTES}m ${SECONDS}s\\n\\n📁 Full reports: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Results & Artifacts>\"
+                      \"text\": \"AI Agent Integration Tests completed for *${PROVIDER}* (${MODEL})\\n\\n📊 $TEST_SUMMARY\\n⏱️ Duration: ${MINUTES}m ${SECONDS}s\\n\\n📁 Full reports: <${RUN_URL}|View Results & Artifacts>\"
                     }" \
                     "$SLACK_WEBHOOK_URL"
+
+            - name: Check test results
+              if: always()
+              env:
+                  EXIT_CODE: ${{ steps.test_results.outputs.exit_code }}
+              run: |
+                  if [ "$EXIT_CODE" = "skipped" ]; then
+                    echo "::warning::AI agent integration tests were skipped this run (missing secrets, IR-3002) -- this run proves nothing about agent quality."
+                    exit 0
+                  fi
+                  if [ -z "$EXIT_CODE" ] || [ "$EXIT_CODE" != "0" ]; then
+                    echo "::error::AI agent integration tests failed or did not report a result (exit_code=${EXIT_CODE:-<empty>})."
+                    exit 1
+                  fi
+                  echo "AI agent integration tests passed."
