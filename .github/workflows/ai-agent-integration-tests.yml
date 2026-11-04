@@ -201,7 +201,7 @@ jobs:
                   set +e
                   START_TIME=$(date +%s)
                   pnpm --filter backend exec vitest run --config vitest.config.integration.ts src/ee/services/ai/agents/tests/agent.integration.test.ts 2>&1 | tee test_output.log
-                  TEST_EXIT_CODE=$?
+                  TEST_EXIT_CODE=${PIPESTATUS[0]}
                   END_TIME=$(date +%s)
                   DURATION=$((END_TIME - START_TIME))
 
