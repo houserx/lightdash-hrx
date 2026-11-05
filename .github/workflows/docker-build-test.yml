@@ -7,16 +7,13 @@
 # (candidate) and diff them with scripts/ci/compare-image-builds.py.
 #
 # SAFETY PROPERTIES
-#   * `depot build` runs with neither `--push` nor `--tag`. Depot leaves the
-#     result in the remote builder cache and `--load` pulls it to the runner's
-#     local daemon. There is no registry credential in this workflow at all —
-#     no Docker Hub login, no GCP auth — so a push is not merely disabled, it
-#     is impossible.
-#     Depot does name the loaded image itself, as
-#     `depot-project-<project>:build-<buildID>`. That name has no registry host,
-#     is derived from a build id that exists only in Depot, and dies with the
-#     ephemeral runner. It is a handle for `docker inspect`/`docker export`
-#     here, never a publish target.
+#   * `docker buildx build` runs with neither `--push` nor `--tag`. `--load`
+#     pulls the result into the runner's local daemon and nothing else. There
+#     is no registry credential in this workflow at all — no Docker Hub login,
+#     no GCP auth — so a push is not merely disabled, it is impossible.
+#     With no `--tag`, the loaded image is unnamed (`<none>:<none>`) in the
+#     local daemon; `--iidfile`/`--metadata-file` are the handles used for
+#     `docker inspect`/`docker export` below, never a publish target.
 #   * Every SENTRY_* build-arg is passed explicitly empty. All Sentry work in
 #     `dockerfile` sits behind `if [ -n "${SENTRY_AUTH_TOKEN}" ] && ...` guards
 #     and sentry-cli is only installed inside those guards, so no release is
@@ -25,12 +22,25 @@
 #     `release.yml`, not `post-release.yml`.
 #   * `permissions: contents: read` only.
 #
-# WHY THE depot CLI RATHER THAN depot/build-push-action
+# WHY PLAIN docker buildx RATHER THAN Depot (IR-2769)
+# This previously ran through the Depot CLI (same Depot project/token as the
+# release build, so this harness's build was a reasonable proxy for what
+# release would produce) until Depot became unavailable for this org entirely
+# -- not just the hosted runners, the build-acceleration service's own API
+# token stopped resolving too. `post-release.yml`'s actual release build still
+# depends on Depot as of this change; it needs the same migration, but as a
+# separate, carefully-reviewed follow-up given it pushes real images to
+# DockerHub and three GCP regions and isn't exercised by this test at all. Until
+# then, treat this harness's build as validating "does this diff change the
+# image," not "is this bit-for-bit what release's Depot build would produce."
+#
+# WHY THE docker CLI RATHER THAN docker/build-push-action
 # The action gives no control over BuildKit progress output and writes no log
 # file, so per-stage timings and cache-hit counts cannot be recovered from it.
-# The CLI with `--progress plain` yields both. The build itself is equivalent to
-# the release build: same Depot project (bgbbt3d0kc), same DEPOT_PROJECT_TOKEN,
-# same platform, same dockerfile, same (absent) TURBO_TOKEN secret mount.
+# The CLI with `--progress plain` yields both, in the same BuildKit plain-text
+# format scripts/ci/image-artifacts.py already parses (VERTEX_DONE_RE/
+# VERTEX_CACHED_RE match `#N DONE`/`#N CACHED` lines regardless of which
+# BuildKit frontend produced them).
 #
 # VERIFICATION PROTOCOL — WHAT IS AND IS NOT AUTOMATED HERE
 #   Automated by this workflow (artifacts uploaded for diffing):
@@ -75,8 +85,6 @@ permissions:
 jobs:
   build-and-describe:
     name: Build image (no push) and describe it
-    # Fork PRs cannot see DEPOT_PROJECT_TOKEN. Skip rather than fail red.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -88,21 +96,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Depot CLI
-        uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
       - name: Report free disk before build
         run: df -h /
 
       - name: Build image (no push, no tags)
         id: build
-        env:
-          DEPOT_TOKEN: ${{ secrets.DEPOT_PROJECT_TOKEN }}
         run: |
           set -euo pipefail
           start=$(date +%s)
-          depot build . \
-            --project bgbbt3d0kc \
+          docker buildx build . \
             --platform linux/amd64 \
             --file dockerfile \
             --progress plain \
@@ -118,29 +123,26 @@ jobs:
             2>&1 | tee build.log
           echo "wall_clock=$(( $(date +%s) - start ))" >> "$GITHUB_OUTPUT"
 
-      # We pass no --tag, but depot names the loaded image after its own build id
-      # (depot-project-<project>:build-<buildID>) and reports it as `image.name`.
-      # That local name is the only reliable handle: the digests in --iidfile and
-      # containerimage.digest identify the image BuildKit built, not the id the
-      # docker daemon assigns when it imports the tarball. Every candidate is
+      # We pass no --tag, so the loaded image has no repo:tag in the local
+      # daemon -- the digests in --iidfile and containerimage.digest (both
+      # standard BuildKit metadata-file fields, unrelated to which frontend
+      # drove the build) are the only reliable handles. Every candidate is
       # probed rather than trusted, and the runner's preinstalled images mean
       # "the only image in the daemon" is never a safe assumption.
       - name: Resolve loaded image
         id: image
         run: |
           set -euo pipefail
-          echo "--- depot metadata (imageConfigs elided) ---"
+          echo "--- build metadata (imageConfigs elided) ---"
           jq 'del(.imageConfigs)' build-metadata.json || true
           echo "--- images in the local daemon ---"
           docker images --all --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Size}}'
 
-          from_name="$(jq -r '."image.name" // empty' build-metadata.json 2>/dev/null || true)"
           from_iidfile="$(tr -d '[:space:]' < image-id.txt 2>/dev/null || true)"
           from_digests="$(jq -r '[."containerimage.config.digest", ."containerimage.digest"] | map(select(type == "string")) | join(" ")' build-metadata.json 2>/dev/null || true)"
-          from_repo="$(docker images --no-trunc --format '{{.Repository}}:{{.Tag}}' --filter 'reference=depot-project-*' | head -n 1)"
 
           image_ref=""
-          for candidate in "$from_name" "$from_iidfile" $from_digests "$from_repo"; do
+          for candidate in "$from_iidfile" $from_digests; do
             if [ -n "$candidate" ] && docker image inspect "$candidate" > /dev/null 2>&1; then
               image_ref="$candidate"
               break
