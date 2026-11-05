@@ -358,7 +358,7 @@ jobs:
     name: Generate API snapshots
     needs: changes
     if: needs.changes.outputs.open == 'true' && needs.changes.outputs.openapi == 'true' && needs.changes.outputs.fresh != 'true'
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       NODE_OPTIONS: '--max-old-space-size=8192'

@@ -39,7 +39,7 @@ on:
 
 jobs:
   publish:
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ubuntu-latest
     env:
       E2B_API_KEY: ${{ secrets.e2b_api_key }}
       E2B_DOMAIN: ${{ inputs.e2b_domain }}
