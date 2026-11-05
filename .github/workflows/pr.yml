@@ -908,6 +908,10 @@ jobs:
           egress-policy: audit
       - name: Drop test schemas
         run: |
+          if [ -z "$PGHOST" ]; then
+            echo "PGHOST is not configured (no shared CI Postgres instance secret in this repo) -- nothing to clean up."
+            exit 0
+          fi
           PATTERN="^(jaffle_cli_tests_${{ github.run_id }}|jaffle_dbt_tests_${{ github.run_id }}_[0-9]+)$"
           SCHEMAS=$(psql -t -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name ~ '$PATTERN';")
           for schema in $SCHEMAS; do
