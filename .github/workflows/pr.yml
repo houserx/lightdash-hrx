@@ -159,7 +159,11 @@ jobs:
   # args are part of the Turbo hash, so shards cache independently.
   unit-tests:
     name: "Unit Tests (${{ matrix.name }})"
-    runs-on: ubuntu-latest
+    # Trying ubuntu-32-large (already used extensively in houserx/platform) for
+    # real CPU headroom -- the pgjdbc 45k-column catalog test and the AuthRoutes
+    # lazy-route test are both legitimately CPU-bound and were tuned against
+    # stronger hardware than ubuntu-latest's shared 2 vCPUs provide.
+    runs-on: ubuntu-32-large
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
       TURBO_TEAM: ${{ vars.TURBO_TEAM }}
