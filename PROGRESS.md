@@ -910,3 +910,38 @@ should add a dated line here per feature.
   `bash ./init.sh`; linter, oxfmt, `tsc --noEmit` clean.
 - **Trap.** `npx tsc` in packages/common fails on the node devEngines pin; use `pnpm exec tsc`.
 - 2026-11-08T20:08:46Z supervisor: viz-grafana-unit-formats passed the gate in round 1
+
+## viz-registry-build (round 1)
+- **What.** New pnpm workspace package `chart-registry` (added to `pnpm-workspace.yaml`; `pnpm install --prefer-offline`
+  added only its importer to `pnpm-lock.yaml`, no new packages; `--offline` fails on the devEngines node pin).
+  `pnpm -F chart-registry build` runs `tsx scripts/build.ts`, which wipes and writes `chart-registry/dist/`:
+  `index.json` + `index-next.json` (same charts), `charts/<slug>/<version>/{entry.json,source.tar,dist.tar}` and any
+  `screenshot-*.png` the chart ships.
+  - A chart is `src/charts/<slug>/` with `registry.json` (name, description, version, publishedAt, changelog, tags,
+    icon, vizSchema, preview) and `index.ts`. esbuild bundles `index.ts` as one minified IIFE ->
+    `dist/assets/<slug>.js`; `dist/index.html` comes from `src/shared/index.html` (external `<script src>` and
+    `style.css` only, CSP-safe). source.tar = the `src/` files esbuild bundled (from its metafile) + registry.json +
+    the shared template/css, so relative imports resolve inside the tar.
+  - Validation: entry.json is the snapshot shape and goes through `parseChartRegistryVersionSnapshot`; the **index
+    entry is the parsed snapshot**, so index and entry.json cannot disagree (thumbnail = first screenshot, as the
+    client derives it). Index goes through `chartRegistryIndexSchema` and `parseChartRegistryIndexTolerant` (build fails
+    if anything is dropped). Build also fails without the `houserx` tag or `preview.rows`.
+  - Tars are deterministic (sorted, mtime = publishedAt, mode 644, uid/gid 0): rebuilding gives identical digests, so a
+    published version stays immutable. Bump `version` (and publishedAt) in registry.json for any change to a chart.
+  - `src/shared/vizContext.ts`: React-free viz protocol (listen for `lightdash:sdk:data-app-viz-context`, post
+    `viz-context-request`, ack `viz-rendered` after two frames) plus `rawValue` (via fieldMapping), `toNumber`,
+    `option` helpers for the other entries.
+- **Decision.** The build needs at least one entry, so the first entry is `histogram` (simplest of the six), fully
+  implemented: `value` field (type column), `bucketCount` number option, `histogram-bar` SVG rects with `data-count`,
+  `data-from`, `data-to`, `data-color` (first palette colour), "No data" when empty. `histogram.test.ts` already
+  passes (3/3); the viz-registry-histogram session only needs to verify it. No screenshots yet (no renderer for PNGs
+  without canvas); the gallery has `preview.rows`.
+- **Tested as a user.** `pnpm -F chart-registry build` -> "built 1 chart(s) into dist: histogram@1.0.0"; listed
+  dist (index.json, index-next.json, charts/histogram/1.0.0/{entry.json,source.tar,dist.tar}); `tar tvf` shows
+  dist.tar = dist/index.html + dist/assets/{histogram.js,style.css}, source.tar = src/...; rebuilt and digests matched.
+  Served dist over HTTP to the real ChartRegistryClient (`client-install.test.ts`, 4/4: index, version entry, digest-
+  checked downloads, next channel). Check `build.test.ts` 10/10 after `bash ./init.sh`; `tsc --noEmit` and oxfmt clean.
+- **For later sessions.** Add an entry = new `src/charts/<slug>/` dir; nothing in the build script changes. Bundling
+  `@lightdash/common` helpers into an entry pulls its whole import graph into the IIFE - prefer importing the
+  specific `src/eng1799/*` module files (or copy small helpers into `src/shared/`) and check bundle size.
+- 2026-11-08T20:15:29Z supervisor: viz-registry-build passed the gate in round 1
