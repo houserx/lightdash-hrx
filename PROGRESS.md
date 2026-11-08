@@ -1077,3 +1077,4 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 8/8, and 198 unit tests pass. Acceptance: 27 files pass and 26 fail. The 26 are unbuilt
   features (ask_data, platform_*, alerts, docs, dockerfile, tool-catalog and others).
 - 2026-11-08T17:32:24Z supervisor: mcp-sql-injection-safety passed the gate in round 1
+- 2026-11-08T17:33:41Z supervisor: mcp-restricted-telemetry halted: worker mcp.feature.mcp-restricted-telemetry.r1 stopped: STOP file present
