@@ -689,3 +689,19 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     ServiceRepository built a FederationService. Backend and common tsc, oxlint and oxfmt
     are clean. Not run against a live server and DB (no Docker or credentials).
 - 2026-11-08T18:48:49Z supervisor: ldq-federation-access-route passed the gate in round 1
+- 2026-11-08 ldq-time-relative-resolution (session):
+  - New `packages/common/src/utils/timeRange.ts`, exported from common's index:
+    `resolveTimeRange({from,to}, {now?, refreshInterval?})` returns `{from,to}` as ISO-8601 UTC.
+    `now` and `now-<n><unit>` (units s, m, h, d, w) resolve against the clock and are floored to
+    epoch multiples of the refresh interval. With no interval (undefined, null or 'off') they
+    floor to 10s (`DEFAULT_TIME_RANGE_ROUNDING_MS`). Also exports `parseTimeRangeDuration` and
+    `isRelativeTimeExpression`. Errors are `ParameterError` (unparseable expression, bad
+    duration, start after end).
+  - Next session (ldq-time-absolute-range): absolute ISO strings currently throw "Cannot parse".
+    Extend `resolveExpression` to accept them, unrounded; the start-after-end check is already
+    there. The refresh option set (10s..1h/off) belongs to ldq-dashboard-time-range-model; here
+    any positive `<n><unit>` duration is accepted.
+  - Tested: init, then the feature check (5/5). A scratch tsx script (deleted) on the real clock
+    gave a 6h window ending on a 10s boundary with refresh off and on a 5m boundary with '5m'.
+    'yesterday' and a reversed range threw ParameterError. common tsc, oxlint and oxfmt are clean.
+- 2026-11-08T18:51:52Z supervisor: ldq-time-relative-resolution passed the gate in round 1

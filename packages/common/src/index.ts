@@ -473,6 +473,7 @@ export * from './utils/tableCalculationFunctions';
 export * from './utils/tableSelection';
 export * from './utils/time';
 export * from './utils/timeFrames';
+export * from './utils/timeRange';
 export * from './utils/resolveQueryTimezone';
 export * from './utils/externalSourceExplore';
 export * from './utils/virtualView';
