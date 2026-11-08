@@ -1071,3 +1071,27 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Enter on the CPU high name called onOpenRule('c') exactly once.
   - For the next session: no page or React Query hook wraps this list yet. alert-ui-pages should feed it from `listAlertRules` in `features/alerting/api.ts`, plus the project's spaces. Mantine Select labels both the input and the listbox, so look up controls with the INPUT-filtering `field()` from the acceptance support (or `getAllByLabelText` filtered to INPUT).
 - 2026-11-08T23:25:40Z supervisor: alert-ui-rules-list passed the gate in round 1
+- alert-ui-rule-detail (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/frontend/src/features/alerting/components/AlertRuleDetail.tsx` (presentational).
+      - Props: `{ rule: AlertRuleWithInstances, history: AlertStateHistoryEntry[], notifications: AlertRuleNotification[], contactPoints?: {uuid, name}[] }`.
+      - Header: the rule name as an h2, the state badge, and the Managed in git, Paused and Shadow badges; then the description and `key=value` labels.
+      - Query section: the SQL in a code block, the condition as one line (`last(value) > 90`), and the interval, for and time range.
+      - Series table: state, labels, value and since for each current instance.
+      - State history: a Mantine Timeline, newest first as given. Transitions read `Normal → Firing` with labels and value. Skipped slots read `Skipped evaluation (overrun)`.
+      - Notifications table: time (`sentAt ?? createdAt`), Contact Point name plus integration type, alert status, a Sent/Failed/Shadow badge, attempts and the error.
+    - `utils.ts` gained `formatAlertCondition`, `formatLabels` and `describeHistoryEntry`, with unit tests in `utils.test.ts` (8 tests in total).
+  - Contract assumptions:
+    - The notification log API (`AlertNotification`) has no Contact Point name, but the page must show one. `AlertRuleNotification = AlertNotification & { contactPointName?: string | null }` is exported from the component. The name is taken from `contactPointName` first, then looked up by `contactPointUuid` in the optional `contactPoints` prop, then falls back to the uuid, and finally to "Deleted Contact Point". The backend still does not return a name.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). The unit file passes 8/8. Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted afterwards) rendered a firing rule with full, typed API-shaped data. Notification names were resolved through the `contactPoints` prop.
+      - The h2 read "Disk almost full" and the query was shown.
+      - The timeline read "Skipped evaluation (overrun)" and then "Normal → Firing".
+      - The series row read Firing | instance=db-1 | 95.
+      - The notification rows read incident-io | Sent | 1, and slack-infra-alerts | Failed | 3 | HTTP 500. The failed entry, whose sentAt is null, showed its createdAt.
+  - For the next session:
+    - alert-ui-rule-test should add the `onTestRule` prop and the "Test rule" button to this component. The acceptance test already passes `onTestRule`, but this session did not add it to the props.
+    - alert-ui-managed-readonly/editor own the `onEdit` prop and the Edit button. The button must be hidden for managed rules. The header already shows Managed in git.
+    - The pages feature should pass `contactPoints` from `getContactPoints` so that names show.
+- 2026-11-08T23:29:15Z supervisor: alert-ui-rule-detail passed the gate in round 1
