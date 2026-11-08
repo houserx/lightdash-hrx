@@ -1,0 +1,78 @@
+// Alert Rules, Contact Points and Notification Routes (ENG-1799).
+//
+// The module is built from injected dependencies so the API, the evaluator
+// and the scheduler can run in the app, the worker and the acceptance
+// harness alike. See PROGRESS.md "Backend" for the full contract.
+import {
+    type AlertRuleQueryContext,
+    type WarehouseClient,
+} from '@lightdash/common';
+import { type Router } from 'express';
+import { type Knex } from 'knex';
+import { AlertRuleModel } from './AlertRuleModel';
+import { AlertRuleService } from './AlertRuleService';
+import { createAlertingApiRouter } from './router';
+
+export type AlertingModuleDeps = {
+    database: Knex;
+    /** Every "now" in alerting comes from here. */
+    clock: { now(): Date };
+    warehouseClients: {
+        getWarehouseClient(args: {
+            projectUuid: string;
+            context: AlertRuleQueryContext;
+        }): Promise<Pick<WarehouseClient, 'runQuery'>>;
+    };
+    secrets: { resolve(name: string): Promise<string | undefined> };
+    email: {
+        sendEmail(message: {
+            to: string[];
+            subject: string;
+            text: string;
+            html?: string;
+        }): Promise<void>;
+    };
+    /** Throws when the Slack app isn't installed for the organization. */
+    slackApp: {
+        postMessage(args: {
+            organizationUuid: string;
+            channel: string;
+            text: string;
+            blocks?: unknown[];
+        }): Promise<void>;
+    };
+    jobQueue: {
+        addJob(
+            taskName: string,
+            payload: object,
+            opts: { jobKey: string; runAt?: Date },
+        ): Promise<void>;
+    };
+    heartbeat: { url: string; method: 'GET' | 'POST' } | null;
+    /** Exponential backoff for notification sends. */
+    retry: { maxAttempts: number; initialDelayMs: number };
+    siteUrl: string;
+};
+
+export type AlertingModule = {
+    alertRules: AlertRuleService;
+    close(): Promise<void>;
+};
+
+export const createAlertingModule = (
+    deps: AlertingModuleDeps,
+): AlertingModule => {
+    const alertRuleModel = new AlertRuleModel(deps.database);
+    return {
+        alertRules: new AlertRuleService({
+            alertRuleModel,
+            clock: deps.clock,
+        }),
+        // The database belongs to the caller; nothing of ours to release yet.
+        close: async () => {},
+    };
+};
+
+/** The alerting HTTP API, with full paths: mount it at the app root. */
+export const createAlertingRouter = (module: AlertingModule): Router =>
+    createAlertingApiRouter({ alertRules: module.alertRules });

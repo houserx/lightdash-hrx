@@ -11,3 +11,4 @@ export * from './routingGrouping';
 export * from './templateEngine';
 export * from './alertmanagerPayload';
 export * from './asCode';
+export * from './alertRules';
