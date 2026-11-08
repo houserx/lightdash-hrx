@@ -371,3 +371,42 @@ token verification for a *valid* token, which feature 39 then hardens.
   - Unaliased expressions get DataFusion's column names (`SELECT 3` → `Int64(3)`, not Postgres's
     `?column?`). No feature on this line asked for this, so I left it alone.
 - 2026-11-08T16:11:11Z supervisor: eng-pg-simple-query passed the gate in round 1
+- 2026-11-08 eng-pg-extended-query (session 4): The extended protocol (Parse/Describe/Bind/Execute) now
+  runs on DataFusion. Before this it was pgwire's Noop handler. All changes are in `src/pg.rs`; the one
+  new dependency is `postgres-types` 0.2.14 (already in Cargo.lock through pgwire; needed for `ToSql`).
+  - `Sql` (owns the shared `SessionContext`) plans SQL once with `create_logical_plan` +
+    `SQLOptions::verify_plan`, using the same read-only options as before. It is pgwire's `QueryParser`.
+    `QueryHandler` serves both protocols.
+  - Parse stores a `Prepared` (plan with placeholders, param Arrow types, described param pg types,
+    result columns). Each `$n` gets the first type found in this order: the client-declared Parse type,
+    DataFusion's own inference (`col = $1`), the target of a direct cast on the placeholder
+    (`$1::bigint`, our own plan walk because DataFusion 55 doesn't infer it), else text. Only `$1..$n`
+    ids are accepted (`$name` → 0A000). Client-declared types: bool, int2/4/8, float4/8, text-likes,
+    timestamp(tz), date. Others get 0A000.
+  - Bind: text params are cast from Utf8 to the param's Arrow type (cast failure → 22P02). Binary
+    params are decoded by pg type, then cast (bad length → 22P03). NULL becomes a typed null. Then
+    `plan.with_param_values`, and the statement is re-executed on each Execute.
+  - Results: Describe statement reports text format (as Postgres does). Execute encodes each column in
+    the format the Bind asked for. Binary columns are cast to the Arrow type of the *described* pg type
+    first, so the bytes always match RowDescription. timestamp(tz) is sent as int8 µs since 2000-01-01,
+    date as int4 days since 2000-01-01. Text output is unchanged (the shared `encode_rows` replaces
+    `text_rows`).
+  Tested as a user: I started `engine --config` (one `[[users]]`) and ran a throwaway tokio-postgres
+  program `../tmp/pgclient/src/bin/ext.rs`. Results: prepare `SELECT $1::bigint + 1 AS n, $2::text AS t`
+  → params [Int8, Text], columns n Int8, t Text. Executed twice → `42 / hi` and `-1 / again`.
+  `prepare_typed(.., [INT8])` → ParameterDescription oid 20, row 42. Preparing against an unknown table
+  → 42P01. After that, on the same session, a text + NULL bigint param query still worked.
+  Check `pgwire::eng_pg_extended_query`, the three earlier checks, harness self-tests and the 6 `pg` unit tests (3 new)
+  pass.
+  For later sessions:
+  - **rustfmt and clippy are not installed on this machine's toolchain now** (`cargo fmt`/`cargo clippy`
+    say "not installed"). I kept rustfmt style by hand (lines ≤100). The next session that has them
+    should run both.
+  - `pgwire::eng_pg_type_oids` still fails at the OID assertion (`CAST(1.5 AS DOUBLE)` etc.). Binary
+    encoding for float8/bool/timestamptz is already in place. That feature's own session owns this.
+  - I did not try an untyped `SELECT $1` (no cast, no context). DataFusion probably can't type it at
+    planning; Postgres would type it as text. Making DataFusion see declared/defaulted types needs a `PlannerContext` with
+    `with_prepare_param_data_types`, which `SessionState` doesn't expose. Left for later if needed.
+  - `max_rows` in Execute is honoured by pgwire's portal (PortalSuspended); results are still fully
+    collected in memory first.
+- 2026-11-08T16:26:55Z supervisor: eng-pg-extended-query passed the gate in round 1

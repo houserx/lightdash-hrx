@@ -1603,6 +1603,7 @@ dependencies = [
  "hmac 0.12.1",
  "md-5 0.10.6",
  "pgwire",
+ "postgres-types",
  "rcgen",
  "reqwest",
  "rustls",
