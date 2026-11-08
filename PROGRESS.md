@@ -624,3 +624,4 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     profiles.yml for dbt runs. With federation credentials it threw NotSupportedError with
     status 400 and the message above. Plain Postgres still produced a `type: postgres` profile.
 - 2026-11-08T18:32:04Z supervisor: ldq-federation-dbt-refused passed the gate in round 1
+- 2026-11-08T18:35:23Z supervisor: ldq-federation-project-types halted: worker ldq.feature.ldq-federation-project-types.r1 stopped: STOP file present
