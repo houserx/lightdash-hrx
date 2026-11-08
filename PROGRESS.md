@@ -250,3 +250,4 @@ should add a dated line here per feature.
 - 2026-11-08T18:05:20Z supervisor: viz-chart-type-wiring halted: the worker halted on viz-chart-type-wiring
 - 2026-11-08T18:06:28Z supervisor: viz-log-stream-model halted: the worker halted on viz-log-stream-model
 - 2026-11-08T18:07:19Z supervisor: viz-log-stream-order halted: the worker halted on viz-log-stream-order
+- 2026-11-08T18:08:02Z supervisor: viz-log-stream-view halted: the worker halted on viz-log-stream-view
