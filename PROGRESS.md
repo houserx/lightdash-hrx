@@ -599,3 +599,4 @@ token verification for a *valid* token, which feature 39 then hardens.
 - 2026-11-08T17:25:02Z supervisor: eng-promql-upstream-errors halted: the worker halted on eng-promql-upstream-errors
 - 2026-11-08T17:25:40Z supervisor: eng-label-function halted: the worker halted on eng-label-function
 - 2026-11-08T17:26:10Z supervisor: eng-series-name-function halted: the worker halted on eng-series-name-function
+- 2026-11-08T17:27:39Z supervisor: eng-promql-pushdown-and-sql halted: the worker halted on eng-promql-pushdown-and-sql
