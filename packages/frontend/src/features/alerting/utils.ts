@@ -71,3 +71,29 @@ export const describeHistoryEntry = (entry: AlertStateHistoryEntry): string =>
     entry.type === 'transition'
         ? `${ALERT_STATE_LABELS[entry.previousState] ?? entry.previousState} → ${ALERT_STATE_LABELS[entry.state] ?? entry.state}`
         : `Skipped evaluation (${entry.reason})`;
+
+/** A label set as editor text: one `key=value` per line. */
+export const labelsToText = (labels: Record<string, string>): string =>
+    formatLabels(labels).join('\n');
+
+/**
+ * Parses editor text of `key=value` lines into a label set. Blank lines are
+ * ignored and keys and values are trimmed. Returns the first bad line as an
+ * error instead: a line without `=` or with an empty key.
+ */
+export const parseLabelsText = (
+    text: string,
+):
+    | { labels: Record<string, string>; error?: undefined }
+    | { labels?: undefined; error: string } => {
+    const labels: Record<string, string> = {};
+    for (const raw of text.split('\n')) {
+        const line = raw.trim();
+        if (line === '') continue;
+        const eq = line.indexOf('=');
+        const key = eq === -1 ? '' : line.slice(0, eq).trim();
+        if (key === '') return { error: `Expected key=value, got "${line}"` };
+        labels[key] = line.slice(eq + 1).trim();
+    }
+    return { labels };
+};

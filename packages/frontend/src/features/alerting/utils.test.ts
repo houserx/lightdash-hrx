@@ -3,7 +3,9 @@ import {
     describeHistoryEntry,
     formatAlertCondition,
     formatLabels,
+    labelsToText,
     matchesLabelFilter,
+    parseLabelsText,
 } from './utils';
 
 describe('matchesLabelFilter', () => {
@@ -93,5 +95,25 @@ describe('describeHistoryEntry', () => {
                 at: '2026-11-08T09:01:00Z',
             }),
         ).toBe('Skipped evaluation (overrun)');
+    });
+});
+
+describe('labelsToText / parseLabelsText', () => {
+    it('round-trips a label set through key=value lines', () => {
+        const labels = { team: 'infra', severity: 'critical' };
+        expect(labelsToText(labels)).toBe('team=infra\nseverity=critical');
+        expect(parseLabelsText(labelsToText(labels))).toEqual({ labels });
+    });
+    it('trims, skips blank lines and keeps = in values', () => {
+        expect(parseLabelsText(' team = infra \n\n url=a=b\n')).toEqual({
+            labels: { team: 'infra', url: 'a=b' },
+        });
+        expect(parseLabelsText('')).toEqual({ labels: {} });
+    });
+    it('rejects a line without a key', () => {
+        expect(parseLabelsText('team=infra\nbroken').error).toBe(
+            'Expected key=value, got "broken"',
+        );
+        expect(parseLabelsText('=x').error).toMatch(/Expected key=value/);
     });
 });

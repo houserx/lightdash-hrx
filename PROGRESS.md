@@ -1110,3 +1110,36 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - A rejected call read "Test rule failed: Network down".
   - For the next session: the pages feature should wire `onTestRule` to `() => previewAlertRule(projectUuid, <the rule as CreateAlertRule>)` from `features/alerting/api.ts`. The preview endpoint takes a CreateAlertRule body, not a rule uuid, so the page must map the saved rule to the create shape. The editor could reuse the same pattern for unsaved rules.
 - 2026-11-08T23:32:00Z supervisor: alert-ui-rule-test passed the gate in round 1
+- alert-ui-rule-editor (round 1) — 2026-11-08
+  - Changes:
+    - New `features/alerting/components/AlertRuleEditor.tsx`, a presentational component with the props `rule?: AlertRule`, `spaces: {uuid, name}[]`, `onSubmit(definition: AlertRuleDefinition)` and `onCancel?`. It uses a `@mantine/form` `useForm`. Save shows a loading spinner while `onSubmit`'s promise runs.
+    - Fields:
+      - Name, Description, Folder (a clearable Select over `spaces`) and Query.
+      - Value column, Reducer, Condition (all 8 operators) and Threshold. A range operator shows Min/Max instead of Threshold.
+      - Evaluate every (`interval`), Time range, For and Keep firing for.
+      - No-data and error state selects.
+      - Labels and Annotations as `key=value` lines.
+      - Paused and Shadow switches.
+    - A new rule starts from `ALERT_RULE_DEFAULTS` with the operator `>`.
+    - Save always submits the whole definition, defaults included. That is a valid CreateAlertRule body and also a valid UpdateAlertRule (PATCH) body.
+    - Validation:
+      - "Name/Description/Query/Value column is required".
+      - "Threshold/Min/Max must be a number", and "Max must be greater than Min".
+      - Durations are checked with `parsePrometheusDuration`, and `interval` must be at least `ALERT_RULE_MIN_INTERVAL` (30s).
+      - A bad label line reads `Expected key=value, got "..."`.
+    - `utils.ts` gained `labelsToText` and `parseLabelsText`, with 3 new unit tests (`utils.test.ts`, 11 in total). There is a new `AlertRuleEditor.module.css`, because lint forbids the `styles` prop.
+  - Traps:
+    - Don't add `withAsterisk` or `required` to the inputs. Mantine appends " *" to the label, and the acceptance `field('Name')` lookup by label then fails.
+    - The labels "For" and "Threshold" must stay exactly as they are.
+  - Tested:
+    - After init, the check passes (2 passed, 4 skipped). The full rules-ui file has 5 passed and 1 failed; the failure is alert-ui-managed-readonly, the next feature. Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) clicked through the editor.
+      - Saving an empty form showed all four required/number errors.
+      - With an outside_range condition, Max below Min, `10s` interval, `For` of "5 minutes" and a bad label line, each error was shown and nothing was submitted.
+      - After fixing them, the rule submitted.
+      - Editing a rule with a range condition, labels, annotations, a folder, paused and shadow, then saving unchanged, submitted exactly the original definition.
+  - For the next session:
+    - alert-ui-managed-readonly should disable every editor field and Save when `rule.managed` is true, and show `ManagedInGitBadge`.
+    - It should also add the `onEdit` prop and Edit button to AlertRuleDetail, hidden for managed rules.
+    - The pages feature should map `onSubmit` to `createAlertRule` or `updateAlertRule` in `api.ts`.
+- 2026-11-08T23:36:29Z supervisor: alert-ui-rule-editor passed the gate in round 1
