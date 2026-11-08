@@ -1,5 +1,7 @@
 import {
+    getErrorMessage,
     WAREHOUSE_LISTED_DATABASES_LIMIT,
+    WarehouseQueryError,
     type CreatePostgresCredentials,
     type WarehouseDatabaseListing,
 } from '@lightdash/common';
@@ -16,6 +18,12 @@ export type FederationWarehouseClientOptions = {
 /** `SET hrx.identity = '<token>'`, with the token quoted as a SQL string literal. */
 const getIdentityStatement = (token: string): string =>
     `SET hrx.identity = '${token.replaceAll("'", "''")}'`;
+
+/** Replace every occurrence of the token (raw or SQL-quoted) with a marker. */
+const redactToken = (text: string, token: string): string =>
+    [token, token.replaceAll("'", "''")]
+        .filter((value) => value.length > 0)
+        .reduce((acc, value) => acc.split(value).join('[redacted]'), text);
 
 /**
  * Client for the Federation Engine: the Postgres warehouse type with
@@ -51,7 +59,21 @@ export class FederationWarehouseClient extends PostgresWarehouseClient {
         const token = await this.getIdentityToken({
             agent: this.agentSession,
         });
-        await client.query(getIdentityStatement(token));
+        try {
+            await client.query(getIdentityStatement(token));
+        } catch (error) {
+            // The engine's error may echo the rejected value. Raise a fresh
+            // error with the token redacted and no `cause`, so neither the
+            // message nor a serialised error can carry the token. A
+            // WarehouseQueryError passes through streamQuery's parseError
+            // unchanged.
+            throw new WarehouseQueryError(
+                `Federation identity was rejected: ${redactToken(
+                    getErrorMessage(error),
+                    token,
+                )}`,
+            );
+        }
     }
 
     /**

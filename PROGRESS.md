@@ -585,3 +585,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     round-tripped intact. On a plain Postgres client the setting was empty and the provider
     was never called.
 - 2026-11-08T18:17:39Z supervisor: ldq-federation-identity-set passed the gate in round 1
+- 2026-11-08 ldq-federation-identity-not-logged (session):
+  - The feature check already passed on arrival. On the normal path the token is only in the
+    SET statement. Nothing logs SQL, and parseError only sees the user's SQL.
+  - Closed the gap the previous session flagged. If `SET hrx.identity` itself fails,
+    `FederationWarehouseClient.beforeQuery` now throws a fresh
+    `WarehouseQueryError("Federation identity was rejected: ...")`. In that message the token,
+    raw or SQL-quoted, is replaced with `[redacted]`, and there is no `cause`. streamQuery
+    rethrows WarehouseQueryError unchanged, so the engine's raw error, which may echo the
+    value, never reaches the message, JSON or logs.
+  - Follow-up (not client logs, out of scope): with Sentry in non-OTel mode, Sentry's default
+    Postgres span integration (see packages/backend/src/sentry.ts) records query text as a
+    span attribute. That text would include `SET hrx.identity = '<token>'`. Whoever wires
+    federation into the backend should check this. Options: drop that integration, or scrub
+    db.statement for SET hrx.identity in beforeSendSpan.
+  - Tested: init, then the feature check (1/1). The real failing query on a throwaway cluster
+    names the table, the error and console contain no token, and the server log shows it was
+    sent. A scratch vitest (deleted) made SET reject with the statement echoed in its message
+    and detail. The resulting error's message, JSON and stack held neither the raw nor the
+    quoted token. Warehouses ldq acceptance plus the Postgres unit tests passed (43/43).
+    tsc, oxfmt and oxlint are clean.
+- 2026-11-08T18:24:34Z supervisor: ldq-federation-identity-not-logged passed the gate in round 1
