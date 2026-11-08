@@ -1285,3 +1285,27 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     SQL appears. Feature check 3/3, investigate-editor-sources 6/6 (regression). frontend tsc
     clean; oxfmt and oxlint clean on changed files.
 - 2026-11-08T20:50:23Z supervisor: ldq-investigate-cloudwatch-editors passed the gate in round 1
+- ldq-investigate-results-timeseries (round 1):
+  - New `features/investigate/components/InvestigateResults.tsx` with the props
+    `{columns, rows, onOpenTrace?}`. It picks a renderer with common `getTelemetryResultShape`.
+    A metric result renders `data-testid="investigate-timeseries"` with `data-series-count`,
+    holding an ECharts line chart (the repo's `EChartsReactWrapper`, svg renderer, time x
+    axis, scrolling legend, one line per series) that is 360px high through
+    `InvestigateResults.module.css`. When there are no points it says "No data points".
+    Every other shape currently renders a plain Mantine table (`data-testid="investigate-table"`).
+  - New `features/investigate/utils/timeSeries.ts`: `groupTimeSeries(columns, rows)` and
+    `findColumn`. The series name is the `series` column, or `labels` when there is no `series`
+    column. Columns match case-insensitively. Timestamps may be ISO strings, epoch ms or Dates.
+    Values that are numeric strings become numbers, and non-finite values become null (a gap).
+    Points are sorted by time.
+  - Next sessions: ldq-investigate-results-logs and ldq-investigate-results-traces add the
+    `log` and `trace` branches in `InvestigateResults` (`onOpenTrace` is accepted but not used
+    yet). The plain table stays the fallback for `table`. Nothing renders InvestigateResults on
+    the page yet. The run wiring belongs to the workspace and time-range features.
+  - Tested: no browser or backend (no Docker), and no Run button in Investigate yet, so the
+    component was driven directly. The new `InvestigateResults.test.tsx` (5/5) feeds promql-shaped
+    rows. It checks for one line per series, that ECharts draws an svg, and that no table
+    appears; it also covers the empty metric result, the plain-table fallback, and the
+    series/labels grouping including upper-cased columns. Feature check 1/1. frontend tsc
+    clean; oxfmt and oxlint clean on changed files.
+- 2026-11-08T20:54:11Z supervisor: ldq-investigate-results-timeseries passed the gate in round 1
