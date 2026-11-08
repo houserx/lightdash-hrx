@@ -22,6 +22,7 @@ import type { Config } from '../config.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
 import { registerListSources } from '../tools/listSources.js';
+import { registerQueryPromql } from '../tools/queryPromql.js';
 import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js';
 
 /** `serverInfo.name` announced to MCP clients. */
@@ -45,6 +46,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     // Registering a tool declares the tools capability and installs the tools/list and tools/call handlers.
     const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
     registerListSources(server, config, engine);
+    registerQueryPromql(server, config, engine);
     return server;
 }
 

@@ -711,3 +711,46 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 2/2. 15 acceptance files pass: the earlier 14 plus this one. The 38 failing files belong
   to unbuilt features.
 - 2026-11-08T16:34:44Z supervisor: mcp-user-mapping-cache passed the gate in round 1
+
+## mcp-tool-query-promql (2026-11-08)
+
+- New `src/tools/queryPromql.ts` (`registerQueryPromql`, `buildPromqlQuery`) is registered in `createMcpServer`
+  (`src/mcp/server.ts`).
+  - A range query sends `SELECT * FROM promql($1, $2, $3, $4[, $5])` with params query, start, end, step[, source].
+  - With `at`, it sends `SELECT * FROM promql_instant($1, $2[, $3])`.
+  - Every value is a bind parameter. Times are sent as `toISOString()` (UTC, with ms).
+- New shared `src/tools/telemetryArgs.ts`, for the later query tools (logql, cloudwatch, traces) to reuse:
+  - `ToolInputError`. Refused arguments become an `isError` result before any engine connection.
+  - `parseDuration`: the Prometheus grammar `y w d h m s ms`, in order, not zero.
+  - `parseInstant` / `parseRange`: strict ISO-8601 that needs `Z` or an offset when a time is given. A date alone is
+    UTC midnight. Impossible dates are refused, and so is end before start.
+  - `sourceParams`: the source must be an `MCP_SOURCES` entry of the tool's kind. It is passed only when given.
+  - `placeholders`, `tableResult`: Date cells become ISO strings, json cells stay parsed objects, `rowCount` =
+    rows.length, `truncated: false`.
+  - `successResult` / `failureResult`: engine errors give "<what> failed: <engine message> (SQLSTATE x)".
+- Decision: `zod@4.6.6` is now a direct dependency for the tool input schemas. It was already in the lockfile as the
+  SDK's required peer, and it was added offline, so the lockfile only gains the importer entry. Use
+  `import { z } from 'zod'` with `registerTool({ inputSchema: { … } })` in later tools.
+- Contract reading: an argument mix (`at` together with start/end/step, or an incomplete range) is refused. A missing
+  `query` is a zod violation and surfaces as JSON-RPC -32602, which the harness accepts.
+- Left for later features, on purpose:
+  - `now`/`now-1h` (mcp-time-inputs: extend `parseInstant`, using `deps.now`, which is not wired into
+    `createMcpServer` yet).
+  - The row cap and `truncated` (mcp-row-cap: change `tableResult`).
+  - The output cap.
+  - SQLSTATE wording (mcp-engine-error-mapping: change `failureResult`).
+  - Logs.
+- Unit tests: `src/tools/queryPromql.test.ts`. 97 unit tests pass and typecheck is clean.
+- Tested as a user: `../tmp/promql-ut/run.mts`. Run it from the repo root with `node_modules/.bin/tsx <abs path>
+  $PWD/packages/telemetry-mcp`. It runs real `dist/main.js` with an RS256 token, the fake Lightdash and the fake
+  engine.
+  - tools/list shows `query_promql` with inputs query/start/end/step/at/source and readOnlyHint.
+  - The range call: the engine got an extended `promql($1..$4)` with the PromQL, both instants and `1m` as params,
+    after SET hrx.identity. The result had columns timestamp,value,labels,series, rowCount 2, truncated false.
+  - With source: `$5` = prometheus-production.
+  - With `at`: `promql_instant($1, $2)`, rowCount 1.
+  - A bad step, a loki source, at mixed with step, and a missing query each gave an error, with no engine query.
+    SIGTERM exits 0.
+- Results: the check passes 5/5. 16 acceptance files pass: the earlier 15 plus this one. The 37 failing files belong
+  to unbuilt features.
+- 2026-11-08T16:39:43Z supervisor: mcp-tool-query-promql passed the gate in round 1
