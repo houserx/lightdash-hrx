@@ -95,6 +95,17 @@ export type AlertRuleInstance = {
 
 export type AlertRuleSummary = AlertRule & { state: AlertRuleState };
 
+/**
+ * Filters of GET .../alerting/rules (`?state=&label=key=value&spaceUuid=`).
+ * A rule matches when it matches every filter given; `labels` are matched
+ * against the rule's own labels.
+ */
+export type AlertRuleListFilters = {
+    state?: AlertRuleState;
+    labels?: Record<string, string>;
+    spaceUuid?: string;
+};
+
 export type AlertRuleWithInstances = AlertRuleSummary & {
     instances: AlertRuleInstance[];
 };
@@ -130,6 +141,10 @@ export const ALERT_RULE_STATE_PRECEDENCE: readonly AlertRuleState[] = [
     'pending',
     'normal',
 ];
+
+export const isAlertRuleState = (value: unknown): value is AlertRuleState =>
+    typeof value === 'string' &&
+    (ALERT_RULE_STATE_PRECEDENCE as readonly string[]).includes(value);
 
 /** Aggregate state of a rule from its series' states. */
 export const getAlertRuleState = (

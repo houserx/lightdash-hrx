@@ -6,16 +6,19 @@ import {
     ALERT_REDUCERS,
     ALERT_RULE_DEFAULTS,
     ALERT_RULE_MIN_INTERVAL,
+    ALERT_RULE_STATE_PRECEDENCE,
     ALERT_THRESHOLD_OPERATORS,
     AlreadyExistsError,
     ForbiddenError,
     generateSlug,
     getAlertRuleState,
+    isAlertRuleState,
     NotFoundError,
     ParameterError,
     parsePrometheusDuration,
     type AlertRule,
     type AlertRuleDefinition,
+    type AlertRuleListFilters,
     type AlertRuleSummary,
     type AlertRuleVersion,
     type AlertRuleWithInstances,
@@ -256,6 +259,80 @@ const validateDefinition = (definition: AlertRuleDefinition) => {
     }
 };
 
+/** The query parameter's values; repeated parameters arrive as an array. */
+const queryValues = (key: string, value: unknown): string[] => {
+    if (value === undefined) return [];
+    const values = Array.isArray(value) ? value : [value];
+    if (!values.every((v): v is string => typeof v === 'string')) {
+        throw new ParameterError(`${key} must be a string`);
+    }
+    return values;
+};
+
+const singleQueryValue = (key: string, value: unknown): string | undefined => {
+    const values = queryValues(key, value);
+    if (values.length > 1) {
+        throw new ParameterError(`${key} must be given at most once`);
+    }
+    return values[0];
+};
+
+/**
+ * Reads the filters of the rule list from its query string:
+ * `state=<rule state>`, `spaceUuid=<uuid>` and any number of
+ * `label=<key>=<value>`. Other parameters are ignored.
+ */
+export const parseAlertRuleListFilters = (
+    query: Record<string, unknown>,
+): AlertRuleListFilters => {
+    const filters: AlertRuleListFilters = {};
+    const state = singleQueryValue('state', query.state);
+    if (state !== undefined) {
+        if (!isAlertRuleState(state)) {
+            throw new ParameterError(
+                `state must be one of ${ALERT_RULE_STATE_PRECEDENCE.join(', ')}`,
+            );
+        }
+        filters.state = state;
+    }
+    const spaceUuid = singleQueryValue('spaceUuid', query.spaceUuid);
+    if (spaceUuid !== undefined) {
+        if (!UUID_PATTERN.test(spaceUuid)) {
+            throw new ParameterError('spaceUuid must be a uuid');
+        }
+        filters.spaceUuid = spaceUuid;
+    }
+    const labels = queryValues('label', query.label);
+    if (labels.length > 0) {
+        filters.labels = {};
+        for (const label of labels) {
+            const separator = label.indexOf('=');
+            if (separator <= 0) {
+                throw new ParameterError('label must be key=value');
+            }
+            const key = label.slice(0, separator);
+            const value = label.slice(separator + 1);
+            if (key in filters.labels && filters.labels[key] !== value) {
+                throw new ParameterError(
+                    `label ${key} must be given at most once`,
+                );
+            }
+            filters.labels[key] = value;
+        }
+    }
+    return filters;
+};
+
+const matchesFilters = (
+    rule: AlertRuleSummary,
+    { state, labels, spaceUuid }: AlertRuleListFilters,
+): boolean =>
+    (state === undefined || rule.state === state) &&
+    (spaceUuid === undefined || rule.spaceUuid === spaceUuid) &&
+    Object.entries(labels ?? {}).every(
+        ([key, value]) => rule.labels[key] === value,
+    );
+
 export class AlertRuleService {
     constructor(
         private readonly deps: {
@@ -328,11 +405,14 @@ export class AlertRuleService {
     async list(
         user: SessionUser,
         projectUuid: string,
+        filters: AlertRuleListFilters = {},
     ): Promise<AlertRuleSummary[]> {
         await this.assertAbility(user, 'view', projectUuid);
         const rules = await this.deps.alertRuleModel.list(projectUuid);
         const withInstances = await this.withInstances(rules);
-        return withInstances.map(({ instances: _instances, ...rule }) => rule);
+        return withInstances
+            .map(({ instances: _instances, ...rule }) => rule)
+            .filter((rule) => matchesFilters(rule, filters));
     }
 
     async get(

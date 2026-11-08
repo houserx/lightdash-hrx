@@ -357,3 +357,25 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - The editor PATCHes `paused: false`. The evaluation at 09:02 → evaluated, 1 call, db-1 firing 95.
       - The rule is paused again, and the evaluation at 09:03 (db-1 at 10) → skipped/paused, still 1 call, db-1 still firing 95.
 - 2026-11-08T19:52:49Z supervisor: alert-eval-paused passed the gate in round 1
+- alert-rule-list-filters (round 1) — 2026-11-08
+  - Already in place: `GET /rules` already returned each rule's aggregate `state` (`getAlertRuleState` over its instances; a rule never evaluated is `normal`). Only the filters were missing.
+  - Changed:
+    - common `alertRules.ts`: added the `AlertRuleListFilters` type (`state?`, `labels?`, `spaceUuid?`) and `isAlertRuleState`.
+    - backend `AlertRuleService.ts`: added the exported `parseAlertRuleListFilters(req.query)`. `AlertRuleService.list(user, projectUuid, filters = {})` now filters after it computes state. The router passes the parsed query.
+    - New unit file `AlertRuleService.test.ts` (9 tests) for the parser.
+  - Contract assumptions (CONTRACTS.md defines no rule-list query; narrowest reading):
+    - `state=<firing|error|nodata|pending|normal>` may be given at most once. `resolved` and any unknown value → 400.
+    - `spaceUuid=<uuid>` may be given at most once. A malformed uuid → 400. An unknown space returns `[]`, not 404.
+    - `label=<key>=<value>` may repeat and all must match (AND). It splits on the first `=`, so values may contain `=`. Labels match the rule's own `labels` only, not series labels. A missing key or `=` → 400. The same key with two values → 400.
+    - Filters combine with AND. Unknown query parameters are ignored.
+    - Filtering happens in memory after the per-rule state is computed (one instances query per list, as before). If rule counts grow large, move `spaceUuid` and labels into SQL.
+  - Tested:
+    - The check passes (1 passed). The query-identity, series-states, for-pending, keep-firing-for, state-history and paused tests pass (6 passed). rules.accept.ts passes (4 passed).
+    - Backend and common tsc are clean. oxlint (src/alerting) and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk; removed afterwards, along with `src/alerting/__walk__`).
+      - Setup: A (platform space, team=infra), B (rds space, team=db, env=prod, for 5m) and C (no space, team=infra). A and B were evaluated with db-1 at 95. C was never evaluated.
+      - The list showed A firing, B pending and C normal. `state=firing` → A, `state=pending` → B, `state=normal` → C, `state=error` → [].
+      - `label=team=infra` → A and C. `label=team=db&label=env=prod` → B. `env=dev` → [].
+      - `spaceUuid=platform` → A. `spaceUuid=rds&state=pending` → B. `state=normal&label=team=infra` → C.
+      - 400s for `state=resolved`, `state=bogus`, a repeated `state`, `label=team`, `label==x` and `spaceUuid=nope`. Outsider → 403. Anonymous → 401.
+- 2026-11-08T19:58:02Z supervisor: alert-rule-list-filters passed the gate in round 1

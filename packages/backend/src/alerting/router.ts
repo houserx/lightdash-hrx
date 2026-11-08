@@ -11,7 +11,10 @@ import express, {
     type Router,
 } from 'express';
 import Logger from '../logging/logger';
-import { type AlertRuleService } from './AlertRuleService';
+import {
+    parseAlertRuleListFilters,
+    type AlertRuleService,
+} from './AlertRuleService';
 import { type ContactPointService } from './ContactPointService';
 import { type NotificationRouteService } from './NotificationRouteService';
 
@@ -104,7 +107,11 @@ export const createAlertingApiRouter = (
     router.get(
         `${base}/rules`,
         route((user, req) =>
-            services.alertRules.list(user, req.params.projectUuid),
+            services.alertRules.list(
+                user,
+                req.params.projectUuid,
+                parseAlertRuleListFilters(req.query),
+            ),
         ),
     );
     router.post(
