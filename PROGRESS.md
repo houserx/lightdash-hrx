@@ -1340,3 +1340,18 @@ token verification for a *valid* token, which feature 39 then hardens.
   `sha256:` hash that matched the portal fallback. Check passed after init, as did the
   `audit::` unit tests.
 - 2026-11-08T20:24:40Z supervisor: eng-audit-integrity-hash passed the gate in round 1
+- 2026-11-08 eng-audit-fail-closed (round 1): already implemented by eng-audit-dynamodb-item and
+  eng-audit-s3-object (the audit write runs before any DataRow, and an error from either store
+  becomes 58000 'audit write failed'). This session verified it and changed no engine code.
+  - The engine logs the full SDK error (`engine: audit write failed: DynamoDB PutItem on <table>`
+    or `S3 PutObject s3://<bucket>/<key>`) to stderr. The client only sees the generic message.
+  - Refusals tested were AccessDenied responses (400 from DynamoDB, 403 from S3), which the SDK
+    doesn't retry. A 5xx would be retried by the SDK's default retry policy before failing.
+  Tested as a user: `../tmp/audit-fail/run.sh <out>` starts the open and restricted Prometheus
+  mocks, a DynamoDB+S3 store that refuses writes while `<out>/ctl/fail-dynamo` or `fail-s3`
+  exists, and the engine. Each phase sets a restricted identity token, then runs the restricted
+  promql query over the simple and extended protocols. With the table refusing: no rows,
+  `ERROR 58000: audit write failed` on both protocols, and S3 is never called. With only the
+  bucket refusing: DynamoDB ok, S3 refused, 58000 on both. After the store is restored: 2 rows on
+  each protocol. The check passed after init.
+- 2026-11-08T20:26:02Z supervisor: eng-audit-fail-closed passed the gate in round 1
