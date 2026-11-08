@@ -166,6 +166,7 @@ export * from './types/favorites';
 export * from './featureFlags/previewFeatureFlags';
 export * from './types/dataRetention';
 export * from './types/featureFlags';
+export * from './types/federation';
 export * from './types/impersonationOrganizationSettings';
 export * from './types/previewExpirationProjectSettings';
 export * from './types/resultsCacheProjectSettings';

@@ -55427,6 +55427,15 @@ const models: TsoaRoute.Models = {
                 {
                     dataType: 'nestedObjectLiteral',
                     nestedProperties: {
+                        httpBaseUrl: { dataType: 'string' },
+                        identitySigningSecret: { dataType: 'string' },
+                        flavor: {
+                            dataType: 'union',
+                            subSchemas: [
+                                { dataType: 'enum', enums: ['postgres'] },
+                                { dataType: 'enum', enums: ['federation'] },
+                            ],
+                        },
                         timeoutSeconds: { dataType: 'double' },
                         dataTimezone: { dataType: 'string' },
                         startOfWeek: {
@@ -56643,6 +56652,21 @@ const models: TsoaRoute.Models = {
                         ],
                     },
                     searchPath: {
+                        dataType: 'union',
+                        subSchemas: [
+                            { dataType: 'string' },
+                            { dataType: 'undefined' },
+                        ],
+                    },
+                    flavor: {
+                        dataType: 'union',
+                        subSchemas: [
+                            { dataType: 'enum', enums: ['postgres'] },
+                            { dataType: 'enum', enums: ['federation'] },
+                            { dataType: 'undefined' },
+                        ],
+                    },
+                    httpBaseUrl: {
                         dataType: 'union',
                         subSchemas: [
                             { dataType: 'string' },

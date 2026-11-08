@@ -50182,6 +50182,19 @@
                     },
                     {
                         "properties": {
+                            "httpBaseUrl": {
+                                "type": "string",
+                                "description": "Federation Engine HTTP base URL (CONTRACTS §1.3)."
+                            },
+                            "identitySigningSecret": {
+                                "type": "string",
+                                "description": "Federation Engine identity token secret. Sensitive."
+                            },
+                            "flavor": {
+                                "type": "string",
+                                "enum": ["postgres", "federation"],
+                                "description": "Absent means 'postgres'. 'federation' is the Federation Engine (CONTRACTS §4.1)."
+                            },
                             "timeoutSeconds": {
                                 "type": "number",
                                 "format": "double"
@@ -51526,6 +51539,15 @@
                     },
                     "searchPath": {
                         "type": "string"
+                    },
+                    "flavor": {
+                        "type": "string",
+                        "enum": ["postgres", "federation"],
+                        "description": "Absent means 'postgres'. 'federation' is the Federation Engine (CONTRACTS §4.1)."
+                    },
+                    "httpBaseUrl": {
+                        "type": "string",
+                        "description": "Federation Engine HTTP base URL (CONTRACTS §1.3)."
                     }
                 },
                 "required": ["type", "schema", "host", "port", "dbname"],
