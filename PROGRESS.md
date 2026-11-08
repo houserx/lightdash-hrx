@@ -507,3 +507,23 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     import these modules because parseConfig needs LIGHTDASH_SECRET, S3 and so on, so use a
     scratch vitest instead.
 - 2026-11-08T18:02:35Z supervisor: ldq-identity-token-agent passed the gate in round 1
+- 2026-11-08 ldq-identity-token-audit-block (session):
+  - `identityToken.ts` now exports `IDENTITY_AUDIT_SOURCES` (investigate, tile, alert_rule,
+    mcp, write_mode) and `isIdentityAuditSource`. `IdentityAuditSource` is derived from the
+    array. `mintIdentityToken` refuses, before signing, an audit block whose `source` is unknown
+    or missing (e.g. 'dashboard') or whose description/ticket/resource_uuid is not a string or
+    null. It does this at runtime because callers may pass untyped request bodies. Since
+    FederationIdentityService.mintForUser goes through mintIdentityToken, it rejects these too.
+    Omitted description/ticket/resource_uuid still default to null (unchanged).
+  - Contract assumption: an empty description is not rejected at mint time. CONTRACTS §2 has
+    the engine refuse Audited Queries without a non-empty description (42501), and only
+    Audited Queries need one, so tile/alert tokens may lack it.
+  - Not wired into the query path yet (ldq-identity-token-provider will pass the audit block
+    from Investigate/tile/alert callers).
+  - Tested: init, then the feature check (3/3) and the attrs, byte-exact, verify and agent
+    tests (15/15), backend `tsc --noEmit` and oxfmt --check. As a user: a scratch vitest
+    (deleted afterwards) minted through FederationIdentityService and verified the tokens.
+    Investigate with a description and ticket gave audit {description, ticket, source
+    'investigate', resource_uuid null}. A tile gave {null, null, 'tile', the tile uuid}.
+    Source 'dashboard', a missing source, and a numeric ticket were all refused.
+- 2026-11-08T18:07:03Z supervisor: ldq-identity-token-audit-block passed the gate in round 1

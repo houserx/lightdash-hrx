@@ -14,12 +14,22 @@ const NONCE_BYTES = 16;
 
 export type IdentityTokenIssuer = 'lightdash' | 'telemetry-mcp';
 
-export type IdentityAuditSource =
-    | 'investigate'
-    | 'tile'
-    | 'alert_rule'
-    | 'mcp'
-    | 'write_mode';
+/** CONTRACTS §3 `audit.source` values: where the query came from. */
+export const IDENTITY_AUDIT_SOURCES = [
+    'investigate',
+    'tile',
+    'alert_rule',
+    'mcp',
+    'write_mode',
+] as const;
+
+export type IdentityAuditSource = (typeof IDENTITY_AUDIT_SOURCES)[number];
+
+export const isIdentityAuditSource = (
+    value: unknown,
+): value is IdentityAuditSource =>
+    typeof value === 'string' &&
+    (IDENTITY_AUDIT_SOURCES as readonly string[]).includes(value);
 
 export type IdentityAttrs = {
     telemetry_restricted: boolean;
@@ -92,6 +102,28 @@ export type MintIdentityTokenOptions = {
     ttlSeconds?: number;
 };
 
+/**
+ * Refuses an audit block the engine couldn't trust: an unknown `source`, or a description,
+ * ticket or resource uuid that isn't a string. Callers may be untyped (request bodies).
+ */
+const assertValidAudit = (audit: IdentityTokenClaims['audit']): void => {
+    if (!isIdentityAuditSource(audit?.source)) {
+        throw new Error(
+            `Unknown identity token audit source: ${String(audit?.source)}`,
+        );
+    }
+    (['description', 'ticket', 'resource_uuid'] as const).forEach((key) => {
+        const value = audit[key];
+        if (
+            value !== undefined &&
+            value !== null &&
+            typeof value !== 'string'
+        ) {
+            throw new Error(`Identity token audit ${key} must be a string`);
+        }
+    });
+};
+
 const signEncodedPayload = (encodedPayload: string, secret: string): string =>
     createHmac('sha256', secret).update(encodedPayload).digest('base64url');
 
@@ -142,6 +174,7 @@ export const mintIdentityToken = (
     if (nonce.length !== NONCE_BYTES) {
         throw new Error(`Identity token nonce must be ${NONCE_BYTES} bytes`);
     }
+    assertValidAudit(claims.audit);
     const iat = Math.floor(now.getTime() / 1000);
     const lifetime = Math.max(
         0,
