@@ -1,4 +1,5 @@
 import { formatGrafanaText } from '../../shared/grafanaFormat';
+import { parseThresholds, thresholdColor } from '../../shared/thresholds';
 import {
     onVizContext,
     rawValue,
@@ -8,13 +9,14 @@ import {
 import {
     buildBars,
     displayModeOption,
+    gradientStops,
+    linearGradientCss,
     orientationOption,
+    type DisplayMode,
     type GaugeBar,
     type Orientation,
 } from './barGauge';
 
-// Grafana's base threshold colour.
-const BAR_COLOR = '#73BF69';
 const DEFAULT_MIN = 0;
 const DEFAULT_MAX = 100;
 
@@ -43,6 +45,13 @@ const element = (
 };
 
 /**
+ * How a bar is painted: its threshold colour (also the value text's colour)
+ * and the CSS background of the filled bar, solid in basic mode or a
+ * gradient through the threshold colours in gradient mode.
+ */
+type BarPaint = { color: string; background: string };
+
+/**
  * One gauge: the name, a track with the bar filled to its share, and the
  * formatted value. Horizontal gauges stack as rows (name above, value at
  * the right of the track); vertical gauges sit side by side as columns
@@ -52,7 +61,8 @@ const gauge = (
     bar: GaugeBar,
     text: string,
     orientation: Orientation,
-    mode: string,
+    mode: DisplayMode,
+    paint: BarPaint,
 ): HTMLElement => {
     const horizontal = orientation === 'horizontal';
     const row = element(
@@ -77,7 +87,7 @@ const gauge = (
     const value = element(
         'div',
         'bar-gauge-value',
-        `color:${BAR_COLOR};font-weight:500;font-size:14px;white-space:nowrap;` +
+        `color:${paint.color};font-weight:500;font-size:14px;white-space:nowrap;` +
             'font-variant-numeric:tabular-nums;' +
             (horizontal
                 ? 'flex:none;min-width:56px;text-align:right'
@@ -92,10 +102,12 @@ const gauge = (
             (horizontal ? 'min-width:0;height:100%' : 'min-height:0;order:2'),
     );
     const percent = `${Math.round(bar.fill * 10000) / 100}%`;
-    const fill = element(
-        'div',
-        'bar-gauge-bar',
-        `position:absolute;left:0;bottom:0;background:${BAR_COLOR};border-radius:2px;` +
+    // Set as the attribute, not through the style object, so the gradient
+    // reaches the page exactly as written.
+    const fill = element('div', 'bar-gauge-bar', '');
+    fill.setAttribute(
+        'style',
+        `position:absolute;left:0;bottom:0;background:${paint.background};border-radius:2px;` +
             (horizontal
                 ? `top:0;width:${percent}`
                 : `right:0;height:${percent}`),
@@ -103,7 +115,7 @@ const gauge = (
     fill.setAttribute('data-name', bar.name);
     fill.setAttribute('data-fill', String(bar.fill));
     fill.setAttribute('data-mode', mode);
-    fill.setAttribute('data-color', BAR_COLOR);
+    fill.setAttribute('data-color', paint.color);
     if (bar.value !== null) fill.setAttribute('data-value', String(bar.value));
     fill.title = `${bar.name}: ${text}`;
     track.appendChild(fill);
@@ -131,6 +143,26 @@ const render = (root: HTMLElement, context: VizContext): void => {
     const max = toNumber(options.max) ?? DEFAULT_MAX;
     const unit = typeof options.unit === 'string' ? options.unit : '';
     const decimals = decimalsOption(options.decimals);
+    const thresholds = parseThresholds(options.thresholds);
+    const range = { min, max };
+    const colorAt = (value: number): string =>
+        thresholdColor(value, thresholds, range);
+    const paintOf = (bar: GaugeBar): BarPaint => {
+        // An empty cell takes the base colour (its bar is empty anyway).
+        const value = bar.value ?? -Infinity;
+        const color = colorAt(value);
+        if (mode === 'basic' || bar.value === null) {
+            return { color, background: color };
+        }
+        const stops = gradientStops(bar.value, thresholds, range, colorAt);
+        return {
+            color,
+            background: linearGradientCss(
+                stops,
+                orientation === 'horizontal' ? 'to right' : 'to top',
+            ),
+        };
+    };
 
     const bars = buildBars(
         context.rows.map((row) => ({
@@ -163,7 +195,7 @@ const render = (root: HTMLElement, context: VizContext): void => {
             bar.value === null
                 ? '-'
                 : formatGrafanaText(bar.value, unit, decimals);
-        panel.appendChild(gauge(bar, text, orientation, mode));
+        panel.appendChild(gauge(bar, text, orientation, mode, paintOf(bar)));
     }
     root.appendChild(panel);
 };

@@ -1153,3 +1153,27 @@ should add a dated line here per feature.
   and oxfmt clean. Scratch driver in `../tmp/drive-bar-gauge/` (run from there with
   `vitest run --globals --disableConsoleIntercept drive.test.ts`).
 - 2026-11-08T20:45:25Z supervisor: viz-registry-bar-gauge passed the gate in round 1
+
+## viz-registry-bar-gauge-modes (round 1)
+- **What.** bar-gauge 1.0.0 -> **1.1.0** (changelog updated). Each bar's colour is now
+  `thresholdColor(value, parseThresholds(options.thresholds), {min, max})`, so percentage steps are read against
+  min..max and no thresholds means Grafana base green. That colour goes on the bar's `data-color` and on the value
+  text. `basic` mode: a solid `background:<colour>`. `gradient` mode: a CSS `linear-gradient` (`to right` when
+  horizontal, `to top` when vertical) on the `bar-gauge-bar` style. It starts with the threshold colour at min, puts
+  each step that begins inside the bar at its place along the bar, and ends with the value's colour. A bar that
+  crosses no step fades from its colour at alpha 0.4 (8-digit hex, only for 6-digit hex colours) to the full colour.
+  Stops are placed along min..min(value, max) because the bar ends at max. An empty cell gets a solid base colour.
+  The preview now has green/orange 60/red 80 thresholds.
+- **Code.** Pure helpers in `barGauge.ts`: `gradientStops`, `fadeColor`, `linearGradientCss`. index.ts sets the bar's
+  style with `setAttribute('style', ...)`, not `style.cssText`, so the gradient text reaches the DOM exactly as
+  written.
+- **Tested as a user.** Built the registry (bar-gauge@1.1.0), untarred dist.tar and ran the bundle in jsdom the way
+  the host does. Thresholds green/orange 60/red 80, rows 20/70/90/150/null. basic: green/orange/red/red/green
+  solid, value text in the same colours. gradient horizontal: 20 -> faded-to-green gradient, 70 -> green->orange,
+  90 -> green->orange->red, 150 -> stops at 60%/80% of the bar. The vertical stops are the same with `to top`.
+  Percentage 50 with min 100 max 200: 140 green, 160 red. The `viz-rendered` ack was sent every time. Check
+  `bar-gauge-modes.test.ts` 2/2 after `bash ./init.sh`. Regressions: bar-gauge 5/5, build 38/38. previews.test.ts
+  still fails 2 tests on status-grid, which is a later feature and not built yet. Typecheck and oxfmt are clean.
+  The scratch driver is in `../tmp/drive-bar-gauge-modes/`. Run it from there with
+  `../../repo/packages/backend/node_modules/.bin/vitest run --globals --disableConsoleIntercept drive.test.ts`.
+- 2026-11-08T20:48:29Z supervisor: viz-registry-bar-gauge-modes passed the gate in round 1

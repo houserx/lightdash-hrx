@@ -1,9 +1,9 @@
 {
     "name": "Bar gauge",
-    "description": "Draws one bar per row, filled by its value between min and max (clamped at both ends), horizontal or vertical, each labelled with its name and its value formatted with a Grafana unit.",
-    "version": "1.0.0",
+    "description": "Draws one bar per row, filled by its value between min and max (clamped at both ends), horizontal or vertical, each labelled with its name and its value formatted with a Grafana unit. Bars are coloured by Grafana thresholds, solid (basic) or as a gradient (gradient).",
+    "version": "1.1.0",
     "publishedAt": "2026-11-08T00:00:00.000Z",
-    "changelog": "Initial HouseRx release.",
+    "changelog": "Bars take their Grafana threshold colour (absolute or percentage steps against min..max): solid in basic mode, a gradient through the threshold colours in gradient mode.",
     "tags": ["houserx", "gauge", "bar-gauge"],
     "icon": "chart-bar",
     "vizSchema": {
@@ -101,7 +101,8 @@
         "optionValues": {
             "unit": "percent",
             "min": 0,
-            "max": 100
+            "max": 100,
+            "thresholds": "{\"mode\":\"absolute\",\"steps\":[{\"value\":null,\"color\":\"green\"},{\"value\":60,\"color\":\"orange\"},{\"value\":80,\"color\":\"red\"}]}"
         }
     }
 }
