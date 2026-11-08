@@ -5,6 +5,7 @@ import {
     resolveAlertQueryParameters,
     substituteAlertQueryParameters,
     type AlertQueryRow,
+    type AlertRule,
     type AlertRuleDefinition,
     type AlertRulePreview,
     type AlertRuleQueryContext,
@@ -13,6 +14,7 @@ import {
 import { randomUUID } from 'crypto';
 import { type AlertInstanceModel } from './AlertInstanceModel';
 import { type AlertRuleModel } from './AlertRuleModel';
+import { type AlertScheduleModel } from './AlertScheduleModel';
 import {
     evaluateAlertSeries,
     getAlertSeriesTransitions,
@@ -35,6 +37,10 @@ export type AlertWarehouseClients = {
 type AlertEvaluatorArgs = {
     alertRuleModel: AlertRuleModel;
     alertInstanceModel: AlertInstanceModel;
+    alertScheduleModel: Pick<
+        AlertScheduleModel,
+        'claimEvaluationSlot' | 'releaseEvaluationSlot'
+    >;
     warehouseClients: AlertWarehouseClients;
 };
 
@@ -44,7 +50,10 @@ type AlertEvaluatorArgs = {
  * the scheduled time, then gives every series of the result its own state
  * and value, stored per series in `alert_instances`. Every state change is
  * written to `alert_state_history`. Paused rules are skipped without
- * running their query. `previewRule` runs an unsaved rule once and stores
+ * running their query. With several workers each scheduled slot is
+ * evaluated once: a worker claims the slot on the rule's row before it runs
+ * the query, and a worker that finds the slot (or a later one) already
+ * claimed skips with reason `duplicate`. `previewRule` runs an unsaved rule once and stores
  * nothing.
  */
 export class AlertEvaluator {
@@ -52,11 +61,14 @@ export class AlertEvaluator {
 
     private readonly alertInstanceModel: AlertInstanceModel;
 
+    private readonly alertScheduleModel: AlertEvaluatorArgs['alertScheduleModel'];
+
     private readonly warehouseClients: AlertWarehouseClients;
 
     constructor(args: AlertEvaluatorArgs) {
         this.alertRuleModel = args.alertRuleModel;
         this.alertInstanceModel = args.alertInstanceModel;
+        this.alertScheduleModel = args.alertScheduleModel;
         this.warehouseClients = args.warehouseClients;
     }
 
@@ -71,6 +83,32 @@ export class AlertEvaluator {
         // are until it is unpaused.
         if (rule.paused) return { status: 'skipped', reason: 'paused' };
 
+        // Another worker is evaluating, or has evaluated, this slot or a
+        // later one.
+        const { claimed, previous } =
+            await this.alertScheduleModel.claimEvaluationSlot(
+                rule.uuid,
+                scheduledAt,
+            );
+        if (!claimed) return { status: 'skipped', reason: 'duplicate' };
+        try {
+            await this.evaluateClaimedRule(rule, scheduledAt);
+        } catch (error) {
+            // Give the slot back so a retry of this job evaluates it again.
+            await this.alertScheduleModel.releaseEvaluationSlot(
+                rule.uuid,
+                scheduledAt,
+                previous,
+            );
+            throw error;
+        }
+        return { status: 'evaluated' };
+    }
+
+    private async evaluateClaimedRule(
+        rule: AlertRule,
+        scheduledAt: Date,
+    ): Promise<void> {
         const rows = await this.runRuleQuery({
             ruleUuid: rule.uuid,
             projectUuid: rule.projectUuid,
@@ -95,7 +133,6 @@ export class AlertEvaluator {
                 transitions: getAlertSeriesTransitions(previous, evaluation),
             },
         );
-        return { status: 'evaluated' };
     }
 
     /**

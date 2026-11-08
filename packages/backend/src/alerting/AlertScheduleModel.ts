@@ -19,7 +19,11 @@ type DbSchedulableAlertRule = {
     last_scheduled_at: Date | null;
 };
 
-/** Interval slots of Alert Rules (`alert_rules.last_scheduled_at`). */
+/**
+ * Interval slots of Alert Rules: the last slot enqueued
+ * (`alert_rules.last_scheduled_at`) and the last slot claimed for
+ * evaluation (`alert_rules.last_evaluation_slot`).
+ */
 export class AlertScheduleModel {
     constructor(private readonly database: Knex) {}
 
@@ -71,6 +75,52 @@ export class AlertScheduleModel {
             )
             .update({ last_scheduled_at: slot });
         return updated > 0;
+    }
+
+    /**
+     * Claims `slot` for evaluation (`alert_rules.last_evaluation_slot`):
+     * `claimed` is true when this caller moved the rule's last evaluation
+     * slot forward to it, false when that slot (or a later one) was already
+     * claimed by some worker or the rule is gone. The rule's row is locked
+     * for the check, so concurrent claims of one slot serialize and only one
+     * wins. `previous` is the slot the claim replaced, for `releaseEvaluationSlot`.
+     */
+    async claimEvaluationSlot(
+        ruleUuid: string,
+        slot: Date,
+    ): Promise<{ claimed: boolean; previous: Date | null }> {
+        return this.database.transaction(async (trx) => {
+            const row = await trx(AlertRulesTableName)
+                .where('alert_rule_uuid', ruleUuid)
+                .forUpdate()
+                .first<{ last_evaluation_slot: Date | null } | undefined>(
+                    'last_evaluation_slot',
+                );
+            if (!row) return { claimed: false, previous: null };
+            const previous = row.last_evaluation_slot;
+            if (previous && previous.getTime() >= slot.getTime()) {
+                return { claimed: false, previous };
+            }
+            await trx(AlertRulesTableName)
+                .where('alert_rule_uuid', ruleUuid)
+                .update({ last_evaluation_slot: slot });
+            return { claimed: true, previous };
+        });
+    }
+
+    /**
+     * Gives back a claim whose evaluation failed, so a retry of the slot
+     * runs again. A no-op if another worker has since claimed a later slot.
+     */
+    async releaseEvaluationSlot(
+        ruleUuid: string,
+        slot: Date,
+        previous: Date | null,
+    ): Promise<void> {
+        await this.database(AlertRulesTableName)
+            .where('alert_rule_uuid', ruleUuid)
+            .andWhere('last_evaluation_slot', slot)
+            .update({ last_evaluation_slot: previous });
     }
 
     async transaction<T>(fn: (trx: Knex.Transaction) => Promise<T>) {

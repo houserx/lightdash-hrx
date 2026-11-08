@@ -415,3 +415,25 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - Two schedulers ticked at once at 09:06. Each rule was enqueued by exactly one of them, so jobLog got one entry per rule and slot.
     - The paused rule never appeared until it was unpaused; after that, 09:06:10 → paused@09:06. Pausing the 1m rule stopped it. A second module ticking the same instant → [].
 - 2026-11-08T20:10:21Z supervisor: alert-scheduler-due passed the gate in round 1
+- alert-eval-concurrency (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108140000_add_alert_rules_last_evaluation_slot.ts` adds a nullable `alert_rules.last_evaluation_slot timestamptz`. It holds the last slot a worker claimed for evaluation. It is not in the rule API and doesn't touch `updated_at`.
+    - `AlertScheduleModel.claimEvaluationSlot(ruleUuid, slot)` → `{claimed, previous}`. It runs in one transaction: `SELECT … FOR UPDATE` on the rule row, then it moves the slot forward only if the stored slot is null or earlier. Concurrent claims serialize on the row lock, and the loser sees the winner's slot. `releaseEvaluationSlot(ruleUuid, slot, previous)` puts `previous` back, but only while the stored slot still equals `slot`.
+    - `AlertEvaluator.evaluateRule` runs the not-found check, then paused, then claims the slot. If the claim fails it returns `{status: 'skipped', reason: 'duplicate'}` without running the query. Otherwise it evaluates, which is now the private `evaluateClaimedRule`. If evaluation throws, it releases the claim and rethrows, so a job retry of a failed slot runs again. A finished slot stays claimed, so its retries skip.
+    - `index.ts`: the evaluator and scheduler now share one `AlertScheduleModel`.
+  - Decisions (the spec doesn't decide these):
+    - The claim is a persisted row-level marker, not a transaction held open across the warehouse query. A slot older than the last claimed one also skips as `duplicate`.
+    - A thrown evaluation gives its slot back.
+    - The claim is committed before the query runs, so a crash in mid-evaluation leaves the slot claimed. That slot is lost, and the next slot runs normally.
+  - For alert-eval-overrun (next): this claim doesn't know whether the previous slot is *still running*. A different-slot evaluation while another is in flight currently just runs. Overrun needs an in-progress marker, for example `evaluation_started_at`/finished, plus a stale timeout, and an `evaluation_skipped` history entry. It can extend `claimEvaluationSlot`.
+  - For alert-eval-error (later): if errors become recorded states rather than throws, the slot stays claimed, which is intended. Only thrown errors release it.
+  - Tested:
+    - The check passes (1 passed, 6 skipped).
+    - Regressions pass: the built evaluation features (8), scheduler-due (1) and db-migrations (1).
+    - Backend tsc, oxlint (src/alerting) and oxfmt are clean.
+    - As a user: a scratch walk through the harness (a copied run.sh/config in tmp/walk and a file in src/alerting/__walk__; both removed). The results:
+      - Three modules evaluated T0 at once → one `evaluated`, two `skipped/duplicate`, with 1 warehouse call.
+      - A retry of T0 → skipped, still 1 call. 09:01 → evaluated (2 calls). T0 again after 09:01 → skipped.
+      - 09:02 with a failing query → threw. A retry of 09:02 → evaluated.
+      - The instance ended firing. `last_evaluation_slot` = 09:02 and `updated_at` was unchanged.
+- 2026-11-08T20:15:17Z supervisor: alert-eval-concurrency passed the gate in round 1

@@ -63,9 +63,11 @@ export const createAlertingModule = (
 ): AlertingModule => {
     const alertRuleModel = new AlertRuleModel(deps.database);
     const notificationRouteModel = new NotificationRouteModel(deps.database);
+    const alertScheduleModel = new AlertScheduleModel(deps.database);
     const evaluator = new AlertEvaluator({
         alertRuleModel,
         alertInstanceModel: new AlertInstanceModel(deps.database),
+        alertScheduleModel,
         warehouseClients: deps.warehouseClients,
     });
     return {
@@ -86,7 +88,7 @@ export const createAlertingModule = (
         }),
         evaluator,
         scheduler: new AlertScheduler({
-            alertScheduleModel: new AlertScheduleModel(deps.database),
+            alertScheduleModel,
             jobQueue: deps.jobQueue,
             clock: deps.clock,
         }),
