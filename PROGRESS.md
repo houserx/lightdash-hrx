@@ -1913,3 +1913,22 @@ docs/eng-1799/telemetry-mcp.md
 - Trap for later features: don't import shared types from the backend (e.g. warehouse or ee code). If a type is
   needed, copy the narrow shape into the package, and never touch packages/backend/src/ee (decision no_ee_changes).
 - 2026-11-08T19:20:55Z supervisor: mcp-no-ee-imports passed the gate in round 1
+
+## mcp-dockerfile (2026-11-08)
+
+- Added `packages/telemetry-mcp/Dockerfile` (written, never built: workers have no Docker). Build context is the
+  repo root: `docker build -f packages/telemetry-mcp/Dockerfile .`.
+  - Two stages, both `node:24.22.1-trixie-slim` (matches .nvmrc and the main image). The acceptance test requires
+    every FROM to be `node:24…`, so pnpm comes from `corepack enable` and the root `packageManager` pin, not from
+    the ghcr pnpm image the root dockerfile uses.
+  - Build stage: `COPY . .`, `pnpm install --frozen-lockfile --filter @lightdash/telemetry-mcp...`, build, then the
+    same install with `--prod` to drop dev deps. Runtime copies root node_modules (pnpm store) plus the package's
+    package.json, node_modules and dist at their workspace paths, root-owned.
+  - `USER node`, `EXPOSE 8080` (MCP_PORT default), `HEALTHCHECK` runs `node -e fetch(.../healthz)` (no curl in slim),
+    `CMD ["node", "dist/main.js"]`. No secret ENV/ARG; only NODE_ENV, MCP_HOST, MCP_PORT.
+- Tested: after `bash ./init.sh`, feature check 3/3. Ran the HEALTHCHECK command against local stub servers: exit 0
+  on 200, 1 on 503 and 1 when nothing listens.
+- Follow-ups for whoever first builds it: pin the base image by digest (no network here to resolve it); confirm
+  pnpm 12's filtered `--frozen-lockfile` install and the `--prod` prune work in the container; consider a
+  package-scoped .dockerignore if the root context is too large.
+- 2026-11-08T19:22:43Z supervisor: mcp-dockerfile passed the gate in round 1
