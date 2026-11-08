@@ -19,7 +19,9 @@ use datafusion::common::ScalarValue;
 use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::SQLOptions;
-use datafusion::logical_expr::{Cast, Expr, LogicalPlan, TryCast};
+use datafusion::logical_expr::{
+    Cast, ColumnarValue, Expr, LogicalPlan, ScalarUDF, TryCast, Volatility, create_udf,
+};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use chrono::{DateTime, NaiveDateTime, Offset, TimeZone, Timelike};
 use engine_config::User;
@@ -46,8 +48,16 @@ use pgwire::types::format::FormatOptions as PgFormatOptions;
 /// PBKDF2 iterations for SCRAM-SHA-256 (the Postgres default).
 const SCRAM_ITERATIONS: usize = 4096;
 
-/// Major.minor reported in the `server_version` startup parameter.
+/// Major.minor reported in the `server_version` startup parameter and by `version()`.
 const SERVER_VERSION: &str = "16.0";
+
+/// What `SELECT version()` returns. Lightdash reads the major version with
+/// `/PostgreSQL (\d+)\./`, so this must start with `PostgreSQL 16.`.
+const VERSION_STRING: &str = concat!(
+    "PostgreSQL 16.0 (hrx-federation-engine ",
+    env!("CARGO_PKG_VERSION"),
+    ")"
+);
 
 /// The session time zone: DataFusion's zone for `TIMESTAMP WITH TIME ZONE` and `now()`.
 const SESSION_TIME_ZONE: &str = "+00:00";
@@ -137,12 +147,14 @@ pub struct Sql {
 impl Sql {
     /// Sessions run in UTC, so `TIMESTAMP WITH TIME ZONE` values carry a zone (and are sent as
     /// timestamptz) rather than being planned as zone-less timestamps.
+    ///
+    /// DataFusion's own `version()` is replaced by [`version_udf`].
     fn new() -> Sql {
         let mut config = SessionConfig::new();
         config.options_mut().execution.time_zone = Some(SESSION_TIME_ZONE.to_string());
-        Sql {
-            ctx: SessionContext::new_with_config(config),
-        }
+        let ctx = SessionContext::new_with_config(config);
+        ctx.register_udf(version_udf());
+        Sql { ctx }
     }
 
     async fn plan(&self, sql: &str) -> Result<LogicalPlan, DataFusionError> {
@@ -168,6 +180,22 @@ impl Sql {
     async fn run(&self, sql: &str) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
         self.execute(self.plan(sql).await?).await
     }
+}
+
+/// `version()` as Postgres clients expect it: [`VERSION_STRING`] instead of DataFusion's
+/// `Apache DataFusion ...`.
+fn version_udf() -> ScalarUDF {
+    create_udf(
+        "version",
+        vec![],
+        DataType::Utf8,
+        Volatility::Immutable,
+        Arc::new(|_args: &[ColumnarValue]| {
+            Ok(ColumnarValue::Scalar(ScalarValue::Utf8(Some(
+                VERSION_STRING.to_string(),
+            ))))
+        }),
+    )
 }
 
 /// Serves both the simple and the extended query protocol from one [`Sql`].
@@ -896,5 +924,15 @@ mod tests {
             b"\0\0\0\x08\0\0\0\0\0\0\0\x2a\0\0\0\x02hi\0\0\0\x08\0\0\0\0\0\x0f\x42\x40"
         );
         assert!(field_infos(&columns, &Format::Individual(vec![1])).is_err());
+    }
+
+    #[test]
+    fn version_reports_postgres_16_and_the_crate_version() {
+        let sql_ = Sql::new();
+        let (_, batches) = futures::executor::block_on(sql_.run("SELECT version()")).unwrap();
+        let v = batches[0].column(0).as_string::<i32>().value(0).to_string();
+        let crate_version = env!("CARGO_PKG_VERSION");
+        assert_eq!(v, format!("PostgreSQL 16.0 (hrx-federation-engine {crate_version})"));
+        assert!(v.starts_with(&format!("PostgreSQL {SERVER_VERSION} ")));
     }
 }

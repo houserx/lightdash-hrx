@@ -438,3 +438,18 @@ token verification for a *valid* token, which feature 39 then hardens.
     takes any arrow `Tz`, e.g. `America/New_York`).
   - BC dates are not printed in Postgres's `... BC` style (chrono prints a negative year).
 - 2026-11-08T16:31:26Z supervisor: eng-pg-type-oids passed the gate in round 1
+- 2026-11-08 eng-pg-version (session 6): `SELECT version()` now returns
+  `PostgreSQL 16.0 (hrx-federation-engine 0.1.0)` (crate version from `CARGO_PKG_VERSION`) instead
+  of DataFusion's built-in `Apache DataFusion ...`. Only `src/pg.rs` changed: a `VERSION_STRING`
+  const, and a zero-argument immutable Utf8 UDF `version_udf()` that `Sql::new()` registers. It
+  replaces DataFusion's built-in of the same name, because `register_udf` overwrites by name.
+  One new unit test (8 `pg` tests now).
+  Tested as a user: a throwaway tokio-postgres program `../tmp/pgclient/src/bin/ver.rs` (config
+  `../tmp/ver.toml`) spawns `target/debug/engine`. Extended query → `PostgreSQL 16.0
+  (hrx-federation-engine 0.1.0)`, simple query `SELECT version() AS version` → the same string,
+  Lightdash's `/PostgreSQL (\d+)\./` → `16`. Check `pgwire::eng_pg_version`, the five earlier
+  checks and the harness self-tests pass.
+  For later sessions: `SERVER_VERSION` ("16.0", the startup parameter) and `VERSION_STRING` must
+  agree. The unit test asserts that. `pg_catalog.version()` (qualified) is not handled; that belongs to
+  the catalog features if they need it.
+- 2026-11-08T16:33:59Z supervisor: eng-pg-version passed the gate in round 1
