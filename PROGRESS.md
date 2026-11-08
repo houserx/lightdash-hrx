@@ -907,3 +907,31 @@ token verification for a *valid* token, which feature 39 then hardens.
   times in a row. disconnect_cleanup, statement_timeout, extended_query, simple_query,
   startup_auth and cursor_batches pass.
 - 2026-11-08T18:51:52Z supervisor: eng-pg-disconnect-cleanup passed the gate in round 2
+- 2026-11-08 eng-pg-tls (worker, round 1): `src/server.rs` replaces the "[tls] not implemented"
+  refusal with `load_tls`. It reads `tls_cert_file` (a PEM chain) and `tls_key_file` (a PEM key)
+  through rustls' own `pki_types::pem` (no new crate) and builds a rustls `ServerConfig` with
+  aws-lc-rs and ALPN `postgresql`, for PG17 direct TLS. That becomes pgwire's `TlsAcceptor`, passed
+  to `process_socket` inside `serve_connection`, so the hang-up watcher still sits on the raw
+  socket. An unreadable or mismatched cert/key stops the engine at startup with a clear error,
+  before anything is bound. It never falls back to plaintext. `PgHandlers::new(config, cert_pem)`
+  calls `ScramAuth::configure_certificate`, so TLS clients get SCRAM-SHA-256-PLUS
+  (tls-server-end-point). If pgwire can't hash the cert's signature (e.g. Ed25519), it logs a
+  warning and offers plain SCRAM.
+  - Decision (CONTRACTS §1 "TLS is optional"): with a certificate, plaintext logins
+    (sslmode=disable) are still accepted. There is no "require TLS" switch. If one is wanted, add a
+    config key later.
+  - Trap: macOS `/usr/bin/openssl` is LibreSSL. `-newkey ec -pkeyopt ec_paramgen_curve:prime256v1`
+    without `-pkeyopt ec_param_enc:named_curve` writes explicit curve parameters, and rustls then
+    reports KeyMismatch. That is the cert's fault, not the engine's.
+  - Tooling: rustfmt and clippy are not installed in this toolchain (`rustup component add` needed),
+    so this change was hand-formatted to rustfmt style and checked by a warning-free build only.
+  Tested as a user: `../tmp/tlsrun` has openssl certs (EC P-256, and RSA-2048/SHA-384) for
+  127.0.0.1, plus three engines (TLS EC, TLS RSA, plain). A raw SSLRequest (`sslreq.py`) got `S`
+  from both TLS engines and `N` from the plain one. `../tmp/pgclient` bin `tls` (tokio-postgres +
+  rustls, verify against the cert) with sslmode=require ran `SELECT 'over tls'` → row on EC and
+  RSA. With an unknown CA the TLS handshake fails. A wrong password over TLS gives a db error.
+  sslmode=disable on the TLS engine works. On the plain engine, prefer and disable log in, and
+  require fails. A missing cert file → exit 1 with "cannot read tls_cert_file …". Checks
+  pgwire::eng_pg_tls, startup_auth, cancel_request, disconnect_cleanup and
+  config::eng_config_check pass.
+- 2026-11-08T18:56:41Z supervisor: eng-pg-tls passed the gate in round 1

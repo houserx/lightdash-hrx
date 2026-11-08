@@ -126,8 +126,11 @@ pub struct PgHandlers {
 }
 
 impl PgHandlers {
+    /// `cert_pem` is the TLS certificate chain when TLS is configured; it enables
+    /// SCRAM-SHA-256-PLUS (tls-server-end-point channel binding).
+    ///
     /// Fails only if the HTTP client for Telemetry Sources cannot be built.
-    pub fn new(config: &Config) -> Result<PgHandlers, String> {
+    pub fn new(config: &Config, cert_pem: Option<&[u8]>) -> Result<PgHandlers, String> {
         let http = reqwest::Client::builder()
             .connect_timeout(SOURCE_CONNECT_TIMEOUT)
             .build()
@@ -139,6 +142,13 @@ impl PgHandlers {
         sql.ctx.register_udtf("promql", Arc::new(promql));
         let mut scram = ScramAuth::new(Arc::new(Logins::new(&config.users)));
         scram.set_iterations(SCRAM_ITERATIONS);
+        if let Some(pem) = cert_pem {
+            // Channel binding is an extra, not a requirement: with a certificate whose signature
+            // hash pgwire can't derive (e.g. Ed25519), plain SCRAM-SHA-256 is still offered.
+            if let Err(e) = scram.configure_certificate(pem) {
+                eprintln!("engine: SCRAM channel binding is off for this certificate: {e}");
+            }
+        }
         let mut params = DefaultServerParameterProvider::default();
         params.server_version = SERVER_VERSION.to_string();
         params.is_superuser = false;
