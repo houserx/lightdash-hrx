@@ -606,3 +606,21 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     quoted token. Warehouses ldq acceptance plus the Postgres unit tests passed (43/43).
     tsc, oxfmt and oxlint are clean.
 - 2026-11-08T18:24:34Z supervisor: ldq-federation-identity-not-logged passed the gate in round 1
+- 2026-11-08 ldq-federation-dbt-refused (session):
+  - `postgresTarget` (packages/backend/src/dbt/targets/postgres.ts) now throws
+    `NotSupportedError` (HTTP 400) when `credentials.flavor === 'federation'`. The message
+    starts with "dbt is not supported for the Federation Engine." Every dbt path goes through
+    the shared `toDbtTarget` (profiles.ts, CredentialResolverRegistry, the SSH-tunnel, OAuth and
+    SSO resolvers, and the dev seed), so they all get the refusal in one place. Plain Postgres
+    (flavour absent or 'postgres') is unchanged.
+  - The AI service-account Postgres resolver already returns `kind: 'none'` and builds no
+    target, so it needed no change.
+  - Contract assumption: I chose to throw rather than return `{ kind: 'none', reason }`.
+    The acceptance test expects a throw, and §4.1 says dbt "fails". Callers that catch
+    `kind: 'none'` to skip dbt quietly therefore do not apply here.
+  - Tested: init, then the feature check (2/2). Ran the dbt/targets, profiles and
+    WarehouseClientFactory suites (1040/1040). Backend tsc, oxlint and oxfmt are clean. As a
+    user: a scratch vitest (deleted) called `profileFromCredentials`, which builds
+    profiles.yml for dbt runs. With federation credentials it threw NotSupportedError with
+    status 400 and the message above. Plain Postgres still produced a `type: postgres` profile.
+- 2026-11-08T18:32:04Z supervisor: ldq-federation-dbt-refused passed the gate in round 1
