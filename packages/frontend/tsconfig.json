@@ -26,6 +26,7 @@
         "tsBuildInfoFile": "dist/.tsbuildinfo"
     },
     "include": ["./src", "./sdk/index.tsx", "./vite-env.d.ts"],
+    "exclude": ["src/__acceptance__/viz"],
     "references": [
         {
             "path": "../common/tsconfig.types.json"
