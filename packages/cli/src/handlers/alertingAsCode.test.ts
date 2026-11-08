@@ -1,10 +1,13 @@
 import { type AlertingAsCodeDocument } from '@lightdash/common';
+import { promises as fs } from 'fs';
 import * as yaml from 'js-yaml';
+import * as os from 'os';
 import * as path from 'path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     dumpAlertingAsCodeYaml,
     getAlertingAsCodeFilePath,
+    readAlertingAsCodeFiles,
 } from './alertingAsCode';
 
 const base = path.join('/tmp', 'out');
@@ -63,5 +66,80 @@ describe('dumpAlertingAsCodeYaml', () => {
         expect(yaml.load(text)).toEqual(rule);
         expect(text).toContain(`query: ${rule.query}\n`);
         expect(text.startsWith('version: 1\ntype: alert_rule\n')).toBe(true);
+    });
+});
+
+describe('readAlertingAsCodeFiles', () => {
+    let dir: string;
+    const write = async (relative: string, content: string) => {
+        const file = path.join(dir, relative);
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, content);
+    };
+    const contactPoint = (slug: string): AlertingAsCodeDocument => ({
+        version: 1,
+        type: 'contact_point',
+        slug,
+        name: slug,
+        integrations: [],
+    });
+    const routes: AlertingAsCodeDocument = {
+        version: 1,
+        type: 'notification_routes',
+        contactPoint: 'a-slack',
+    };
+
+    beforeEach(async () => {
+        dir = await fs.mkdtemp(path.join(os.tmpdir(), 'alerting-as-code-'));
+    });
+    afterEach(async () => {
+        await fs.rm(dir, { recursive: true, force: true });
+    });
+
+    it('returns contact points, then the route tree, then rules', async () => {
+        await write('alert-rules/rds-free-storage-low.yml', yaml.dump(rule));
+        await write(
+            'notification-routes/notification-routes.yml',
+            yaml.dump(routes),
+        );
+        await write(
+            'contact-points/b-incident.yaml',
+            yaml.dump(contactPoint('b-incident')),
+        );
+        await write(
+            'contact-points/a-slack.yml',
+            yaml.dump(contactPoint('a-slack')),
+        );
+        await write('contact-points/README.md', 'not a document');
+
+        const files = await readAlertingAsCodeFiles(dir);
+
+        expect(files.map(({ document }) => document)).toEqual([
+            contactPoint('a-slack'),
+            contactPoint('b-incident'),
+            routes,
+            rule,
+        ]);
+        expect(files[0].filePath).toBe(
+            path.join(dir, 'contact-points', 'a-slack.yml'),
+        );
+    });
+
+    it('returns nothing when the folders are missing', async () => {
+        await expect(readAlertingAsCodeFiles(dir)).resolves.toEqual([]);
+    });
+
+    it('names the file whose document is in the wrong folder', async () => {
+        await write('alert-rules/oops.yml', yaml.dump(contactPoint('oops')));
+        await expect(readAlertingAsCodeFiles(dir)).rejects.toThrow(
+            /oops\.yml: files in alert-rules\/ must be alert_rule documents/,
+        );
+    });
+
+    it('names the file that is not valid YAML', async () => {
+        await write('contact-points/broken.yml', 'name: [unclosed');
+        await expect(readAlertingAsCodeFiles(dir)).rejects.toThrow(
+            /broken\.yml: invalid YAML/,
+        );
     });
 });

@@ -983,3 +983,20 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - A slug of `../evil` gave exit 1 with "invalid slug", and no file was written.
       - `--spaces-only` gave exit 1 with no requests.
 - 2026-11-08T22:55:14Z supervisor: alert-cli-download passed the gate in round 1
+- alert-cli-upload (round 1) — 2026-11-08
+  - Changes:
+    - Added `--alerting-only` to `lightdash upload` (`packages/cli/src/index.ts`). There is a new early branch in `uploadHandler` (`download.ts`), placed before space preflight and drafts/sync-settings work. It checks the version, loads config and credentials, selects the project and calls `uploadAlertingAsCode`. `--path` falls back to `content_as_code.path`, the same way the normal upload does.
+    - `alertingAsCode.ts`: `readAlertingAsCodeFiles(basePath)` reads `contact-points/`, then `notification-routes/`, then `alert-rules/`, with `*.yml`/`*.yaml` files sorted by name within each folder. Missing folders are skipped. Each file must hold one YAML object whose `type` matches its folder, and errors name the file. `uploadAlertingAsCode` sends everything in ONE `POST /api/v2/projects/{uuid}/alerting/as-code` `{documents}` in that order. The server applies the documents in order in one transaction, so a failure changes nothing. No files means a warning, no request, and exit 0. The summary counts created/updated/unchanged from `result.documents`, and it tolerates a result without `documents` (the acceptance mock returns `{created, updated}`).
+    - `--alerting-only` together with `--apps-only`, `--chart-types-only`, `--spaces-only`, `--organization` or `--charts/--dashboards` is a ParameterError.
+    - Common: added `AlertingAsCodeUploadResult` to the `ApiResults` union. Run `init` after changing common, because the CLI build reads common's dist.
+  - Decision: the CLI does not validate documents against the JSON schemas. The server does that and its errors name `documents[i] (type slug)`. The local secret/schema check with file names is the next feature (alert-cli-upload-validation). Hook it into `readAlertingAsCodeFiles` (it already has each file's path) before the POST.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped). The alert-cli-download check still passes. `alertingAsCode.test.ts` passes 7/7 (4 new reader tests) and `download.test.ts` 103/103. CLI tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock server and the real CLI from source via tsx (in the run tmp dir, removed afterwards).
+      - Two contact points, a tree and a rule gave exit 0. The only requests were health and one POST with the documents in this order: contact_point email-ops, contact_point slack-infra, notification_routes, alert_rule. It printed "Uploaded 2 contact points, 1 notification route trees and 1 alert rules ... (3 created, 0 updated, 1 unchanged)".
+      - A server 400 gave exit 1.
+      - `--spaces-only` gave exit 1 with no requests.
+      - A contact_point file in alert-rules/ gave exit 1, naming the file, with no POST.
+      - An empty folder gave exit 0 with a warning and no POST.
+    - Trap: don't run an in-process mock server with `spawnSync` of the CLI. It deadlocks, so use async `spawn`.
+- 2026-11-08T23:06:09Z supervisor: alert-cli-upload passed the gate in round 1

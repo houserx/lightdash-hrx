@@ -1404,6 +1404,11 @@ const uploadCommand = program
         false,
     )
     .option(
+        '--alerting-only',
+        'upload only Contact Points, the Notification Route tree and Alert Rules (in that order) from alert-rules/, contact-points/ and notification-routes/',
+        false,
+    )
+    .option(
         '--organization',
         'upload all organization-scoped resources, including Data App themes, without selecting a project',
         false,
