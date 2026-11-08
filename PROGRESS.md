@@ -445,3 +445,22 @@ should add a dated line here per feature.
   - Zero rows never reach the view through `renderChart` (it returns `empty`/`noRows`); "No log lines" is for a model
     with no lines (e.g. everything filtered out).
 - 2026-11-08T18:51:47Z supervisor: viz-log-stream-view passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-virtualised (session)
+
+- **What.** `packages/frontend/src/components/LogStream/LogStreamView.tsx` now virtualises its rows with
+  `@tanstack/react-virtual` (already a frontend dependency, same pattern as `sqlRunner/components/Tables.tsx`). The
+  Mantine `ScrollArea` viewport is the scroll element. Rows have a fixed height (`ROW_HEIGHT = 24`, matching `.row`
+  in the CSS module) and an overscan of 20. Each row is absolutely positioned through a `--log-row-start` CSS variable
+  bridge (`transform: translateY(...)` in the CSS module), which the lint rule allows. The viewport size comes from the
+  real measurement, falling back to `height - 28` (footer) while the element has no layout (first paint, jsdom). It
+  uses `initialRect` plus a wrapper around the library's `observeElementRect`.
+- **Tested as a user.** No app mounts the view yet, so I rendered it with `manyLogs(5000)` in a throwaway vitest file
+  (deleted). It took about 47 ms and drew 36 rows (line 5000 down to 4965), and the footer read "5,000 of 5,000 lines".
+  After scrolling the viewport to 4,000 rows down, the window showed lines 1020 to 965 (56 rows). The check passes
+  1/1 and log-stream-view still passes 3/3. The frontend tsc, oxlint and oxfmt pass.
+- **Traps for the next sessions.** Fixed row heights assume one text line per row. `log-stream-wrap-lines` and
+  `log-stream-expand-row` will need variable heights: add `ref={virtualizer.measureElement}` + `data-index` on rows
+  and drop the fixed `height` in `.row`. jsdom measures 0 though, so keep the estimate as the fallback when the
+  measured size is 0 (the jsdom window tests must still draw rows).
+- 2026-11-08T18:54:34Z supervisor: viz-log-stream-virtualised passed the gate in round 1

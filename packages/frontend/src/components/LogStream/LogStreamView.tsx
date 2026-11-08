@@ -3,7 +3,12 @@ import {
     type LogStreamModel,
 } from '@lightdash/visualization';
 import { Box, Center, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { type FC } from 'react';
+import {
+    observeElementRect,
+    useVirtualizer,
+    type Virtualizer,
+} from '@tanstack/react-virtual';
+import { useCallback, useRef, type FC } from 'react';
 import classes from './LogStreamView.module.css';
 
 type Props = {
@@ -14,6 +19,9 @@ type Props = {
 };
 
 const FOOTER_HEIGHT = 28;
+/** Every row is one line of text (no wrapping), so rows have a fixed height; keep in step with `.row` in the CSS module. */
+const ROW_HEIGHT = 24;
+const OVERSCAN = 20;
 
 /** The data's own formatting first, else the ISO time, else nothing. */
 const timestampText = (line: LogStreamLine): string => {
@@ -22,11 +30,15 @@ const timestampText = (line: LogStreamLine): string => {
     return new Date(line.timestamp).toISOString();
 };
 
-const LogStreamRow: FC<{ line: LogStreamLine }> = ({ line }) => (
+const LogStreamRow: FC<{ line: LogStreamLine; start: number }> = ({
+    line,
+    start,
+}) => (
     <Group
         data-testid="log-stream-row"
         data-level={line.level}
         className={classes.row}
+        style={{ '--log-row-start': `${start}px` }}
         gap="sm"
         wrap="nowrap"
         align="flex-start"
@@ -51,9 +63,39 @@ const LogStreamRow: FC<{ line: LogStreamLine }> = ({ line }) => (
     </Group>
 );
 
-/** A log stream: one row per line, newest or oldest first as the model says. */
+/**
+ * A log stream: one row per line, newest or oldest first as the model says.
+ * Only the rows in view (plus overscan) are in the page.
+ */
 export const LogStreamView: FC<Props> = ({ model, height }) => {
     const total = model.lines.length;
+    const viewportHeight = Math.max(height - FOOTER_HEIGHT, 0);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    // Measure the viewport as usual, but fall back to the size the props
+    // give it while the element has no layout yet (first paint, jsdom).
+    const observeViewport = useCallback(
+        (
+            instance: Virtualizer<HTMLDivElement, Element>,
+            onChange: (rect: { width: number; height: number }) => void,
+        ) =>
+            observeElementRect(instance, (rect) =>
+                onChange(
+                    rect.height > 0
+                        ? rect
+                        : { width: rect.width, height: viewportHeight },
+                ),
+            ),
+        [viewportHeight],
+    );
+    const virtualizer = useVirtualizer({
+        count: total,
+        getScrollElement: () => viewportRef.current,
+        estimateSize: () => ROW_HEIGHT,
+        getItemKey: (index) => model.lines[index]?.id ?? index,
+        initialRect: { width: 0, height: viewportHeight },
+        observeElementRect: observeViewport,
+        overscan: OVERSCAN,
+    });
     const lineCount = `${total.toLocaleString()} of ${total.toLocaleString()} lines`;
 
     return (
@@ -65,10 +107,20 @@ export const LogStreamView: FC<Props> = ({ model, height }) => {
                     </Text>
                 </Center>
             ) : (
-                <ScrollArea flex={1} type="auto">
-                    {model.lines.map((line) => (
-                        <LogStreamRow key={line.id} line={line} />
-                    ))}
+                <ScrollArea flex={1} type="auto" viewportRef={viewportRef}>
+                    <Box h={virtualizer.getTotalSize()} pos="relative">
+                        {virtualizer.getVirtualItems().map((item) => {
+                            const line = model.lines[item.index];
+                            if (!line) return null;
+                            return (
+                                <LogStreamRow
+                                    key={item.key}
+                                    line={line}
+                                    start={item.start}
+                                />
+                            );
+                        })}
+                    </Box>
                 </ScrollArea>
             )}
             <Box h={FOOTER_HEIGHT} className={classes.footer}>

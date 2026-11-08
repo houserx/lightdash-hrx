@@ -4,6 +4,13 @@
 }
 
 .row {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 24px;
+    box-sizing: border-box;
+    transform: translateY(var(--log-row-start));
     padding: 2px var(--mantine-spacing-xs);
     border-bottom: 1px solid var(--mantine-color-default-border);
 }
@@ -15,6 +22,7 @@
 
 .line {
     flex: 1 1 auto;
+    overflow: hidden;
     min-width: 0;
     white-space: pre;
 }
