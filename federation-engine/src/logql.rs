@@ -393,18 +393,21 @@ impl TableProvider for LogqlQuery {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let data = self.fetch().await?;
-        let (name, max_rows) = (&self.source.name, self.source.max_rows);
-        let batch = if self.metric {
-            metric_batch(name, &data, max_rows)?
-        } else {
-            stream_batch(name, &data, max_rows)?
-        };
-        Ok(MemorySourceConfig::try_new_exec(
-            &[vec![batch]],
-            self.schema(),
-            projection.cloned(),
-        )?)
+        crate::metrics::observe(&self.source.name, async {
+            let data = self.fetch().await?;
+            let (name, max_rows) = (&self.source.name, self.source.max_rows);
+            let batch = if self.metric {
+                metric_batch(name, &data, max_rows)?
+            } else {
+                stream_batch(name, &data, max_rows)?
+            };
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                self.schema(),
+                projection.cloned(),
+            )?)
+        })
+        .await
     }
 }
 

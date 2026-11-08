@@ -571,12 +571,15 @@ impl TableProvider for CloudwatchQuery {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let batch = self.fetch().await?.batch()?;
-        Ok(MemorySourceConfig::try_new_exec(
-            &[vec![batch]],
-            self.schema(),
-            projection.cloned(),
-        )?)
+        crate::metrics::observe(&self.name, async {
+            let batch = self.fetch().await?.batch()?;
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                self.schema(),
+                projection.cloned(),
+            )?)
+        })
+        .await
     }
 }
 

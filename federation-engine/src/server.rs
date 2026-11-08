@@ -159,7 +159,8 @@ async fn hung_up(watcher: &TcpStream) {
     }
 }
 
-/// The HTTP side port (CONTRACTS §1.3). `GET /healthz` probes every source (no auth).
+/// The HTTP side port (CONTRACTS §1.3). `GET /healthz` probes every source and `GET /metrics`
+/// is the Prometheus exposition (both no auth).
 /// `POST /v1/write` is Write Mode (§4.2). `POST /v1/write/confirmations/verify` exists only with
 /// `test_mode = true`; otherwise it is 404 like any unknown path. `GET /v1/audit` is the audit
 /// browser.
@@ -179,5 +180,11 @@ fn http_router(config: &Config) -> Router {
     let health = Router::new()
         .route("/healthz", get(crate::health::handle))
         .with_state(Arc::new(Health::new(config)));
-    router.with_state(write).merge(browser).merge(health)
+    crate::metrics::init(config);
+    let metrics = Router::new().route("/metrics", get(crate::metrics::handle));
+    router
+        .with_state(write)
+        .merge(browser)
+        .merge(health)
+        .merge(metrics)
 }

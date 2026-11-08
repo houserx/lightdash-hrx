@@ -85,6 +85,15 @@ impl AuditWriter {
     /// returns its id. The error text is for the engine's log only; clients get "audit write
     /// failed".
     pub async fn write(&self, execution: &Execution<'_>) -> Result<String, String> {
+        let written = self.put(execution).await;
+        if written.is_err() {
+            crate::metrics::audit_write_failed();
+        }
+        written
+    }
+
+    /// [`AuditWriter::write`] without counting failures: the DynamoDB item, then the S3 object.
+    async fn put(&self, execution: &Execution<'_>) -> Result<String, String> {
         let created_at = chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();

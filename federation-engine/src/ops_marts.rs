@@ -498,21 +498,24 @@ impl TableProvider for OpsMartTable {
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let (wanted, output) = match projection {
-            Some(p) if p.is_empty() => (vec![0], Some(vec![])),
-            Some(p) => (p.clone(), None),
-            None => ((0..self.schema.fields().len()).collect(), None),
-        };
-        if self.schema.fields().is_empty() {
-            return Err(self.table.fail("the table has no columns"));
-        }
-        let columns = self.schema.project(&wanted)?;
-        let batch = self.marts.read(&self.table, &columns, limit).await?;
-        Ok(MemorySourceConfig::try_new_exec(
-            &[vec![batch]],
-            Arc::new(columns),
-            output,
-        )?)
+        crate::metrics::observe(&self.table.source.name, async {
+            let (wanted, output) = match projection {
+                Some(p) if p.is_empty() => (vec![0], Some(vec![])),
+                Some(p) => (p.clone(), None),
+                None => ((0..self.schema.fields().len()).collect(), None),
+            };
+            if self.schema.fields().is_empty() {
+                return Err(self.table.fail("the table has no columns"));
+            }
+            let columns = self.schema.project(&wanted)?;
+            let batch = self.marts.read(&self.table, &columns, limit).await?;
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                Arc::new(columns),
+                output,
+            )?)
+        })
+        .await
     }
 }
 

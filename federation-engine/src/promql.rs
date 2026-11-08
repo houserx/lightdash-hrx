@@ -540,13 +540,16 @@ impl TableProvider for PromqlQuery {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let data = self.fetch().await?;
-        let batch = result_batch("prometheus", &self.source, &data, self.instant, self.max_rows)?;
-        Ok(MemorySourceConfig::try_new_exec(
-            &[vec![batch]],
-            sample_schema(),
-            projection.cloned(),
-        )?)
+        crate::metrics::observe(&self.source, async {
+            let data = self.fetch().await?;
+            let batch = result_batch("prometheus", &self.source, &data, self.instant, self.max_rows)?;
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                sample_schema(),
+                projection.cloned(),
+            )?)
+        })
+        .await
     }
 }
 

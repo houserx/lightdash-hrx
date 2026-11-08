@@ -724,13 +724,16 @@ impl TableProvider for PlatformTable {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let rows = self.fetch().await?;
-        let batch = to_batch(&self.schema, &rows)?;
-        Ok(MemorySourceConfig::try_new_exec(
-            &[vec![batch]],
-            self.schema(),
-            projection.cloned(),
-        )?)
+        crate::metrics::observe(&self.source.name, async {
+            let rows = self.fetch().await?;
+            let batch = to_batch(&self.schema, &rows)?;
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                self.schema(),
+                projection.cloned(),
+            )?)
+        })
+        .await
     }
 }
 

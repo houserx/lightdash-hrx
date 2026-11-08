@@ -2249,3 +2249,37 @@ token verification for a *valid* token, which feature 39 then hardens.
   Note: the harness polls /healthz until it gets a response, and a 503 counts. A source that
   hangs adds at most 2 s to engine startup.
 - 2026-11-08T22:57:13Z supervisor: eng-healthz passed the gate in round 1
+- eng-metrics (operations): `GET /metrics` (no auth) serves Prometheus text exposition
+  (`text/plain; version=0.0.4`). New `src/metrics.rs`: a process-wide registry (a `LazyLock`, so
+  no state is threaded through the providers), routed in `server::http_router`. `metrics::init`
+  pre-registers every configured source, so each one's series start at 0. Families:
+  `federation_engine_queries_total{source}`, `federation_engine_query_errors_total{source}`,
+  `federation_engine_query_duration_seconds{source}` (a histogram with buckets 5 ms..300 s,
+  i.e. the Prometheus defaults plus 30/60/120/300), and `federation_engine_audit_write_failures_total`.
+  Decision: a "query" is one read of a source, so every `TableProvider::scan` body (promql, logql,
+  traceql, trace, cloudwatch, cloudwatch_logs, ops_marts, platform) is wrapped in
+  `crate::metrics::observe(<source name>, async { ... })`. A statement that reads two sources counts
+  once for each, and an Audited Query's source read counts even when its audit write then fails.
+  Errors are any failed scan: upstream errors, unreachable sources, a malformed answer, max_rows.
+  A scan that gets dropped (statement timeout, cancel, hang-up) is recorded on drop as a query
+  with its elapsed time, but not as an error. Plan-time describes, such as platform describe-only
+  and the ops_marts catalog, are not counted.
+  Audit write failures are counted inside `AuditWriter::write`, now a thin wrapper over the old
+  body, which became `put`, so both pg-wire Audited Queries and Write Mode are covered. "No
+  [audit] store / no identity" is a fail-closed refusal, not a store write, so it is not counted.
+  The wrapped scans return `Ok::<Arc<dyn ExecutionPlan>, _>(...)` because the trait-object
+  coercion no longer happens through the async block.
+  Unit tests: `metrics::tests::{histogram_buckets_are_cumulative_and_end_in_inf,
+  label_values_are_escaped, a_dropped_read_counts_as_a_query_but_not_an_error}`.
+  Tested as a user: `../tmp/metrics-user/run.sh` (python mocks on 59851-59854; engine 59861/59862).
+  psql is blocked by the sandbox, so `pgclient.py` there is a small SCRAM + simple-query pg-wire
+  client. Before any query, prom-open showed 0. Then I ran two count(*) on prom-open (OK), one
+  prom-bad query (XX000 HTTP 500) and a restricted query with an identity token while the audit
+  store answered 500 (58000 audit write failed). /metrics then showed prom-open queries 2, errors 0,
+  and count 2 with all buckets 2 and +Inf 2. prom-bad showed queries 1 and errors 1, prom-restricted
+  showed queries 1, and audit_write_failures_total was 1.
+  The check passes. ops::eng_healthz, audit::eng_audit_fail_closed, audit::eng_audit_dynamodb_item,
+  promql::eng_promql_upstream_errors, ops_marts::eng_ops_marts_query and
+  platform::eng_platform_query_basic also pass. Clippy -D warnings (tmp/rustup) is clean, and
+  metrics.rs is fmt-clean. I didn't reformat the other files, whose existing fmt drift is unchanged.
+- 2026-11-08T23:02:44Z supervisor: eng-metrics passed the gate in round 1

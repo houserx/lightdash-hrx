@@ -339,15 +339,18 @@ impl TableProvider for TraceQuery {
         _filters: &[Expr],
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        let batch = match self.fetch().await? {
-            Some(answer) => trace_batch(&self.source.name, &answer, self.source.max_rows)?,
-            None => RecordBatch::new_empty(self.schema()),
-        };
-        Ok(MemorySourceConfig::try_new_exec(
-            &[vec![batch]],
-            self.schema(),
-            projection.cloned(),
-        )?)
+        crate::metrics::observe(&self.source.name, async {
+            let batch = match self.fetch().await? {
+                Some(answer) => trace_batch(&self.source.name, &answer, self.source.max_rows)?,
+                None => RecordBatch::new_empty(self.schema()),
+            };
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                self.schema(),
+                projection.cloned(),
+            )?)
+        })
+        .await
     }
 }
 

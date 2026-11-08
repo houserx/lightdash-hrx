@@ -14,6 +14,7 @@ mod health;
 mod identity;
 mod labels;
 mod logql;
+mod metrics;
 mod ops_marts;
 mod pg;
 mod platform;
