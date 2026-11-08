@@ -1,5 +1,5 @@
 import { MantineProvider } from '@mantine/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { toLogEntries } from '../utils/logLines';
 import { groupTimeSeries } from '../utils/timeSeries';
 import { InvestigateResults } from './InvestigateResults';
@@ -171,5 +171,65 @@ describe('InvestigateResults', () => {
         expect(
             screen.getByTestId('investigate-log-list').textContent,
         ).toContain('No log lines');
+    });
+
+    it('shows trace search results as a trace table whose ids open the trace', () => {
+        const onOpenTrace = vi.fn();
+        renderResults({
+            columns: [
+                'TRACE_ID',
+                'ROOT_SERVICE',
+                'ROOT_NAME',
+                'START',
+                'DURATION_MS',
+                'SPAN_COUNT',
+            ],
+            rows: [
+                {
+                    TRACE_ID: 'abc123',
+                    ROOT_SERVICE: 'svc-a',
+                    ROOT_NAME: 'GET /things',
+                    START: '2026-11-08T10:00:00.000Z',
+                    DURATION_MS: 12.5,
+                    SPAN_COUNT: 3,
+                },
+                {
+                    TRACE_ID: null,
+                    ROOT_SERVICE: 'svc-b',
+                    ROOT_NAME: 'GET /other',
+                    START: '2026-11-08T10:00:01.000Z',
+                    DURATION_MS: 1,
+                    SPAN_COUNT: 1,
+                },
+            ],
+            onOpenTrace,
+        });
+        const table = screen.getByTestId('investigate-trace-table');
+        expect(within(table).getByText('svc-a')).toBeInTheDocument();
+        expect(within(table).getByText('GET /things')).toBeInTheDocument();
+        expect(within(table).getByText('12.5')).toBeInTheDocument();
+        expect(within(table).getAllByRole('button')).toHaveLength(1);
+        fireEvent.click(within(table).getByRole('button', { name: 'abc123' }));
+        expect(onOpenTrace).toHaveBeenCalledTimes(1);
+        expect(onOpenTrace).toHaveBeenCalledWith('abc123');
+        expect(screen.queryByTestId('investigate-table')).toBeNull();
+    });
+
+    it('shows trace ids as plain text when nothing can open a trace', () => {
+        renderResults({
+            columns: ['trace_id', 'span_id', 'service', 'name', 'status'],
+            rows: [
+                {
+                    trace_id: 't1',
+                    span_id: 's1',
+                    service: 'api',
+                    name: 'db.query',
+                    status: 'ok',
+                },
+            ],
+        });
+        const table = screen.getByTestId('investigate-trace-table');
+        expect(within(table).getByText('t1')).toBeInTheDocument();
+        expect(within(table).queryAllByRole('button')).toHaveLength(0);
     });
 });

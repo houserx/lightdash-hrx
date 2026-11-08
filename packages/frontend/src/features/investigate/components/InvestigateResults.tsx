@@ -1,11 +1,20 @@
 import { getTelemetryResultShape } from '@lightdash/common';
-import { Box, Group, ScrollArea, Stack, Table, Text } from '@mantine/core';
+import {
+    Anchor,
+    Box,
+    Group,
+    ScrollArea,
+    Stack,
+    Table,
+    Text,
+} from '@mantine/core';
 import { useMemo, type FC } from 'react';
 import EChartsReact, {
     type EChartsOption,
 } from '../../../components/EChartsReactWrapper';
 import { toLogEntries, type LogEntry } from '../utils/logLines';
 import {
+    findColumn,
     groupTimeSeries,
     type InvestigateRow,
     type TimeSeriesLine,
@@ -116,12 +125,24 @@ const LogList: FC<{ entries: LogEntry[] }> = ({ entries }) => (
     </Box>
 );
 
-const ResultTable: FC<{ columns: string[]; rows: InvestigateRow[] }> = ({
+type ResultTableProps = {
+    columns: string[];
+    rows: InvestigateRow[];
+    testId: string;
+    /** Column whose values open a trace when clicked. */
+    traceIdColumn?: string;
+    onOpenTrace?: (traceId: string) => void;
+};
+
+const ResultTable: FC<ResultTableProps> = ({
     columns,
     rows,
+    testId,
+    traceIdColumn,
+    onOpenTrace,
 }) => (
     <ScrollArea>
-        <Table striped withTableBorder data-testid="investigate-table">
+        <Table striped withTableBorder data-testid={testId}>
             <Table.Thead>
                 <Table.Tr>
                     {columns.map((column) => (
@@ -134,11 +155,37 @@ const ResultTable: FC<{ columns: string[]; rows: InvestigateRow[] }> = ({
                     // Result rows have no stable id.
                     // eslint-disable-next-line react/no-array-index-key
                     <Table.Tr key={index}>
-                        {columns.map((column) => (
-                            <Table.Td key={column}>
-                                {formatCell(row[column])}
-                            </Table.Td>
-                        ))}
+                        {columns.map((column) => {
+                            const text = formatCell(row[column]);
+                            const opensTrace =
+                                column === traceIdColumn &&
+                                onOpenTrace !== undefined &&
+                                text !== '';
+                            return (
+                                <Table.Td
+                                    key={column}
+                                    ff={
+                                        column === traceIdColumn
+                                            ? 'monospace'
+                                            : undefined
+                                    }
+                                >
+                                    {opensTrace ? (
+                                        <Anchor
+                                            component="button"
+                                            type="button"
+                                            ff="monospace"
+                                            size="sm"
+                                            onClick={() => onOpenTrace(text)}
+                                        >
+                                            {text}
+                                        </Anchor>
+                                    ) : (
+                                        text
+                                    )}
+                                </Table.Td>
+                            );
+                        })}
                     </Table.Tr>
                 ))}
             </Table.Tbody>
@@ -149,11 +196,14 @@ const ResultTable: FC<{ columns: string[]; rows: InvestigateRow[] }> = ({
 /**
  * Renders an Investigate query result by its shape: metric results as a
  * time-series chart with one line per series, log results as a list of lines
- * with their timestamps, anything else as a plain table.
+ * with their timestamps, trace results (traceql searches and trace span lists)
+ * as a trace table whose trace ids open that trace, anything else as a plain
+ * table.
  */
 export const InvestigateResults: FC<InvestigateResultsProps> = ({
     columns,
     rows,
+    onOpenTrace,
 }) => {
     const shape = getTelemetryResultShape(columns);
     const lines = useMemo(
@@ -170,5 +220,18 @@ export const InvestigateResults: FC<InvestigateResultsProps> = ({
     if (shape === 'log') {
         return <LogList entries={logEntries} />;
     }
-    return <ResultTable columns={columns} rows={rows} />;
+    if (shape === 'trace') {
+        return (
+            <ResultTable
+                columns={columns}
+                rows={rows}
+                testId="investigate-trace-table"
+                traceIdColumn={findColumn(columns, 'trace_id')}
+                onOpenTrace={onOpenTrace}
+            />
+        );
+    }
+    return (
+        <ResultTable columns={columns} rows={rows} testId="investigate-table" />
+    );
 };

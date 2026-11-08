@@ -1332,3 +1332,25 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     features/investigate.
   - Next: ldq-investigate-results-traces adds the `trace` branch (`onOpenTrace` still unused).
 - 2026-11-08T20:56:23Z supervisor: ldq-investigate-results-logs passed the gate in round 1
+- ldq-investigate-results-traces (round 1):
+  - `InvestigateResults` has a `trace` branch now (common `getTelemetryResultShape`: any
+    `trace_id` column, so both traceql search results and trace(...) span lists). It renders
+    `data-testid="investigate-trace-table"`: every column in result order (root_service,
+    root_name, duration_ms for searches; service, name, status, ... for spans). The trace id
+    column (found case-insensitively) is monospace. When `onOpenTrace` is given, each non-empty
+    trace id is a button-styled Anchor that calls `onOpenTrace(traceId)`. Without it, or for a
+    null id, the id is plain text. The plain table (`investigate-table`) is still the fallback
+    for `table` shapes. `ResultTable` is shared and now takes `testId`, `traceIdColumn` and
+    `onOpenTrace`.
+  - Decision: durations are shown as the raw value the engine returns (no ms/s formatting), so
+    the table matches the SQL result exactly.
+  - Next: nothing renders InvestigateResults on the page yet. The workspace feature should pass
+    an `onOpenTrace` that runs the `trace('<id>')` SQL (common's TraceQL builder already makes
+    it).
+  - Tested: no browser or backend (no Docker), and no Run button in Investigate yet, so the
+    component was driven directly. `InvestigateResults.test.tsx` (10/10) adds an upper-cased
+    traceql result: one clickable id, a null id not clickable, and a click calls onOpenTrace
+    once with the id. It also checks that span ids are plain text without onOpenTrace. Feature
+    check 3/3, regression investigate-results-logs 2/2. frontend tsc clean; oxfmt and oxlint
+    clean on features/investigate.
+- 2026-11-08T20:58:24Z supervisor: ldq-investigate-results-traces passed the gate in round 1
