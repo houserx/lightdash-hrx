@@ -1263,3 +1263,25 @@ should add a dated line here per feature.
 - **Next.** viz-cartesian-threshold-lines. The engine reads `config.thresholds` (`CartesianThresholds`) and draws
   ECharts `markLine`s. Resolve palette names with `resolveGrafanaColor`.
 - 2026-11-08T20:59:36Z supervisor: viz-cartesian-thresholds-config passed the gate in round 1
+
+## viz-cartesian-threshold-lines (round 1)
+- **What changed.** New `packages/visualization/src/cartesian/thresholds.ts` with `applyThresholdLines`. When
+  `config.thresholds.style` is `line`, `dashed`, `line+area` or `dashed+area`, it adds one markLine entry per step
+  except the null base step: `yAxis: <value>` (`xAxis` with flipAxes), `lineStyle {color: resolveGrafanaColor(step.color),
+  type: solid|dashed, width: 1}`, label hidden, silent. They go on the first series on value axis 0 that is visible in the
+  legend, appended to any reference lines it already has, so each line draws once. Percentage mode is read against the
+  min..max of the values the first-axis series draw. `buildCartesianEchartsOptionFromData` calls it after the
+  incomplete-period step. `buildValidCartesianConfig` takes an optional `thresholds` and keeps it (it used to drop
+  unknown keys), and `resolveCartesianChartConfig` passes it. In the frontend, `CartesianEditorState` gains `thresholds`
+  (loaded from the saved config), and `selectCartesianValidConfig` passes it, so explorer/dashboard charts keep them.
+  There are no reducers to edit it yet: that is viz-thresholds-config-panel. Unit tests are in `cartesian/thresholds.test.ts` (8).
+- **Tested as a user.** The app UI needs backend and Postgres, so I used the real render path. `renderChart` (built dist) on
+  a time series with steps null green / 80 orange / 90 red was set into real ECharts (SVG SSR, 600x300) in
+  `../tmp/drive-threshold-lines/` (`node drive.cjs <repo>`, `node pix.cjs <repo>`). Style line: two horizontal paths,
+  #FF9830 at y=74.5 and #F2495C at y=52.5, which match `convertToPixel` for 80 (74) and 90 (52), and both are solid.
+  Style dashed: the same paths with stroke-dasharray 4,2. Style area: no threshold paths. No extra series or legend entry.
+  Check 5/5 after `bash ./init.sh`. Also echartsOption.test 178/178, render.test 21/21, and visualization and frontend
+  typechecks, oxfmt and oxlint are clean.
+- **Next.** viz-cartesian-threshold-areas: add markArea bands in `thresholds.ts` the same way, using the same host-series
+  choice. The area style currently draws nothing.
+- 2026-11-08T21:04:49Z supervisor: viz-cartesian-threshold-lines passed the gate in round 1
