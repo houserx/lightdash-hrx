@@ -1168,3 +1168,15 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     escaping + source, bad limit, trace id trim + source, blank id). common tsc clean;
     oxfmt/oxlint clean on changed files (oxlint via `pnpm -F common exec oxlint`).
 - 2026-11-08T20:33:57Z supervisor: ldq-investigate-sql-traceql passed the gate in round 1
+- ldq-investigate-result-shape (round 1):
+  - New `packages/common/src/utils/telemetryResultShape.ts` (exported from common index):
+    `TelemetryResultShape = 'metric'|'log'|'trace'|'table'` and
+    `getTelemetryResultShape(columnNames)`. Rules, checked in this order: timestamp + value +
+    labels -> metric; timestamp + (line | message) -> log; trace_id -> trace; else table
+    (column sets from CONTRACTS §1.1). Contract assumption: names match case-insensitively
+    and order is ignored (warehouses may upper-case identifiers); extra columns are allowed.
+  - Tested: no Investigate UI yet; called the exported function through `tsx` against the §1.1
+    column sets (metric/log/trace/table as expected). Feature check 4/4, traceql acceptance 3/3
+    (regression), new telemetryResultShape.test.ts 4/4 (case/order, partial metric, log needs
+    timestamp, empty). common tsc clean; oxlint/oxfmt clean on changed files.
+- 2026-11-08T20:35:57Z supervisor: ldq-investigate-result-shape passed the gate in round 1
