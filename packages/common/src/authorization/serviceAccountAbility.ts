@@ -5,7 +5,11 @@ import { ProjectType } from '../types/projects';
 import { getPermissionsFromAbilityRules } from './abilityPermissions';
 import { AGENT_DEFAULT_CAPABILITY_SUBJECTS } from './agentCapabilityScopes';
 import { applyOrganizationMemberStaticAbilities } from './organizationMemberAbility';
-import { type MemberAbility } from './types';
+import {
+    ALERTING_SUBJECTS,
+    EDITOR_ALERTING_SUBJECTS,
+    type MemberAbility,
+} from './types';
 
 type ServiceAccountAbilitiesArgs = {
     organizationUuid: string;
@@ -199,6 +203,9 @@ const applyServiceAccountStaticAbilities: Record<
         can('view', 'ContentVerification', {
             organizationUuid,
         });
+        ALERTING_SUBJECTS.forEach((resource) => {
+            can('view', resource, { organizationUuid });
+        });
     },
     [ServiceAccountScope.ORG_EDIT]: ({
         organizationUuid,
@@ -247,6 +254,9 @@ const applyServiceAccountStaticAbilities: Record<
         // here explicitly to preserve the existing CI workflow.
         can('manage', 'ContentAsCode', {
             organizationUuid,
+        });
+        EDITOR_ALERTING_SUBJECTS.forEach((resource) => {
+            can('manage', resource, { organizationUuid });
         });
     },
     [ServiceAccountScope.ORG_ADMIN]: ({
@@ -335,6 +345,9 @@ const applyServiceAccountStaticAbilities: Record<
         });
         can('manage', 'VerifiedContent', {
             organizationUuid,
+        });
+        ALERTING_SUBJECTS.forEach((resource) => {
+            can('manage', resource, { organizationUuid });
         });
         can('view', 'JobStatus', {
             organizationUuid,

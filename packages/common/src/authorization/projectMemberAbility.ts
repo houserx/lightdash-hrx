@@ -5,7 +5,9 @@ import { ProjectType } from '../types/projects';
 import { SpaceMemberRole } from '../types/space';
 import { AGENT_DEFAULT_CAPABILITY_SUBJECTS } from './agentCapabilityScopes';
 import {
+    ALERTING_SUBJECTS,
     DEVELOPER_EMBED_SUBJECTS,
+    EDITOR_ALERTING_SUBJECTS,
     INTERACTIVE_VIEWER_EMBED_SUBJECTS,
     VIEWER_EMBED_SUBJECTS,
     type MemberAbility,
@@ -27,6 +29,9 @@ export const projectMemberAbilities: Record<
             can('view', resource, {
                 projectUuid: member.projectUuid,
             });
+        });
+        ALERTING_SUBJECTS.forEach((resource) => {
+            can('view', resource, { projectUuid: member.projectUuid });
         });
         can('view', 'Dashboard', {
             projectUuid: member.projectUuid,
@@ -250,6 +255,9 @@ export const projectMemberAbilities: Record<
     },
     editor(member, { can }) {
         projectMemberAbilities.interactive_viewer(member, { can });
+        EDITOR_ALERTING_SUBJECTS.forEach((resource) => {
+            can('manage', resource, { projectUuid: member.projectUuid });
+        });
         can('create', 'DataApp', {
             projectUuid: member.projectUuid,
         });
@@ -295,6 +303,9 @@ export const projectMemberAbilities: Record<
             can('view', resource, {
                 projectUuid: member.projectUuid,
             });
+        });
+        ALERTING_SUBJECTS.forEach((resource) => {
+            can('manage', resource, { projectUuid: member.projectUuid });
         });
         can('manage', 'PreAggregation', {
             projectUuid: member.projectUuid,

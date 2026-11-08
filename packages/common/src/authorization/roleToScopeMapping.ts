@@ -56,6 +56,11 @@ const BASE_ROLE_SCOPES = {
         'view:EmbedImageExport',
         'view:EmbedPagePdfExport',
         'view:EmbedDateZoom',
+
+        // Alerting
+        'view:AlertRule',
+        'view:ContactPoint',
+        'view:NotificationRoute',
     ],
 
     [ProjectMemberRole.INTERACTIVE_VIEWER]: [
@@ -129,6 +134,9 @@ const BASE_ROLE_SCOPES = {
         'view:ContentAsCode',
         'create:ContentAsCode',
         'create:DataApp',
+
+        // Alerting: editors manage rules; contact points and routes stay developer-level
+        'manage:AlertRule',
     ],
 
     [ProjectMemberRole.DEVELOPER]: [
@@ -192,6 +200,10 @@ const BASE_ROLE_SCOPES = {
         // custom roles can grant/withhold it independently of manage:Content.
         'manage:VerifiedContent',
         'create:AiDeepResearch',
+
+        // Alerting
+        'manage:ContactPoint',
+        'manage:NotificationRoute',
     ],
 
     [ProjectMemberRole.ADMIN]: [
@@ -313,6 +325,10 @@ export const TRAINING_PROJECT_EXCLUDED_SCOPES: readonly string[] = [
     'manage:ScheduledDeliveries',
     'manage:ScheduledDeliveries@self',
     'manage:GoogleSheets',
+    // Alerting notifies contact points (Slack, email, webhooks)
+    'manage:AlertRule',
+    'manage:ContactPoint',
+    'manage:NotificationRoute',
     // Egress and supply chain: custom npm deps, external connections and
     // sources, git integration, source-code PRs, preview-project creation
     'manage:DataAppDependency',
