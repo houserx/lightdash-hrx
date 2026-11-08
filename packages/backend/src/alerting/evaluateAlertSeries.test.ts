@@ -103,6 +103,27 @@ describe('evaluateAlertSeries', () => {
         });
     });
 
+    it('fires only after `for` and returns a recovered pending series to normal', () => {
+        const forRule = { ...rule, for: '2m' };
+        const states: Record<string, string[]> = { 'db-1': [], 'db-2': [] };
+        let previous: AlertInstanceRecord[] = [];
+        for (const m of [0, 1, 2, 3]) {
+            ({ instances: previous } = evaluateAlertSeries({
+                rule: forRule,
+                rows: disk({ 'db-1': 95, 'db-2': m === 0 ? 95 : 10 }),
+                previous,
+                at: at(m),
+            }));
+            for (const name of ['db-1', 'db-2'])
+                states[name].push(byInstance(previous, name)!.state);
+        }
+        expect(states).toEqual({
+            'db-1': ['pending', 'pending', 'firing', 'firing'],
+            'db-2': ['pending', 'normal', 'normal', 'normal'],
+        });
+        expect(byInstance(previous, 'db-1')?.stateSince).toEqual(at(2));
+    });
+
     it('resolves a firing series missing from the result, then removes it', () => {
         const fired = evaluateAlertSeries({
             rule,
