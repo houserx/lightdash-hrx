@@ -686,3 +686,19 @@ token verification for a *valid* token, which feature 39 then hardens.
   Still failing (not built yet): pg tls/cancel/disconnect/statement_timeout, max_rows,
   pushdown_and_sql, label/series_name functions.
 - 2026-11-08T18:01:07Z supervisor: eng-promql-instant passed the gate in round 1
+- 2026-11-08 eng-time-arguments (worker, round 1): no code change needed. The time/step argument
+  handling built in eng-promql-range (src/promql.rs) already satisfies the feature, as that entry
+  predicted. I verified it end to end and added nothing to the tree except this entry.
+  Tested as a user: `../tmp/pgclient/src/bin/timeargs.rs` (mock Prometheus on 127.0.0.1:59090,
+  config `../tmp/promql/prom.toml`) spawns `target/debug/engine` and runs `promql('up', ..)` over
+  tokio-postgres. Prometheus received: ISO Z strings → start=1794096000 end=1794099600 step=60;
+  `+02:00` offset and `.500Z` → start=1794096000 end=1794097800.5 step=5400 (1h30m);
+  CAST(.. AS TIMESTAMP WITH TIME ZONE) → end=1794117600 step=15; to_timestamp() → step=300 (5m);
+  `now() - INTERVAL '1 hour', now()` → end within 1s of the wall clock, end-start=3600.
+  Step 'abc' and '0s' get 22023 ("invalid step ..."), start 'yesterday' gets 22007; zero requests
+  reached Prometheus for the three bad calls. The check `promql::eng_time_arguments` passes; in
+  the promql module range/instant/source_selection/upstream_errors pass too, and
+  series_name/label/pushdown_and_sql/max_rows still fail (not built yet).
+  Minor, for later: the step error message doesn't prefix the function signature the way the
+  start/end time errors do.
+- 2026-11-08T18:02:57Z supervisor: eng-time-arguments passed the gate in round 1
