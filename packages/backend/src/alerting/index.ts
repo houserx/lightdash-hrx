@@ -9,6 +9,7 @@ import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
 import { AlertInstanceModel } from './AlertInstanceModel';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
+import { AlertStateHistoryModel } from './AlertStateHistoryModel';
 import { ContactPointModel } from './ContactPointModel';
 import { ContactPointService } from './ContactPointService';
 import { NotificationRouteModel } from './NotificationRouteModel';
@@ -67,6 +68,7 @@ export const createAlertingModule = (
     return {
         alertRules: new AlertRuleService({
             alertRuleModel,
+            alertStateHistoryModel: new AlertStateHistoryModel(deps.database),
             clock: deps.clock,
         }),
         contactPoints: new ContactPointService({

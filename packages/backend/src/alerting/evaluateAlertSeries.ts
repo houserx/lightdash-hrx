@@ -6,6 +6,7 @@ import {
     splitAlertSeries,
     transitionAlertInstance,
     type AlertInstanceSnapshot,
+    type AlertInstanceState,
     type AlertQueryRow,
     type AlertRule,
     type AlertSeriesLabels,
@@ -124,4 +125,58 @@ export const evaluateAlertSeries = ({
             }
         });
     return { instances: [...evaluated.values()], removedFingerprints };
+};
+
+/** One series changing state in an evaluation. */
+export type AlertSeriesTransition = {
+    fingerprint: string;
+    labels: AlertSeriesLabels;
+    previousState: AlertInstanceState;
+    state: AlertInstanceState;
+    value: number | null;
+};
+
+/**
+ * The state changes an evaluation made: every stored series whose state
+ * differs from its previous one (a new series counts as previously normal,
+ * so a new normal series is no change), and every removed series that was
+ * not normal yet (it went to normal, with no value).
+ */
+export const getAlertSeriesTransitions = (
+    previous: readonly AlertInstanceRecord[],
+    { instances, removedFingerprints }: AlertSeriesEvaluation,
+): AlertSeriesTransition[] => {
+    const previousByFingerprint = new Map(
+        previous.map((instance) => [instance.fingerprint, instance]),
+    );
+    const changed = instances.flatMap((instance) => {
+        const previousState =
+            previousByFingerprint.get(instance.fingerprint)?.state ?? 'normal';
+        return previousState === instance.state
+            ? []
+            : [
+                  {
+                      fingerprint: instance.fingerprint,
+                      labels: instance.labels,
+                      previousState,
+                      state: instance.state,
+                      value: instance.value,
+                  },
+              ];
+    });
+    const cleared = removedFingerprints.flatMap((fingerprint) => {
+        const removed = previousByFingerprint.get(fingerprint);
+        return !removed || removed.state === 'normal'
+            ? []
+            : [
+                  {
+                      fingerprint,
+                      labels: removed.labels,
+                      previousState: removed.state,
+                      state: 'normal' as const,
+                      value: null,
+                  },
+              ];
+    });
+    return [...changed, ...cleared];
 };

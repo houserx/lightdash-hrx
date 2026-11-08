@@ -7,7 +7,10 @@ import {
 } from '@lightdash/common';
 import { type AlertInstanceModel } from './AlertInstanceModel';
 import { type AlertRuleModel } from './AlertRuleModel';
-import { evaluateAlertSeries } from './evaluateAlertSeries';
+import {
+    evaluateAlertSeries,
+    getAlertSeriesTransitions,
+} from './evaluateAlertSeries';
 
 export type AlertEvaluationOutcome = {
     status: 'evaluated' | 'skipped';
@@ -32,7 +35,8 @@ type AlertEvaluatorArgs = {
  * Evaluates Alert Rules: runs a rule's SQL through the project's
  * WarehouseClient as `system:alert-evaluator`, over the window that ends at
  * the scheduled time, then gives every series of the result its own state
- * and value, stored per series in `alert_instances`.
+ * and value, stored per series in `alert_instances`. Every state change is
+ * written to `alert_state_history`.
  */
 export class AlertEvaluator {
     private readonly alertRuleModel: AlertRuleModel;
@@ -74,13 +78,24 @@ export class AlertEvaluator {
             alert_rule_uuid: rule.uuid,
             project_uuid: rule.projectUuid,
         });
+        const previous = await this.alertInstanceModel.listForRule(rule.uuid);
         const evaluation = evaluateAlertSeries({
             rule,
             rows,
-            previous: await this.alertInstanceModel.listForRule(rule.uuid),
+            previous,
             at: scheduledAt,
         });
-        await this.alertInstanceModel.save(rule.uuid, evaluation);
+        await this.alertInstanceModel.save(
+            {
+                projectUuid: rule.projectUuid,
+                ruleUuid: rule.uuid,
+                at: scheduledAt,
+            },
+            {
+                ...evaluation,
+                transitions: getAlertSeriesTransitions(previous, evaluation),
+            },
+        );
         return { status: 'evaluated' };
     }
 }

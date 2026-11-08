@@ -1,7 +1,11 @@
 import { type AlertInstanceState } from '@lightdash/common';
 import { type Knex } from 'knex';
 import { AlertInstancesTableName } from './AlertRuleModel';
-import { type AlertInstanceRecord } from './evaluateAlertSeries';
+import { AlertStateHistoryModel } from './AlertStateHistoryModel';
+import {
+    type AlertInstanceRecord,
+    type AlertSeriesTransition,
+} from './evaluateAlertSeries';
 
 type DbAlertInstanceState = {
     fingerprint: string;
@@ -48,18 +52,33 @@ export class AlertInstanceModel {
         return rows.map(toRecord);
     }
 
-    /** Upserts the given series (by fingerprint) and deletes the removed ones. */
+    /**
+     * Upserts the given series (by fingerprint), deletes the removed ones and
+     * writes the evaluation's transitions to the state history, all at once.
+     */
     async save(
-        ruleUuid: string,
+        {
+            projectUuid,
+            ruleUuid,
+            at,
+        }: { projectUuid: string; ruleUuid: string; at: Date },
         {
             instances,
             removedFingerprints,
+            transitions,
         }: {
             instances: AlertInstanceRecord[];
             removedFingerprints: string[];
+            transitions: readonly AlertSeriesTransition[];
         },
     ): Promise<void> {
         await this.database.transaction(async (trx) => {
+            await AlertStateHistoryModel.insertTransitions(trx, {
+                projectUuid,
+                ruleUuid,
+                at,
+                transitions,
+            });
             if (removedFingerprints.length > 0) {
                 await trx(AlertInstancesTableName)
                     .where('alert_rule_uuid', ruleUuid)

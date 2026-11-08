@@ -19,6 +19,7 @@ import {
     type AlertRuleSummary,
     type AlertRuleVersion,
     type AlertRuleWithInstances,
+    type AlertStateHistoryEntry,
     type CreateAlertRule,
     type SessionUser,
     type UpdateAlertRule,
@@ -32,6 +33,7 @@ import {
     type AlertingAction,
 } from './alertingAccess';
 import { getAlertRuleDefinition, type AlertRuleModel } from './AlertRuleModel';
+import { type AlertStateHistoryModel } from './AlertStateHistoryModel';
 
 const DEFINITION_KEYS = [
     'name',
@@ -258,6 +260,7 @@ export class AlertRuleService {
     constructor(
         private readonly deps: {
             alertRuleModel: AlertRuleModel;
+            alertStateHistoryModel: AlertStateHistoryModel;
             clock: { now(): Date };
         },
     ) {}
@@ -351,6 +354,17 @@ export class AlertRuleService {
         await this.assertAbility(user, 'view', projectUuid);
         const rule = await this.getRuleOrThrow(projectUuid, ruleUuid);
         return this.deps.alertRuleModel.listVersions(rule.uuid);
+    }
+
+    /** The rule's state history, newest first. */
+    async listHistory(
+        user: SessionUser,
+        projectUuid: string,
+        ruleUuid: string,
+    ): Promise<AlertStateHistoryEntry[]> {
+        await this.assertAbility(user, 'view', projectUuid);
+        const rule = await this.getRuleOrThrow(projectUuid, ruleUuid);
+        return this.deps.alertStateHistoryModel.listForRule(rule.uuid);
     }
 
     private async nextFreeSlug(

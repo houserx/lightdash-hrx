@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     evaluateAlertSeries,
     getAlertInstanceLabels,
+    getAlertSeriesTransitions,
     type AlertInstanceRecord,
 } from './evaluateAlertSeries';
 
@@ -190,5 +191,61 @@ describe('evaluateAlertSeries', () => {
                 at: at(1),
             }),
         ).toEqual({ instances: fired.instances, removedFingerprints: [] });
+    });
+});
+
+describe('getAlertSeriesTransitions', () => {
+    const run = (
+        previous: AlertInstanceRecord[],
+        values: Record<string, number>,
+        minute: number,
+    ) => {
+        const evaluation = evaluateAlertSeries({
+            rule,
+            rows: disk(values),
+            previous,
+            at: at(minute),
+        });
+        const transitions = getAlertSeriesTransitions(previous, evaluation);
+        return { instances: evaluation.instances, transitions };
+    };
+    const summary = (transitions: ReturnType<typeof run>['transitions']) =>
+        transitions.map((t) => [
+            t.labels.instance,
+            t.previousState,
+            t.state,
+            t.value,
+        ]);
+
+    it('reports only the series whose state changed', () => {
+        const first = run([], { 'db-1': 95, 'db-2': 40 }, 0);
+        expect(summary(first.transitions)).toEqual([
+            ['db-1', 'normal', 'firing', 95],
+        ]);
+        const second = run(first.instances, { 'db-1': 96, 'db-2': 40 }, 1);
+        expect(second.transitions).toEqual([]);
+        const third = run(second.instances, { 'db-1': 10, 'db-2': 40 }, 2);
+        expect(summary(third.transitions)).toEqual([
+            ['db-1', 'firing', 'resolved', 10],
+        ]);
+        expect(third.transitions[0].fingerprint).toBe(
+            byInstance(first.instances, 'db-1')?.fingerprint,
+        );
+        const fourth = run(third.instances, { 'db-1': 10, 'db-2': 40 }, 3);
+        expect(summary(fourth.transitions)).toEqual([
+            ['db-1', 'resolved', 'normal', 10],
+        ]);
+    });
+
+    it('reports a removed series going to normal without a value', () => {
+        const fired = run([], { 'db-1': 95, 'db-2': 40 }, 0);
+        const gone = run(fired.instances, { 'db-2': 40 }, 1);
+        expect(summary(gone.transitions)).toEqual([
+            ['db-1', 'firing', 'resolved', null],
+        ]);
+        const cleared = run(gone.instances, { 'db-2': 40 }, 2);
+        expect(summary(cleared.transitions)).toEqual([
+            ['db-1', 'resolved', 'normal', null],
+        ]);
     });
 });

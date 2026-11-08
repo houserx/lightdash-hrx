@@ -99,6 +99,29 @@ export type AlertRuleWithInstances = AlertRuleSummary & {
     instances: AlertRuleInstance[];
 };
 
+/** One series of a rule changing state, as written by the evaluator. */
+export type AlertStateTransition = {
+    type: 'transition';
+    uuid: string;
+    ruleUuid: string;
+    fingerprint: string;
+    labels: Record<string, string>;
+    /** `normal` for a series seen for the first time. */
+    previousState: AlertInstanceState;
+    state: AlertInstanceState;
+    /** The series' value at the transition; null when it left the result. */
+    value: number | null;
+    /** When the evaluation that made the transition was scheduled (ISO). */
+    at: string;
+};
+
+/**
+ * An entry of a rule's state history (GET .../rules/{uuid}/history), newest
+ * first. Rule-level entries (such as skipped evaluations) join this union
+ * when they are written.
+ */
+export type AlertStateHistoryEntry = AlertStateTransition;
+
 /** Highest first: the aggregate state is the first one any series is in. */
 export const ALERT_RULE_STATE_PRECEDENCE: readonly AlertRuleState[] = [
     'firing',

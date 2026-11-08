@@ -317,3 +317,30 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - The rule state (and the list) is firing until 09:03 and normal from 09:04 on.
     - 2 rows in alert_instances.
 - 2026-11-08T19:42:30Z supervisor: alert-eval-keep-firing-for passed the gate in round 1
+- alert-eval-state-history (round 1) — 2026-11-08
+  - Changed: the evaluator now writes every series state change to `alert_state_history`, in the same transaction as the `alert_instances` upsert. There is a new route `GET /api/v2/projects/{uuid}/alerting/rules/{ruleUuid}/history` that returns the rule's history newest first. It is a view ability, so viewers can read it, outsiders get 403, anonymous requests get 401, and unknown or non-uuid rules get 404.
+    - common `alertRules.ts`: adds `AlertStateTransition` (`type: 'transition'`, uuid, ruleUuid, fingerprint, labels, previousState, state, value, at ISO) and `AlertStateHistoryEntry` (for now just the transition type).
+    - backend `evaluateAlertSeries.ts`: adds the pure `getAlertSeriesTransitions(previous, evaluation)`. It reports every stored series whose state differs from before. A new series counts as previously `normal`, so a new normal series is no entry. A removed series that was not normal yet becomes `→ normal` with value null.
+    - New `AlertStateHistoryModel.ts`: the static `insertTransitions(trx, …)` and `listForRule`. `listForRule` orders by `at desc, fingerprint` and filters `fingerprint IS NOT NULL`.
+    - `AlertInstanceModel.save` now takes `({projectUuid, ruleUuid, at}, {instances, removedFingerprints, transitions})`.
+    - Also changed: `AlertRuleService.listHistory`, the router, and `index.ts` (the service gets `alertStateHistoryModel`).
+  - For the next sessions:
+    - alert-eval-overrun needs `evaluation_skipped` entries. Write them as rows with `fingerprint` null, put the reason in the `reason` column, and set `state` to something non-null (the column is NOT NULL). Then drop the `whereNotNull('fingerprint')` filter in `listForRule`, map such rows to `type: 'evaluation_skipped'` with `reason`, and widen the `AlertStateHistoryEntry` union.
+    - The project-wide `/alerting/history?rule=&since=` route (shadow-ascode-ai.accept.ts) also wants `ruleName` on entries. That is not added yet.
+    - `at` is the scheduled time of the evaluation, not the clock.
+  - Tested:
+    - The check passes (1 passed, 10 skipped). The query-identity, series-states, for-pending and keep-firing-for tests in the same file still pass (4 passed).
+    - The unit file passes 10/10, with 2 new tests for `getAlertSeriesTransitions`.
+    - Backend and common tsc are clean, oxlint (src/alerting) is clean, and oxfmt is clean.
+    - As a user: a scratch vitest walk over real HTTP through the harness (run.sh and the config copied to tmp/walk; `tmp/walk` and `src/alerting/__walk__` removed afterwards).
+      - The editor POSTs the default disk rule → 200. A viewer GET of the history before any evaluation → 200 `[]`.
+      - Evaluations at 09:00–09:05 with db-1 at 95, 96, 10, 10, 10, 10 and db-2 at 40, 40, 40, 93, then absent twice.
+      - A viewer GET then lists, newest first:
+        - db-2 resolved→normal null 09:05
+        - db-2 firing→resolved null 09:04
+        - db-1 resolved→normal 10 09:03
+        - db-2 normal→firing 93 09:03
+        - db-1 firing→resolved 10 09:02
+        - db-1 normal→firing 95 09:00
+      - Every entry has 16-hex fingerprints and labels `{team, instance, alertname}`. Outsider → 403, anonymous → 401, unknown rule → 404.
+- 2026-11-08T19:48:25Z supervisor: alert-eval-state-history passed the gate in round 1
