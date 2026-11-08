@@ -1017,3 +1017,37 @@ should add a dated line here per feature.
   Check `state-timeline.test.ts` 3/3 after `bash ./init.sh`; regressions build 24/24, heatmap 5/5, histogram 3/3,
   client-install 4/4; `tsc --noEmit` and oxfmt clean. Scratch driver in `../tmp/drive-state-timeline/` (outside repo).
 - 2026-11-08T20:26:49Z supervisor: viz-registry-state-timeline passed the gate in round 1
+
+## viz-registry-stat-value (round 1)
+- **What.** New entry `chart-registry/src/charts/stat-sparkline/` (build script unchanged). `stat.ts` is the pure
+  model: `orderPoints` sorts rows by the optional `time` field (stable; rows without a time follow in row order) and
+  `reduce` implements Grafana reducers `lastNotNull` (default), `last`, `firstNotNull`, `first`, `min`, `max`, `mean`,
+  `sum`, `count` (all rows, like Grafana), `range`; nulls are skipped except by last/first/count; null result = no
+  value. `index.ts` draws HTML `div[data-testid=stat]` (attrs `data-reducer`, `data-value`, `data-empty`) holding
+  `stat-value` (number + `span[data-testid=stat-unit]` suffix) and `stat-label` (the value field's label). A null
+  result or no rows shows "No data".
+- **Shared helper for later entries.** `chart-registry/src/shared/grafanaFormat.ts`: `formatGrafanaValue(value, unit,
+  decimals|null)` -> {prefix, text, suffix} and `formatGrafanaText`. Standalone on purpose (common's `grafanaUnits.ts`
+  imports `types/field`, which pulls es-toolkit into the bundle) and it auto-scales like Grafana, which the Lightdash
+  CustomFormat mapping cannot: bytes 1536 -> 1.5 KiB (IEC; decbytes SI), ms 1500 -> 1.5 s (ns..year ladder),
+  short -> K/Mil/Bil, percentunit x100 + %, Bps/decBps/bps add /s, currency prefixes, `prefix:`/`suffix:` custom,
+  unknown unit = " <unit>" suffix. Auto decimals (null): integers 0, |v|>=1 up to 2, below 1 ~3 significant,
+  trailing zeros dropped. bar-gauge and status-grid should reuse it.
+- **Schema.** Fields `value` (metric, required), `time` (dimension, optional). Options: `reducer` (select, default
+  lastNotNull), `unit` (text, ""), `decimals` (number, default -1 = auto, min -1 max 20), and - declared now because
+  this feature's schema test requires them, but **not yet acted on** - `thresholds` (text ""), `valueMappings` (text
+  ""), `graphMode` (select area|none, default area, Grafana's default), `colorMode` (select value|background|none,
+  default value). viz-registry-stat-thresholds / -stat-sparkline / -stat-value-mappings implement them; each of those
+  changes dist.tar, so bump the entry's `version` (and changelog) in `registry.json` when you add behaviour.
+  `colorPalette: null` for now. Preview: 8 synthetic p95 latency points, `optionValues` unit ms, 1 decimal.
+- **Note for value-mappings.** The null special must apply when the reduced value is null (test feeds a single null
+  row with default lastNotNull): check mappings before falling back to "No data".
+- **Tested as a user.** Built the registry (`heatmap, histogram, stat-sparkline, state-timeline @1.0.0`), read the
+  stat entry from `index.json`, untarred dist.tar and ran its bundle in jsdom as the host does, with Lightdash-style
+  field ids, digit-string epoch times and string numerics, rows newest first: unit ms + 1 decimal -> "42.5 ms" (latest
+  by time, not last row); defaults -> "42.5"; trailing null -> "42.5 ms"; reducer last with trailing null -> "No
+  data"; max "99.0 ms"; mean "50.50"; 1500 ms auto -> "1.5 s"; 5 GiB bytes -> "5.0 GiB"; percentunit "42.4%"; reqps
+  "123 req/s"; free text "7 widgets"; no rows / all null -> "No data"; label "p95 latency"; `viz-rendered` ack sent.
+  Check `stat-sparkline-value.test.ts` 9/9 after `bash ./init.sh`; regressions build 31/31, client-install 4/4,
+  state-timeline 3/3; `tsc --noEmit` and oxfmt clean. Scratch driver in `../tmp/drive-stat/` (outside the repo).
+- 2026-11-08T20:31:14Z supervisor: viz-registry-stat-value passed the gate in round 1
