@@ -1768,3 +1768,25 @@ docs/eng-1799/telemetry-mcp.md
   constants stay, so `id > 17` and `id > 99` are two different shapes and are not merged.
 - Feature check: 2/2.
 - 2026-11-08T19:08:40Z supervisor: mcp-ask-data-example-queries passed the gate in round 1
+
+## mcp-ai-not-configured (2026-11-08)
+
+- No code changes. The behaviour was already in place from earlier features. `askData` in
+  `src/ask/data-assistant.service.ts` throws `AskError(503, NOT_CONFIGURED_MESSAGE)` before any catalog or engine
+  call when `llm` is null. `platformExplain` returns the plan with `advice: null` and
+  `adviceError: ADVICE_NOT_CONFIGURED` when there is no `deps.llm`. This session checked it and recorded the result.
+- Tested as a user: after `bash ./init.sh`, `../tmp/ai-not-configured/drive.test.ts` (run with
+  `pnpm exec vitest run --root ../../../tmp/ai-not-configured --disableConsoleIntercept drive.test.ts` from the
+  package) started the built `dist/index.js` with no `deps.llm` and with `ANTHROPIC_API_KEY` unset, against the fake
+  Okta, Lightdash and engine. A real MCP client connected over streamable HTTP with an Okta bearer token.
+  - ask_data: isError true, "Ask is not configured for this environment (no Anthropic API key available)." The engine
+    received 0 data queries.
+  - platform_explain `SELECT 1`: isError false, plan returned, `advice: null`,
+    `adviceError: "Plan advice is not configured on this server"`.
+- Gap for a later or integration session (not in the feature list): `src/main.ts` never builds an `LlmClient`. The
+  config reads `ANTHROPIC_API_KEY` and redacts it from logs, but nothing uses it to create a model client. So the
+  production entry point (`dist/main.js`) always reports AI as "not configured", even when the key is set. Only callers
+  that inject `deps.llm` through `startServer` get AI features. Wiring a real Anthropic client needs a decision about
+  the SDK dependency and the model id.
+- Feature check: 2/2.
+- 2026-11-08T19:10:05Z supervisor: mcp-ai-not-configured passed the gate in round 1
