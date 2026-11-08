@@ -1695,3 +1695,23 @@ docs/eng-1799/telemetry-mcp.md
     "not configured".
   - MCP progress notifications are not sent; `onProgress` is unused.
 - 2026-11-08T19:03:16Z supervisor: mcp-tool-ask-data passed the gate in round 1
+
+## mcp-ask-data-abstain (2026-11-08)
+
+- No code changes. The mcp-tool-ask-data wiring (the ported data-assistant loop) already does everything this
+  feature needs; this session verified it and recorded the result here.
+- Tested as a user: after `bash ./init.sh`, `../tmp/ask-data-abstain/drive.test.ts` (run with `pnpm exec vitest run
+  --root ../tmp/ask-data-abstain --disableConsoleIntercept drive.test.ts` from the package) started the built
+  `dist/index.js` with `MCP_ASK_MAX_STEPS=4` against the fake Okta, Lightdash and engine, plus a `ScriptedLlm`. A real
+  MCP client connected over streamable HTTP with an Okta bearer token.
+  - unsafe_request abstention: status abstained, the reason and `whatWouldHelp` were passed through, there were no
+    queries, and the engine saw 0 `platform_query` runs.
+  - "answered" citing query 1 when no query had run: the model was re-prompted, 3 model calls in all. The result was
+    abstained / `unsupported_answer` with an explanation and a hint.
+  - The model never submitted: exactly 4 model calls, then abstained / `budget_exceeded` with `usage.steps` 4.
+  - A bad table, then a good query: queries were [error "SQL error: relation does not exist", ok], status answered,
+    and the engine saw 2 `platform_query` runs.
+- Feature check: 4/4.
+- Note: when an MCP tool result is not an error, `isError` is omitted rather than set to false. The harness treats a
+  missing `isError` as false.
+- 2026-11-08T19:04:38Z supervisor: mcp-ask-data-abstain passed the gate in round 1
