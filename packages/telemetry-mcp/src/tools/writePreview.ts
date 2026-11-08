@@ -6,16 +6,43 @@
  * There is no mode argument and no commit path: committing a write is a human action in Lightdash. A description is
  * required (it is recorded in the audit log) and a Linear ticket is optional; bad input is refused before any engine
  * call.
+ *
+ * The caller needs the `platform_write` user attribute. The engine checks it too, but the tool refuses a caller
+ * without it (or whose attributes cannot be read) before any engine request, so no Preview is ever attempted for them.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { EngineWriteError, type EngineWriter, type PreviewRequest, type PreviewResult } from '../engine/write.js';
+import type { IdentityAttrs } from '../identity/token.js';
 import { LINEAR_TICKET } from './platformQuery.js';
 import { ToolInputError, errorResult } from './telemetryArgs.js';
 
 export const WRITE_PREVIEW_TOOL = 'write_preview';
+
+/** The caller's §3 attrs, resolved from their Lightdash user; rejects when they cannot be read. */
+export type CallerAttrs = () => Promise<Pick<IdentityAttrs, 'platform_write'>>;
+
+/** Shown when the caller lacks `platform_write`. */
+export const PLATFORM_WRITE_REQUIRED =
+    'write_preview needs the platform_write user attribute, and your Lightdash user does not have it. Ask a ' +
+    'Lightdash admin to grant platform_write if you need to preview writes.';
+
+/** Shown when the caller's attributes cannot be read; the tool fails closed. */
+export const PLATFORM_WRITE_UNCHECKED =
+    'The Preview was not run: your platform_write user attribute could not be checked. Try again later.';
+
+/** Resolves to an error message when the caller may not Preview writes, else `undefined`. */
+export async function writeAccessDenial(attrs: CallerAttrs): Promise<string | undefined> {
+    let platformWrite: boolean;
+    try {
+        platformWrite = (await attrs()).platform_write === true;
+    } catch {
+        return PLATFORM_WRITE_UNCHECKED;
+    }
+    return platformWrite ? undefined : PLATFORM_WRITE_REQUIRED;
+}
 
 export interface WritePreviewArgs {
     statement?: unknown;
@@ -58,7 +85,12 @@ export function previewResult(result: PreviewResult, maxBytes: number): CallTool
     return { content: [{ type: 'text', text }], structuredContent: result };
 }
 
-export function registerWritePreview(server: McpServer, config: Config, writer: EngineWriter): void {
+export function registerWritePreview(
+    server: McpServer,
+    config: Config,
+    writer: EngineWriter,
+    attrs: CallerAttrs,
+): void {
     server.registerTool(
         WRITE_PREVIEW_TOOL,
         {
@@ -91,6 +123,8 @@ export function registerWritePreview(server: McpServer, config: Config, writer: 
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         },
         async (args) => {
+            const denial = await writeAccessDenial(attrs);
+            if (denial !== undefined) return errorResult(denial);
             try {
                 const result = await writer.preview(buildPreviewRequest(args));
                 return previewResult(result, config.maxOutputBytes);

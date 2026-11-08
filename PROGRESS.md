@@ -1835,3 +1835,25 @@ docs/eng-1799/telemetry-mcp.md
     SQL text appeared in the server logs.
 - Feature check: 6/6.
 - 2026-11-08T19:14:05Z supervisor: mcp-tool-write-preview passed the gate in round 1
+
+## mcp-write-preview-requires-platform-write (2026-11-08)
+
+- `write_preview` now checks the caller's `platform_write` attr in the tool handler before any input validation or
+  `writer.preview`. A caller without it gets "write_preview needs the platform_write user attribute, ...". The
+  engine gets no request. The check fails closed: if the attrs cannot be read, the tool returns
+  `PLATFORM_WRITE_UNCHECKED` and the engine gets no call (`writeAccessDenial` in `src/tools/writePreview.ts`).
+- `registerWritePreview(server, config, writer, attrs)` takes a new `CallerAttrs` argument.
+  `McpServerDeps.attrs` is optional; when it is absent (unit tests), `NO_ATTRS` rejects, so the tool refuses.
+  `serveMcpRequest` passes `async () => (await users.user()).attrs`, which reuses the request's once-resolver, so
+  the check costs no extra Lightdash call.
+- The tool stays in tools/list for users without the attr (the description already says it needs platform_write).
+  Hiding it per user was not asked for.
+- Unit tests: 3 new `writeAccessDenial` cases in `src/tools/writePreview.test.ts` (12 total).
+- Tested as a user: after `bash ./init.sh`, ran `../tmp/write-preview-platform-write/drive.test.ts` (from the package:
+  `pnpm exec vitest run --root ../../../tmp/write-preview-platform-write --disableConsoleIntercept drive.test.ts`).
+  It spawns `node dist/main.js` against the fake Okta, Lightdash and engine, with `MCP_USER_CACHE_TTL_MS=0`.
+  - The analyst (platform_read only) and the viewer (no attrs) each got the platform_write error, and the engine
+    got 0 `/v1/write` calls.
+  - After the fake Lightdash granted the analyst platform_write, the same call returned a Preview, with 1 engine call.
+- Feature check: 1/1. `tool-write-preview.test.ts` still 6/6, `src/mcp/server.test.ts` 5/5.
+- 2026-11-08T19:16:13Z supervisor: mcp-write-preview-requires-platform-write passed the gate in round 1

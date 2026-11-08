@@ -27,6 +27,7 @@ import { createEngineAuditBrowser } from '../engine/audit.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
 import { EngineWriteError, createEngineWriter, type EngineWriter } from '../engine/write.js';
+import type { IdentityAttrs } from '../identity/token.js';
 import { createAlertingClient, type AlertingClient } from '../lightdash/alerting.js';
 import { registerAlertHistory } from '../tools/alertHistory.js';
 import { registerAlertState } from '../tools/alertState.js';
@@ -69,12 +70,20 @@ export interface McpServerDeps {
     ask?: Pick<AskDataDeps, 'memory' | 'examples' | 'user' | 'onError'>;
     /** Write Mode Previews through the engine's `POST /v1/write`, as the caller. Default (unit tests): none. */
     writer?: EngineWriter;
+    /**
+     * The caller's §3 attrs, from their mapped Lightdash user; write_preview needs `platform_write` before it calls
+     * the writer. Default (unit tests): none, so write_preview refuses every call.
+     */
+    attrs?: () => Promise<IdentityAttrs>;
 }
 
 /** The writer used when `McpServerDeps.writer` is not given: every Preview fails before any engine call. */
 const NO_WRITER: EngineWriter = {
     preview: () => Promise.reject(new EngineWriteError('The Preview failed: Write Mode is not available in this server')),
 };
+
+/** The attrs used when `McpServerDeps.attrs` is not given: unknown, so write_preview fails closed. */
+const NO_ATTRS = (): Promise<IdentityAttrs> => Promise.reject(new Error('no caller attributes in this server'));
 
 /**
  * What a request needs besides the config: the shared user resolver, the server clock (epoch ms) and the structured
@@ -121,7 +130,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerPlatformQuery(server, config, engine);
     registerPlatformExplain(server, config, engine, llm);
     registerAskData(server, config, { engine, llm, now, ...(deps.ask ?? standaloneAsk(now)) });
-    registerWritePreview(server, config, deps.writer ?? NO_WRITER);
+    registerWritePreview(server, config, deps.writer ?? NO_WRITER, deps.attrs ?? NO_ATTRS);
     return server;
 }
 
@@ -218,6 +227,7 @@ export async function serveMcpRequest(
                 now: context.now,
                 secrets,
             }),
+            attrs: async () => (await users.user()).attrs,
         });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

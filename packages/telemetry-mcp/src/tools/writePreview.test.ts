@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { ToolInputError } from './telemetryArgs.js';
-import { buildPreviewRequest, previewResult } from './writePreview.js';
+import {
+    PLATFORM_WRITE_REQUIRED,
+    PLATFORM_WRITE_UNCHECKED,
+    buildPreviewRequest,
+    previewResult,
+    writeAccessDenial,
+} from './writePreview.js';
 
 const STATEMENT = "DELETE FROM orders WHERE id = 1 RETURNING id; --'";
 
@@ -41,5 +47,23 @@ describe('previewResult', () => {
         const r = previewResult(result, 20);
         expect(r.isError).toBe(true);
         expect((r.content[0] as { text: string }).text).toMatch(/audit id a-1.*nothing committed/);
+    });
+});
+
+describe('writeAccessDenial', () => {
+    it('allows a caller with platform_write', async () => {
+        await expect(writeAccessDenial(() => Promise.resolve({ platform_write: true }))).resolves.toBeUndefined();
+    });
+
+    it('refuses a caller without platform_write, naming the attribute', async () => {
+        const denial = await writeAccessDenial(() => Promise.resolve({ platform_write: false }));
+        expect(denial).toBe(PLATFORM_WRITE_REQUIRED);
+        expect(denial).toMatch(/platform_write/);
+    });
+
+    it('fails closed when the attributes cannot be read', async () => {
+        await expect(writeAccessDenial(() => Promise.reject(new Error('lightdash down')))).resolves.toBe(
+            PLATFORM_WRITE_UNCHECKED,
+        );
     });
 });
