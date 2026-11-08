@@ -584,3 +584,34 @@ docs/eng-1799/telemetry-mcp.md
   - Results: the check passes (3/3), the 9 previously passing acceptance files plus engine-session, user-mapping and
     user-attributes pass (12 files, 49 tests), unit tests pass (41), and typecheck is clean.
 - 2026-11-08T16:14:31Z supervisor: mcp-engine-session passed the gate in round 1
+
+## mcp-user-mapping (2026-11-08)
+
+- Checked and hardened, not rewritten: `src/auth/userMapping.ts` came in with `mcp-engine-session`, and the check
+  (`user-mapping.test.ts`, 3/3) already passed on a clean tree. Production code is unchanged.
+- Pagination checked: Lightdash's `GET /api/v1/org/users` paginates only when both `pageSize` and `page` are given
+  (`packages/backend/src/controllers/organizationController.ts`). The resolver sends neither, so it gets every match
+  for the search in one response.
+- New `src/auth/userMapping.test.ts` (6 unit tests, stubbed `fetch` with a substring search like the real one). It covers:
+  - a decoy listed first whose email contains the claim;
+  - an email-shaped `sub` in different case, returning Lightdash's spelling of the email;
+  - `ApiKey <token>` on both calls, plus the `searchQuery`/`includeGroups` params;
+  - inactive exact matches and substring-only matches rejected;
+  - no Lightdash call when the token has no email;
+  - the HTTP-error and network-error texts.
+- Tested as a user: `../tmp/user-mapping-ut/run.mts`. Run it from the repo root with
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs real `dist/main.js` with the SDK
+  streamable-HTTP client against the fake Lightdash and fake engine. Fake Lightdash users, in order: decoys
+  `x.analyst@…` and `analyst@example.test.decoy`, then the target.
+  - An `email` claim gave an identity token with the target's uuid, email, org and project, `platform_read`
+    (direct) and `platform_explain` (group).
+  - `sub=Analyst@Example.TEST` with no email claim gave the same user.
+  - A substring-only email got `isError` ("no active Lightdash user…") and opened no engine connection.
+  - A non-email `sub` got `isError` ("no email…").
+  - All 5 Lightdash requests carried `ApiKey <service token>`.
+  - SIGTERM exits 0.
+- Results: the check passes 3/3, unit tests pass (47), typecheck is clean, and 13 acceptance files pass. Every
+  other failing file belongs to an unbuilt feature.
+- Still open, unchanged: the TTL cache (`mcp-user-mapping-cache`) and the empty tool list for unknown users
+  (`mcp-unknown-user-no-tools`).
+- 2026-11-08T16:19:54Z supervisor: mcp-user-mapping passed the gate in round 1
