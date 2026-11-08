@@ -322,3 +322,34 @@ token verification for a *valid* token, which feature 39 then hardens.
   - The private clippy/rustfmt toolchain is installed in `tmp/rustup` (the rustup "not installed at
     tmp/cargohome" message at the end of the install is harmless).
 - 2026-11-08T15:51:24Z supervisor: eng-config-check passed the gate in round 1
+- 2026-11-08 eng-pg-startup-auth (session 2): `engine --config <file>` now serves. New `src/server.rs`
+  binds `listen_pg` and `listen_http` (bind failure → exit 1 naming the address) and runs the pg-wire
+  accept loop plus an axum HTTP router. New `src/pg.rs`: pgwire 0.42 `SASLAuthStartupHandler` with
+  **SCRAM-SHA-256** (4096 iterations; A1 allows any method) against `[[users]]`. Each user's salted
+  password is computed once at startup with a random salt. An unknown user gets a random decoy secret,
+  so it fails exactly like a wrong password (28P01, FATAL) and logins can't be enumerated. Queries run on
+  one shared DataFusion 55 `SessionContext` via `sql_with_options` with DDL, DML and statements all
+  refused (keeps the shared context read-only). Results are collected, then sent as text rows. Arrow
+  → pg OIDs: bool 16, int2/4/8, float4/8, timestamptz 1184, timestamp, date, everything else text 25.
+  Bool is sent as `t`/`f`. NULL comes from `logical_nulls()` (a `NullArray` has no validity buffer;
+  `is_null` alone sent `SELECT NULL` as ''). DataFusion errors map to SQL→42601, Plan/Schema→42000,
+  NotImplemented→0A000, else XX000.
+  Tested as a user: psql is blocked by the sandbox, so I built a throwaway tokio-postgres CLI in
+  `../tmp/pgclient` (outside the repo). I started the engine with two `[[users]]`. Each login ran
+  `SELECT 1` → `1`. A wrong password, an unknown user and the other user's password each got
+  `28P01` FATAL. `/healthz` → 200. Check `pgwire::eng_pg_startup_auth`, `config::eng_config_check`, the
+  harness self-tests, 6 config + 2 new `pg` unit tests, fmt and clippy (`--workspace --all-targets
+  -D warnings`) all pass.
+  For later sessions:
+  - `/healthz` is a stub (always 200 "ok"). It exists only because the harness waits on it.
+    eng-healthz must add source probes and 503.
+  - `[tls]` in the config makes the server refuse to start ("TLS is not implemented yet"). This fails
+    closed instead of serving plaintext. eng-pg-tls replaces it (pgwire `process_socket` takes a
+    `TlsAcceptor`; SCRAM channel binding needs `ScramAuth::configure_certificate`).
+  - The extended protocol is pgwire's default Noop handler. `SET` and multi-statement simple queries
+    are refused (statements disabled). `server_version` startup param is `16.0`; `version()` is not done.
+  - Results are collected in memory before sending (no streaming, no max_rows cap, no cancellation yet).
+  - pgwire's auth failure message reads `Password authentication failed for user ""` (empty name,
+    pgwire's wording). Harmless, but a later session may want a custom message.
+  - The first build compiles DataFusion (several minutes for clippy's separate target dir).
+- 2026-11-08T16:08:29Z supervisor: eng-pg-startup-auth passed the gate in round 1

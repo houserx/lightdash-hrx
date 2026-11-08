@@ -1,8 +1,11 @@
 //! HouseRx Federation Engine entry point.
 //!
-//! `engine --config <file>` serves; `engine --check-config --config <file>` only validates the
+//! `engine --config <file>` serves pg-wire and HTTP; `engine --check-config --config <file>` only validates the
 //! config (CONTRACTS §1.4), resolving secrets from env vars, without binding ports or contacting
 //! sources.
+
+mod pg;
+mod server;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -67,6 +70,21 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
-    eprintln!("engine: serving is not implemented yet (see PROGRESS.md at the repo root)");
-    ExitCode::from(2)
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("engine: cannot start the async runtime: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(server::run(config)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("engine: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

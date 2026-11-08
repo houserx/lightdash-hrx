@@ -21,7 +21,14 @@ name = "acceptance"
 path = "tests/acceptance/main.rs"
 
 [dependencies]
+async-trait = "0.1.92"
+axum = "0.8"
+datafusion = { version = "55", default-features = false, features = ["sql", "nested_expressions", "datetime_expressions", "string_expressions", "unicode_expressions", "regex_expressions", "crypto_expressions", "encoding_expressions", "recursive_protection"] }
 engine-config = { path = "crates/engine-config" }
+futures = "0.3.34"
+getrandom = "0.3"
+pgwire = "0.42"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 
 # Used only by tests/acceptance. They drive the real `engine` binary through pg-wire and HTTP,
 # so they compile without any engine code. Keep these: the protected harness needs them.
