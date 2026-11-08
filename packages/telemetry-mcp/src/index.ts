@@ -14,3 +14,5 @@ export { startServer } from './http/server.js';
 export type { RunningServer } from './http/server.js';
 export { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './http/protectedResource.js';
 export type { ProtectedResourceMetadata } from './http/protectedResource.js';
+export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
+export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';

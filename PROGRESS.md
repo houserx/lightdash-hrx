@@ -374,3 +374,25 @@ docs/eng-1799/telemetry-mcp.md
   issuer, `["header"]`; `/…/other` → 404; POST → 405; SIGTERM exit 0. Acceptance checks protected-resource-metadata,
   package-skeleton, config-validation, identity-token pass; unit tests and typecheck pass.
 - 2026-11-08T15:52:10Z supervisor: mcp-protected-resource-metadata passed the gate in round 1
+
+### mcp-unauthorized-challenge (2026-11-08)
+
+- `src/http/bearerChallenge.ts`: `extractBearer(headers)` → `missing` (no header, or any non-Bearer scheme) |
+  `malformed` (Bearer with an empty or non-compact-JWS token) | `token`; `resourceMetadataUrl(config)` →
+  `${publicUrl}/.well-known/oauth-protected-resource/mcp`; `bearerChallenge(config, err?)` builds the
+  `WWW-Authenticate` value (`Bearer [error="invalid_token", error_description="…", ]resource_metadata="…"`). Nothing
+  from the request is ever put in the challenge or body. All exported from `src/index.ts`.
+- `src/http/server.ts`: `/mcp` (any method) now goes through `handleMcp`, which answers 401 + challenge before
+  anything else: no error code for missing/non-Bearer credentials (RFC 6750 §3.1), `invalid_token` for malformed.
+  JSON bodies `{error:"unauthorized"}` / `{error:"invalid_token", error_description}`.
+- **Fail closed, for the next session:** a JWT-shaped token currently also gets 401 `invalid_token` ("could not be
+  verified"), because Okta verification doesn't exist yet. `mcp-okta-claims-validation` must replace that last
+  branch of `handleMcp` with real JWKS verification (and then hand off to the MCP transport); keep
+  `sendUnauthorized(config, res, {error:'invalid_token', …})` for every verification failure.
+- Unit tests: `src/http/bearerChallenge.test.ts`, new cases in `src/http/server.test.ts`.
+- Tested as a user: started `dist/main.js` with Lightdash/engine pointed at counting TCP listeners; POST initialize with
+  no auth → 401 `Bearer resource_metadata="https://telemetry-mcp.example.test/.well-known/oauth-protected-resource/mcp"`;
+  `Bearer not-a-jwt` → 401 with `error="invalid_token"`; Basic → 401 no error code; GET /mcp → 401; metadata still
+  200; SIGTERM exit 0; Lightdash and engine contacted 0 times. Acceptance unauthorized-challenge passes, and the four
+  earlier acceptance checks, unit tests and typecheck pass too.
+- 2026-11-08T15:54:14Z supervisor: mcp-unauthorized-challenge passed the gate in round 1

@@ -66,4 +66,35 @@ describe('http server', () => {
         expect(res.status).toBe(405);
         expect(res.headers.get('allow')).toBe('GET, HEAD');
     });
+
+    it('challenges /mcp without a token, pointing at the metadata', async () => {
+        server = await startServer({ config: loadConfig(ENV) });
+        for (const method of ['POST', 'GET', 'DELETE']) {
+            const res = await fetch(`${server.url}/mcp`, { method });
+            expect(res.status).toBe(401);
+            expect(res.headers.get('www-authenticate')).toBe(
+                'Bearer resource_metadata="https://telemetry-mcp.example.test/.well-known/oauth-protected-resource/mcp"',
+            );
+        }
+    });
+
+    it('answers invalid_token for a malformed token without echoing it', async () => {
+        server = await startServer({ config: loadConfig(ENV) });
+        const res = await fetch(`${server.url}/mcp`, {
+            method: 'POST',
+            headers: { authorization: 'Bearer not-a-jwt' },
+        });
+        expect(res.status).toBe(401);
+        const challenge = res.headers.get('www-authenticate') ?? '';
+        expect(challenge).toContain('error="invalid_token"');
+        expect(challenge).not.toContain('not-a-jwt');
+        expect(await res.json()).toEqual({ error: 'invalid_token', error_description: 'The access token is malformed' });
+    });
+
+    it('fails closed for a JWT-shaped token until Okta verification exists', async () => {
+        server = await startServer({ config: loadConfig(ENV) });
+        const res = await fetch(`${server.url}/mcp`, { method: 'POST', headers: { authorization: 'Bearer aaa.bbb.ccc' } });
+        expect(res.status).toBe(401);
+        expect(res.headers.get('www-authenticate') ?? '').toContain('error="invalid_token"');
+    });
 });

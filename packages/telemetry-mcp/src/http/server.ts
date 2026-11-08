@@ -1,7 +1,8 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Config } from '../config.js';
-import { PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './protectedResource.js';
+import { bearerChallenge, extractBearer, type BearerError } from './bearerChallenge.js';
+import { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './protectedResource.js';
 
 export interface RunningServer {
     /** Base URL, e.g. `http://127.0.0.1:8080` (no path). */
@@ -26,6 +27,29 @@ function allowGetOnly(req: http.IncomingMessage, res: http.ServerResponse): bool
     return false;
 }
 
+function sendUnauthorized(config: Config, res: http.ServerResponse, err?: BearerError): void {
+    res.setHeader('WWW-Authenticate', bearerChallenge(config, err));
+    sendJson(res, 401, err ? { error: err.error, error_description: err.description } : { error: 'unauthorized' });
+}
+
+/**
+ * Every request to `/mcp` must carry a valid Okta bearer token; anything else gets a 401 challenge pointing at the
+ * protected-resource metadata, before any other work (no Lightdash or engine call).
+ */
+function handleMcp(config: Config, req: http.IncomingMessage, res: http.ServerResponse): void {
+    const bearer = extractBearer(req.headers);
+    if (bearer.kind === 'missing') {
+        sendUnauthorized(config, res);
+        return;
+    }
+    if (bearer.kind === 'malformed') {
+        sendUnauthorized(config, res, { error: 'invalid_token', description: 'The access token is malformed' });
+        return;
+    }
+    // Okta signature and claims verification is not wired in yet: fail closed until it is.
+    sendUnauthorized(config, res, { error: 'invalid_token', description: 'The access token could not be verified' });
+}
+
 async function handle(config: Config, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
     if (pathname === '/healthz') {
@@ -34,6 +58,10 @@ async function handle(config: Config, req: http.IncomingMessage, res: http.Serve
     }
     if (PROTECTED_RESOURCE_METADATA_PATHS.includes(pathname)) {
         if (allowGetOnly(req, res)) sendJson(res, 200, protectedResourceMetadata(config));
+        return;
+    }
+    if (pathname === MCP_PATH) {
+        handleMcp(config, req, res);
         return;
     }
     sendJson(res, 404, { error: 'not_found' });
