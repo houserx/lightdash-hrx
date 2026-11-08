@@ -242,3 +242,4 @@ assertions. The registry harness was proven against a scratch package, which was
 should add a dated line here per feature.
 - 2026-11-08T17:32:09Z supervisor: initialized: 54 features, run 20261108-114537
 - 2026-11-08T17:41:27Z supervisor: initialized: 54 features, run 20261108-123501
+- 2026-11-08T17:53:38Z supervisor: viz-chart-type-members halted: the worker halted on viz-chart-type-members
