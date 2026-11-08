@@ -12,12 +12,14 @@ import express, {
 } from 'express';
 import Logger from '../logging/logger';
 import { type AlertRuleService } from './AlertRuleService';
+import { type ContactPointService } from './ContactPointService';
 
 export const ALERTING_PROJECT_API_PATH =
     '/api/v2/projects/:projectUuid/alerting';
 
 type AlertingRouterServices = {
     alertRules: AlertRuleService;
+    contactPoints: ContactPointService;
 };
 
 type Handler = (user: SessionUser, req: Request) => Promise<unknown>;
@@ -147,6 +149,55 @@ export const createAlertingApiRouter = (
                 user,
                 req.params.projectUuid,
                 req.params.ruleUuid,
+            );
+            return undefined;
+        }),
+    );
+
+    router.get(
+        `${base}/contact-points`,
+        route((user, req) =>
+            services.contactPoints.list(user, req.params.projectUuid),
+        ),
+    );
+    router.post(
+        `${base}/contact-points`,
+        route((user, req) =>
+            services.contactPoints.create(
+                user,
+                req.params.projectUuid,
+                req.body,
+            ),
+        ),
+    );
+    router.get(
+        `${base}/contact-points/:contactPointUuid`,
+        route((user, req) =>
+            services.contactPoints.get(
+                user,
+                req.params.projectUuid,
+                req.params.contactPointUuid,
+            ),
+        ),
+    );
+    router.patch(
+        `${base}/contact-points/:contactPointUuid`,
+        route((user, req) =>
+            services.contactPoints.update(
+                user,
+                req.params.projectUuid,
+                req.params.contactPointUuid,
+                req.body,
+            ),
+        ),
+    );
+    router.delete(
+        `${base}/contact-points/:contactPointUuid`,
+        route(async (user, req) => {
+            await services.contactPoints.delete(
+                user,
+                req.params.projectUuid,
+                req.params.contactPointUuid,
             );
             return undefined;
         }),

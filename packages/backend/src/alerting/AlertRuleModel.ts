@@ -12,6 +12,10 @@ import {
 import { type Knex } from 'knex';
 import { ProjectTableName } from '../database/entities/projects';
 import { SpaceTableName } from '../database/entities/spaces';
+import {
+    findProjectOrganizationUuid,
+    slugPrefixPattern,
+} from './alertingAccess';
 
 // Tables from migration 20261108120000_create_alerting_tables.
 export const AlertRulesTableName = 'alert_rules';
@@ -161,14 +165,6 @@ const stableStringify = (value: unknown): string =>
             : v,
     );
 
-const POSTGRES_UNIQUE_VIOLATION = '23505';
-
-export const isUniqueViolation = (error: unknown): boolean =>
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === POSTGRES_UNIQUE_VIOLATION;
-
 export class AlertRuleModel {
     constructor(private readonly database: Knex) {}
 
@@ -185,17 +181,7 @@ export class AlertRuleModel {
     async findProjectOrganizationUuid(
         projectUuid: string,
     ): Promise<string | undefined> {
-        const row = await this.database('projects')
-            .innerJoin(
-                'organizations',
-                'organizations.organization_id',
-                'projects.organization_id',
-            )
-            .where('projects.project_uuid', projectUuid)
-            .first<{ organization_uuid: string } | undefined>(
-                'organizations.organization_uuid',
-            );
-        return row?.organization_uuid;
+        return findProjectOrganizationUuid(this.database, projectUuid);
     }
 
     /** Whether the space exists in the project and isn't in the trash. */
@@ -242,7 +228,7 @@ export class AlertRuleModel {
     async getSlugs(projectUuid: string, prefix: string): Promise<string[]> {
         const rows = await this.database(AlertRulesTableName)
             .where('project_uuid', projectUuid)
-            .andWhere('slug', 'like', `${prefix.replace(/[\\%_]/g, '\\$&')}%`)
+            .andWhere('slug', 'like', slugPrefixPattern(prefix))
             .select<{ slug: string }[]>('slug');
         return rows.map((row) => row.slug);
     }

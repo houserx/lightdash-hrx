@@ -11,6 +11,8 @@ import { type Router } from 'express';
 import { type Knex } from 'knex';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
+import { ContactPointModel } from './ContactPointModel';
+import { ContactPointService } from './ContactPointService';
 import { createAlertingApiRouter } from './router';
 
 export type AlertingModuleDeps = {
@@ -56,6 +58,7 @@ export type AlertingModuleDeps = {
 
 export type AlertingModule = {
     alertRules: AlertRuleService;
+    contactPoints: ContactPointService;
     close(): Promise<void>;
 };
 
@@ -68,6 +71,10 @@ export const createAlertingModule = (
             alertRuleModel,
             clock: deps.clock,
         }),
+        contactPoints: new ContactPointService({
+            contactPointModel: new ContactPointModel(deps.database),
+            clock: deps.clock,
+        }),
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},
     };
@@ -75,4 +82,7 @@ export const createAlertingModule = (
 
 /** The alerting HTTP API, with full paths: mount it at the app root. */
 export const createAlertingRouter = (module: AlertingModule): Router =>
-    createAlertingApiRouter({ alertRules: module.alertRules });
+    createAlertingApiRouter({
+        alertRules: module.alertRules,
+        contactPoints: module.contactPoints,
+    });

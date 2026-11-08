@@ -1,4 +1,3 @@
-import { subject } from '@casl/ability';
 import {
     ALERT_CONDITION_OPERATORS,
     ALERT_ERROR_STATES,
@@ -25,12 +24,14 @@ import {
     type UpdateAlertRule,
 } from '@lightdash/common';
 import {
-    getAlertRuleDefinition,
+    assertAlertingAbility,
     isUniqueViolation,
-    type AlertRuleModel,
-} from './AlertRuleModel';
-
-type AlertRuleAction = 'view' | 'manage';
+    nextFreeSlug,
+    SLUG_PATTERN,
+    UUID_PATTERN,
+    type AlertingAction,
+} from './alertingAccess';
+import { getAlertRuleDefinition, type AlertRuleModel } from './AlertRuleModel';
 
 const DEFINITION_KEYS = [
     'name',
@@ -73,9 +74,6 @@ const REQUIRED_ON_CREATE = [
     'condition',
 ] as const satisfies readonly (keyof CreateAlertRule)[];
 
-const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const UUID_PATTERN =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_SLUG_ATTEMPTS = 5;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -267,25 +265,16 @@ export class AlertRuleService {
     /** 404 for an unknown project, 403 without the ability on it. */
     private async assertAbility(
         user: SessionUser,
-        action: AlertRuleAction,
+        action: AlertingAction,
         projectUuid: string,
     ) {
-        const organizationUuid = UUID_PATTERN.test(projectUuid)
-            ? await this.deps.alertRuleModel.findProjectOrganizationUuid(
-                  projectUuid,
-              )
-            : undefined;
-        if (!organizationUuid) {
-            throw new NotFoundError('Project not found');
-        }
-        if (
-            user.ability.cannot(
-                action,
-                subject('AlertRule', { organizationUuid, projectUuid }),
-            )
-        ) {
-            throw new ForbiddenError();
-        }
+        await assertAlertingAbility(
+            this.deps.alertRuleModel,
+            user,
+            action,
+            'AlertRule',
+            projectUuid,
+        );
     }
 
     /** 400 unless the folder is null or a space of this project. */
@@ -369,13 +358,10 @@ export class AlertRuleService {
         name: string,
     ): Promise<string> {
         const base = generateSlug(name);
-        const taken = new Set(
+        return nextFreeSlug(
+            base,
             await this.deps.alertRuleModel.getSlugs(projectUuid, base),
         );
-        if (!taken.has(base)) return base;
-        let suffix = 2;
-        while (taken.has(`${base}-${suffix}`)) suffix += 1;
-        return `${base}-${suffix}`;
     }
 
     async create(
