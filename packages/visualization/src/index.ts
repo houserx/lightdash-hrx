@@ -55,3 +55,8 @@ export type {
 } from './table/model';
 export type { CustomVisualizationData } from './custom/config';
 export type { LogStreamLine, LogStreamModel } from './logStream/model';
+export type {
+    TraceWaterfallModel,
+    TraceWaterfallSpan,
+    TraceWaterfallTrace,
+} from './traceWaterfall/model';

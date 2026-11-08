@@ -53,8 +53,9 @@ switch (rendered.kind) {
     case 'bigNumber':   rendered.model.value; rendered.model.comparison; break;
     case 'custom':      rendered.spec; rendered.data; break;
     case 'logStream':   rendered.model.lines; break; // line, timestamp, level, color, labels
+    case 'traceWaterfall': rendered.model.traces; break; // spans in tree order: depth, offsetMs, durationMs, color
     case 'empty':       rendered.reason; break; // noRows, incompleteConfig, needsPivotDetails, needsPivotTable
-    case 'unsupported': break; // maps, data-app visualizations and trace waterfalls
+    case 'unsupported': break; // maps and data-app visualizations
 }
 ```
 

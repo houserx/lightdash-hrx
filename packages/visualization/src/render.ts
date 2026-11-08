@@ -75,6 +75,12 @@ import {
 import { LIGHT_VISUALIZATION_THEME, type VisualizationTheme } from './theme';
 import { resolveThemeColors } from './themeColors';
 import {
+    buildTraceWaterfallModel,
+    resolveTraceWaterfallChartConfig,
+    type ResolvedTraceWaterfallChartConfig,
+    type TraceWaterfallModel,
+} from './traceWaterfall';
+import {
     buildTreemapEchartsOption,
     resolveTreemapChartConfig,
     type ResolvedTreemapChartConfig,
@@ -119,10 +125,7 @@ export type RenderOptions = {
 };
 
 /** Chart types this package resolves but does not draw. */
-export type UnsupportedChartType =
-    | ChartType.MAP
-    | ChartType.DATA_APP_VIZ
-    | ChartType.TRACE_WATERFALL;
+export type UnsupportedChartType = ChartType.MAP | ChartType.DATA_APP_VIZ;
 
 export type EChartsChartType =
     | ChartType.CARTESIAN
@@ -164,8 +167,13 @@ export type RenderOutput =
           chartType: ChartType.LOG_STREAM;
           model: LogStreamModel;
       }
+    | {
+          kind: 'traceWaterfall';
+          chartType: ChartType.TRACE_WATERFALL;
+          model: TraceWaterfallModel;
+      }
     | { kind: 'empty'; chartType: ChartType; reason: EmptyReason }
-    /** Not drawn by this package (yet): maps, data-app visualizations and trace waterfalls. */
+    /** Not drawn by this package (yet): maps and data-app visualizations. */
     | {
           kind: 'unsupported';
           chartType: UnsupportedChartType;
@@ -219,6 +227,7 @@ export type ResolvedChart =
       >
     | Resolved<ChartType.CUSTOM, CustomVis>
     | Resolved<ChartType.LOG_STREAM, ResolvedLogStreamChartConfig>
+    | Resolved<ChartType.TRACE_WATERFALL, ResolvedTraceWaterfallChartConfig>
     | Resolved<UnsupportedChartType, unknown>;
 
 const DEFAULT_SIZE = { width: 600, height: 400 };
@@ -357,9 +366,17 @@ export const resolveChart = (
                 }),
                 derived: {},
             };
+        case ChartType.TRACE_WATERFALL:
+            return {
+                chartType: ChartType.TRACE_WATERFALL,
+                config: resolveTraceWaterfallChartConfig({
+                    chartConfig: chartConfig.config,
+                    data,
+                }),
+                derived: {},
+            };
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:
-        case ChartType.TRACE_WATERFALL:
             return {
                 chartType: chartConfig.type,
                 config: chartConfig.config,
@@ -591,9 +608,22 @@ export const buildChart = (
                     config: resolved.config,
                 }),
             });
+        case ChartType.TRACE_WATERFALL:
+            if (noRows) return empty(ChartType.TRACE_WATERFALL, 'noRows');
+            if (!resolved.config.spanIdFieldId) {
+                return empty(ChartType.TRACE_WATERFALL, 'incompleteConfig');
+            }
+            return done({
+                kind: 'traceWaterfall',
+                chartType: ChartType.TRACE_WATERFALL,
+                model: buildTraceWaterfallModel({
+                    rows: data.rows,
+                    config: resolved.config,
+                    palette: colorPalette,
+                }),
+            });
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:
-        case ChartType.TRACE_WATERFALL:
             return done({ kind: 'unsupported', chartType: resolved.chartType });
         default:
             return assertUnreachable(resolved, 'Unknown chart type');

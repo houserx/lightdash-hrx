@@ -617,3 +617,34 @@ should add a dated line here per feature.
 - **For the next sessions.** When mounting, map the explore's dimensions to `fields` (id = field id, label = field
   label) and wire `onChange` to the chart config store.
 - 2026-11-08T19:19:07Z supervisor: viz-log-stream-config-panel passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-model (session)
+
+- **What.** New `packages/visualization/src/traceWaterfall/` (`config.ts`, `model.ts`, `index.ts`, unit test).
+  `renderChart` on `trace_waterfall` now returns `{kind: 'traceWaterfall', chartType, model}` (was `unsupported`);
+  `UnsupportedChartType` is now only MAP and DATA_APP_VIZ. `resolveTraceWaterfallChartConfig` keeps configured field
+  ids the data has and binds the rest to the `trace()` columns by name (id is `<col>` or ends in `_<col>`, else a label
+  equal to the column with spaces read as `_`); `span_id` never binds a `parent_span_id` column. No rows →
+  `empty/noRows`; no span id column → `empty/incompleteConfig`. Model shape is the one in "Visualization engine" above:
+  `traces[{traceId, startMs, durationMs, spans}]`, span `{spanId, parentSpanId, traceId, service, name, status,
+  attributes, offsetMs, durationMs, reportedDurationMs, depth, isOrphan, isClamped, color}`. Model types exported from
+  the package index. README and `scripts/smoke-pack/consumer.ts` (exhaustive switch) gained the new kind.
+- **Decisions.** Traces in row order of first appearance. Roots and each span's children sorted by start (no-time
+  spans last, ties by row order). Trace window = earliest root start to latest root end (falls back to all spans if no
+  root has a time). Service colours: the render palette (`options.colors.palette`, default `ECHARTS_DEFAULT_COLORS`)
+  in waterfall order of first appearance across all traces, so a service keeps its colour when the picker switches
+  traces; wraps after the palette length. Duration: `Number(raw)`, negative/invalid → 0. Status is the raw text.
+- **For the next sessions.** (1) *Orphans*: so no span is ever dropped, a span whose parent is not in its trace is
+  already rooted (depth 0, `isOrphan: true`), ordered by start among roots; spans only reachable through a parent cycle
+  are rooted too. `viz-trace-waterfall-orphans` already passes (3/3, checked this session); that session only needs to confirm it as a user. (2) *Clock skew is NOT done*: `isClamped` is
+  always `false` and `durationMs === reportedDurationMs`; a skewed child can have a negative offset or overrun its
+  parent. `viz-trace-waterfall-clock-skew` should clamp in `buildTrace` (`model.ts`) during placement, against the
+  parent's (already clamped) window.
+- **Tested as a user.** No app mounts the waterfall yet, so I drove the built package's public `renderChart` from a
+  throwaway Node script (deleted) with five `trace()`-shaped rows (bare column names, `start` as Date, attributes as
+  JSON text and as an object) and no chart config: got `traceWaterfall`, trace `trace-a`, 200 ms, spans a(0) e(1)
+  b(1) c(2) d(2) at +0/+5/+10/+20/+80 ms, five distinct colours, attributes parsed; with no rows got `empty noRows`.
+  After `bash ./init.sh` the check passes 7/7; `log-stream-model` 9/9 and `render.test.ts` 21/21 still pass;
+  visualization and frontend typechecks clean; oxlint/oxfmt clean on the new and touched src files (the package
+  README was already not oxfmt-clean before this change and is not in the `format` script).
+- 2026-11-08T19:24:50Z supervisor: viz-trace-waterfall-model passed the gate in round 1
