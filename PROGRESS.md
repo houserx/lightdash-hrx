@@ -1373,3 +1373,25 @@ should add a dated line here per feature.
 - **Next.** There is no editor UI yet for table value mappings. They come from YAML or chart-as-code only. Pivot tables
   are not mapped, because the model has no flat columns there.
 - 2026-11-08T21:25:25Z supervisor: viz-table-value-mappings passed the gate in round 1
+
+## viz-value-mappings-config-panel (round 1)
+- **What changed.** New `components/VisualizationConfigs/ValueMappingsConfig/ValueMappingsConfig.tsx`, a controlled editor
+  (`mappings`, `onChange`) for Grafana value mappings. Each row has a type select (value, range, regex, special), the match
+  input(s), a colour (Grafana swatches; named colours are shown resolved to hex, and can be reset) and the display text,
+  plus a remove button. "Add value mapping" appends an empty value mapping `{ '': { index } }`. Labels follow the
+  acceptance test: `Mapping N value|from|to|pattern|special value|type|colour|display text`, `Remove mapping N`.
+- **Decision (row model).** Like Grafana's own editor, a value mapping with several keys is shown as one row per key,
+  and rows are sorted by result `index`. On every change the editor writes **one mapping per row**, with
+  `index` = row position. Matching is unchanged, but a hand-written multi-key value mapping is split into single-key
+  mappings once someone edits it in the UI. Cleared display text or colour drops the key instead of storing "".
+- **Mounted.** The table config gets a fourth tab, "Value mappings" (`TableConfigPanel/ColumnValueMappings.tsx`). It has
+  a column select (the query's dimensions, metrics and table calculations; defaults to the first) and the editor. It writes
+  `columns[field].valueMappings` with `updateColumnProperty`, and writes undefined when the list is empty.
+- **Tested as a user.** A throwaway vitest drive (since deleted) mounted the real `ConfigTabs` inside `VisualizationProvider`
+  backed by the explorer store, the same way `ColumnConfiguration.test.tsx` does. Steps: open the "Value mappings" tab (the
+  column select showed "status"), add → store held `[{type:'value',options:{'':{index:0}}}]`; set value `completed` and
+  text `Done` → `{completed:{index:0,text:'Done'}}`, and the inputs showed them; change the text to `Finished` → saved;
+  remove → `columns.orders_status` was `{}`, with no rows left. Check 3/3 after `bash ./init.sh`. Frontend tsc, oxlint and
+  oxfmt are clean on the changed files.
+- **Next.** Pivot tables still don't apply mappings (see viz-table-value-mappings).
+- 2026-11-08T21:30:05Z supervisor: viz-value-mappings-config-panel passed the gate in round 1
