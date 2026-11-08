@@ -1879,3 +1879,22 @@ docs/eng-1799/telemetry-mcp.md
 - Trap for later features: never add a pass-through of tool args (`...args`) into the write body, and never add a
   `mode` input; the acceptance test asserts no write_preview property matches /commit|confirm/i.
 - 2026-11-08T19:18:18Z supervisor: mcp-no-commit-tool passed the gate in round 1
+
+## mcp-tool-catalog (2026-11-08)
+
+- No source change was needed: the catalog earlier features built already met the contract, and the feature check
+  passed on arrival (4/4).
+- Added one unit case to `src/mcp/server.test.ts` (6 total). It pins the catalog at the unit level: the exact 14
+  CONTRACTS §7 tools, a description over 20 characters for every tool, an object input schema with every property
+  described, readOnlyHint true on every tool except `ask_data` (it writes team memory) and `write_preview`, the
+  glossary terms Platform Database, Audited Query, Preview and Telemetry Source, and none of the avoided terms.
+- Tested as a user: after `bash ./init.sh`, ran `../tmp/tool-catalog/drive.test.ts` (from the package:
+  `pnpm exec vitest run --root ../../../tmp/tool-catalog --disableConsoleIntercept drive.test.ts`). It spawns
+  `node dist/main.js` against the fake Okta, Lightdash and engine, and connects over /mcp with an Okta token for the
+  analyst. tools/list returned the 14 contract tools and every property was described. readOnlyHint was true for 12
+  tools and false for ask_data and write_preview. A scan against the CONTEXT.md avoided terms (datasource,
+  warehouse, connection, prod db, dry run, test run, logged/tracked query, proxy, gateway, panel and others) found
+  none in the tool or property descriptions.
+- Trap for later features: a new tool, a renamed tool or an undescribed input property now fails both the
+  acceptance test and `src/mcp/server.test.ts`. Write descriptions in CONTEXT.md glossary terms.
+- 2026-11-08T19:20:06Z supervisor: mcp-tool-catalog passed the gate in round 1

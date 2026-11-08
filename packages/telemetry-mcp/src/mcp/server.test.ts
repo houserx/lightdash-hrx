@@ -71,6 +71,42 @@ describe('mcp server', () => {
         expect(tool?.annotations?.readOnlyHint).toBe(true);
     });
 
+    it('lists exactly the CONTRACTS §7 tools, described in glossary terms with every input described', async () => {
+        const { tools } = await (await connect()).listTools();
+        expect(tools.map((t) => t.name).sort()).toEqual(
+            [
+                'list_sources',
+                'query_promql',
+                'query_logql',
+                'query_cloudwatch',
+                'query_cloudwatch_logs',
+                'search_traces',
+                'get_trace',
+                'alert_state',
+                'alert_history',
+                'platform_schema',
+                'platform_query',
+                'platform_explain',
+                'ask_data',
+                'write_preview',
+            ].sort(),
+        );
+        const writing = new Set(['ask_data', 'write_preview']);
+        for (const t of tools) {
+            expect(t.description?.length, t.name).toBeGreaterThan(20);
+            expect(t.inputSchema.type, t.name).toBe('object');
+            for (const [prop, schema] of Object.entries(t.inputSchema.properties ?? {})) {
+                expect((schema as { description?: string }).description, `${t.name}.${prop}`).toBeTruthy();
+            }
+            expect(t.annotations?.readOnlyHint ?? false, t.name).toBe(!writing.has(t.name));
+        }
+        const text = tools.map((t) => t.description).join('\n');
+        for (const term of ['Platform Database', 'Audited Query', 'Preview', 'Telemetry Source']) {
+            expect(text).toContain(term);
+        }
+        expect(text).not.toMatch(/\b(datasource|prod db|dry run|test run|logged query|tracked query)\b/i);
+    });
+
     it('list_sources returns the configured Telemetry Sources and the Ops Marts from information_schema', async () => {
         queries.length = 0;
         const r = await (await connect()).callTool({ name: 'list_sources', arguments: {} });
