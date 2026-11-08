@@ -13,6 +13,7 @@ use tokio::io::Interest;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::audit_browser::AuditBrowser;
+use crate::health::Health;
 use crate::pg::{PgHandlers, SOURCE_CONNECT_TIMEOUT};
 use crate::write::WriteMode;
 
@@ -158,15 +159,13 @@ async fn hung_up(watcher: &TcpStream) {
     }
 }
 
-/// The HTTP side port (CONTRACTS §1.3). `/healthz` does not probe sources yet (eng-healthz).
+/// The HTTP side port (CONTRACTS §1.3). `GET /healthz` probes every source (no auth).
 /// `POST /v1/write` is Write Mode (§4.2). `POST /v1/write/confirmations/verify` exists only with
 /// `test_mode = true`; otherwise it is 404 like any unknown path. `GET /v1/audit` is the audit
 /// browser.
 fn http_router(config: &Config) -> Router {
     let write = Arc::new(WriteMode::new(config, SOURCE_CONNECT_TIMEOUT));
-    let mut router = Router::new()
-        .route("/healthz", get(|| async { "ok\n" }))
-        .route("/v1/write", post(crate::write::handle));
+    let mut router = Router::new().route("/v1/write", post(crate::write::handle));
     if config.test_mode {
         router = router.route(
             "/v1/write/confirmations/verify",
@@ -177,5 +176,8 @@ fn http_router(config: &Config) -> Router {
     let browser = Router::new()
         .route("/v1/audit", get(crate::audit_browser::handle))
         .with_state(audit);
-    router.with_state(write).merge(browser)
+    let health = Router::new()
+        .route("/healthz", get(crate::health::handle))
+        .with_state(Arc::new(Health::new(config)));
+    router.with_state(write).merge(browser).merge(health)
 }

@@ -10,6 +10,7 @@ mod aws;
 mod cloudwatch;
 mod cloudwatch_logs;
 mod gcp_auth;
+mod health;
 mod identity;
 mod labels;
 mod logql;

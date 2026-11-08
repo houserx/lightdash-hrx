@@ -2223,3 +2223,29 @@ token verification for a *valid* token, which feature 39 then hardens.
   Contract assumptions: the token scope is bigquery (not cloud-platform), and the subject token
   uses the regional STS host. GCP accepts both.
 - 2026-11-08T22:53:48Z supervisor: eng-ops-marts-workload-identity passed the gate in round 1
+- eng-healthz (operations): `GET /healthz` (no auth) now probes every configured source and answers
+  200 when all are reachable, else 503. New `src/health.rs` (`Health`), wired in
+  `server::http_router` with its own state, like the audit browser. Body (JSON):
+  `{"status":"ok"|"unhealthy","sources":[{name,kind,reachable,error?}],"unhealthy":[names]}`.
+  Decision: "reachable" means a TCP connect within 2 s (`PROBE_TIMEOUT`). It is the same for
+  every kind and needs no credentials. The endpoints are: prometheus/loki/tempo `url`; bigquery
+  `api_base_url`; cloudwatch(_logs) `endpoint_url`, else `monitoring|logs.<region>.amazonaws.com:443`;
+  platform_postgres every TCP host of the read URL (default port 5432). It does not send an HTTP
+  request, so an upstream that answers 500 still counts as healthy. Probes run concurrently on
+  each request and nothing is cached. The body never carries addresses or URLs (the endpoint is
+  unauthenticated, and the read URL holds a password), only the io error text.
+  Unit tests: `health::tests::{url_endpoints_use_the_scheme_default_port,
+  aws_sources_default_to_the_regional_endpoint, postgres_hosts_and_ports_without_leaking_the_url}`.
+  Tested as a user: `../tmp/healthz-user` (python mocks on 59811-59813; engines on 59821/59822 and
+  59831/59832; dead port 59819).
+  - The healthy config gave HTTP 200 with prom-up, loki-up and tempo-up all reachable.
+  - Adding prom-dead on the dead port gave HTTP 503, `unhealthy: ["prom-dead"]` and
+    "Connection refused".
+  The check passes, and so does ops_marts::eng_ops_marts_query. Clippy -D warnings (tmp/rustup)
+  is clean, and health.rs is fmt-clean.
+  Trap: running `rustfmt` on main.rs follows the `mod` tree and reformats the whole crate.
+  Format only leaf files, or use `cargo fmt --check` and read the diff. `cargo fmt --check`
+  already flags a `tls_note` line in server.rs from earlier work; I left it as it was.
+  Note: the harness polls /healthz until it gets a response, and a 503 counts. A source that
+  hangs adds at most 2 s to engine startup.
+- 2026-11-08T22:57:13Z supervisor: eng-healthz passed the gate in round 1
