@@ -21,6 +21,8 @@ import { UserMappingError, type MappedUser, type UserResolver } from '../auth/us
 import type { Config } from '../config.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
+import { createAlertingClient, type AlertingClient } from '../lightdash/alerting.js';
+import { registerAlertState } from '../tools/alertState.js';
 import { registerGetTrace } from '../tools/getTrace.js';
 import { registerListSources } from '../tools/listSources.js';
 import { registerQueryCloudwatch } from '../tools/queryCloudwatch.js';
@@ -34,9 +36,13 @@ import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js
 export const MCP_SERVER_NAME = 'telemetry-mcp';
 export const MCP_SERVER_VERSION = '0.0.1';
 
-/** What the tools talk to: the Federation Engine, as the caller. Unit tests inject fakes. */
+/**
+ * What the tools talk to: the Federation Engine, as the caller, and the Lightdash alerting API, as the service
+ * account (defaults to `LIGHTDASH_URL`). Unit tests inject fakes.
+ */
 export interface McpServerDeps {
     engine: EngineClient;
+    alerting?: AlertingClient;
     /** The server clock (epoch ms); relative time arguments such as `now-1h` resolve against it. */
     now: () => number;
 }
@@ -50,6 +56,7 @@ export interface McpRequestContext {
 /** Builds the MCP server for one request, with every tool registered. */
 export function createMcpServer(config: Config, deps: McpServerDeps): McpServer {
     const { engine, now } = deps;
+    const alerting = deps.alerting ?? createAlertingClient(config.lightdash);
     // Registering a tool declares the tools capability and installs the tools/list and tools/call handlers.
     const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
     registerListSources(server, config, engine);
@@ -59,6 +66,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerQueryCloudwatchLogs(server, config, engine, now);
     registerSearchTraces(server, config, engine, now);
     registerGetTrace(server, config, engine);
+    registerAlertState(server, config, alerting);
     return server;
 }
 

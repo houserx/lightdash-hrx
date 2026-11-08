@@ -1115,3 +1115,38 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 3/3. Acceptance: 27 files pass and 26 fail. All 26 failures are unbuilt features (ask_data,
   platform_*, alerts, docs, dockerfile, readme, structured-logs, tool-catalog and others).
 - 2026-11-08T17:47:47Z supervisor: mcp-restricted-telemetry passed the gate in round 1
+
+## mcp-tool-alert-state (2026-11-08)
+
+- New `src/lightdash/alerting.ts`: `createAlertingClient(config.lightdash)` with `.get(kind, query)`. It calls
+  `GET /api/v2/projects/{LIGHTDASH_PROJECT_UUID}/alerting/state|history` with `Authorization: ApiKey <service token>`
+  and returns `results` from the `{status:"ok", results}` envelope untouched (Contract assumption 2). Undefined query
+  values are not sent. Failures become `AlertingError`s: "could not reach Lightdash", "HTTP <status>: <Lightdash
+  error.message>" passed through `redactSecrets([apiToken])`, or "unexpected response" when the body is not the envelope.
+  It reuses `LIGHTDASH_TIMEOUT_MS` from `auth/userMapping.ts`.
+- New `src/tools/alertState.ts`: `alert_state` takes an optional `rule_uuid`. It is checked against `UUID_RE`, which
+  `config.ts` now exports, before any Lightdash call, and is sent as `ruleUuid`. The result is `{ results }` as
+  structuredContent, with its JSON as the text.
+  - Decision: alert results are not row-shaped, so nothing is dropped. A result whose JSON is over
+    `MCP_MAX_OUTPUT_BYTES` becomes an `isError` that suggests `rule_uuid`.
+  - `alertingResult(results, maxBytes, hint)` is exported so that `alert_history` can reuse it.
+- `src/mcp/server.ts`: `McpServerDeps.alerting?` is optional and defaults to `createAlertingClient(config.lightdash)`.
+  `alert_state` is registered after `get_trace`.
+- Next session (alert_history): reuse `alerting.get('history', { ruleUuid, from, to, limit })` and `alertingResult`.
+  For from/to, use `parseInstant` + `isoParam` from `telemetryArgs.ts`.
+- Unit tests: `src/lightdash/alerting.test.ts` and `src/tools/alertState.test.ts`. 212 unit tests pass, and typecheck is
+  clean.
+- Tested as a user with `../tmp/alert-state-ut/run.mts`. Run it from the repo root as `node_modules/.bin/tsx <abs path>
+  $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 18998 with an RS256 Okta token and the
+  acceptance fakes.
+  - tools/list showed `alert_state` with a `rule_uuid` string property.
+  - A call with no arguments returned `{results:[...]}`. Lightdash saw `GET .../alerting/state` with no query string and
+    the ApiKey service token.
+  - A call with a `rule_uuid` showed `ruleUuid` in Lightdash's query.
+  - `../../admin` returned isError "rule_uuid must be an Alert Rule uuid..." and made 0 Lightdash calls.
+  - With Lightdash failing with a 503, the result was isError "The Lightdash alerting state request failed with HTTP 503:
+    alerting evaluator unavailable", and the token did not appear in it.
+  - The engine received 0 data queries, and SIGTERM exited 0.
+- Results: the check passes 4/4. Acceptance: 28 files pass and 25 fail. All 25 failures are unbuilt features
+  (alert_history, ask_data, platform_*, docs, dockerfile, readme, structured-logs, tool-catalog and others).
+- 2026-11-08T17:52:40Z supervisor: mcp-tool-alert-state passed the gate in round 1
