@@ -1716,3 +1716,36 @@ token verification for a *valid* token, which feature 39 then hardens.
   Trap: pgclient's `platform` bin panics while printing int4 rows (its printer reads them as
   String). Use int8 columns, or count rows only.
 - 2026-11-08T21:33:38Z supervisor: eng-platform-max-rows passed the gate in round 1
+- 2026-11-08 eng-platform-pools (round 1): platform functions now share one bounded read pool.
+  Before, every describe and every fetch opened a new connection and closed it afterwards.
+  platform.rs: new `ReadPool` and `PooledClient`. It allows `READ_POOL_SIZE` = 10 connections as the
+  read-only role per engine, held by a tokio Semaphore. `READ_POOL_IDLE` = 60 s: an idle
+  connection older than that, or one that is closed, is dropped on the next acquire. Waiting for a
+  slot is bounded by the source connect timeout (10 s). Then it fails with 53300 "platform source
+  \"x\": all 10 connections stayed busy for 10 s; try again". Only a read that finished goes back
+  to the pool, and only after `DISCARD ALL` succeeds. A read that failed, was cancelled
+  (CancelOnDrop), or hit max_rows drops its connection. So a cancel can never land on a
+  connection that is reused. New `pub struct PlatformDatabase` (built once in pg.rs) owns the
+  source and its pool. PlatformQuery/PlatformCatalog/PlatformExplain now take `&PlatformDatabase`
+  instead of (config, connect_timeout), so all four functions share one pool.
+  Why DISCARD ALL: `SELECT set_config('search_path', ..., false)` passes the read guard, and
+  without a reset it would leak into the next session's read on the same backend. The cost is one
+  extra round trip per read.
+  Tested as a user: `../tmp/platform-pools/run.sh <out>` (throwaway cluster, audit store mock,
+  engine; new pgclient bin `ppool`). 20 concurrent sessions: 20/20 succeed on 7 backends, and 7
+  engine_read connections stay open, all idle. 40 sequential reads in one session: all on 1
+  backend, still 7 connections. After set_config(search_path), the next 12 reads all see the
+  default `"$user", public`. 10 sessions run pg_sleep(14): pg_stat_activity shows 10 engine_read
+  connections, and an 11th read fails with 53300 after 10.0 s. All 10 long reads succeed, a read
+  afterwards works, and 10 idle connections remain. Check passes. These also pass: platform
+  _query_basic, _describe_only, _enforcement, _statement_timeout, _cancel_on_disconnect,
+  _max_rows, _tables_columns, _explain, _read_only_role and _sql_over_results, plus the
+  platform unit tests. clippy -D warnings is clean. My hunks are fmt-clean; the old pg.rs and
+  platform.rs test hunks are left unformatted.
+  Next sessions: the write pool (eng-write-preview/commit) is separate and is NOT this pool, so
+  give it its own ReadPool-like pool over write_url. Note that the write pool should probably not
+  `DISCARD ALL` inside a BEGIN. Pool size and idle time are constants. CONTRACTS doesn't name
+  them, and they are not in the config schema. For graceful shutdown: idle pooled connections
+  close when the engine process exits. There is no reaper, so up to 10 idle connections can stay
+  open until the next acquire prunes them.
+- 2026-11-08T21:39:54Z supervisor: eng-platform-pools passed the gate in round 1

@@ -24,12 +24,18 @@
 //! read has finished (`statement_timeout`, a cancel request, the client going away), the read's
 //! future is dropped, and dropping it sends Postgres a cancel request for the backend running it,
 //! so that backend stops too ([`CancelOnDrop`]).
+//!
+//! Connections come from a bounded pool per engine ([`ReadPool`]): at most
+//! [`READ_POOL_SIZE`] connections as the read-only role, shared by every session. A read that
+//! finished cleanly gives its connection back after `DISCARD ALL` (so nothing one statement set,
+//! e.g. with `set_config`, reaches the next); a read that failed or was cancelled closes it.
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt::Write as _;
-use std::sync::Arc;
-use std::time::Duration;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -47,6 +53,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use engine_config::{Config, SourceKind, SourceSettings};
 use engine_guard::Mode;
 use futures::{TryStreamExt, pin_mut};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{CancelToken, Client, NoTls, Row};
 
@@ -55,6 +62,80 @@ use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, UTC, constant, text_argu
 use crate::session::{sqlstate, sqlstate_owned};
 
 const SIGNATURE: &str = "platform_query(sql)";
+
+/// At most this many Platform Database connections are open at once, across all sessions.
+const READ_POOL_SIZE: usize = 10;
+/// A pooled connection idle for longer than this is closed rather than reused.
+const READ_POOL_IDLE: Duration = Duration::from_secs(60);
+
+/// The read-only role's connections, shared by all sessions and all the platform functions.
+/// Taking one waits for a free slot (at most the connect timeout, then 53300), reuses an idle
+/// connection when there is one, and otherwise opens a new one.
+struct ReadPool {
+    slots: Arc<Semaphore>,
+    /// Open connections nobody is using, with when they were given back.
+    idle: Mutex<Vec<(Client, Instant)>>,
+    connect_timeout: Duration,
+}
+
+impl std::fmt::Debug for ReadPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReadPool")
+            .field("free_slots", &self.slots.available_permits())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ReadPool {
+    fn new(connect_timeout: Duration) -> ReadPool {
+        ReadPool {
+            slots: Arc::new(Semaphore::new(READ_POOL_SIZE)),
+            idle: Mutex::new(vec![]),
+            connect_timeout,
+        }
+    }
+
+    /// The most recently returned idle connection that is still open and fresh; closes the
+    /// others that are not.
+    fn take_idle(&self) -> Option<Client> {
+        let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
+        idle.retain(|(client, since)| !client.is_closed() && since.elapsed() < READ_POOL_IDLE);
+        idle.pop().map(|(client, _)| client)
+    }
+}
+
+/// A connection taken from the [`ReadPool`], holding its slot. Dropping it closes the connection
+/// and frees the slot; [`release`](PooledClient::release) gives a clean connection back instead.
+struct PooledClient {
+    client: Option<Client>,
+    pool: Arc<ReadPool>,
+    _slot: OwnedSemaphorePermit,
+}
+
+impl Deref for PooledClient {
+    type Target = Client;
+
+    fn deref(&self) -> &Client {
+        self.client
+            .as_ref()
+            .expect("a pooled client holds its connection until it is released")
+    }
+}
+
+impl PooledClient {
+    /// Gives the connection back for reuse, once `DISCARD ALL` has reset its session state; if
+    /// the reset fails the connection is closed instead. Call it only after a read that finished.
+    async fn release(mut self) {
+        let Some(client) = self.client.take() else {
+            return;
+        };
+        if client.batch_execute("DISCARD ALL").await.is_ok() {
+            let mut idle = self.pool.idle.lock().unwrap_or_else(|e| e.into_inner());
+            idle.push((client, Instant::now()));
+        }
+        // The slot is freed when `self` drops, after the connection is back in `idle`.
+    }
+}
 
 /// The configured Platform Database: the source `platform_query` reads.
 #[derive(Debug, Clone)]
@@ -66,9 +147,39 @@ struct PlatformSource {
     read_url_env: String,
     /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
     max_rows: usize,
+    pool: Arc<ReadPool>,
 }
 
 impl PlatformSource {
+    /// A connection as the read-only role from the pool: waits for a free slot, then reuses an
+    /// idle connection or opens a new one.
+    async fn acquire(&self) -> Result<PooledClient, DataFusionError> {
+        let pool = &self.pool;
+        let slot = tokio::time::timeout(pool.connect_timeout, pool.slots.clone().acquire_owned())
+            .await
+            .map_err(|_| {
+                sqlstate(
+                    "53300",
+                    format!(
+                        "platform source \"{}\": all {READ_POOL_SIZE} connections stayed busy for \
+                         {} s; try again",
+                        self.name,
+                        pool.connect_timeout.as_secs()
+                    ),
+                )
+            })?
+            .expect("the read pool's semaphore is never closed");
+        let client = match pool.take_idle() {
+            Some(client) => client,
+            None => self.connect(pool.connect_timeout).await?,
+        };
+        Ok(PooledClient {
+            client: Some(client),
+            pool: pool.clone(),
+            _slot: slot,
+        })
+    }
+
     /// A new connection as the read-only role. It closes when the client is dropped.
     async fn connect(&self, timeout: Duration) -> Result<Client, DataFusionError> {
         let name = &self.name;
@@ -124,9 +235,25 @@ fn cause(e: &tokio_postgres::Error) -> String {
     }
 }
 
+/// The Platform Database the platform functions read, with its read pool. Build it once and give
+/// it to every platform function, so that they share one pool.
+#[derive(Debug, Clone)]
+pub struct PlatformDatabase {
+    /// `Err` holds why there is no source to read (none configured, or no default among many).
+    source: Result<PlatformSource, String>,
+}
+
+impl PlatformDatabase {
+    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformDatabase {
+        PlatformDatabase {
+            source: PlatformSource::from_config(config, connect_timeout),
+        }
+    }
+}
+
 impl PlatformSource {
     /// The config's default `platform_postgres` source, or why there is none to read.
-    fn from_config(config: &Config) -> Result<PlatformSource, String> {
+    fn from_config(config: &Config, connect_timeout: Duration) -> Result<PlatformSource, String> {
         let kind = SourceKind::PlatformPostgres;
         match config.default_source(kind) {
             Some(s) => match &s.settings {
@@ -136,6 +263,7 @@ impl PlatformSource {
                     read_url_env: read_url.env_name().to_string(),
                     max_rows: usize::try_from(s.max_rows.unwrap_or(config.max_rows))
                         .unwrap_or(usize::MAX),
+                    pool: Arc::new(ReadPool::new(connect_timeout)),
                 }),
                 _ => Err("the default platform_postgres source has no read URL".to_string()),
             },
@@ -168,14 +296,12 @@ impl PlatformSource {
 pub struct PlatformQuery {
     /// `Err` holds why there is no source to read (none configured, or no default among many).
     source: Result<PlatformSource, String>,
-    connect_timeout: Duration,
 }
 
 impl PlatformQuery {
-    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformQuery {
+    pub fn new(database: &PlatformDatabase) -> PlatformQuery {
         PlatformQuery {
-            source: PlatformSource::from_config(config),
-            connect_timeout,
+            source: database.source.clone(),
         }
     }
 }
@@ -198,22 +324,21 @@ impl TableFunctionImpl for PlatformQuery {
             PlatformSource::for_call(&self.source, session, SIGNATURE, Claim::PlatformRead)?;
         let sql =
             engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
-        let timeout = self.connect_timeout;
         let types = block_on(async {
-            let client = source.connect(timeout).await?;
+            let client = source.acquire().await?;
             let statement = client.prepare(&sql).await.map_err(|e| source.error(e))?;
-            Ok::<_, DataFusionError>(
-                statement
-                    .columns()
-                    .iter()
-                    .map(|c| (c.name().to_string(), c.type_().clone()))
-                    .collect::<Vec<_>>(),
-            )
+            let types = statement
+                .columns()
+                .iter()
+                .map(|c| (c.name().to_string(), c.type_().clone()))
+                .collect::<Vec<_>>();
+            drop(statement);
+            client.release().await;
+            Ok::<_, DataFusionError>(types)
         })??;
         let schema = schema_of(&types)?;
         Ok(Arc::new(PlatformTable {
             source,
-            connect_timeout: timeout,
             signature: SIGNATURE,
             sql,
             params: vec![],
@@ -232,7 +357,6 @@ impl TableFunctionImpl for PlatformQuery {
 pub struct PlatformCatalog {
     listing: Listing,
     source: Result<PlatformSource, String>,
-    connect_timeout: Duration,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -255,18 +379,17 @@ const COLUMNS_SQL: &str = "SELECT column_name::text AS column_name, data_type::t
      ORDER BY ordinal_position";
 
 impl PlatformCatalog {
-    pub fn tables(config: &Config, connect_timeout: Duration) -> PlatformCatalog {
+    pub fn tables(database: &PlatformDatabase) -> PlatformCatalog {
         PlatformCatalog {
             listing: Listing::Tables,
-            source: PlatformSource::from_config(config),
-            connect_timeout,
+            source: database.source.clone(),
         }
     }
 
-    pub fn columns(config: &Config, connect_timeout: Duration) -> PlatformCatalog {
+    pub fn columns(database: &PlatformDatabase) -> PlatformCatalog {
         PlatformCatalog {
             listing: Listing::Columns,
-            ..PlatformCatalog::tables(config, connect_timeout)
+            source: database.source.clone(),
         }
     }
 }
@@ -322,7 +445,6 @@ impl TableFunctionImpl for PlatformCatalog {
         let schema = schema_of(&columns)?;
         Ok(Arc::new(PlatformTable {
             source,
-            connect_timeout: self.connect_timeout,
             signature,
             sql: sql.to_string(),
             params,
@@ -341,16 +463,14 @@ impl TableFunctionImpl for PlatformCatalog {
 #[derive(Debug, Clone)]
 pub struct PlatformExplain {
     source: Result<PlatformSource, String>,
-    connect_timeout: Duration,
 }
 
 const EXPLAIN_SIGNATURE: &str = "platform_explain(sql)";
 
 impl PlatformExplain {
-    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformExplain {
+    pub fn new(database: &PlatformDatabase) -> PlatformExplain {
         PlatformExplain {
-            source: PlatformSource::from_config(config),
-            connect_timeout,
+            source: database.source.clone(),
         }
     }
 }
@@ -385,7 +505,6 @@ impl TableFunctionImpl for PlatformExplain {
         let schema = schema_of(&columns)?;
         Ok(Arc::new(PlatformTable {
             source,
-            connect_timeout: self.connect_timeout,
             signature: EXPLAIN_SIGNATURE,
             sql: explain_sql(&sql),
             params: vec![],
@@ -477,7 +596,6 @@ fn schema_of(columns: &[(String, Type)]) -> Result<SchemaRef, DataFusionError> {
 #[derive(Debug)]
 struct PlatformTable {
     source: PlatformSource,
-    connect_timeout: Duration,
     /// The calling function, for error messages.
     signature: &'static str,
     sql: String,
@@ -489,10 +607,11 @@ struct PlatformTable {
 
 impl PlatformTable {
     /// Runs the statement once and returns all its rows. Fails with 54000 past `max_rows`, and
-    /// with 0A000 when the result's columns are no longer the ones it was planned with.
+    /// with 0A000 when the result's columns are no longer the ones it was planned with. Only a
+    /// read that finished gives its connection back to the pool; any other ends it.
     async fn fetch(&self) -> Result<Vec<Row>, DataFusionError> {
         let source = &self.source;
-        let client = source.connect(self.connect_timeout).await?;
+        let client = source.acquire().await?;
         let mut running = CancelOnDrop(Some(client.cancel_token()));
         let statement = client
             .prepare(&self.sql)
@@ -529,6 +648,8 @@ impl PlatformTable {
             rows.push(row);
         }
         running.finished();
+        drop(statement);
+        client.release().await;
         Ok(rows)
     }
 }
