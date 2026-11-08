@@ -9,3 +9,4 @@ export * from './routingMatchers';
 export * from './routingTree';
 export * from './routingGrouping';
 export * from './templateEngine';
+export * from './alertmanagerPayload';
