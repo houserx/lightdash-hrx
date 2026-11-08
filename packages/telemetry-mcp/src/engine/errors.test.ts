@@ -7,13 +7,27 @@ const what = 'The PromQL query';
 describe('engineErrorText', () => {
     it('42501 is access denied and keeps the missing claim', () => {
         const text = engineErrorText(
-            new EngineError('permission denied: missing claim attrs.telemetry_restricted', '42501'),
+            new EngineError('permission denied: missing claim attrs.platform_read', '42501'),
             what,
         );
         expect(text).toMatch(/^Access denied: /);
-        expect(text).toContain('attrs.telemetry_restricted');
+        expect(text).toContain('attrs.platform_read');
         expect(text).toContain('SQLSTATE 42501');
         expect(text).toContain('ask a Lightdash admin');
+    });
+
+    it('42501 for Restricted Telemetry says MCP never reads it, whatever the attributes', () => {
+        for (const message of [
+            'permission denied: missing claim attrs.telemetry_restricted',
+            'restricted telemetry requires attrs.telemetry_restricted and agent = false',
+        ]) {
+            const text = engineErrorText(new EngineError(message, '42501'), 'The LogQL query');
+            expect(text).toMatch(/^Access denied: /);
+            expect(text).toContain(message);
+            expect(text).toContain('never readable through MCP');
+            expect(text).not.toContain('ask a Lightdash admin');
+            expect(text).toContain('SQLSTATE 42501');
+        }
     });
 
     it('42501 for a missing audit description does not blame a claim', () => {

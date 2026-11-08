@@ -1078,3 +1078,40 @@ docs/eng-1799/telemetry-mcp.md
   features (ask_data, platform_*, alerts, docs, dockerfile, tool-catalog and others).
 - 2026-11-08T17:32:24Z supervisor: mcp-sql-injection-safety passed the gate in round 1
 - 2026-11-08T17:33:41Z supervisor: mcp-restricted-telemetry halted: worker mcp.feature.mcp-restricted-telemetry.r1 stopped: STOP file present
+
+## mcp-restricted-telemetry (2026-11-08)
+
+- Round 1 restarted after the earlier worker stopped on a STOP file. There was no STOP file this time, and the tree was
+  clean.
+- The property was already in place: `src/identity/token.ts` always mints `agent: true` (`iss = telemetry-mcp`), and
+  `list_sources` reports each source's `restricted` flag from `MCP_SOURCES`. The check passed 3/3 before any change.
+- Changed `src/engine/errors.ts`: a `42501` whose engine message mentions "restricted" now ends with "This is
+  Restricted Telemetry, which is never readable through MCP: every MCP query identifies as an agent, so no Lightdash
+  user attribute grants it here...". It used to say "ask a Lightdash admin" for the claim, which is wrong through MCP
+  because a user who already holds `telemetry_restricted` is still refused. The advice now comes from a small
+  `accessDeniedAdvice()` helper, and other 42501s keep the old advice.
+  - Contract assumptions: §2/§7 put enforcement in the engine (§1.2 refuses Restricted Telemetry to `agent = true`).
+    The MCP adds no local block for `restricted` sources. Restricted selectors and log groups
+    (`restricted_selectors`/`restricted_log_groups`) are known only to the engine, so a local block would cover only
+    part of it. The engine stays the single gate, and the MCP's part is `agent = true` plus a clear error.
+- Unit tests: `src/engine/errors.test.ts` gained a case for the restricted 42501 text, and the generic 42501 case now
+  uses `attrs.platform_read`. 199 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/restricted-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 18999. The
+  fake Lightdash gives the user `telemetry_restricted` and `platform_read`, and the fake engine refuses `loki-platform`
+  to agent identities as §1.2 says.
+  - list_sources showed `loki-platform:loki:restricted=true` and every other source `restricted=false`.
+  - query_logql on `loki-platform` gave `isError`, no rows, and the access-denied text above (SQLSTATE 42501).
+  - An ordinary query_logql returned 1 row. Every engine statement had `agent true` and `iss telemetry-mcp`, even with
+    `attrs.telemetry_restricted true`. That covered the Ops Marts listing, logql, promql_instant and traceql.
+- Traps for user-test scripts:
+  - Under load (another factory line was running backend vitest), `dist/main.js` took more than 5 s to answer
+    `/healthz`. Wait up to 30 s.
+  - Kill the child on `process.on('exit')`. Otherwise a script that dies early leaves a server on its port that comes
+    up late. The next run then reaches that stale server and gets 401 invalid_token.
+  - Don't pipe the script into `head`/`tail`: the orphan inherits stderr and keeps the pipe open.
+  - The fake engine tries handlers last-registered first, so register specific handlers after catch-all ones.
+  - Pid 64110 (an older `dist/main.js` on 18987, not started by this session) is still running. I left it alone.
+- Results: the check passes 3/3. Acceptance: 27 files pass and 26 fail. All 26 failures are unbuilt features (ask_data,
+  platform_*, alerts, docs, dockerfile, readme, structured-logs, tool-catalog and others).
+- 2026-11-08T17:47:47Z supervisor: mcp-restricted-telemetry passed the gate in round 1
