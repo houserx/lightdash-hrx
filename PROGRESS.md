@@ -615,3 +615,41 @@ docs/eng-1799/telemetry-mcp.md
 - Still open, unchanged: the TTL cache (`mcp-user-mapping-cache`) and the empty tool list for unknown users
   (`mcp-unknown-user-no-tools`).
 - 2026-11-08T16:19:54Z supervisor: mcp-user-mapping passed the gate in round 1
+
+## mcp-user-attributes (2026-11-08)
+
+- The check (`user-attributes.test.ts`, 3/3) already passed on a clean tree with the `resolveAttrs` that came in with
+  `mcp-engine-session`. I compared it with Lightdash's own resolution
+  (`packages/backend/src/models/UserAttributesModel.ts`, `getAttributeValuesForOrgMember`) and found two gaps, now fixed
+  in `src/auth/userMapping.ts`:
+  - Lightdash resolves a value **set**: the user's direct values together with the values of all their groups, and it
+    uses the defaults only when that set is empty. The old code let a direct value shadow groups, and fell back to the
+    default when a group had a non-"true" value. So a group set to `"false"` over a default of `"true"` gave true;
+    Lightdash gives false. That is now false.
+  - The API sends canonical `values` / `attributeDefaults` arrays plus the deprecated `value` / `attributeDefault`
+    fields. Only the deprecated ones were read. Both are read now, with the same precedence as `getUserAttributeValues`
+    and `getAttributeDefaultValues` in `packages/common/src/types/userAttributes.ts`.
+- **Contract assumption (CONTRACTS §3, "the value `"true"` is true; anything else is false"):** an attr is true only
+  when the resolved set is exactly `{"true"}`. A conflicting set such as direct `"false"` plus group `"true"`, or
+  `["true","x"]`, is false. This is the least-privilege reading. The same `"true"` from several sources is still one
+  value. The integration line should confirm it.
+- New `src/auth/resolveAttrs.test.ts` (4 unit tests) covers:
+  - `values` arrays and the legacy fields;
+  - defaults used only when nothing is assigned;
+  - groups the user is not in being ignored;
+  - case and whitespace variants being false;
+  - conflicting sets being false;
+  - malformed entries.
+
+  I also retitled the `resolveAttrs` test in `src/engine/session.test.ts`; its assertions are unchanged.
+- Tested as a user: `../tmp/user-attributes-ut/run.mts`. Run it from the repo root with
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs real `dist/main.js` with the SDK
+  streamable-HTTP client and calls `list_sources`, then verifies the identity token the fake engine got.
+  - ops (platform_read via a group, platform_explain direct, platform_write `"yes"`, telemetry_restricted by default)
+    got `{telemetry_restricted true, platform_read true, platform_write false, platform_explain true}`.
+  - plain (no values) got only the default: `telemetry_restricted true`, the rest false.
+  - optout (group `"false"` over default `"true"`) got all four false.
+  - Lightdash was read at `/api/v1/org/users` and `/api/v1/org/attributes`. SIGTERM exits 0.
+- Results: the check passes 3/3, unit tests pass (51), typecheck is clean, and the same 13 acceptance files pass as
+  before the change. The 40 failing files belong to unbuilt features.
+- 2026-11-08T16:24:23Z supervisor: mcp-user-attributes passed the gate in round 1

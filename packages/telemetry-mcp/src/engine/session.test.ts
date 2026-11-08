@@ -73,7 +73,7 @@ describe('user mapping helpers', () => {
         expect(emailFromClaims({ sub: '00u1' })).toBeUndefined();
     });
 
-    it('resolves direct values, then group "true" values, then defaults; only "true" is true', () => {
+    it('resolves direct values, group values and defaults; only "true" is true', () => {
         const attrs = resolveAttrs(
             [
                 { name: 'platform_read', groups: [{ groupUuid: 'g1', value: 'true' }], attributeDefault: 'false' },

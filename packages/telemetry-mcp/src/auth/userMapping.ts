@@ -4,8 +4,8 @@
  * The Okta `email` claim (or an email-shaped `sub` when there is no email claim) is looked up with
  * `GET /api/v1/org/users?searchQuery=<email>&includeGroups=<n>`. Lightdash's search is a substring match, so only
  * the active user whose email equals the claim (case-insensitively) counts. The four §3 attrs come from
- * `GET /api/v1/org/attributes`: the user's direct value, else a `"true"` value from one of the user's groups, else
- * the attribute default. Only the exact string `"true"` is true.
+ * `GET /api/v1/org/attributes`, resolved like Lightdash does (the user's direct and group values, else the attribute
+ * defaults); an attr is true only when that resolves to exactly `"true"` (see `resolveAttrs`).
  *
  * Not here yet: the per-user TTL cache (`mcp-user-mapping-cache`) and the empty tool list for unknown users
  * (`mcp-unknown-user-no-tools`).
@@ -60,14 +60,47 @@ interface LightdashMember {
     groups?: { uuid?: unknown }[];
 }
 
+interface LightdashAttributeValue {
+    values?: unknown;
+    /** Deprecated by Lightdash in favour of `values`; still sent. */
+    value?: unknown;
+}
+
 interface LightdashAttribute {
     name?: unknown;
-    users?: { userUuid?: unknown; value?: unknown }[];
-    groups?: { groupUuid?: unknown; value?: unknown }[];
+    users?: (LightdashAttributeValue & { userUuid?: unknown })[];
+    groups?: (LightdashAttributeValue & { groupUuid?: unknown })[];
+    attributeDefaults?: unknown;
+    /** Deprecated by Lightdash in favour of `attributeDefaults`; still sent. */
     attributeDefault?: unknown;
 }
 
-/** Resolves the four §3 attrs for a user from Lightdash's attribute list. */
+const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []);
+
+/** A user or group entry's values, like Lightdash's `getUserAttributeValues`: `values`, else a non-empty `value`. */
+function entryValues(entry: LightdashAttributeValue): string[] {
+    const values = strings(entry.values);
+    if (values.length > 0) return values;
+    return typeof entry.value === 'string' && entry.value !== '' ? [entry.value] : [];
+}
+
+/** An attribute's defaults, like Lightdash's `getAttributeDefaultValues`: `attributeDefaults`, else the legacy field. */
+function defaultValues(attribute: LightdashAttribute): string[] {
+    if (attribute.attributeDefaults !== undefined) return strings(attribute.attributeDefaults);
+    const legacy = attribute.attributeDefault;
+    if (Array.isArray(legacy)) return strings(legacy);
+    return typeof legacy === 'string' && legacy !== '' ? [legacy] : [];
+}
+
+/**
+ * Resolves the four §3 attrs for a user from Lightdash's attribute list.
+ *
+ * The values are resolved the way Lightdash resolves them for its own queries
+ * (`UserAttributesModel.getAttributeValuesForOrgMember`): the user's direct values together with the values of every
+ * group the user is in, or, only when there are none, the attribute's defaults. An attr is true only when that
+ * resolves to the single value `"true"` (Contract assumption: CONTRACTS §3 "the value `"true"` is true; anything
+ * else is false", so a conflicting set such as `["false", "true"]` is false).
+ */
 export function resolveAttrs(
     attributes: readonly LightdashAttribute[],
     userUuid: string,
@@ -76,13 +109,14 @@ export function resolveAttrs(
     const value = (name: string): boolean => {
         const attribute = attributes.find((a) => a.name === name);
         if (!attribute) return false;
-        const direct = attribute.users?.find((u) => u.userUuid === userUuid);
-        if (direct) return direct.value === 'true';
-        const viaGroup = attribute.groups?.some(
-            (g) => typeof g.groupUuid === 'string' && groupUuids.has(g.groupUuid) && g.value === 'true',
-        );
-        if (viaGroup) return true;
-        return attribute.attributeDefault === 'true';
+        const assigned = [
+            ...(attribute.users ?? []).filter((u) => u.userUuid === userUuid).flatMap(entryValues),
+            ...(attribute.groups ?? [])
+                .filter((g) => typeof g.groupUuid === 'string' && groupUuids.has(g.groupUuid))
+                .flatMap(entryValues),
+        ];
+        const resolved = new Set(assigned.length > 0 ? assigned : defaultValues(attribute));
+        return resolved.size === 1 && resolved.has('true');
     };
     return {
         telemetry_restricted: value('telemetry_restricted'),
