@@ -65,10 +65,16 @@ export const createAlertingModule = (
 ): AlertingModule => {
     const alertRuleModel = new AlertRuleModel(deps.database);
     const notificationRouteModel = new NotificationRouteModel(deps.database);
+    const evaluator = new AlertEvaluator({
+        alertRuleModel,
+        alertInstanceModel: new AlertInstanceModel(deps.database),
+        warehouseClients: deps.warehouseClients,
+    });
     return {
         alertRules: new AlertRuleService({
             alertRuleModel,
             alertStateHistoryModel: new AlertStateHistoryModel(deps.database),
+            rulePreviewer: evaluator,
             clock: deps.clock,
         }),
         contactPoints: new ContactPointService({
@@ -80,11 +86,7 @@ export const createAlertingModule = (
             notificationRouteModel,
             clock: deps.clock,
         }),
-        evaluator: new AlertEvaluator({
-            alertRuleModel,
-            alertInstanceModel: new AlertInstanceModel(deps.database),
-            warehouseClients: deps.warehouseClients,
-        }),
+        evaluator,
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},
     };

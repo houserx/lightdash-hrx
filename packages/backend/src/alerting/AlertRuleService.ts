@@ -19,6 +19,7 @@ import {
     type AlertRule,
     type AlertRuleDefinition,
     type AlertRuleListFilters,
+    type AlertRulePreview,
     type AlertRuleSummary,
     type AlertRuleVersion,
     type AlertRuleWithInstances,
@@ -27,6 +28,7 @@ import {
     type SessionUser,
     type UpdateAlertRule,
 } from '@lightdash/common';
+import { type AlertEvaluator } from './AlertEvaluator';
 import {
     assertAlertingAbility,
     isUniqueViolation,
@@ -338,6 +340,7 @@ export class AlertRuleService {
         private readonly deps: {
             alertRuleModel: AlertRuleModel;
             alertStateHistoryModel: AlertStateHistoryModel;
+            rulePreviewer: Pick<AlertEvaluator, 'previewRule'>;
             clock: { now(): Date };
         },
     ) {}
@@ -458,12 +461,17 @@ export class AlertRuleService {
         );
     }
 
-    async create(
-        user: SessionUser,
+    /**
+     * A new rule's body, checked as on create: required fields, defaults,
+     * value rules and the folder.
+     */
+    private async parseNewRule(
         projectUuid: string,
         body: unknown,
-    ): Promise<AlertRuleWithInstances> {
-        await this.assertAbility(user, 'manage', projectUuid);
+    ): Promise<{
+        requestedSlug: string | undefined;
+        definition: AlertRuleDefinition;
+    }> {
         const input = parseRuleBody(body, { allowSlug: true });
         const missing = REQUIRED_ON_CREATE.filter(
             (key) => input[key] === undefined,
@@ -483,6 +491,39 @@ export class AlertRuleService {
         });
         validateDefinition(definition);
         await this.assertFolder(projectUuid, definition.spaceUuid);
+        return { requestedSlug, definition };
+    }
+
+    /**
+     * "Test rule": checks the body as create does (editors and above only),
+     * then runs its query once and returns every series' value, whether the
+     * condition holds and the state it would enter. Nothing is saved; a
+     * failing query is reported in the result, not as an HTTP error.
+     */
+    async preview(
+        user: SessionUser,
+        projectUuid: string,
+        body: unknown,
+    ): Promise<AlertRulePreview> {
+        await this.assertAbility(user, 'manage', projectUuid);
+        const { definition } = await this.parseNewRule(projectUuid, body);
+        return this.deps.rulePreviewer.previewRule({
+            projectUuid,
+            rule: definition,
+            at: this.deps.clock.now(),
+        });
+    }
+
+    async create(
+        user: SessionUser,
+        projectUuid: string,
+        body: unknown,
+    ): Promise<AlertRuleWithInstances> {
+        await this.assertAbility(user, 'manage', projectUuid);
+        const { requestedSlug, definition } = await this.parseNewRule(
+            projectUuid,
+            body,
+        );
         const ruleUuid = await this.insertRule({
             user,
             projectUuid,

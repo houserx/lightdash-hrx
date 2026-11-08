@@ -133,6 +133,28 @@ export type AlertStateTransition = {
  */
 export type AlertStateHistoryEntry = AlertStateTransition;
 
+/** One series of a rule preview ("Test rule"). */
+export type AlertRulePreviewSeries = {
+    /** The series' labels plus the rule's labels and `alertname`. */
+    labels: Record<string, string>;
+    value: number | null;
+    conditionMet: boolean;
+    /** The state the series would enter if it were new. */
+    state: AlertInstanceState;
+};
+
+/**
+ * The result of POST .../alerting/rules/preview: the rule's query run once,
+ * saving nothing. A failing query gives its message in `error` and no
+ * series.
+ */
+export type AlertRulePreview = {
+    /** When the preview ran (ISO): the end of the query's time window. */
+    evaluatedAt: string;
+    series: AlertRulePreviewSeries[];
+    error: string | null;
+};
+
 /** Highest first: the aggregate state is the first one any series is in. */
 export const ALERT_RULE_STATE_PRECEDENCE: readonly AlertRuleState[] = [
     'firing',

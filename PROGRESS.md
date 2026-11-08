@@ -379,3 +379,26 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - `spaceUuid=platform` → A. `spaceUuid=rds&state=pending` → B. `state=normal&label=team=infra` → C.
       - 400s for `state=resolved`, `state=bogus`, a repeated `state`, `label=team`, `label==x` and `spaceUuid=nope`. Outsider → 403. Anonymous → 401.
 - 2026-11-08T19:58:02Z supervisor: alert-rule-list-filters passed the gate in round 1
+- alert-rule-preview (round 1) — 2026-11-08
+  - Changed:
+    - common `alertRules.ts`: new types `AlertRulePreview` (`{evaluatedAt, series, error}`) and `AlertRulePreviewSeries` (`{labels, value, conditionMet, state}`).
+    - backend `AlertEvaluator.ts`: the query path (resolve `__from/__to/__interval`, open the WarehouseClient as `system:alert-evaluator`, run it) is now the private `runRuleQuery`, shared by `evaluateRule` and the new `previewRule({projectUuid, rule, at})`. `previewRule` runs `evaluateAlertSeries` with `previous: []` and reads or writes no stored state. Any error from the client, the query or the series split is returned as `error` with `series: []`, not thrown.
+    - backend `AlertRuleService.ts`: create's body checks moved into the private `parseNewRule` (required fields, defaults, value rules, folder). The new `preview(user, projectUuid, body)` uses `manage` ability, then `parseNewRule`, then `rulePreviewer.previewRule` at `clock.now()`. The service gets the new dependency `rulePreviewer` (the evaluator). `index.ts` builds the evaluator first.
+    - `router.ts`: `POST .../alerting/rules/preview`, registered before the `:ruleUuid` routes.
+  - Contract assumptions (CONTRACTS.md has no preview endpoint; narrowest reading):
+    - Who may call: editors and above (`manage:AlertRule`), the same as create. Viewers and outsiders get 403, anonymous 401.
+    - The body is a full new-rule body, validated exactly like create (400 on the same errors). `slug` is accepted and ignored, so the editor form can send its create body as it is.
+    - "Would-be state" means the state as a brand-new series at `now`: `for: 0s` → firing, `for > 0` → pending, condition not met → normal. Stored instances of a saved rule are not consulted. A paused rule still previews.
+    - An empty result gives `series: []` with `error: null`. noDataState/errorState handling is not applied (alert-eval-nodata and alert-eval-error are not built yet). If those features add synthetic `DatasourceNoData`/`DatasourceError` series, they may want preview to show them too.
+    - Identity: the preview query runs as `system:alert-evaluator`, as the saved rule would, with the body's description as the audit reason. An unsaved rule has no uuid, so a fresh random uuid per preview is used as `audit.resource_uuid` and `alert_rule_uuid` tag, plus the tag `alert_rule_preview: 'true'`. The integration line may want a distinct audit marker for previews; that would mean changing `AlertRuleQueryAudit`.
+    - The error message is the raw warehouse error message (the editor's own query).
+  - Tested:
+    - The check passes (1 passed). query-identity, series-states, for-pending, keep-firing-for, state-history, paused, list-filters and preview pass together (8 passed). rules.accept.ts passes (4 passed).
+    - Backend tsc, oxlint (src/alerting) and oxfmt are clean. Common builds through init.
+    - As a user: a scratch walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk; removed afterwards, along with `src/alerting/__walk__`).
+      - The editor previewed with db-1 95 and db-2 40 → db-1 95 / conditionMet true / firing, and db-2 40 / false / normal. Labels were instance + team + alertname. 1 warehouse call as system:alert-evaluator.
+      - `for: 5m` → db-1 pending. `within_range 30..50` → db-2 firing and db-1 normal. `paused: true` still previews. An empty result → `[]` with error null.
+      - A failing query → 200 with error `relation "disk_usage" does not exist` and series `[]`.
+      - Viewer and outsider → 403, anonymous → 401. A blank description or `for: soon` → 400. Developer and admin → 200.
+      - Afterwards: alert_rules, alert_instances and alert_state_history all held 0 rows, and the list was `[]`.
+- 2026-11-08T20:04:47Z supervisor: alert-rule-preview passed the gate in round 1

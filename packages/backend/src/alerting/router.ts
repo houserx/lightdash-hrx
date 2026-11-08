@@ -120,6 +120,13 @@ export const createAlertingApiRouter = (
             services.alertRules.create(user, req.params.projectUuid, req.body),
         ),
     );
+    // Before the `:ruleUuid` routes, so "preview" is never read as a uuid.
+    router.post(
+        `${base}/rules/preview`,
+        route((user, req) =>
+            services.alertRules.preview(user, req.params.projectUuid, req.body),
+        ),
+    );
     router.get(
         `${base}/rules/:ruleUuid`,
         route((user, req) =>

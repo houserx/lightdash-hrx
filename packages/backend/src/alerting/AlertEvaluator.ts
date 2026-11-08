@@ -1,15 +1,22 @@
 import {
     buildAlertEvaluatorQueryContext,
+    evaluateAlertCondition,
+    getErrorMessage,
     resolveAlertQueryParameters,
     substituteAlertQueryParameters,
+    type AlertQueryRow,
+    type AlertRuleDefinition,
+    type AlertRulePreview,
     type AlertRuleQueryContext,
     type WarehouseClient,
 } from '@lightdash/common';
+import { randomUUID } from 'crypto';
 import { type AlertInstanceModel } from './AlertInstanceModel';
 import { type AlertRuleModel } from './AlertRuleModel';
 import {
     evaluateAlertSeries,
     getAlertSeriesTransitions,
+    type AlertSeriesEvaluation,
 } from './evaluateAlertSeries';
 
 export type AlertEvaluationOutcome = {
@@ -37,7 +44,8 @@ type AlertEvaluatorArgs = {
  * the scheduled time, then gives every series of the result its own state
  * and value, stored per series in `alert_instances`. Every state change is
  * written to `alert_state_history`. Paused rules are skipped without
- * running their query.
+ * running their query. `previewRule` runs an unsaved rule once and stores
+ * nothing.
  */
 export class AlertEvaluator {
     private readonly alertRuleModel: AlertRuleModel;
@@ -63,24 +71,11 @@ export class AlertEvaluator {
         // are until it is unpaused.
         if (rule.paused) return { status: 'skipped', reason: 'paused' };
 
-        const sql = substituteAlertQueryParameters(
-            rule.query,
-            resolveAlertQueryParameters({
-                at: scheduledAt,
-                timeRange: rule.timeRange,
-            }),
-        );
-        const warehouseClient = await this.warehouseClients.getWarehouseClient({
+        const rows = await this.runRuleQuery({
+            ruleUuid: rule.uuid,
             projectUuid: rule.projectUuid,
-            context: buildAlertEvaluatorQueryContext({
-                ruleUuid: rule.uuid,
-                projectUuid: rule.projectUuid,
-                description: rule.description,
-            }),
-        });
-        const { rows } = await warehouseClient.runQuery(sql, {
-            alert_rule_uuid: rule.uuid,
-            project_uuid: rule.projectUuid,
+            rule,
+            at: scheduledAt,
         });
         const previous = await this.alertInstanceModel.listForRule(rule.uuid);
         const evaluation = evaluateAlertSeries({
@@ -101,5 +96,89 @@ export class AlertEvaluator {
             },
         );
         return { status: 'evaluated' };
+    }
+
+    /**
+     * "Test rule": runs an (unsaved) rule's query once over the window that
+     * ends at `at`, and gives every series its value, whether the condition
+     * holds and the state it would enter as a new series. It reads and
+     * writes no stored state. The query runs under the evaluator's identity,
+     * as it would once saved; an unsaved rule has no uuid, so a fresh one
+     * per preview stands in as the audit's resource uuid.
+     */
+    async previewRule({
+        projectUuid,
+        rule,
+        at,
+    }: {
+        projectUuid: string;
+        rule: AlertRuleDefinition;
+        at: Date;
+    }): Promise<AlertRulePreview> {
+        const evaluatedAt = at.toISOString();
+        let evaluation: AlertSeriesEvaluation;
+        try {
+            const rows = await this.runRuleQuery({
+                ruleUuid: randomUUID(),
+                projectUuid,
+                rule,
+                at,
+                tags: { alert_rule_preview: 'true' },
+            });
+            evaluation = evaluateAlertSeries({ rule, rows, previous: [], at });
+        } catch (error) {
+            return {
+                evaluatedAt,
+                series: [],
+                error: getErrorMessage(error),
+            };
+        }
+        return {
+            evaluatedAt,
+            series: evaluation.instances.map((instance) => ({
+                labels: instance.labels,
+                value: instance.value,
+                conditionMet: evaluateAlertCondition(
+                    instance.value,
+                    rule.condition,
+                ),
+                state: instance.state,
+            })),
+            error: null,
+        };
+    }
+
+    /** Runs the rule's SQL, time parameters resolved, as the evaluator. */
+    private async runRuleQuery({
+        ruleUuid,
+        projectUuid,
+        rule,
+        at,
+        tags = {},
+    }: {
+        ruleUuid: string;
+        projectUuid: string;
+        rule: Pick<AlertRuleDefinition, 'query' | 'timeRange' | 'description'>;
+        at: Date;
+        tags?: Record<string, string>;
+    }): Promise<AlertQueryRow[]> {
+        const sql = substituteAlertQueryParameters(
+            rule.query,
+            resolveAlertQueryParameters({ at, timeRange: rule.timeRange }),
+        );
+        const warehouseClient = await this.warehouseClients.getWarehouseClient({
+            projectUuid,
+            context: buildAlertEvaluatorQueryContext({
+                ruleUuid,
+                projectUuid,
+                description: rule.description,
+            }),
+        });
+        const { rows } = await warehouseClient.runQuery(sql, {
+            alert_rule_uuid: ruleUuid,
+            project_uuid: projectUuid,
+            ...tags,
+        });
+        return rows;
     }
 }
