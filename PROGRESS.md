@@ -731,3 +731,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   with an "Execution error: " prefix from DataFusion. An integration line may want a specific
   class here (e.g. 58000/08xxx).
 - 2026-11-08T18:06:56Z supervisor: eng-promql-upstream-errors passed the gate in round 1
+- 2026-11-08 eng-label-function (worker, round 1): added `label(labels json, key text) -> text` as
+  a DataFusion scalar UDF in the new module `federation-engine/src/labels.rs`, registered in
+  `Sql::new` (src/pg.rs) next to `version()`. It reads like Postgres `labels ->> key`: NULL when
+  either argument is NULL, the key is absent, the value is JSON null or labels is not an object;
+  strings come back as is, other JSON values as their JSON text. Text that is not JSON fails with
+  22P02 `invalid input syntax for type json: ...` (contract assumption: CONTRACTS only says "or
+  NULL"; 22P02 is what Postgres gives for a bad json cast). Volatility Immutable; all-scalar
+  calls return a scalar. One unit test in labels.rs.
+  Tested as a user: `../tmp/pgclient/src/bin/labels.rs` (mock prom-a on 127.0.0.1:59096 with
+  three series api-1/api-2/db-1, config `../tmp/promql/labels.toml`) spawns `target/debug/engine`
+  and runs SQL over tokio-postgres. `label(labels,'pod')`, `'job'`, `'__name__'` gave each row's
+  values; `'missing'` and `__name__` on series without it were NULL; `label(NULL,'a')` and
+  `label('{}','a')` NULL, `label('{"a":"b"}','a')` = b; `WHERE label(labels,'job')='api' GROUP BY
+  job, pod` gave api-1 3, api-2 2; GROUP BY job gave api 5, db 1; `label('{not json','a')` 22P02.
+  The check `promql::eng_label_function` passes, and every feature in the passing list still
+  passes. Note for eng-series-name-function: put `series_name_udf()` in src/labels.rs too, reusing
+  `promql::series_name`. rustfmt/clippy are not installed on this toolchain, so formatting is by
+  hand.
+- 2026-11-08T18:12:43Z supervisor: eng-label-function passed the gate in round 1

@@ -4,6 +4,7 @@
 //! config (CONTRACTS §1.4), resolving secrets from env vars, without binding ports or contacting
 //! sources.
 
+mod labels;
 mod pg;
 mod promql;
 mod server;
