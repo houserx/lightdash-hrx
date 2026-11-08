@@ -784,3 +784,24 @@ token verification for a *valid* token, which feature 39 then hardens.
   upstream request each. The check `promql::eng_promql_pushdown_and_sql` passes, and every feature
   in the passing list still passes (full suite: 25 pass; the failures are all unbuilt/halted features).
 - 2026-11-08T18:20:38Z supervisor: eng-promql-pushdown-and-sql passed the gate in round 1
+- 2026-11-08 eng-max-rows-overflow (worker, round 1): `Promql` (src/promql.rs) now holds a row
+  cap per source name (the source's `max_rows`, else the top-level `max_rows`, default 100000).
+  `source()` returns it with the URL, `PromqlQuery` carries it, and `result_batch(.., max_rows)`
+  builds rows via `Rows::new(source, max_rows)`. `Rows::push` fails with SQLSTATE 54000 "result
+  exceeds max_rows (N) for source \"name\"" as soon as one row too many would be added, so an
+  oversize answer is never built or truncated. Exactly max_rows is fine. The cap applies to what
+  the source returns, not to the final SQL result, so `LIMIT 5` over an oversize source still
+  fails. That is my reading of CONTRACTS §1.2 "Results are capped by max_rows in the source
+  config". It applies to `promql` and `promql_instant` alike. One more unit test in promql.rs.
+  Note for later source kinds (Loki, CloudWatch, Tempo, platform, BigQuery): apply the same
+  per-source cap with the same 54000 message.
+  Tested as a user: `../tmp/pgclient/src/bin/maxrows.rs` (mock on 127.0.0.1:59099 answering
+  query=sixty/fifty with 2 series x 60/50 samples, config `../tmp/promql/maxrows.toml`: top-level
+  max_rows = 100, prom-capped default, prom-roomy max_rows = 1000) spawns `target/debug/engine`
+  and runs SQL over tokio-postgres. 'sixty' on the default source gave 54000 "result exceeds
+  max_rows (100) for source \"prom-capped\"". 'fifty' gave count 100. 'sixty' on 'prom-roomy'
+  gave 120. LIMIT 5 over 'sixty' still gave 54000, and so did promql_instant on the oversize
+  answer. The check `promql::eng_max_rows_overflow` passes, and every feature in the passing list
+  still passes (full suite: 26 pass, including eng_perf_promql_large_range; the failures are all
+  unbuilt or halted features).
+- 2026-11-08T18:27:15Z supervisor: eng-max-rows-overflow passed the gate in round 1

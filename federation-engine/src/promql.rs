@@ -62,6 +62,8 @@ pub struct Promql {
     urls: HashMap<String, String>,
     /// Kind by source name, for every source (to name a kind mismatch).
     kinds: HashMap<String, SourceKind>,
+    /// Row cap by source name: the source's `max_rows`, else the top-level one.
+    max_rows: HashMap<String, usize>,
     /// Restricted sources need an identity, which this engine doesn't check yet.
     restricted: Vec<String>,
     default: Option<String>,
@@ -87,6 +89,14 @@ impl Promql {
                 .sources
                 .iter()
                 .map(|s| (s.name.clone(), s.kind()))
+                .collect(),
+            max_rows: config
+                .sources
+                .iter()
+                .map(|s| {
+                    let cap = s.max_rows.unwrap_or(config.max_rows);
+                    (s.name.clone(), usize::try_from(cap).unwrap_or(usize::MAX))
+                })
                 .collect(),
             restricted: config
                 .sources
@@ -118,8 +128,8 @@ impl Promql {
         }
     }
 
-    /// The source a call names, or the default Prometheus source.
-    fn source(&self, name: Option<String>) -> Result<(String, String), DataFusionError> {
+    /// The source a call names, or the default Prometheus source: its name, URL and row cap.
+    fn source(&self, name: Option<String>) -> Result<(String, String, usize), DataFusionError> {
         let name = match name {
             Some(name) => name,
             None => self.default.clone().ok_or_else(|| {
@@ -149,7 +159,8 @@ impl Promql {
                 format!("source \"{name}\" is Restricted Telemetry and needs telemetry_restricted"),
             ));
         }
-        Ok((name, url.clone()))
+        let max_rows = self.max_rows.get(&name).copied().unwrap_or(usize::MAX);
+        Ok((name, url.clone(), max_rows))
     }
 }
 
@@ -200,11 +211,12 @@ impl TableFunctionImpl for Promql {
             Some(_) => Some(text_argument(arg(required)?, "source", sig)?),
             None => None,
         };
-        let (source, url) = self.source(source)?;
+        let (source, url, max_rows) = self.source(source)?;
         Ok(Arc::new(PromqlQuery {
             http: self.http.clone(),
             source,
             url,
+            max_rows,
             instant: self.instant,
             form,
         }))
@@ -321,6 +333,8 @@ struct PromqlQuery {
     http: reqwest::Client,
     source: String,
     url: String,
+    /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
+    max_rows: usize,
     /// `/api/v1/query` rather than `/api/v1/query_range`.
     instant: bool,
     form: Vec<(&'static str, String)>,
@@ -375,10 +389,16 @@ fn prometheus_data(source: &str, status: u16, body: &[u8]) -> Result<Value, Data
 /// The rows of a Prometheus answer's `data`. A range query must answer a matrix; an instant
 /// query may answer a vector, a scalar (one row, labels `{}`), a string (one row, value NULL,
 /// labels `{}`, series = the string; a contract assumption) or a matrix (e.g. `up[5m]`).
-fn result_batch(source: &str, data: &Value, instant: bool) -> Result<RecordBatch, DataFusionError> {
+/// More than `max_rows` rows fails with SQLSTATE 54000 (CONTRACTS §1.2); exactly `max_rows` is fine.
+fn result_batch(
+    source: &str,
+    data: &Value,
+    instant: bool,
+    max_rows: usize,
+) -> Result<RecordBatch, DataFusionError> {
     let fail =
         |what: &str| DataFusionError::Execution(format!("prometheus source \"{source}\": {what}"));
-    let mut rows = Rows::default();
+    let mut rows = Rows::new(source, max_rows);
     let result = &data["result"];
     match data["resultType"].as_str() {
         Some("matrix") => {
@@ -395,7 +415,7 @@ fn result_batch(source: &str, data: &Value, instant: bool) -> Result<RecordBatch
                 for sample in samples {
                     let (t, v) =
                         parse_sample(sample).ok_or_else(|| fail("a sample is malformed"))?;
-                    rows.push(t, Some(v), metric, None);
+                    rows.push(t, Some(v), metric, None)?;
                 }
             }
         }
@@ -410,12 +430,12 @@ fn result_batch(source: &str, data: &Value, instant: bool) -> Result<RecordBatch
                     .ok_or_else(|| fail("a series has no metric labels"))?;
                 let (t, v) =
                     parse_sample(&s["value"]).ok_or_else(|| fail("a sample is malformed"))?;
-                rows.push(t, Some(v), metric, None);
+                rows.push(t, Some(v), metric, None)?;
             }
         }
         Some("scalar") => {
             let (t, v) = parse_sample(result).ok_or_else(|| fail("the scalar is malformed"))?;
-            rows.push(t, Some(v), &serde_json::Map::new(), None);
+            rows.push(t, Some(v), &serde_json::Map::new(), None)?;
         }
         Some("string") => {
             let t = result.get(0).and_then(Value::as_f64);
@@ -423,7 +443,7 @@ fn result_batch(source: &str, data: &Value, instant: bool) -> Result<RecordBatch
             let (Some(t), Some(text)) = (t, text) else {
                 return Err(fail("the string is malformed"));
             };
-            rows.push(micros(t), None, &serde_json::Map::new(), Some(text));
+            rows.push(micros(t), None, &serde_json::Map::new(), Some(text))?;
         }
         _ => return Err(fail("the answer has an unknown resultType")),
     }
@@ -438,29 +458,44 @@ struct Rows {
     series: StringBuilder,
     /// The last metric seen and its (labels json, series name), as a series' samples repeat it.
     last: Option<(serde_json::Map<String, Value>, String, String)>,
+    count: usize,
+    max_rows: usize,
+    source: String,
 }
 
-impl Default for Rows {
-    fn default() -> Rows {
+impl Rows {
+    fn new(source: &str, max_rows: usize) -> Rows {
         Rows {
             timestamps: TimestampMicrosecondBuilder::new().with_timezone(UTC),
             values: Float64Builder::new(),
             labels: StringBuilder::new(),
             series: StringBuilder::new(),
             last: None,
+            count: 0,
+            max_rows,
+            source: source.to_string(),
         }
     }
-}
 
-impl Rows {
-    /// One row. `series` overrides the name derived from the labels (a string answer).
+    /// One row. `series` overrides the name derived from the labels (a string answer). Fails
+    /// with 54000 once the row would exceed `max_rows`, before building it.
     fn push(
         &mut self,
         t: i64,
         value: Option<f64>,
         metric: &serde_json::Map<String, Value>,
         series: Option<&str>,
-    ) {
+    ) -> Result<(), DataFusionError> {
+        if self.count == self.max_rows {
+            return Err(sqlstate(
+                "54000",
+                format!(
+                    "result exceeds max_rows ({}) for source \"{}\"",
+                    self.max_rows, self.source
+                ),
+            ));
+        }
+        self.count += 1;
         if self.last.as_ref().is_none_or(|(m, _, _)| m != metric) {
             let json = Value::Object(metric.clone()).to_string();
             self.last = Some((metric.clone(), json, series_name(metric)));
@@ -470,6 +505,7 @@ impl Rows {
         self.values.append_option(value);
         self.labels.append_value(json);
         self.series.append_value(series.unwrap_or(name));
+        Ok(())
     }
 
     fn finish(mut self) -> Result<RecordBatch, DataFusionError> {
@@ -561,7 +597,7 @@ impl TableProvider for PromqlQuery {
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
         let data = self.fetch().await?;
-        let batch = result_batch(&self.source, &data, self.instant)?;
+        let batch = result_batch(&self.source, &data, self.instant, self.max_rows)?;
         Ok(MemorySourceConfig::try_new_exec(
             &[vec![batch]],
             sample_schema(),
@@ -614,7 +650,7 @@ mod tests {
              "values": [[1762560000, "1"], [1762560030.5, "NaN"], [1762560060, "+Inf"]]},
             {"metric": {}, "values": [[1762560000, "-Inf"]]},
         ]});
-        let batch = result_batch("p", &data, false).unwrap();
+        let batch = result_batch("p", &data, false, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 4);
         let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
         assert_eq!(t.value(1), 1_762_560_030_500_000);
@@ -632,9 +668,9 @@ mod tests {
         assert_eq!(batch.column(2).null_count(), 0);
 
         let empty = json!({"resultType": "matrix", "result": []});
-        assert_eq!(result_batch("p", &empty, false).unwrap().num_rows(), 0);
+        assert_eq!(result_batch("p", &empty, false, usize::MAX).unwrap().num_rows(), 0);
         let vector = json!({"resultType": "vector", "result": []});
-        assert!(result_batch("p", &vector, false).is_err());
+        assert!(result_batch("p", &vector, false, usize::MAX).is_err());
     }
 
     #[test]
@@ -643,7 +679,7 @@ mod tests {
             {"metric": {"job": "api"}, "value": [1762560600, "3"]},
             {"metric": {"job": "worker"}, "value": [1762560600, "0.25"]},
         ]});
-        let batch = result_batch("p", &vector, true).unwrap();
+        let batch = result_batch("p", &vector, true, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 2);
         let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
         assert_eq!(t.value(0), 1_762_560_600_000_000);
@@ -654,14 +690,14 @@ mod tests {
         );
 
         let scalar = json!({"resultType": "scalar", "result": [1762560600, "42"]});
-        let batch = result_batch("p", &scalar, true).unwrap();
+        let batch = result_batch("p", &scalar, true, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(batch.column(1).as_primitive::<Float64Type>().value(0), 42.0);
         assert_eq!(batch.column(2).as_string::<i32>().value(0), "{}");
         assert_eq!(batch.column(3).as_string::<i32>().value(0), "{}");
 
         let string = json!({"resultType": "string", "result": [1762560600, "hello"]});
-        let batch = result_batch("p", &string, true).unwrap();
+        let batch = result_batch("p", &string, true, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 1);
         assert!(batch.column(1).is_null(0));
         assert_eq!(batch.column(2).as_string::<i32>().value(0), "{}");
@@ -670,9 +706,22 @@ mod tests {
         let matrix = json!({"resultType": "matrix", "result": [
             {"metric": {}, "values": [[1762560000, "1"], [1762560030, "2"]]},
         ]});
-        assert_eq!(result_batch("p", &matrix, true).unwrap().num_rows(), 2);
+        assert_eq!(result_batch("p", &matrix, true, usize::MAX).unwrap().num_rows(), 2);
         let odd = json!({"resultType": "histogram", "result": []});
-        assert!(result_batch("p", &odd, true).is_err());
+        assert!(result_batch("p", &odd, true, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn more_rows_than_max_rows_is_an_error_not_a_truncation() {
+        let data = json!({"resultType": "matrix", "result": [
+            {"metric": {"s": "1"}, "values": [[1762560000, "1"], [1762560001, "1"]]},
+            {"metric": {"s": "2"}, "values": [[1762560000, "2"]]},
+        ]});
+        assert_eq!(result_batch("p", &data, false, 3).unwrap().num_rows(), 3);
+        let e = result_batch("p", &data, false, 2).unwrap_err().to_string();
+        assert!(e.contains("result exceeds max_rows (2)") && e.contains("\"p\""), "{e}");
+        let scalar = json!({"resultType": "scalar", "result": [1762560000, "1"]});
+        assert_eq!(result_batch("p", &scalar, true, 1).unwrap().num_rows(), 1);
     }
 
     #[test]
