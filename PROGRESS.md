@@ -1573,3 +1573,19 @@ token verification for a *valid* token, which feature 39 then hardens.
   Trap: `cargo fmt --all` with the private toolchain rewraps many existing files that earlier
   sessions formatted by hand, so format only the files you touch (`cargo fmt -p engine-guard` is clean).
 - 2026-11-08T21:05:26Z supervisor: eng-guard-read-mode passed the gate in round 1
+- 2026-11-08 eng-platform-read-only-role (round 1): no code change needed. Earlier features already
+  do this: `PlatformSource` in `federation-engine/src/platform.rs` is built from `read_url` only. It
+  never reads `write_url`, so platform_query connects as the read role even when `write_url_env` is
+  set. `engine_guard::guard(sql, Mode::Read)` (eng-guard-read-mode) rejects DELETE/UPDATE, including
+  a DELETE inside a CTE, with 42501 "... requires write mode and the elevated role." before any
+  connection opens.
+  Tested as a user: `../tmp/platform-readonly/run.sh <out>` (throwaway cluster with engine_read
+  SELECT-only and engine_write DML roles, audit store mock, engine configured with BOTH
+  read_url_env and write_url_env; pgclient's `platform` bin, reader token, extended then simple).
+  `SELECT current_user` -> engine_read in both protocols. `DELETE FROM widgets`, the DELETE CTE and
+  an UPDATE -> 42501 "requires write mode" in both protocols. widgets 200 before and after, and the
+  Postgres log gained 0 lines during the write attempts. Only engine_read ever connected; engine_write
+  never did. The check passed after init.
+  For Write Mode (/v1/write): that path should be the only user of `write_url`. Keep platform_query,
+  platform_tables/columns and platform_explain on the read pool.
+- 2026-11-08T21:07:53Z supervisor: eng-platform-read-only-role passed the gate in round 1
