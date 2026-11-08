@@ -7,6 +7,7 @@ import {
     transitionAlertInstance,
     type AlertInstanceSnapshot,
     type AlertInstanceState,
+    type AlertInstanceTiming,
     type AlertQueryRow,
     type AlertRule,
     type AlertSeriesLabels,
@@ -39,6 +40,13 @@ type EvaluatedRule = Pick<
     | 'keepFiringFor'
 >;
 
+const getAlertInstanceTiming = (
+    rule: Pick<AlertRule, 'for' | 'keepFiringFor'>,
+): AlertInstanceTiming => ({
+    forMs: parsePrometheusDuration(rule.for),
+    keepFiringForMs: parsePrometheusDuration(rule.keepFiringFor),
+});
+
 /**
  * An instance's labels: the series' labels, then the rule's labels (which
  * win on a clash, as in Prometheus), then `alertname` = the rule name.
@@ -53,12 +61,52 @@ export const getAlertInstanceLabels = (
 });
 
 /**
+ * Settles the stored series that are not in `evaluated` as not meeting the
+ * condition, with no value: a firing one resolves (honouring
+ * keepFiringFor), and one that is back to normal is removed.
+ */
+const settleMissingSeries = ({
+    previous,
+    evaluated,
+    at,
+    timing,
+}: {
+    previous: readonly AlertInstanceRecord[];
+    evaluated: Map<string, AlertInstanceRecord>;
+    at: Date;
+    timing: AlertInstanceTiming;
+}): AlertSeriesEvaluation => {
+    const instances = new Map(evaluated);
+    const removedFingerprints: string[] = [];
+    previous
+        .filter((instance) => !evaluated.has(instance.fingerprint))
+        .forEach((instance) => {
+            const snapshot = transitionAlertInstance(
+                instance,
+                { conditionMet: false, at },
+                timing,
+            );
+            if (snapshot.state === 'normal') {
+                removedFingerprints.push(instance.fingerprint);
+            } else {
+                instances.set(instance.fingerprint, {
+                    ...instance,
+                    ...snapshot,
+                    value: null,
+                });
+            }
+        });
+    return { instances: [...instances.values()], removedFingerprints };
+};
+
+/**
  * One evaluation of a rule over its query rows: every series is reduced,
  * checked against the condition and moved through the state machine from
  * its previous snapshot. A stored series missing from a non-empty result
  * counts as not meeting the condition (so a firing one resolves); once it is
  * back to normal it is removed. An empty result changes nothing here: the
- * rule's noDataState decides what happens then.
+ * evaluator passes it to `evaluateAlertNoData`, which follows the rule's
+ * noDataState.
  */
 export const evaluateAlertSeries = ({
     rule,
@@ -74,10 +122,7 @@ export const evaluateAlertSeries = ({
     if (rows.length === 0) {
         return { instances: [...previous], removedFingerprints: [] };
     }
-    const timing = {
-        forMs: parsePrometheusDuration(rule.for),
-        keepFiringForMs: parsePrometheusDuration(rule.keepFiringFor),
-    };
+    const timing = getAlertInstanceTiming(rule);
     const previousByFingerprint = new Map(
         previous.map((instance) => [instance.fingerprint, instance]),
     );
@@ -105,26 +150,86 @@ export const evaluateAlertSeries = ({
         },
     );
 
-    const removedFingerprints: string[] = [];
-    previous
-        .filter((instance) => !evaluated.has(instance.fingerprint))
-        .forEach((instance) => {
-            const snapshot = transitionAlertInstance(
-                instance,
-                { conditionMet: false, at },
-                timing,
-            );
-            if (snapshot.state === 'normal') {
-                removedFingerprints.push(instance.fingerprint);
-            } else {
-                evaluated.set(instance.fingerprint, {
-                    ...instance,
-                    ...snapshot,
-                    value: null,
-                });
-            }
+    return settleMissingSeries({
+        previous,
+        evaluated,
+        at,
+        timing,
+    });
+};
+
+/** `alertname` of the synthetic series an empty result raises. */
+export const DATASOURCE_NO_DATA_ALERTNAME = 'DatasourceNoData';
+
+/**
+ * The synthetic no-data series' labels: the rule's labels (so it routes like
+ * the rule's own series), `alertname` = DatasourceNoData and `rulename` =
+ * the rule name.
+ */
+export const getAlertNoDataLabels = (
+    rule: Pick<AlertRule, 'name' | 'labels'>,
+): AlertSeriesLabels => ({
+    ...rule.labels,
+    alertname: DATASOURCE_NO_DATA_ALERTNAME,
+    rulename: rule.name,
+});
+
+/**
+ * One evaluation of a rule whose query returned no rows, following its
+ * noDataState:
+ * - `keep_last`: nothing changes.
+ * - `normal`: every stored series is settled as not meeting the condition,
+ *   so a firing one resolves.
+ * - `nodata`: the same, plus a synthetic DatasourceNoData series in state
+ *   `nodata` (which notifies as firing).
+ * - `alerting`: the same, but the DatasourceNoData series meets the
+ *   condition and goes pending / firing as the rule's `for` says.
+ * The DatasourceNoData series is a stored series like any other, so once
+ * the query returns rows again it is missing from them and clears.
+ */
+export const evaluateAlertNoData = ({
+    rule,
+    previous,
+    at,
+}: {
+    rule: Pick<EvaluatedRule, 'name' | 'labels' | 'annotations'> &
+        Pick<AlertRule, 'for' | 'keepFiringFor' | 'noDataState'>;
+    previous: readonly AlertInstanceRecord[];
+    at: Date;
+}): AlertSeriesEvaluation => {
+    if (rule.noDataState === 'keep_last') {
+        return { instances: [...previous], removedFingerprints: [] };
+    }
+    const timing = getAlertInstanceTiming(rule);
+    const evaluated = new Map<string, AlertInstanceRecord>();
+    if (rule.noDataState !== 'normal') {
+        const labels = getAlertNoDataLabels(rule);
+        const fingerprint = alertLabelsFingerprint(labels);
+        const before = previous.find((i) => i.fingerprint === fingerprint);
+        const snapshot =
+            rule.noDataState === 'nodata'
+                ? {
+                      state: 'nodata' as const,
+                      stateSince:
+                          before?.state === 'nodata' ? before.stateSince : at,
+                      activeAt: null,
+                      lastConditionMetAt: before?.lastConditionMetAt ?? null,
+                      lastEvaluatedAt: at,
+                  }
+                : transitionAlertInstance(
+                      before,
+                      { conditionMet: true, at },
+                      timing,
+                  );
+        evaluated.set(fingerprint, {
+            ...snapshot,
+            fingerprint,
+            labels,
+            annotations: rule.annotations,
+            value: null,
         });
-    return { instances: [...evaluated.values()], removedFingerprints };
+    }
+    return settleMissingSeries({ previous, evaluated, at, timing });
 };
 
 /** One series changing state in an evaluation. */

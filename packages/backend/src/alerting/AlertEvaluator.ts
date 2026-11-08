@@ -17,6 +17,7 @@ import { type AlertInstanceModel } from './AlertInstanceModel';
 import { type AlertRuleModel } from './AlertRuleModel';
 import { type AlertScheduleModel } from './AlertScheduleModel';
 import {
+    evaluateAlertNoData,
     evaluateAlertSeries,
     getAlertSeriesTransitions,
     type AlertSeriesEvaluation,
@@ -59,7 +60,8 @@ type AlertEvaluatorArgs = {
  * the scheduled time, then gives every series of the result its own state
  * and value, stored per series in `alert_instances`. Every state change is
  * written to `alert_state_history`. Paused rules are skipped without
- * running their query. With several workers each scheduled slot is
+ * running their query. A query that returns no rows follows the rule's
+ * noDataState (see `evaluateAlertNoData`). With several workers each scheduled slot is
  * evaluated once: a worker claims the slot on the rule's row before it runs
  * the query, and a worker that finds the slot (or a later one) already
  * claimed skips with reason `duplicate`. A newer slot that comes due while
@@ -140,12 +142,16 @@ export class AlertEvaluator {
             at: scheduledAt,
         });
         const previous = await this.alertInstanceModel.listForRule(rule.uuid);
-        const evaluation = evaluateAlertSeries({
-            rule,
-            rows,
-            previous,
-            at: scheduledAt,
-        });
+        // An empty result follows the rule's noDataState.
+        const evaluation =
+            rows.length === 0
+                ? evaluateAlertNoData({ rule, previous, at: scheduledAt })
+                : evaluateAlertSeries({
+                      rule,
+                      rows,
+                      previous,
+                      at: scheduledAt,
+                  });
         await this.alertInstanceModel.save(
             {
                 projectUuid: rule.projectUuid,

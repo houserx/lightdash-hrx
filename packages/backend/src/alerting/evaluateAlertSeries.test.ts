@@ -1,7 +1,10 @@
+import { alertLabelsFingerprint } from '@lightdash/common';
 import { describe, expect, it } from 'vitest';
 import {
+    evaluateAlertNoData,
     evaluateAlertSeries,
     getAlertInstanceLabels,
+    getAlertNoDataLabels,
     getAlertSeriesTransitions,
     type AlertInstanceRecord,
 } from './evaluateAlertSeries';
@@ -191,6 +194,139 @@ describe('evaluateAlertSeries', () => {
                 at: at(1),
             }),
         ).toEqual({ instances: fired.instances, removedFingerprints: [] });
+    });
+});
+
+describe('evaluateAlertNoData', () => {
+    const fire = (
+        noDataState: 'nodata' | 'normal' | 'alerting' | 'keep_last',
+    ) => {
+        const withState = { ...rule, noDataState };
+        const fired = evaluateAlertSeries({
+            rule: withState,
+            rows: disk({ 'db-1': 95 }),
+            previous: [],
+            at: T0,
+        });
+        return { withState, fired };
+    };
+    const noData = (instances: AlertInstanceRecord[]) =>
+        instances.find((i) => i.labels.alertname === 'DatasourceNoData');
+
+    it('with nodata adds a DatasourceNoData series and resolves the rest', () => {
+        const { withState, fired } = fire('nodata');
+        const empty = evaluateAlertNoData({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+        });
+        expect(byInstance(empty.instances, 'db-1')).toMatchObject({
+            state: 'resolved',
+            value: null,
+        });
+        expect(noData(empty.instances)).toMatchObject({
+            state: 'nodata',
+            stateSince: at(1),
+            value: null,
+            labels: {
+                team: 'infra',
+                alertname: 'DatasourceNoData',
+                rulename: 'Disk almost full',
+            },
+            annotations: { summary: 'Disk almost full' },
+        });
+        expect(noData(empty.instances)?.fingerprint).toBe(
+            alertLabelsFingerprint(getAlertNoDataLabels(withState)),
+        );
+
+        const still = evaluateAlertNoData({
+            rule: withState,
+            previous: empty.instances,
+            at: at(2),
+        });
+        expect(still.removedFingerprints).toEqual([
+            byInstance(fired.instances, 'db-1')?.fingerprint,
+        ]);
+        expect(still.instances).toHaveLength(1);
+        expect(noData(still.instances)).toMatchObject({
+            state: 'nodata',
+            stateSince: at(1),
+            lastEvaluatedAt: at(2),
+        });
+    });
+
+    it('with normal resolves the series and adds nothing', () => {
+        const { withState, fired } = fire('normal');
+        const empty = evaluateAlertNoData({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+        });
+        expect(empty.instances).toHaveLength(1);
+        expect(byInstance(empty.instances, 'db-1')?.state).toBe('resolved');
+    });
+
+    it('with alerting fires DatasourceNoData, honouring `for`', () => {
+        const { withState, fired } = fire('alerting');
+        const empty = evaluateAlertNoData({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+        });
+        expect(noData(empty.instances)?.state).toBe('firing');
+        expect(byInstance(empty.instances, 'db-1')?.state).toBe('resolved');
+
+        const slow = { ...withState, for: '2m' };
+        const pending = evaluateAlertNoData({
+            rule: slow,
+            previous: [],
+            at: T0,
+        });
+        expect(noData(pending.instances)?.state).toBe('pending');
+        expect(
+            noData(
+                evaluateAlertNoData({
+                    rule: slow,
+                    previous: pending.instances,
+                    at: at(2),
+                }).instances,
+            )?.state,
+        ).toBe('firing');
+    });
+
+    it('with keep_last changes nothing', () => {
+        const { withState, fired } = fire('keep_last');
+        expect(
+            evaluateAlertNoData({
+                rule: withState,
+                previous: fired.instances,
+                at: at(1),
+            }),
+        ).toEqual({ instances: fired.instances, removedFingerprints: [] });
+    });
+
+    it('clears DatasourceNoData once the query returns rows again', () => {
+        const { withState, fired } = fire('nodata');
+        const empty = evaluateAlertNoData({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+        });
+        const back = evaluateAlertSeries({
+            rule: withState,
+            rows: disk({ 'db-1': 95 }),
+            previous: empty.instances,
+            at: at(2),
+        });
+        expect(noData(back.instances)).toBeUndefined();
+        expect(back.removedFingerprints).toEqual([
+            noData(empty.instances)?.fingerprint,
+        ]);
+        expect(
+            getAlertSeriesTransitions(empty.instances, back)
+                .filter((t) => t.labels.alertname === 'DatasourceNoData')
+                .map((t) => [t.previousState, t.state]),
+        ).toEqual([['nodata', 'normal']]);
     });
 });
 

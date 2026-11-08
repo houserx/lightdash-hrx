@@ -685,3 +685,29 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - viewer, interactive_viewer and editor got 403, no user got 401, and an unknown uuid got 404.
   - Next: the UI's `ContactPointsList` `onSendTest` should call this endpoint and show "Test notification sent", or the failing results' errors.
 - 2026-11-08T21:28:36Z supervisor: alert-contact-test-notification passed the gate in round 1
+- alert-eval-nodata (round 1) — 2026-11-08
+  - Changed:
+    - `evaluateAlertSeries.ts`: new `evaluateAlertNoData({rule, previous, at})`, `getAlertNoDataLabels(rule)` and `DATASOURCE_NO_DATA_ALERTNAME`. The "settle the missing series" loop is now the shared `settleMissingSeries` helper, and `getAlertInstanceTiming` is shared too. `evaluateAlertSeries` itself is unchanged and still returns `previous` for `rows: []`.
+    - `AlertEvaluator.evaluateClaimedRule`: an empty result goes to `evaluateAlertNoData`. Instances, transitions and history are saved the same way as before.
+    - `evaluateAlertSeries.test.ts`: 5 new unit tests (15 in total).
+  - Behaviour (CONTRACTS API notes: "No rows → noDataState"):
+    - `keep_last`: nothing changes, `lastEvaluatedAt` included.
+    - `normal`: every stored series is settled as not meeting the condition, so firing goes to resolved and then normal/removed.
+    - `nodata`: the same as `normal`, plus a synthetic series in state `nodata`. It is notified as firing, because `NOTIFYING_ALERT_STATES` already included nodata. `stateSince` is kept while it stays nodata.
+    - `alerting`: the same, but the synthetic series goes through `transitionAlertInstance` with conditionMet true, so it fires.
+    - The synthetic series is stored like any other series. When rows come back, it is missing from them and gets settled: nodata→normal (removed), or firing→resolved→normal. A resolved notification goes out, because a transition out of a notifying state is in the history.
+  - Contract assumptions (narrowest reading):
+    - (1) Synthetic labels are `{...rule.labels, alertname: DatasourceNoData, rulename: <rule name>}`. The rule labels are kept so the series routes like the rule's own series. There is no datasource_uid or ref_id. Annotations are the rule's annotations, and value is null.
+    - (2) With `alerting`, the existing series resolve as they do with `nodata`. The contract only says "DatasourceNoData firing".
+    - (3) With `alerting`, the synthetic series honours the rule's `for` (pending first) and `keepFiringFor`, as in Grafana. With `nodata`, it goes straight to nodata.
+    - (4) Preview (`previewRule`) is unchanged: an empty result still gives `series: []`. It does not show the synthetic series.
+  - Tested:
+    - After init, the check passes (1 passed, 10 skipped). evaluation.accept.ts: 9 pass. The only failures are alert-eval-error and alert-annotation-templates, which are not built yet. notifications.accept.ts passes 8/8, and the unit file 15/15. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (run.sh and config copied to tmp/walk, both removed afterwards). An editor created a rule, PATCHed each noDataState in turn, and evaluated it fired → empty → empty → data → recovered:
+      - nodata: rule state `nodata`, a DatasourceNoData instance in `nodata` (rulename = the rule name), and db-1 resolved and then removed. The webhook got DatasourceNoData `firing`, and `?state=nodata` listed the rule. When data came back, DatasourceNoData was removed and a `resolved` notification was sent.
+      - normal: db-1 resolved, with no synthetic series.
+      - alerting: DatasourceNoData firing (rule firing), notified. When data came back it went resolved and then disappeared.
+      - keep_last: db-1 stayed firing at 95.
+      - The history showed normal→nodata, nodata→normal, normal→firing, firing→resolved and resolved→normal for DatasourceNoData.
+  - Next: alert-eval-error should mirror this. Add `evaluateAlertError`, or generalise it with alertname DatasourceError and annotation `error` = the message. Catch the query error in `evaluateClaimedRule`; today the error is rethrown and the slot is released. Note that `/state` returns 404 (not built yet), and alert-eval-error's test reads it.
+- 2026-11-08T21:35:04Z supervisor: alert-eval-nodata passed the gate in round 1
