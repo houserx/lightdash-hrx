@@ -2183,3 +2183,43 @@ token verification for a *valid* token, which feature 39 then hardens.
   Decision: table and dataset names are case-sensitive, exactly as written in `allow`. A
   wrong-case name is 42P01, not folded to the allowlisted table.
 - 2026-11-08T22:48:08Z supervisor: eng-ops-marts-allowlist passed the gate in round 1
+- eng-ops-marts-workload-identity (security): with workload_identity_audience + service_account
+  (no access_token_env), BigQuery calls now carry a service-account token from GCP workload
+  identity federation. The new `src/gcp_auth.rs` (`WorkloadIdentity`) does this:
+  1. It signs (does not send) a SigV4 `POST https://sts.<region>.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15`.
+     The signature uses the default AWS credential chain (`aws_config::defaults`, region from the
+     chain, else us-east-1). Signed headers: host, x-amz-date, x-amz-security-token (when there
+     is a session token) and x-goog-cloud-target-resource = audience.
+  2. It serializes that as GCP's `{"url","method","headers":[{key,value}]}` and percent-encodes it
+     (RFC 3986).
+  3. It sends a form-encoded token exchange to gcp_sts_url: grant_type token-exchange, audience,
+     scope cloud-platform, requested_token_type access_token, subject_token_type
+     `urn:ietf:params:aws:token-type:aws4_request`.
+  4. It calls `POST {gcp_iam_credentials_url}/v1/projects/-/serviceAccounts/<sa>:generateAccessToken`
+     with the federated bearer and scope bigquery.
+  The SA token is cached per source, process-wide, until 5 minutes before its expireTime. A tokio
+  Mutex around the refresh means concurrent queries exchange only once. `ops_marts.rs` now keeps a
+  local `Auth` enum (Static secret | Federated(Box<WorkloadIdentity>)), built from
+  `BigQueryAuth`, and `BigQuerySource::token` is async. A failed exchange is a query error
+  naming the source and step (e.g. "GCP STS token exchange: HTTP 400: ..."). New direct dep:
+  `aws-credential-types = "1.3"`, which was already in Cargo.lock; it brings in the
+  `ProvideCredentials` trait.
+  Unit tests: `gcp_auth::tests::{get_caller_identity_is_signed_for_the_audience,
+  signing_key_matches_the_aws_example, percent_encoding_keeps_only_unreserved}`.
+  Tested as a user: `python3 -I ../tmp/ops-marts-workload-identity/run.py out` (ports 59741, 59742,
+  59745). One stand-in plays STS, IAM Credentials and BigQuery, and it re-verifies the SigV4
+  signature in Python with the env secret. The engine got a fake key, a session token and
+  AWS_REGION us-east-2.
+  - GROUP BY queue gave intake 10 and review 1.
+  - The STS call was form-encoded with the audience, the aws4_request type and the
+    GetCallerIdentity URL for us-east-2. The key id was the env one, the session token was
+    present, and signature_ok was True.
+  - There was one generateAccessToken, with the SA email in the path and the federated bearer.
+  - Every BigQuery call carried the SA token.
+  - A second query, and then a second connection, made no further STS or IAM calls (1 + 1 in total).
+  The check passes, and so do ops_marts::eng_ops_marts_query and _catalog. Clippy -D warnings
+  (tmp/rustup 1.99.1, CARGO_TARGET_DIR=tmp/clippy-target) is clean, and gcp_auth.rs and
+  ops_marts.rs are rustfmt-clean.
+  Contract assumptions: the token scope is bigquery (not cloud-platform), and the subject token
+  uses the regional STS host. GCP accepts both.
+- 2026-11-08T22:53:48Z supervisor: eng-ops-marts-workload-identity passed the gate in round 1

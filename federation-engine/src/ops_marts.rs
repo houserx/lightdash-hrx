@@ -8,7 +8,8 @@
 //!
 //! Reading a table runs `SELECT <projected columns> FROM <table> [LIMIT n]` with `jobs.query` and
 //! reads every result page with `jobs.getQueryResults`; filters, aggregates and joins run in the
-//! engine. Every call carries the source's bearer token.
+//! engine. Every call carries the source's bearer token: `access_token_env`, or else a
+//! service-account token from workload identity federation ([`crate::gcp_auth`]).
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
@@ -25,9 +26,10 @@ use datafusion::catalog::{CatalogProvider, SchemaProvider, Session, TableProvide
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
-use engine_config::{BigQueryAuth, BigQuerySettings, Config, SourceSettings};
+use engine_config::{BigQueryAuth, BigQuerySettings, Config, Secret, SourceSettings};
 use serde_json::{Value, json};
 
+use crate::gcp_auth::WorkloadIdentity;
 use crate::session::sqlstate;
 
 /// The catalog name Ops Marts appear under.
@@ -43,23 +45,28 @@ struct BigQuerySource {
     project: String,
     /// `api_base_url` without a trailing `/`.
     api_base_url: String,
-    auth: BigQueryAuth,
+    auth: Auth,
     /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
     max_rows: usize,
 }
 
+/// How a source's BigQuery calls get their bearer token.
+#[derive(Debug)]
+enum Auth {
+    /// `access_token_env`.
+    Static(Secret),
+    /// Workload identity federation from the engine's AWS identity, cached.
+    Federated(Box<WorkloadIdentity>),
+}
+
 impl BigQuerySource {
     /// The bearer token for BigQuery calls.
-    fn token(&self) -> Result<String, DataFusionError> {
+    async fn token(&self, http: &reqwest::Client) -> Result<String, DataFusionError> {
         match &self.auth {
-            BigQueryAuth::StaticToken(secret) => Ok(secret.expose().to_string()),
-            BigQueryAuth::WorkloadIdentity { .. } => Err(sqlstate(
-                "0A000",
-                format!(
-                    "bigquery source \"{}\": workload identity federation is not supported yet; set access_token_env",
-                    self.name
-                ),
-            )),
+            Auth::Static(secret) => Ok(secret.expose().to_string()),
+            Auth::Federated(federation) => federation.token(http).await.map_err(|e| {
+                DataFusionError::Execution(format!("bigquery source \"{}\": {e}", self.name))
+            }),
         }
     }
 }
@@ -118,7 +125,7 @@ impl Marts {
         request: reqwest::RequestBuilder,
     ) -> Result<Value, DataFusionError> {
         let response = request
-            .bearer_auth(t.source.token()?)
+            .bearer_auth(t.source.token(&self.http).await?)
             .send()
             .await
             .map_err(|e| t.fail(format!("BigQuery is unreachable: {e}")))?;
@@ -361,7 +368,20 @@ pub fn catalog(config: &Config, http: reqwest::Client) -> Option<Arc<dyn Catalog
             name: s.name.clone(),
             project: project.clone(),
             api_base_url: api_base_url.trim_end_matches('/').to_string(),
-            auth: auth.clone(),
+            auth: match auth {
+                BigQueryAuth::StaticToken(secret) => Auth::Static(secret.clone()),
+                BigQueryAuth::WorkloadIdentity {
+                    audience,
+                    service_account,
+                    sts_url,
+                    iam_credentials_url,
+                } => Auth::Federated(Box::new(WorkloadIdentity::new(
+                    audience,
+                    service_account,
+                    sts_url,
+                    iam_credentials_url,
+                ))),
+            },
             max_rows: usize::try_from(s.max_rows.unwrap_or(config.max_rows)).unwrap_or(usize::MAX),
         });
         for entry in allow {
@@ -554,12 +574,7 @@ mod tests {
                 name: "ops-marts".into(),
                 project: "p-1".into(),
                 api_base_url: "http://127.0.0.1:1".into(),
-                auth: BigQueryAuth::WorkloadIdentity {
-                    audience: String::new(),
-                    service_account: String::new(),
-                    sts_url: String::new(),
-                    iam_credentials_url: String::new(),
-                },
+                auth: Auth::Federated(Box::new(WorkloadIdentity::new("", "", "", ""))),
                 max_rows: 10,
             }),
             dataset: "ops_marts".into(),

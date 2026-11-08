@@ -28,6 +28,9 @@ aws-sdk-cloudwatch = { version = "1.140", default-features = false, features = [
 aws-sdk-cloudwatchlogs = { version = "1.163", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sdk-dynamodb = { version = "1.137", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sdk-s3 = { version = "1.157", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+# The default chain's credentials, to sign the GetCallerIdentity subject token of GCP workload
+# identity federation (BigQuery).
+aws-credential-types = "1.3"
 # Only to mark a source's sts_endpoint_url as programmatic config, so it wins over AWS_ENDPOINT_URL.
 aws-types = "1.7"
 axum = "0.8"
