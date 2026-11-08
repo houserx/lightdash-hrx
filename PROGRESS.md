@@ -590,3 +590,30 @@ should add a dated line here per feature.
   button disabled. After `bash ./init.sh` the check passes 2/2; filter, view, wrap-lines, expand-row still pass.
   Frontend tsc, `pnpm run linter`, oxfmt clean.
 - 2026-11-08T19:12:51Z supervisor: viz-log-stream-csv-export passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-config-panel (session)
+
+- **What.** New `packages/frontend/src/components/VisualizationConfigs/LogStreamConfig/LogStreamConfigPanel.tsx`, a
+  controlled panel: props `config: LogStreamChart`, `fields: { id, label }[]`, `onChange(config)`. Every edit calls
+  `onChange({ ...config, ...patch })`. Sections: **Fields**: four searchable, clearable Mantine `Select`s ("Line
+  field", "Timestamp field", "Level field", "Labels field"); clearing one sets it to `undefined` (auto-detect).
+  **Display**: `Switch`es for Wrap lines (default off), Newest first (default **on**, as in `LogStreamChart`) and Show
+  labels (default off). **Level colours**: one hex `ColorInput` per `LOG_LEVELS` entry, visible label `Error` etc.,
+  `aria-label="Error colour"`.
+- **Traps.** (1) Mantine 9's Combobox keeps its dropdown mounted by default, and the listbox is `aria-labelledby` the
+  Select's label, so `getByLabelText(/line field/)` found two elements. The pickers pass
+  `comboboxProps={{ keepMounted: false }}`. (2) `ColorInput` calls `onChange` again on blur, which saved the default
+  colour as an override when you just tabbed through. Now a value equal to the level's default (or an empty input)
+  removes the override, `onChange` only fires on a real change, and an empty `levelColors` becomes `undefined`.
+  Typing an invalid colour keeps a local draft and goes back to the saved colour on blur.
+- **Tested as a user.** No app mounts the panel yet (`viz-native-types-mounted` does that). So I used a throwaway
+  vitest harness (deleted): config in `useState`, the panel plus `LogStreamView` fed by `renderChart`, `FIVE_LOGS`
+  with an extra `app_logs_message` column. Picked Line field → Message: the rows showed `msg-4 … msg-0`. Toggled Wrap
+  lines: the lines went from `pre` to `pre-wrap`. Typed `#123456` in Error colour: the error row's bar turned
+  rgb(18,52,86) and the config held `levelColors.error`. Cleared it: back to the default red, override removed. After
+  `bash ./init.sh` the check passes 6/6. Frontend tsc and oxfmt are clean. oxlint is clean on the new file; the package
+  lint has 37 errors without this change too, mostly `only-export-components` in the protected acceptance
+  `fixtures.tsx`.
+- **For the next sessions.** When mounting, map the explore's dimensions to `fields` (id = field id, label = field
+  label) and wire `onChange` to the chart config store.
+- 2026-11-08T19:19:07Z supervisor: viz-log-stream-config-panel passed the gate in round 1
