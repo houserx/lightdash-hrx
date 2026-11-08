@@ -7,6 +7,10 @@
 // - a group with alerts not yet sent as firing once `now ≥ last send +
 //   groupInterval`;
 // - an unchanged group once `now ≥ last send + repeatInterval`.
+// A series that was sent as firing and has stopped notifying stays in its
+// group as a resolved alert (with `endsAt`) until the group's next send,
+// which counts as a change. Integrations with `disableResolveMessage` leave
+// resolved alerts out, and send nothing when only resolved alerts are left.
 // The send is claimed in `alert_notification_groups` before anything leaves
 // the process, so concurrent or repeated flushes never send a group twice.
 import {
@@ -26,6 +30,7 @@ import {
     type AlertNotificationModel,
     type NotificationContactPoint,
     type NotificationGroupState,
+    type ResolvedAlert,
 } from './AlertNotificationModel';
 
 const WEBHOOK_TIMEOUT_MS = 10_000;
@@ -42,18 +47,24 @@ type AlertNotifierDeps = {
     siteUrl: string;
 };
 
+/** A firing alert, or a resolved one (which has `endsAt`). */
+export type NotificationAlert = ActiveAlert | ResolvedAlert;
+
 /** The alerts one route sends to one Contact Point together. */
 export type NotificationGroup = {
     projectUuid: string;
     route: ResolvedNotificationRoute;
     contactPointSlug: string;
     groupKey: string;
-    alerts: ActiveAlert[];
+    alerts: NotificationAlert[];
 };
 
 export const alertKey = (
     alert: Pick<ActiveAlert, 'ruleUuid' | 'fingerprint'>,
 ) => `${alert.ruleUuid}:${alert.fingerprint}`;
+
+export const alertStatus = (alert: NotificationAlert): 'firing' | 'resolved' =>
+    'endsAt' in alert ? 'resolved' : 'firing';
 
 /** Whether `group` should be sent at `now`, given its last send. */
 export const isNotificationGroupDue = (
@@ -74,7 +85,7 @@ export const isNotificationGroupDue = (
         );
     }
     const changed = group.alerts.some(
-        (alert) => previous.sentAlerts[alertKey(alert)] !== 'firing',
+        (alert) => previous.sentAlerts[alertKey(alert)] !== alertStatus(alert),
     );
     const wait = changed
         ? group.route.groupInterval
@@ -85,17 +96,43 @@ export const isNotificationGroupDue = (
     );
 };
 
-/** Routes and groups one project's alerts through its tree. */
+const groupId = (
+    group: Pick<
+        NotificationGroupState,
+        'projectUuid' | 'contactPointSlug' | 'groupKey'
+    >,
+) =>
+    JSON.stringify([group.projectUuid, group.contactPointSlug, group.groupKey]);
+
+/**
+ * Routes and groups one project's alerts through its tree. A resolved alert
+ * only joins a group that last sent it as firing (`sentAlerts`, by group id).
+ */
 export const groupAlerts = (
     projectUuid: string,
     tree: NotificationRoute,
-    alerts: ActiveAlert[],
+    alerts: NotificationAlert[],
+    sentAlerts: (
+        id: string,
+    ) => NotificationGroupState['sentAlerts'] | undefined = () => undefined,
 ): NotificationGroup[] => {
     const groups = new Map<string, NotificationGroup>();
     alerts.forEach((alert) => {
         routeAlert(tree, alert.labels).forEach((route) => {
             if (route.contactPoint === undefined) return;
             const groupKey = alertGroupKey(route, alert.labels);
+            if (
+                alertStatus(alert) === 'resolved' &&
+                sentAlerts(
+                    groupId({
+                        projectUuid,
+                        contactPointSlug: route.contactPoint,
+                        groupKey,
+                    }),
+                )?.[alertKey(alert)] !== 'firing'
+            ) {
+                return;
+            }
             const id = JSON.stringify([route.contactPoint, groupKey]);
             const group = groups.get(id) ?? {
                 projectUuid,
@@ -111,14 +148,6 @@ export const groupAlerts = (
     return [...groups.values()];
 };
 
-const groupId = (
-    group: Pick<
-        NotificationGroupState,
-        'projectUuid' | 'contactPointSlug' | 'groupKey'
-    >,
-) =>
-    JSON.stringify([group.projectUuid, group.contactPointSlug, group.groupKey]);
-
 export class AlertNotifier {
     constructor(private readonly deps: AlertNotifierDeps) {}
 
@@ -129,7 +158,10 @@ export class AlertNotifier {
             this.deps.alertNotificationModel.listActiveAlerts(),
             this.deps.alertNotificationModel.listGroups(),
         ]);
-        const alertsByProject = new Map<string, ActiveAlert[]>();
+        // Projects with only sent groups left may have resolved alerts.
+        const alertsByProject = new Map<string, ActiveAlert[]>(
+            states.map((state) => [state.projectUuid, []]),
+        );
         alerts.forEach((alert) => {
             alertsByProject.set(alert.projectUuid, [
                 ...(alertsByProject.get(alert.projectUuid) ?? []),
@@ -181,7 +213,17 @@ export class AlertNotifier {
     ): Promise<string[]> {
         const tree = await this.deps.notificationRouteModel.find(projectUuid);
         if (!tree) return [];
-        const groups = groupAlerts(projectUuid, tree, alerts);
+        const resolved = await this.listResolvedAlerts(
+            projectUuid,
+            alerts,
+            statesById,
+        );
+        const groups = groupAlerts(
+            projectUuid,
+            tree,
+            [...alerts, ...resolved],
+            (id) => statesById.get(id)?.sentAlerts,
+        );
         const contactPoints = new Map(
             (
                 await this.deps.alertNotificationModel.listContactPoints(
@@ -205,6 +247,35 @@ export class AlertNotifier {
         return groups.map(groupId);
     }
 
+    /** Series the project's groups sent as firing that no longer notify. */
+    private async listResolvedAlerts(
+        projectUuid: string,
+        alerts: ActiveAlert[],
+        statesById: Map<string, NotificationGroupState>,
+    ): Promise<ResolvedAlert[]> {
+        const active = new Set(alerts.map(alertKey));
+        const keys = new Map<
+            string,
+            { ruleUuid: string; fingerprint: string }
+        >();
+        statesById.forEach((state) => {
+            if (state.projectUuid !== projectUuid) return;
+            Object.entries(state.sentAlerts).forEach(([key, status]) => {
+                if (status !== 'firing' || active.has(key)) return;
+                const separator = key.indexOf(':');
+                keys.set(key, {
+                    ruleUuid: key.slice(0, separator),
+                    fingerprint: key.slice(separator + 1),
+                });
+            });
+        });
+        const resolved =
+            await this.deps.alertNotificationModel.listResolvedAlerts([
+                ...keys.values(),
+            ]);
+        return resolved.filter((alert) => alert.projectUuid === projectUuid);
+    }
+
     /** Claims and sends `group` if it is due; a lost claim sends nothing. */
     private async sendIfDue(
         group: NotificationGroup,
@@ -218,8 +289,11 @@ export class AlertNotifier {
             contactPointSlug: group.contactPointSlug,
             groupKey: group.groupKey,
             previous,
+            // A resolved alert leaves the group once it is sent.
             sentAlerts: Object.fromEntries(
-                group.alerts.map((alert) => [alertKey(alert), 'firing']),
+                group.alerts
+                    .filter((alert) => alertStatus(alert) === 'firing')
+                    .map((alert) => [alertKey(alert), 'firing']),
             ),
             at: now,
         });
@@ -248,7 +322,7 @@ export class AlertNotifier {
 
     private async sendIntegration(
         group: NotificationGroup,
-        alerts: ActiveAlert[],
+        groupAlertsSorted: NotificationAlert[],
         contactPoint: NotificationContactPoint,
         integration: ContactPointIntegration,
         now: Date,
@@ -256,6 +330,12 @@ export class AlertNotifier {
         // Only generic webhooks so far; the other integration types are
         // added by their own features (alert-contact-*).
         if (integration.type !== 'webhook') return;
+        const alerts = integration.disableResolveMessage
+            ? groupAlertsSorted.filter(
+                  (alert) => alertStatus(alert) === 'firing',
+              )
+            : groupAlertsSorted;
+        if (alerts.length === 0) return;
         const siteUrl = this.deps.siteUrl.replace(/\/+$/, '');
         const payload = buildAlertmanagerWebhookPayload({
             receiver: contactPoint.name,
@@ -264,10 +344,12 @@ export class AlertNotifier {
             externalURL: siteUrl,
             maxAlerts: integration.maxAlerts,
             alerts: alerts.map((alert) => ({
-                status: 'firing',
+                status: alertStatus(alert),
                 labels: alert.labels,
                 annotations: alert.annotations,
                 startsAt: alert.startsAt.toISOString(),
+                endsAt:
+                    'endsAt' in alert ? alert.endsAt.toISOString() : undefined,
                 generatorURL: `${siteUrl}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`,
                 fingerprint: alert.fingerprint,
             })),
@@ -292,7 +374,7 @@ export class AlertNotifier {
             alerts: alerts.map((alert) => ({
                 ruleUuid: alert.ruleUuid,
                 fingerprint: alert.fingerprint,
-                status: 'firing',
+                status: alertStatus(alert),
             })),
             payload,
             error,

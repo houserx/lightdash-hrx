@@ -4,6 +4,7 @@ import {
 } from '@lightdash/common';
 import { type Knex } from 'knex';
 import { AlertInstancesTableName, AlertRulesTableName } from './AlertRuleModel';
+import { AlertStateHistoryTableName } from './AlertStateHistoryModel';
 import { ContactPointsTableName } from './ContactPointModel';
 
 // Tables from migrations 20261108120000_create_alerting_tables and
@@ -27,6 +28,12 @@ export type ActiveAlert = {
     annotations: Record<string, string>;
     /** When the series entered its current (notifying) state. */
     startsAt: Date;
+};
+
+/** A series that was sent as firing and has since stopped notifying. */
+export type ResolvedAlert = ActiveAlert & {
+    /** When the series left its notifying state. */
+    endsAt: Date;
 };
 
 export type NotificationGroupState = {
@@ -122,6 +129,89 @@ export class AlertNotificationModel {
             labels: row.labels,
             annotations: row.annotations,
             startsAt: row.state_since,
+        }));
+    }
+
+    /**
+     * The given series as resolved alerts, read from the state history: the
+     * labels and time of their last transition out of a notifying state
+     * (`endsAt`) and of the last transition into one before it (`startsAt`).
+     * Series with no such transition, or of shadow rules, are left out.
+     */
+    async listResolvedAlerts(
+        keys: { ruleUuid: string; fingerprint: string }[],
+    ): Promise<ResolvedAlert[]> {
+        if (keys.length === 0) return [];
+        const notifying = NOTIFYING_ALERT_STATES.map(() => '?').join(', ');
+        const { rows } = await this.database.raw<{
+            rows: {
+                project_uuid: string;
+                alert_rule_uuid: string;
+                fingerprint: string;
+                labels: Record<string, string>;
+                annotations: Record<string, string>;
+                starts_at: Date | null;
+                ends_at: Date;
+            }[];
+        }>(
+            `
+            WITH wanted AS (
+                SELECT * FROM jsonb_to_recordset(?::jsonb)
+                    AS w (alert_rule_uuid uuid, fingerprint text)
+            ),
+            ended AS (
+                SELECT DISTINCT ON (h.alert_rule_uuid, h.fingerprint)
+                    h.project_uuid, h.alert_rule_uuid, h.fingerprint,
+                    h.labels, h.at AS ends_at
+                FROM ${AlertStateHistoryTableName} h
+                JOIN wanted w
+                    ON w.alert_rule_uuid = h.alert_rule_uuid
+                    AND w.fingerprint = h.fingerprint
+                WHERE h.previous_state IN (${notifying})
+                    AND h.state NOT IN (${notifying})
+                ORDER BY h.alert_rule_uuid, h.fingerprint, h.at DESC
+            )
+            SELECT
+                e.project_uuid, e.alert_rule_uuid, e.fingerprint, e.labels,
+                e.ends_at,
+                COALESCE(i.annotations, r.annotations) AS annotations,
+                (
+                    SELECT max(s.at)
+                    FROM ${AlertStateHistoryTableName} s
+                    WHERE s.alert_rule_uuid = e.alert_rule_uuid
+                        AND s.fingerprint = e.fingerprint
+                        AND s.state IN (${notifying})
+                        AND s.at <= e.ends_at
+                ) AS starts_at
+            FROM ended e
+            JOIN ${AlertRulesTableName} r
+                ON r.alert_rule_uuid = e.alert_rule_uuid
+            LEFT JOIN ${AlertInstancesTableName} i
+                ON i.alert_rule_uuid = e.alert_rule_uuid
+                AND i.fingerprint = e.fingerprint
+            WHERE r.shadow = false
+            ORDER BY e.project_uuid, e.alert_rule_uuid, e.fingerprint
+            `,
+            [
+                JSON.stringify(
+                    keys.map((key) => ({
+                        alert_rule_uuid: key.ruleUuid,
+                        fingerprint: key.fingerprint,
+                    })),
+                ),
+                ...NOTIFYING_ALERT_STATES,
+                ...NOTIFYING_ALERT_STATES,
+                ...NOTIFYING_ALERT_STATES,
+            ],
+        );
+        return rows.map((row) => ({
+            projectUuid: row.project_uuid,
+            ruleUuid: row.alert_rule_uuid,
+            fingerprint: row.fingerprint,
+            labels: row.labels,
+            annotations: row.annotations,
+            startsAt: row.starts_at ?? row.ends_at,
+            endsAt: row.ends_at,
         }));
     }
 

@@ -537,3 +537,25 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - POST #1 at 09:00:30. A flush at 09:10:29 → still 1. POST #2 at 09:10:30, POST #3 at 09:20:30.
       - All three are `firing` with startsAt 09:00:00 and the same groupKey. There are 3 `sent` rows in alert_notifications.
 - 2026-11-08T20:37:48Z supervisor: alert-notify-repeat passed the gate in round 1
+- alert-notify-resolve (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotificationModel.listResolvedAlerts(keys)`: reads resolved alerts from `alert_state_history`. `endsAt` is the time of the series' last transition out of a notifying state (firing/nodata/error). `startsAt` is the last transition into one before that. Labels come from the history row. Annotations come from the instance, or from the rule if the instance was removed. Shadow rules are left out. Keys are bound as one JSON array (`jsonb_to_recordset`), because knex `raw` expands JS arrays into `?, ?` lists.
+    - `AlertNotifier`:
+      - A key a group sent as `firing` that is no longer active is added back to that same group as a resolved alert (`NotificationAlert = ActiveAlert | ResolvedAlert`, `alertStatus()`). `groupAlerts` takes an optional `sentAlerts(groupId)` lookup so a resolved alert only joins groups that sent it as firing.
+      - A resolved alert counts as a change, so it goes out after `groupInterval` from the last send.
+      - The claim stores only the firing alerts, so a resolved alert leaves the group once sent. An empty group is deleted on the next flush.
+      - Integrations with `disableResolveMessage` drop resolved alerts and post nothing if none are left. The group still claims, so it doesn't retry later.
+      - `flush()` now also visits projects that only have group rows left. Before, a project whose last alert resolved was never flushed again. This was the bug that made the first attempt send nothing.
+    - `AlertNotifier.test.ts`: added 2 tests (a resolved alert is a change; resolved alerts only join groups that sent them as firing). The file has 7 tests.
+  - Why history and not `alert_instances.state_since`: a resolved series goes to `normal` (or is removed) on its next evaluation, which can be before the group's next send. Its `state_since` would then give the wrong `endsAt`.
+  - Tested:
+    - The check passes after init (1 passed, 7 skipped). In the whole notifications file, firing, grouping, repeat, resolve and routing pass. notifications-log and contact-retries still fail with 404 on `/alerting/notifications`; those are later features.
+    - Unit file 7/7. oxlint and oxfmt are clean. Backend tsc is clean.
+    - As a user: a scratch walk over real HTTP through the harness (`src/alerting/__walk__` and `tmp/walk`; both removed):
+      - Setup: developer POSTs webhooks `a` and `b` (b with `disableResolveMessage`) → 200, and the viewer GET shows the flag. Admin PUTs the tree with `a` (continue) and `b` on team=infra, groupWait 30s, groupInterval 5m → 200. Editor POSTs the rule → 200.
+      - Fire at 09:00. One POST to each webhook at 09:00:30.
+      - Recover at 09:02. The series goes normal at 09:03.
+      - Nothing is sent up to 09:05:29. At 09:05:30, `a` gets a `resolved` payload: db-1, startsAt 09:00, endsAt 09:02 (not 09:03). `b` gets nothing.
+      - Flushes at 09:11 and 09:20 → no more POSTs. The log has 3 `sent` rows (firing, firing, resolved), and 0 groups are left.
+  - Next session: a send that fails still drops the resolved alert from the group (same as firing sends today). alert-contact-retries should cover retrying it.
+- 2026-11-08T20:45:38Z supervisor: alert-notify-resolve passed the gate in round 1

@@ -1,6 +1,12 @@
+import { type NotificationRoute } from '@lightdash/common';
 import { describe, expect, it } from 'vitest';
-import { type ActiveAlert } from './AlertNotificationModel';
-import { alertKey, groupAlerts, isNotificationGroupDue } from './AlertNotifier';
+import { type ActiveAlert, type ResolvedAlert } from './AlertNotificationModel';
+import {
+    alertKey,
+    alertStatus,
+    groupAlerts,
+    isNotificationGroupDue,
+} from './AlertNotifier';
 
 const T0 = new Date('2026-11-08T09:00:00.000Z');
 const at = (seconds: number) => new Date(T0.getTime() + seconds * 1000);
@@ -16,6 +22,11 @@ const alert = (
     labels: { alertname: 'Disk almost full', instance, ...labels },
     annotations: {},
     startsAt,
+});
+
+const resolved = (instance: string, endsAt: Date): ResolvedAlert => ({
+    ...alert(instance),
+    endsAt,
 });
 
 const route = {
@@ -50,6 +61,16 @@ describe('isNotificationGroupDue', () => {
         expect(isNotificationGroupDue(unchanged, sent, at(3630))).toBe(true);
         expect(isNotificationGroupDue(changed, sent, at(89))).toBe(false);
         expect(isNotificationGroupDue(changed, sent, at(90))).toBe(true);
+    });
+
+    it('counts a resolved alert as a change', () => {
+        const sent = {
+            lastSentAt: at(30),
+            sentAlerts: { [alertKey(alert('db-1'))]: 'firing' as const },
+        };
+        const group = { route, alerts: [resolved('db-1', at(60))] };
+        expect(isNotificationGroupDue(group, sent, at(89))).toBe(false);
+        expect(isNotificationGroupDue(group, sent, at(90))).toBe(true);
     });
 
     it('never sends an empty group', () => {
@@ -127,6 +148,38 @@ describe('groupAlerts', () => {
         ).toEqual([
             ['root:{alertname="Disk almost full"}', ['db-1', 'db-2']],
             ['root:{alertname="CPU high"}', ['db-1']],
+        ]);
+    });
+
+    it('adds a resolved alert only to groups that sent it as firing', () => {
+        const all = [
+            { label: 'alertname', operator: '=~' as const, value: '.+' },
+        ];
+        const tree: NotificationRoute = {
+            contactPoint: 'ops',
+            groupBy: ['alertname'],
+            routes: [
+                { matchers: all, contactPoint: 'ops', continue: true },
+                { matchers: all, contactPoint: 'pager' },
+            ],
+        };
+        const groups = groupAlerts(
+            'project',
+            tree,
+            [resolved('db-1', at(60)), alert('db-2')],
+            (id) =>
+                id.includes('"ops"')
+                    ? { [alertKey(alert('db-1'))]: 'firing' }
+                    : undefined,
+        );
+        expect(
+            groups.map((group) => [
+                group.contactPointSlug,
+                group.alerts.map(alertStatus),
+            ]),
+        ).toEqual([
+            ['ops', ['resolved', 'firing']],
+            ['pager', ['firing']],
         ]);
     });
 });
