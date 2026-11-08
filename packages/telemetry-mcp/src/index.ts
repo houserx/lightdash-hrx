@@ -93,6 +93,21 @@ export {
 } from './ask/plan-advisor.service.js';
 export { extractFigures, unverifiedFigures } from './ask/answer-verification.js';
 export type { EvidenceQuery, Figure } from './ask/answer-verification.js';
+export {
+    DEFAULT_ASK_MEMORY_TTL_DAYS,
+    InMemoryAskMemoryStore,
+    MEMORY_KINDS,
+    noteId,
+    shouldHide,
+} from './ask/ask-memory-store.js';
+export type {
+    AskMemoryStore,
+    InMemoryAskMemoryStoreOptions,
+    ListNotesOptions,
+    MemoryKind,
+    MemoryNote,
+    UpsertNoteInput,
+} from './ask/ask-memory-store.js';
 export type {
     AdvisePlanInput,
     ExistingIndex,

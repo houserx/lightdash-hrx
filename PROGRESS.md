@@ -1428,3 +1428,37 @@ docs/eng-1799/telemetry-mcp.md
   `["31%","99"]`. After `bash ./init.sh` the feature check passes. Strict typecheck covered the test file through
   `../tmp/answer-verification-port/tsconfig.json`. `pnpm typecheck` is clean, and the unit suite has 303 passing.
 - 2026-11-08T18:37:40Z supervisor: mcp-answer-verification-port passed the gate in round 1
+
+### mcp-ask-memory-store (session 2026-11-08, round 1)
+
+- Source: portal `api/src/dynamo/askMemory.ts` at `aea73de` (read-only).
+- New `src/ask/ask-memory-store.ts` holds the portal's `MemoryKind`, `MEMORY_KINDS`, `MemoryNote`, `UpsertNoteInput`,
+  `noteId` and `shouldHide`, unchanged. The portal's free functions become the `AskMemoryStore` interface:
+  `upsertNote`, `listNotes(db, { includeHidden })`, `getNote`, `touchNotes`, `voteNote`, `deleteNote`.
+  `InMemoryAskMemoryStore` reproduces the DynamoDB update rules:
+  - if_not_exists keeps createdAt, createdByEmail, status, uses and votes;
+  - each upsert adds 1 to confirmations, and the latest topic, insight and tables win;
+  - sqlTemplate is set only when given;
+  - a hidden note stays hidden;
+  - each voter counts once per note, and a repeat vote or a missing note returns null;
+  - a note is hidden once `shouldHide` is true;
+  - touch skips missing ids.
+  Options are `{ ttlDays = 120 (portal AI_ASK_MEMORY_TTL_DAYS default), now }`. Expired items are dropped on read,
+  like DynamoDB TTL. The portal's `voters` set is kept in a private map, so returned notes never carry voter ids.
+  Notes are copied in and out. Everything is re-exported from `src/index.ts`.
+- **Decision:** no DynamoDB-backed store and no config variable for the TTL or enablement. No feature asks for them,
+  and the package has no AWS SDK. ask_data takes the store as `deps.askMemoryStore` (the harness already passes it).
+- **For mcp-ask-memory-port:** my unit file is `src/ask/in-memory-ask-memory-store.test.ts`, with 6 extra
+  non-portal cases. The file name `ask-memory-store.test.ts` is free on purpose, for the portal's 6 table cases
+  run against the in-memory store. The portal's jest `ddb.send` mocks will need rewriting as store behaviour.
+- Tested as a user: after `bash ./init.sh`, a node script (`../tmp/ask-memory-store/drive.mjs`) imported the built
+  `dist/index.js` and followed the steps:
+  - upsert gave the 32-hex portal noteId with every attribute (confirmations 1, uses and votes 0, ISO times, expiresAt
+    about 120 days out);
+  - re-upserting "active ORDER status!" gave the same id, confirmations 2 and one listed note;
+  - downvote v1 stayed active, a repeat v1 returned null, and v2 made it hidden; the list showed 0, or 1 with
+    includeHidden;
+  - touch set uses to 1, and after delete, get returned undefined.
+  Results: the feature check passes (5/5), the unit file passes 6/6, `pnpm typecheck` is clean, and a strict tsc over
+  the test file passes via `../tmp/ask-memory-store/tsconfig.json`.
+- 2026-11-08T18:40:11Z supervisor: mcp-ask-memory-store passed the gate in round 1
