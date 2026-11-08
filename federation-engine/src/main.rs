@@ -13,6 +13,7 @@ mod labels;
 mod logql;
 mod pg;
 mod promql;
+mod selectors;
 mod server;
 mod session;
 mod sources;

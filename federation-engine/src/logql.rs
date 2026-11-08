@@ -112,7 +112,7 @@ impl Logql {
         };
         Ok(LogqlQuery {
             http: self.http.clone(),
-            source: self.sources.resolve(source, session)?,
+            source: self.sources.resolve_logql(source, &query, session)?,
             metric: true,
             form: vec![
                 ("query", query),
@@ -156,7 +156,7 @@ impl TableFunctionImpl for Logql {
             Some(_) => Some(text_argument(arg(5)?, "source", SIGNATURE)?),
             None => None,
         };
-        let source = self.sources.resolve(source, session)?;
+        let source = self.sources.resolve_logql(source, &query, session)?;
         Ok(Arc::new(LogqlQuery {
             http: self.http.clone(),
             source,

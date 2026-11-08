@@ -1422,3 +1422,35 @@ token verification for a *valid* token, which feature 39 then hardens.
   description`. A token with a description then returned 2. The restricted mock saw 1 request
   and the store saw 2 calls, both from the allowed query. The check passed after init.
 - 2026-11-08T20:33:14Z supervisor: eng-audited-query-description-required passed the gate in round 1
+- 2026-11-08 eng-restricted-loki-selectors (round 1): a Loki source's `restricted_selectors` are
+  now checked per query rather than making the whole source restricted. The new
+  `src/selectors.rs` (`may_touch`) finds every stream selector `{...}` in a logql or
+  logql_metric query (skipping `"`/`` ` `` string literals) and parses its matchers. The query is
+  open only if every selector is *provably disjoint* from every restricted selector. That means
+  some label has `="v"` against `="w"` (v != w), or `="v"` against `!="v"`. Everything else counts
+  as restricted and goes through `Access::require_restricted` (42501 naming
+  telemetry_restricted, plan time, before any request, and the statement becomes an Audited
+  Query): regex matchers, missing labels, `!=` alone, any `\` escape in a value, a `#` outside a
+  string, unbalanced braces, an empty `{}`, a query with no selector, and an unparseable
+  restricted selector in the config. `HttpSources::resolve_logql` (src/sources.rs) does the check
+  and `logql.rs` calls it for both functions. `is_restricted` no longer counts Loki selectors.
+  CloudWatch Logs `restricted_log_groups` still restrict the whole source; that is the next
+  feature (eng-restricted-cloudwatch-log-groups).
+  - Contract assumption: CONTRACTS §1.2 says "touches a stream selector", and the feature says
+    "only provably disjoint selectors are open". Only the eq/eq and eq/ne cases count as proof.
+    `{namespace=~"web"}` is restricted even though it is logically disjoint. This is narrow on
+    purpose and fails closed.
+  - `engine-config`'s `is_audited` is unchanged: a Loki source with restricted_selectors still
+    needs `[audit]`.
+  Tested as a user: `../tmp/restricted-loki/run.sh <out>` starts a synthetic Loki mock, the
+  DynamoDB+S3 store and the engine (loki-a, restricted_selectors = ['{namespace="platform"}']).
+  It drives one pg-wire session with pgclient. With no identity, {namespace="web"},
+  {namespace="web", app="api"} and a metric query over namespace="web" returned 1 row each. These
+  each got 42501 needs telemetry_restricted: {namespace="platform"}, {namespace="platform",
+  app="api"}, {app="api"}, {namespace=~"plat.*"}, {namespace!="web"}, sum(count_over_time(
+  {namespace="platform"}[5m])), and a web/platform ratio. After SET hrx.identity with a
+  restricted reader token, {namespace="platform"} returned 1 row. Loki saw exactly 4 requests
+  (the 3 open queries and the authorized one), and the store saw one dynamo put and one S3 put.
+  The check passed after init, as did `selectors::` unit tests and sources::eng_logql_streams and
+  sources::eng_logql_metric.
+- 2026-11-08T20:38:43Z supervisor: eng-restricted-loki-selectors passed the gate in round 1

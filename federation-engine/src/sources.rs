@@ -9,6 +9,7 @@ use datafusion::error::DataFusionError;
 use engine_config::{Config, SourceKind, SourceSettings};
 
 use crate::identity::Access;
+use crate::selectors;
 use crate::session::sqlstate;
 
 /// A resolved source: its name, base URL (no trailing `/`) and row cap.
@@ -32,6 +33,9 @@ pub struct HttpSources {
     max_rows: HashMap<String, usize>,
     /// Restricted Telemetry sources: reading one needs `telemetry_restricted` and is audited.
     restricted: Vec<String>,
+    /// A Loki source's `restricted_selectors`: a query that may touch one of them is a read of
+    /// Restricted Telemetry.
+    restricted_selectors: HashMap<String, Vec<String>>,
     default: Option<String>,
 }
 
@@ -67,6 +71,20 @@ impl HttpSources {
                 .filter(|s| s.kind() == kind && is_restricted(&s.settings, s.restricted))
                 .map(|s| s.name.clone())
                 .collect(),
+            restricted_selectors: config
+                .sources
+                .iter()
+                .filter(|s| s.kind() == kind)
+                .filter_map(|s| match &s.settings {
+                    SourceSettings::Loki {
+                        restricted_selectors,
+                        ..
+                    } if !restricted_selectors.is_empty() => {
+                        Some((s.name.clone(), restricted_selectors.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
             default: config.default_source(kind).map(|s| s.name.clone()),
         }
     }
@@ -78,12 +96,35 @@ impl HttpSources {
         session: &dyn Session,
     ) -> Result<HttpSource, DataFusionError> {
         let (name, max_rows) = self.pick(name, session)?;
+        Ok(self.http_source(name, max_rows))
+    }
+
+    /// [`HttpSources::resolve`] for a LogQL `query`: on a Loki source with
+    /// `restricted_selectors`, a query that may touch one of them (unless provably disjoint from
+    /// all of them) needs the session's identity to allow it (42501 otherwise) and makes the
+    /// statement an Audited Query.
+    pub fn resolve_logql(
+        &self,
+        name: Option<String>,
+        query: &str,
+        session: &dyn Session,
+    ) -> Result<HttpSource, DataFusionError> {
+        let (name, max_rows) = self.pick(name, session)?;
+        if let Some(selectors) = self.restricted_selectors.get(&name)
+            && selectors::may_touch(query, selectors)
+        {
+            Access::require_restricted(session, &name)?;
+        }
+        Ok(self.http_source(name, max_rows))
+    }
+
+    fn http_source(&self, name: String, max_rows: usize) -> HttpSource {
         let url = self.urls.get(&name).cloned().unwrap_or_default();
-        Ok(HttpSource {
+        HttpSource {
             name,
             url,
             max_rows,
-        })
+        }
     }
 
     /// The name and row cap of the source a call names, or of the kind's default source. Any
@@ -132,16 +173,12 @@ fn base_url(settings: &SourceSettings) -> Option<&String> {
     }
 }
 
-/// A `restricted = true` source, a Loki source with `restricted_selectors` or a CloudWatch Logs
-/// source with `restricted_log_groups`: until selectors and log groups are checked for overlap,
-/// every query to it may touch Restricted Telemetry.
+/// A `restricted = true` source or a CloudWatch Logs source with `restricted_log_groups`: until
+/// log groups are checked for overlap, every query to it may touch Restricted Telemetry. (A Loki
+/// source's `restricted_selectors` are checked per query, in [`HttpSources::resolve_logql`].)
 fn is_restricted(settings: &SourceSettings, restricted: bool) -> bool {
     restricted
         || match settings {
-            SourceSettings::Loki {
-                restricted_selectors,
-                ..
-            } => !restricted_selectors.is_empty(),
             SourceSettings::CloudwatchLogs {
                 restricted_log_groups,
                 ..
