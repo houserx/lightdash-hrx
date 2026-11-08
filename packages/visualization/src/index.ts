@@ -2,8 +2,8 @@
  * `@lightdash/visualization`: draws a Lightdash chart from its data.
  *
  * A chart (`ChartView`) and its data (`ChartData`) go in; what to draw comes
- * out (`RenderedChart`): an ECharts option, a table or big number model, a
- * Vega-Lite spec, or `empty` with the reason. The engine never runs a query.
+ * out (`RenderedChart`): an ECharts option, a table, big number or log
+ * stream model, a Vega-Lite spec, or `empty` with the reason. The engine never runs a query.
  */
 
 // Drawing
@@ -54,3 +54,4 @@ export type {
     TableTotalCell,
 } from './table/model';
 export type { CustomVisualizationData } from './custom/config';
+export type { LogStreamLine, LogStreamModel } from './logStream/model';

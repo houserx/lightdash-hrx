@@ -49,6 +49,12 @@ import {
     resolveGaugeChartConfig,
 } from './gauge';
 import {
+    buildLogStreamModel,
+    resolveLogStreamChartConfig,
+    type LogStreamModel,
+    type ResolvedLogStreamChartConfig,
+} from './logStream';
+import {
     buildPieEchartsOption,
     getPieFieldPools,
     resolvePieChartConfig,
@@ -116,7 +122,6 @@ export type RenderOptions = {
 export type UnsupportedChartType =
     | ChartType.MAP
     | ChartType.DATA_APP_VIZ
-    | ChartType.LOG_STREAM
     | ChartType.TRACE_WATERFALL;
 
 export type EChartsChartType =
@@ -154,8 +159,13 @@ export type RenderOutput =
           spec: CustomVis['spec'];
           data: CustomVisualizationData;
       }
+    | {
+          kind: 'logStream';
+          chartType: ChartType.LOG_STREAM;
+          model: LogStreamModel;
+      }
     | { kind: 'empty'; chartType: ChartType; reason: EmptyReason }
-    /** Not drawn by this package (yet): maps, data-app visualizations and telemetry charts. */
+    /** Not drawn by this package (yet): maps, data-app visualizations and trace waterfalls. */
     | {
           kind: 'unsupported';
           chartType: UnsupportedChartType;
@@ -208,6 +218,7 @@ export type ResolvedChart =
           }
       >
     | Resolved<ChartType.CUSTOM, CustomVis>
+    | Resolved<ChartType.LOG_STREAM, ResolvedLogStreamChartConfig>
     | Resolved<UnsupportedChartType, unknown>;
 
 const DEFAULT_SIZE = { width: 600, height: 400 };
@@ -337,9 +348,17 @@ export const resolveChart = (
                 }),
                 derived: {},
             };
+        case ChartType.LOG_STREAM:
+            return {
+                chartType: ChartType.LOG_STREAM,
+                config: resolveLogStreamChartConfig({
+                    chartConfig: chartConfig.config,
+                    data,
+                }),
+                derived: {},
+            };
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:
-        case ChartType.LOG_STREAM:
         case ChartType.TRACE_WATERFALL:
             return {
                 chartType: chartConfig.type,
@@ -559,9 +578,21 @@ export const buildChart = (
                 spec: resolved.config.spec,
                 data: buildCustomVisualizationData(resultsData),
             });
+        case ChartType.LOG_STREAM:
+            if (noRows) return empty(ChartType.LOG_STREAM, 'noRows');
+            if (!resolved.config.lineFieldId) {
+                return empty(ChartType.LOG_STREAM, 'incompleteConfig');
+            }
+            return done({
+                kind: 'logStream',
+                chartType: ChartType.LOG_STREAM,
+                model: buildLogStreamModel({
+                    rows: data.rows,
+                    config: resolved.config,
+                }),
+            });
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:
-        case ChartType.LOG_STREAM:
         case ChartType.TRACE_WATERFALL:
             return done({ kind: 'unsupported', chartType: resolved.chartType });
         default:

@@ -377,3 +377,30 @@ should add a dated line here per feature.
   that gate (for example, a log-stream branch like the `DATA_APP_VIZ` one) to offer CSV. The ee AI-copilot callers of
   `CHART_TYPES_WITHOUT_IMAGE_EXPORT` and `getChartIcon` pick up the new entries automatically, with no ee edit.
 - 2026-11-08T18:41:04Z supervisor: viz-chart-type-wiring passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-model (session)
+
+- **What.** A new folder, `packages/visualization/src/logStream/`. `config.ts` holds `resolveLogStreamChartConfig`: a
+  field the config names stays bound while the data has it. Otherwise each role binds by name to a field id equal to
+  or ending in `_<name>`, else to a field with that label: line `line`, then `message`; timestamp `timestamp`; level
+  `level`; labels `labels`, then `fields`. These are the `logql()`/`cloudwatch_logs()` columns of CONTRACTS §1.1. It
+  also fills the defaults: wrapLines false, newestFirst true, showLabels false. `model.ts` holds `buildLogStreamModel`:
+  one line per row with `id` (row index), `line`, `timestamp` (epoch ms or null), `formattedTimestamp`, `level`,
+  `color` and `labels`, plus the display options and the full `levelColors` map. Labels can be an object or JSON
+  text. The level comes from the level column, else the label `level`, then `detected_level`, else `unknown`
+  (contract assumption 2).
+- **render.ts.** `LOG_STREAM` left `UnsupportedChartType`. `RenderOutput` gains `{ kind: 'logStream', model }`. No
+  rows gives `empty`/`noRows`. Rows with no line column give `empty`/`incompleteConfig`. The README's kind switch and
+  the smoke-pack consumer's exhaustive switch list the new kind. `LogStreamLine`/`LogStreamModel` are exported from the
+  package index.
+- **Tested as a user.** There is no telemetry engine or frontend log renderer yet: the renderer is `viz-log-stream-view`.
+  So I called the built `dist/cjs` `renderChart` from plain Node. The input was synthetic logql-shaped rows (fields
+  `logs_timestamp/line/level/labels/stream`) with no config. Every line came back with its timestamp, its level
+  (ERR→error, crit→critical, null+detected_level notice→info), Grafana's colour and its labels, from both JSON text
+  and object labels. Zero rows gave `empty`/`noRows`. The check passes 9/9 after `bash ./init.sh`. The new unit tests
+  pass (6/6), and so do render.test (21) and readme.test. The visualization typecheck, lint and format check pass, and
+  so does the frontend typecheck.
+- **Next.** Lines keep the data's order. Sorting by `newestFirst` belongs to `viz-log-stream-order`: sort on
+  `timestamp` (null last) in `buildLogStreamModel`. The view should read `model.lines[].formattedTimestamp` or format
+  `timestamp` itself.
+- 2026-11-08T18:46:43Z supervisor: viz-log-stream-model passed the gate in round 1
