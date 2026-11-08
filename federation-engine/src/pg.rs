@@ -17,8 +17,11 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::common::ScalarValue;
 use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
+use datafusion::dataframe::DataFrame;
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::SQLOptions;
+use datafusion::execution::{SessionState, SessionStateBuilder};
+use datafusion::execution::FunctionRegistry;
 use datafusion::logical_expr::{
     Cast, ColumnarValue, Expr, LogicalPlan, ScalarUDF, TryCast, Volatility, create_udf,
 };
@@ -35,7 +38,7 @@ use pgwire::api::portal::{Format, Portal};
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{
     DataRowEncoder, DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo,
-    QueryResponse, Response,
+    QueryResponse, Response, Tag,
 };
 use pgwire::api::stmt::{QueryParser, StoredStatement};
 use pgwire::api::store::PortalStore;
@@ -44,6 +47,8 @@ use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 use pgwire::messages::data::DataRow;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
+
+use crate::session::{Change, Settings, SqlStateError, current_setting_udf};
 
 /// PBKDF2 iterations for SCRAM-SHA-256 (the Postgres default).
 const SCRAM_ITERATIONS: usize = 4096;
@@ -138,15 +143,22 @@ impl PgWireServerHandlers for PgHandlers {
     }
 }
 
-/// SQL planning and execution on DataFusion. Read-only: DDL, DML and session statements are
-/// refused.
+/// SQL planning and execution on DataFusion. Read-only: DDL and DML are refused; `SET` and
+/// `RESET` change the connection's [`Settings`] and DataFusion's own statements are refused.
 pub struct Sql {
     ctx: SessionContext,
 }
 
+/// What a planned statement does when executed.
+#[derive(Debug)]
+enum Action {
+    Query(LogicalPlan),
+    Change(Change),
+}
+
 impl Sql {
-    /// Sessions run in UTC, so `TIMESTAMP WITH TIME ZONE` values carry a zone (and are sent as
-    /// timestamptz) rather than being planned as zone-less timestamps.
+    /// Sessions default to UTC, so `TIMESTAMP WITH TIME ZONE` values carry a zone (and are sent
+    /// as timestamptz) rather than being planned as zone-less timestamps.
     ///
     /// DataFusion's own `version()` is replaced by [`version_udf`].
     fn new() -> Sql {
@@ -157,28 +169,43 @@ impl Sql {
         Sql { ctx }
     }
 
-    async fn plan(&self, sql: &str) -> Result<LogicalPlan, DataFusionError> {
-        let plan = self.ctx.state().create_logical_plan(sql).await?;
+    /// The shared state as one connection sees it: planned in its time zone, with
+    /// `current_setting` reading its settings.
+    fn state_for(&self, settings: &Settings) -> Result<SessionState, DataFusionError> {
+        let mut state = self.ctx.state();
+        if let Some(zone) = settings.time_zone() {
+            state.config_mut().options_mut().execution.time_zone = Some(zone.to_string());
+            // Rebuilt so zone-aware functions such as `now()` pick up the new zone.
+            state = SessionStateBuilder::new_from_existing(state).build();
+        }
+        state.register_udf(Arc::new(current_setting_udf(settings.clone())))?;
+        Ok(state)
+    }
+
+    async fn plan(&self, sql: &str, settings: &Settings) -> Result<Action, DataFusionError> {
+        let state = self.state_for(settings)?;
+        let statement = state.sql_to_statement(sql, &state.config().options().sql_parser.dialect)?;
+        if let Some(change) = Change::of(&statement) {
+            return Ok(Action::Change(change?));
+        }
+        let plan = state.statement_to_plan(statement).await?;
         SQLOptions::new()
             .with_allow_ddl(false)
             .with_allow_dml(false)
             .with_allow_statements(false)
             .verify_plan(&plan)?;
-        Ok(plan)
+        Ok(Action::Query(plan))
     }
 
     async fn execute(
         &self,
         plan: LogicalPlan,
+        settings: &Settings,
     ) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
-        let df = self.ctx.execute_logical_plan(plan).await?;
+        let df = DataFrame::new(self.state_for(settings)?, plan);
         let schema = df.schema().as_arrow().clone();
         let batches = df.collect().await?;
         Ok((schema, batches))
-    }
-
-    async fn run(&self, sql: &str) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
-        self.execute(self.plan(sql).await?).await
     }
 }
 
@@ -205,14 +232,26 @@ pub struct QueryHandler {
 
 #[async_trait]
 impl SimpleQueryHandler for QueryHandler {
-    async fn do_query<C>(&self, _client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
+    async fn do_query<C>(&self, client: &mut C, query: &str) -> PgWireResult<Vec<Response>>
     where
         C: ClientInfo + ClientPortalStore + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
         C::PortalStore: PortalStore,
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
-        let (schema, batches) = self.sql.run(query).await.map_err(query_error)?;
+        let settings = Settings::of(client.metadata());
+        let plan = match self.sql.plan(query, &settings).await.map_err(query_error)? {
+            Action::Query(plan) => plan,
+            Action::Change(change) => {
+                change.apply(client.metadata_mut());
+                return Ok(vec![Response::Execution(Tag::new(change.tag()))]);
+            }
+        };
+        let (schema, batches) = self
+            .sql
+            .execute(plan, &settings)
+            .await
+            .map_err(query_error)?;
         let columns = columns_of(&schema);
         let fields = Arc::new(field_infos(&columns, &Format::UnifiedText)?);
         let rows = encode_rows(&fields, &batches)?;
@@ -226,8 +265,8 @@ impl SimpleQueryHandler for QueryHandler {
 /// A statement from a Parse message: planned once, executed on every Bind/Execute.
 #[derive(Debug)]
 pub struct Prepared {
-    /// The plan with `$n` placeholders still in it.
-    plan: LogicalPlan,
+    /// The plan with `$n` placeholders still in it, or the `SET` it makes.
+    action: Action,
     /// The Arrow type each `$n` binds as (index 0 is `$1`).
     params: Vec<DataType>,
     /// The Postgres type each `$n` is described as.
@@ -242,15 +281,24 @@ impl QueryParser for Sql {
 
     async fn parse_sql<C>(
         &self,
-        _client: &C,
+        client: &C,
         sql: &str,
         types: &[Option<Type>],
     ) -> PgWireResult<Option<Arc<Prepared>>>
     where
         C: ClientInfo + Unpin + Send + Sync,
     {
-        let plan = self.plan(sql).await.map_err(query_error)?;
-        Ok(Some(Arc::new(prepare(plan, types)?)))
+        let settings = Settings::of(client.metadata());
+        let prepared = match self.plan(sql, &settings).await.map_err(query_error)? {
+            Action::Query(plan) => prepare(plan, types)?,
+            Action::Change(change) => Prepared {
+                action: Action::Change(change),
+                params: vec![],
+                param_types: vec![],
+                columns: vec![],
+            },
+        };
+        Ok(Some(Arc::new(prepared)))
     }
 
     fn get_parameter_types(&self, stmt: &Arc<Prepared>) -> PgWireResult<Vec<Type>> {
@@ -314,7 +362,7 @@ impl ExtendedQueryHandler for QueryHandler {
 
     async fn do_query<C>(
         &self,
-        _client: &mut C,
+        client: &mut C,
         portal: &Portal<Arc<Prepared>>,
         _max_rows: usize,
     ) -> PgWireResult<Response>
@@ -326,12 +374,20 @@ impl ExtendedQueryHandler for QueryHandler {
     {
         let stmt = &portal.statement.statement;
         let values = bind_params(stmt, portal)?;
-        let plan = stmt
-            .plan
-            .clone()
-            .with_param_values(values)
+        let plan = match &stmt.action {
+            Action::Query(plan) => plan.clone(),
+            Action::Change(change) => {
+                change.apply(client.metadata_mut());
+                return Ok(Response::Execution(Tag::new(change.tag())));
+            }
+        };
+        let plan = plan.with_param_values(values).map_err(query_error)?;
+        let settings = Settings::of(client.metadata());
+        let (_, batches) = self
+            .sql
+            .execute(plan, &settings)
+            .await
             .map_err(query_error)?;
-        let (_, batches) = self.sql.execute(plan).await.map_err(query_error)?;
         // Encoded as described, so binary values match the types in RowDescription.
         let fields = Arc::new(field_infos(&stmt.columns, &portal.result_column_format)?);
         let rows = encode_rows(&fields, &batches)?;
@@ -372,7 +428,7 @@ fn prepare(plan: LogicalPlan, declared: &[Option<Type>]) -> PgWireResult<Prepare
     }
     let columns = columns_of(plan.schema().as_arrow());
     Ok(Prepared {
-        plan,
+        action: Action::Query(plan),
         params,
         param_types,
         columns,
@@ -733,7 +789,13 @@ impl<T: postgres_types::ToSql + pgwire::types::ToSqlText> PutValue for T {
 
 /// Maps a DataFusion error to an ErrorResponse with a SQLSTATE.
 fn query_error(e: DataFusionError) -> PgWireError {
-    let code = match e.find_root() {
+    let root = e.find_root();
+    if let DataFusionError::External(inner) = root
+        && let Some(e) = inner.downcast_ref::<SqlStateError>()
+    {
+        return user_error(e.code, e.message.clone());
+    }
+    let code = match root {
         // DataFusion has no typed "unknown table" error, only this wording (unit-tested below).
         DataFusionError::Plan(msg)
             if msg.starts_with("table '") && msg.ends_with("' not found") =>
@@ -779,9 +841,20 @@ mod tests {
         assert_eq!(get(None).password(), [4]);
     }
 
+    /// Plans and runs a query in a fresh session.
+    fn run(sql: &str) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
+        futures::executor::block_on(async {
+            let sql_ = Sql::new();
+            let settings = Settings::default();
+            match sql_.plan(sql, &settings).await? {
+                Action::Query(plan) => sql_.execute(plan, &settings).await,
+                Action::Change(c) => panic!("not a query: {c:?}"),
+            }
+        })
+    }
+
     fn sqlstate_of(sql: &str) -> String {
-        let sql_ = Sql::new();
-        let e = futures::executor::block_on(sql_.run(sql)).unwrap_err();
+        let e = run(sql).unwrap_err();
         match query_error(e) {
             PgWireError::UserError(info) => info.code.clone(),
             other => panic!("not a user error: {other:?}"),
@@ -840,7 +913,10 @@ mod tests {
 
     fn prepared(sql: &str, declared: &[Option<Type>]) -> Prepared {
         let sql_ = Sql::new();
-        let plan = futures::executor::block_on(sql_.plan(sql)).unwrap();
+        let action = futures::executor::block_on(sql_.plan(sql, &Settings::default())).unwrap();
+        let Action::Query(plan) = action else {
+            panic!("not a query: {sql}")
+        };
         prepare(plan, declared).unwrap()
     }
 
@@ -928,8 +1004,7 @@ mod tests {
 
     #[test]
     fn version_reports_postgres_16_and_the_crate_version() {
-        let sql_ = Sql::new();
-        let (_, batches) = futures::executor::block_on(sql_.run("SELECT version()")).unwrap();
+        let (_, batches) = run("SELECT version()").unwrap();
         let v = batches[0].column(0).as_string::<i32>().value(0).to_string();
         let crate_version = env!("CARGO_PKG_VERSION");
         assert_eq!(v, format!("PostgreSQL 16.0 (hrx-federation-engine {crate_version})"));

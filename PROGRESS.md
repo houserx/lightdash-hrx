@@ -453,3 +453,50 @@ token verification for a *valid* token, which feature 39 then hardens.
   agree. The unit test asserts that. `pg_catalog.version()` (qualified) is not handled; that belongs to
   the catalog features if they need it.
 - 2026-11-08T16:33:59Z supervisor: eng-pg-version passed the gate in round 1
+- 2026-11-08 eng-pg-session-settings (session 7): `SET`/`RESET` are per connection, and
+  `current_setting(name)` reports the value. The new module is `src/session.rs`, wired in from `src/pg.rs`.
+  `chrono-tz = "0.10"` became a direct dependency; it was already in Cargo.lock through arrow.
+  - Settings live in the pgwire client's metadata under `hrx.setting:<lower-case name>`, so they
+    belong to one connection and end with it. Statements are parsed with
+    `state.sql_to_statement`. `Change::of` turns `SET [SESSION] x {=|TO} v`, `SET TIME ZONE v`,
+    `SET x TO DEFAULT`, `RESET x` and `RESET ALL` into a change. `SET LOCAL`, `SET ROLE`, `SET NAMES` and
+    `SET TRANSACTION` are accepted and do nothing. The command tag is `SET` or `RESET`. In the
+    extended protocol, the change happens at Execute, and Describe answers ParameterDescription([]) + NoData.
+  - Every name is stored as given (`statement_timeout`, `lightdash.agent`, `search_path`,
+    `application_name`, unknown ones), so current_setting can read it back. Only `timezone` is
+    validated. It must be an IANA name, matched case-insensitively and stored in canonical form
+    (`utc` → `UTC`). Anything else gets 22023 `invalid value for parameter "TimeZone"`. Postgres's
+    POSIX offsets such as `'+05:30'` are refused on purpose, because their sign is inverted. Defaults are
+    `timezone` → `UTC` and `statement_timeout` → `0`. An unknown name in current_setting gets
+    42704. Only the one-argument form exists; the `missing_ok` form does not.
+  - `Sql::state_for(settings)` clones the shared state once per plan and once per execute. It
+    registers a `current_setting` UDF that holds a snapshot of the settings. When a zone has been SET,
+    it also sets `execution.time_zone` and rebuilds the state through `SessionStateBuilder`, so
+    `now()` follows the zone. As a result, timestamptz columns are planned and printed in the
+    session zone, as in Postgres (`...05+00'::timestamptz` → `2026-01-01 22:04:05-05` in
+    America/New_York, and a literal with no offset is read as local time). OID 1184 is unchanged. The
+    default zone is still `+00:00`. Execution now goes through `DataFrame::new(state, plan)`
+    instead of `ctx.execute_logical_plan`.
+  - `SqlStateError` (in session.rs) wrapped in `DataFusionError::External` lets any code return its
+    own SQLSTATE. `query_error` unwraps it.
+  Tested as a user: a throwaway tokio-postgres program `../tmp/pgclient/src/bin/sess.rs` (config
+  `../tmp/ver.toml`) spawns `target/debug/engine`. Results: current_setting('TIMEZONE') → `UTC` in
+  both the simple and extended protocols. The SETs for statement_timeout, lightdash.agent and
+  timezone 'America/New_York' complete in both protocols. After them, the zone reads
+  `America/New_York`, timestamps print `-05` (`-04` in July), `now()` prints `-05`, and
+  `current_setting('statement_timeout')` reads `600000`. Extended `SET timezone TO 'Europe/Berlin'`
+  → `Europe/Berlin`. A bad zone gives 22023. `SET some.unknown_setting` and `SET search_path TO public`
+  are accepted. A second connection still sees `UTC` while the first keeps Berlin. `RESET timezone`
+  goes back to `UTC`. The check `pgwire::eng_pg_session_settings`, the five earlier pgwire checks,
+  config + harness self-tests and the 11 unit tests (3 new in session.rs) all pass.
+  For later sessions:
+  - eng-pg-statement-timeout: read `Settings::get("statement_timeout")`, which is the raw text
+    (`540000`; Postgres also allows units such as `'5s'`). It is not validated yet.
+  - The identity feature: `SET hrx.identity` is already accepted and stored under
+    `hrx.setting:hrx.identity`. Read it with `Settings::get`. It does mean
+    `current_setting('hrx.identity')` echoes the session's own token back to it. Decide whether to keep that or hide it.
+  - Settings are snapshotted when a statement is planned. If a statement is prepared once and
+    reused after a later `SET`, its current_setting value and zone come from Parse time.
+  - Simple queries are still one statement each (`a; b` is refused by `sql_to_statement`).
+    eng-pg-transaction-statements needs `BEGIN; ROLLBACK`, so it will have to split statements.
+- 2026-11-08T16:41:36Z supervisor: eng-pg-session-settings passed the gate in round 1

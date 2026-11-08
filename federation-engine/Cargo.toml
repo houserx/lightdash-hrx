@@ -24,6 +24,7 @@ path = "tests/acceptance/main.rs"
 async-trait = "0.1.92"
 axum = "0.8"
 chrono = "0.4"
+chrono-tz = "0.10"
 datafusion = { version = "55", default-features = false, features = ["sql", "nested_expressions", "datetime_expressions", "string_expressions", "unicode_expressions", "regex_expressions", "crypto_expressions", "encoding_expressions", "recursive_protection"] }
 engine-config = { path = "crates/engine-config" }
 futures = "0.3.34"
