@@ -1074,3 +1074,28 @@ should add a dated line here per feature.
   `stat-sparkline-thresholds.test.ts` 7/7 after `bash ./init.sh`; regressions stat-sparkline-value 9/9, build 31/31,
   client-install 4/4; chart-registry typecheck and oxfmt clean. Scratch driver in `../tmp/drive-stat-thresholds/`.
 - 2026-11-08T20:34:52Z supervisor: viz-registry-stat-thresholds passed the gate in round 1
+
+## viz-registry-stat-sparkline (round 1)
+- **What.** With `graphMode` area (the default; unknown values also mean area), the stat entry draws
+  `svg[data-testid=stat-sparkline]` behind the value, across the bottom half of the tile: a filled area (opacity 0.2)
+  under a line through every point. `data-points` = points drawn. The pure geometry is `sparkline()` in
+  `chart-registry/src/charts/stat-sparkline/stat.ts` (with `graphModeOption`). x spans first..last time, y the series
+  min (bottom)..max (top); a flat series runs through the middle; if every point has the same time they are spread in row
+  order. `div[data-testid=stat]` now carries `data-graph-mode` and is `position:relative`. The value and label have
+  `z-index:1` so they sit above the sparkline.
+- **Decisions.** A point needs both a time and a value. Null values are skipped, so the line joins its neighbours. No
+  sparkline when the time field is unbound, when fewer than two points can be drawn, or when the value is "No data".
+  Colour: the threshold colour in value and none colour modes (Grafana colours the sparkline even when colour mode is
+  none). In background mode it takes the text colour (white or near-black). Both paths carry `data-color`.
+- **Version.** stat-sparkline bumped to **1.2.0** in `registry.json`, with a changelog and a description update.
+  value-mappings must bump it again. If a mapping gives the value a colour, decide whether the sparkline follows it
+  (Grafana: the field colour, i.e. thresholds, not the mapping colour).
+- **Tested as a user.** Built the registry, untarred stat-sparkline@1.2.0 dist.tar and ran its bundle in jsdom as the
+  host does: Lightdash-style ids, digit-string epoch times, string numerics, rows newest first. Default options with the
+  preview series: "42.5 ms" over an 8-point green sparkline, x strictly increasing and y following the series in time
+  order. graphMode area [3,1,4,1,5,9]: 6 points, value "9". graphMode none: no sparkline. Red threshold: line and area
+  `#F2495C`. Background mode: white line. Nulls skipped (3 of 5 points). Flat series: mid-line. One point, time unbound
+  and no rows: no sparkline. `viz-rendered` ack sent each time. Check `stat-sparkline-graph.test.ts` 3/3 after
+  `bash ./init.sh`. Regressions: stat-sparkline-value 9/9, -thresholds 7/7, build 31/31, client-install 4/4. Typecheck
+  and oxfmt clean. Scratch driver in `../tmp/drive-stat-sparkline/` (outside the repo).
+- 2026-11-08T20:38:37Z supervisor: viz-registry-stat-sparkline passed the gate in round 1

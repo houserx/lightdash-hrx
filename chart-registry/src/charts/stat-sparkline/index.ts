@@ -8,11 +8,15 @@ import {
 } from '../../shared/vizContext';
 import {
     DEFAULT_REDUCER,
+    graphModeOption,
     isReducer,
     orderPoints,
     reduce,
+    sparkline,
     type StatPoint,
 } from './stat';
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 /** A time cell as epoch millis: dates, epoch millis (numbers or digits) and date strings. */
 const toMillis = (raw: unknown): number | null => {
@@ -73,6 +77,46 @@ const dataRange = (
     return min < max ? { min, max } : undefined;
 };
 
+/**
+ * The sparkline drawn behind the value, across the bottom of the tile:
+ * a filled area under a line through every point, in `color`. Null when
+ * the series has no line to draw (no time field, or under two points).
+ */
+const sparklineSvg = (
+    points: readonly StatPoint[],
+    width: number,
+    height: number,
+    color: string,
+): SVGSVGElement | null => {
+    const spark = sparkline(points, width, height);
+    if (!spark) return null;
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('data-testid', 'stat-sparkline');
+    svg.setAttribute('data-points', String(spark.points));
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.style.cssText =
+        'position:absolute;left:0;bottom:0;width:100%;height:50%;' +
+        'pointer-events:none';
+    const area = document.createElementNS(SVG_NS, 'path');
+    area.setAttribute('d', spark.area);
+    area.setAttribute('fill', color);
+    area.setAttribute('fill-opacity', '0.2');
+    area.setAttribute('stroke', 'none');
+    area.setAttribute('data-color', color);
+    const line = document.createElementNS(SVG_NS, 'path');
+    line.setAttribute('d', spark.line);
+    line.setAttribute('fill', 'none');
+    line.setAttribute('stroke', color);
+    line.setAttribute('stroke-width', '1.5');
+    line.setAttribute('stroke-linejoin', 'round');
+    line.setAttribute('vector-effect', 'non-scaling-stroke');
+    line.setAttribute('data-color', color);
+    svg.append(area, line);
+    return svg;
+};
+
 const render = (root: HTMLElement, context: VizContext): void => {
     root.textContent = '';
     const options = context.options ?? {};
@@ -82,6 +126,7 @@ const render = (root: HTMLElement, context: VizContext): void => {
     const unit = typeof options.unit === 'string' ? options.unit : '';
     const decimals = decimalsOption(options.decimals);
     const colorMode = colorModeOption(options.colorMode);
+    const graphMode = graphModeOption(options.graphMode);
     const thresholds = parseThresholds(options.thresholds);
 
     const points: StatPoint[] = orderPoints(
@@ -99,8 +144,9 @@ const render = (root: HTMLElement, context: VizContext): void => {
     stat.setAttribute('data-testid', 'stat');
     stat.setAttribute('data-reducer', reducer);
     stat.setAttribute('data-color-mode', colorMode);
+    stat.setAttribute('data-graph-mode', graphMode);
     stat.style.cssText =
-        'display:flex;flex-direction:column;align-items:center;' +
+        'position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;' +
         'justify-content:center;height:100%;box-sizing:border-box;padding:8px';
 
     const valueEl = document.createElement('div');
@@ -112,7 +158,8 @@ const render = (root: HTMLElement, context: VizContext): void => {
     );
     valueEl.style.cssText =
         `font-size:${Math.round(size)}px;font-weight:500;line-height:1.1;` +
-        'white-space:nowrap;font-variant-numeric:tabular-nums';
+        'white-space:nowrap;font-variant-numeric:tabular-nums;' +
+        'position:relative;z-index:1';
 
     if (value === null) {
         valueEl.textContent = 'No data';
@@ -135,6 +182,17 @@ const render = (root: HTMLElement, context: VizContext): void => {
             stat.style.background = color;
             stat.style.color = textOn(color);
         }
+        if (graphMode === 'area') {
+            // Grafana draws the sparkline in the threshold colour, or in the
+            // text colour over a coloured background.
+            const spark = sparklineSvg(
+                points,
+                root.clientWidth || 300,
+                Math.max(1, Math.round((root.clientHeight || 150) / 2)),
+                colorMode === 'background' ? textOn(color) : color,
+            );
+            if (spark) stat.appendChild(spark);
+        }
         if (parts.suffix) {
             // Grafana draws the unit a little smaller than the number.
             const suffix = document.createElement('span');
@@ -150,7 +208,8 @@ const render = (root: HTMLElement, context: VizContext): void => {
     if (label) {
         const title = document.createElement('div');
         title.setAttribute('data-testid', 'stat-label');
-        title.style.cssText = 'opacity:0.7;margin-top:4px';
+        title.style.cssText =
+            'opacity:0.7;margin-top:4px;position:relative;z-index:1';
         title.textContent = label;
         stat.appendChild(title);
     }

@@ -1,9 +1,9 @@
 {
     "name": "Stat",
-    "description": "Shows one big value reduced from the rows (last not-null by default, or min, max, mean, total and more), formatted with a Grafana unit and decimals, or No data when there is nothing to show.",
-    "version": "1.1.0",
+    "description": "Shows one big value reduced from the rows (last not-null by default, or min, max, mean, total and more), formatted with a Grafana unit and decimals, or No data when there is nothing to show, over a sparkline of the series in time order.",
+    "version": "1.2.0",
     "publishedAt": "2026-11-08T00:00:00.000Z",
-    "changelog": "Colours the value or the background by Grafana threshold steps, per the colour mode.",
+    "changelog": "With graph mode Area and a time field, draws a sparkline of the series behind the value; graph mode None draws none.",
     "tags": ["houserx", "stat", "single-value"],
     "icon": "number",
     "vizSchema": {

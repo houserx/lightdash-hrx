@@ -79,3 +79,66 @@ export const reduce = (
             return numbers[numbers.length - 1];
     }
 };
+
+export const GRAPH_MODES = ['area', 'none'] as const;
+
+export type GraphMode = (typeof GRAPH_MODES)[number];
+
+/** The `graphMode` option; anything unknown is Grafana's default, area. */
+export const graphModeOption = (raw: unknown): GraphMode =>
+    GRAPH_MODES.find((mode) => mode === raw) ?? 'area';
+
+export type Sparkline = {
+    /** How many points the line goes through. */
+    points: number;
+    /** SVG path of the line through every point, left to right in time. */
+    line: string;
+    /** The line closed down to the bottom edge, for the area fill. */
+    area: string;
+};
+
+const coord = (n: number): string => String(Math.round(n * 100) / 100);
+
+/**
+ * The sparkline of the series in a `width` x `height` box: one point per
+ * row with both a time and a value, in time order (`points` must already be
+ * ordered, see `orderPoints`). x spans the first to the last time, y the
+ * series' min (bottom) to max (top); a flat series runs through the middle.
+ * Null values are skipped, so the line joins its neighbours, as Grafana's
+ * sparkline does. Null when fewer than two points have a time and a value:
+ * there is no line to draw.
+ */
+export const sparkline = (
+    points: readonly StatPoint[],
+    width: number,
+    height: number,
+): Sparkline | null => {
+    const drawn = points.filter(
+        (p): p is { time: number; value: number } =>
+            p.time !== null && p.value !== null,
+    );
+    if (drawn.length < 2) return null;
+    const first = drawn[0].time;
+    const last = drawn[drawn.length - 1].time;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const p of drawn) {
+        if (p.value < min) min = p.value;
+        if (p.value > max) max = p.value;
+    }
+    // Every point at one instant: spread them evenly in row order instead.
+    const x = (p: { time: number }, i: number): number =>
+        last > first
+            ? ((p.time - first) / (last - first)) * width
+            : (i / (drawn.length - 1)) * width;
+    const y = (value: number): number =>
+        max > min
+            ? height - ((value - min) / (max - min)) * height
+            : height / 2;
+    const xy = drawn.map((p, i) => `${coord(x(p, i))},${coord(y(p.value))}`);
+    const line = `M${xy.join('L')}`;
+    const area =
+        `${line}L${coord(x(drawn[drawn.length - 1], drawn.length - 1))},${coord(height)}` +
+        `L${coord(x(drawn[0], 0))},${coord(height)}Z`;
+    return { points: drawn.length, line, area };
+};
