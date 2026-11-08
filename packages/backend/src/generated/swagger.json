@@ -4731,8 +4731,55 @@
                 "required": ["count", "direction", "mode"],
                 "type": "object"
             },
+            "GrafanaThresholdStep": {
+                "properties": {
+                    "color": {
+                        "type": "string"
+                    },
+                    "value": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    }
+                },
+                "required": ["color", "value"],
+                "type": "object",
+                "description": "Grafana threshold steps, as stored in a panel's\n`fieldConfig.defaults.thresholds`. The first step is the base step and\nhas `value: null` (Grafana's -Infinity); each later step starts at its\nvalue. In `percentage` mode step values are percentages of the min..max\nrange instead of absolute values."
+            },
+            "CartesianThresholdsStyle": {
+                "type": "string",
+                "enum": ["line", "dashed", "area", "line+area", "dashed+area"],
+                "description": "How a cartesian chart draws its thresholds: a solid or dashed horizontal\nline at each step, shaded bands between steps, or lines plus bands."
+            },
+            "CartesianThresholds": {
+                "properties": {
+                    "style": {
+                        "$ref": "#/components/schemas/CartesianThresholdsStyle",
+                        "description": "How the thresholds are drawn"
+                    },
+                    "steps": {
+                        "items": {
+                            "$ref": "#/components/schemas/GrafanaThresholdStep"
+                        },
+                        "type": "array",
+                        "description": "Threshold steps; the base step has `value: null`"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["absolute", "percentage"],
+                        "description": "Step values are absolute or percentages of the y range"
+                    }
+                },
+                "required": ["style", "steps"],
+                "type": "object",
+                "description": "Grafana-style thresholds on a cartesian chart (Grafana's time series\n`thresholdsStyle` plus its threshold steps). `mode` defaults to\n`absolute`."
+            },
             "CartesianChart": {
                 "properties": {
+                    "thresholds": {
+                        "$ref": "#/components/schemas/CartesianThresholds",
+                        "description": "Grafana-style thresholds drawn as lines and/or shaded bands"
+                    },
                     "columnLimit": {
                         "type": "number",
                         "format": "double",

@@ -4762,11 +4762,72 @@ const models: TsoaRoute.Models = {
         },
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaThresholdStep: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                color: { dataType: 'string', required: true },
+                value: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'double' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
+                    required: true,
+                },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    CartesianThresholdsStyle: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { dataType: 'enum', enums: ['line'] },
+                { dataType: 'enum', enums: ['dashed'] },
+                { dataType: 'enum', enums: ['area'] },
+                { dataType: 'enum', enums: ['line+area'] },
+                { dataType: 'enum', enums: ['dashed+area'] },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    CartesianThresholds: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                style: { ref: 'CartesianThresholdsStyle', required: true },
+                steps: {
+                    dataType: 'array',
+                    array: {
+                        dataType: 'refAlias',
+                        ref: 'GrafanaThresholdStep',
+                    },
+                    required: true,
+                },
+                mode: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'enum', enums: ['absolute'] },
+                        { dataType: 'enum', enums: ['percentage'] },
+                    ],
+                },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     CartesianChart: {
         dataType: 'refAlias',
         type: {
             dataType: 'nestedObjectLiteral',
             nestedProperties: {
+                thresholds: { ref: 'CartesianThresholds' },
                 columnLimit: { dataType: 'double' },
                 rowLimit: { ref: 'RowLimit' },
                 metadata: { ref: 'Record_string.SeriesMetadata_' },

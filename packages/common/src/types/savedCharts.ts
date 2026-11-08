@@ -1,4 +1,5 @@
 import { type DataAppVizOptionValue } from '../ee/apps/dataAppVizConfigOptions';
+import { type CartesianThresholds } from '../eng1799/grafanaThresholds';
 import { type LogStreamChart } from '../eng1799/logStream';
 import { type TraceWaterfallChart } from '../eng1799/traceWaterfall';
 import assertUnreachable from '../utils/assertUnreachable';
@@ -844,6 +845,8 @@ export type CartesianChart = {
     rowLimit?: RowLimit;
     /** Maximum number of pivot columns to display */
     columnLimit?: number;
+    /** Grafana-style thresholds drawn as lines and/or shaded bands */
+    thresholds?: CartesianThresholds;
 };
 
 export type BigNumberConfig = {

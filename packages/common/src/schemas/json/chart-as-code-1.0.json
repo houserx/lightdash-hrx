@@ -428,6 +428,10 @@
                 "rowLimit": {
                     "$ref": "#/$defs/RowLimit",
                     "description": "Limit displayed rows to first/last N"
+                },
+                "thresholds": {
+                    "$ref": "#/$defs/CartesianThresholds",
+                    "description": "Grafana-style thresholds drawn as lines and/or shaded bands"
                 }
             },
             "required": ["eChartsConfig", "layout"],
@@ -567,6 +571,34 @@
         },
         "CartesianSeriesType.LINE": {
             "enum": ["line"],
+            "type": "string"
+        },
+        "CartesianThresholds": {
+            "description": "Grafana-style thresholds on a cartesian chart (Grafana's time series\n`thresholdsStyle` plus its threshold steps). `mode` defaults to\n`absolute`.",
+            "properties": {
+                "mode": {
+                    "description": "Step values are absolute or percentages of the y range",
+                    "enum": ["absolute", "percentage"],
+                    "type": "string"
+                },
+                "steps": {
+                    "description": "Threshold steps; the base step has `value: null`",
+                    "items": {
+                        "$ref": "#/$defs/GrafanaThresholdStep"
+                    },
+                    "type": "array"
+                },
+                "style": {
+                    "$ref": "#/$defs/CartesianThresholdsStyle",
+                    "description": "How the thresholds are drawn"
+                }
+            },
+            "required": ["style", "steps"],
+            "type": "object"
+        },
+        "CartesianThresholdsStyle": {
+            "description": "How a cartesian chart draws its thresholds: a solid or dashed horizontal\nline at each step, shaded bands between steps, or lines plus bands.",
+            "enum": ["line", "dashed", "area", "line+area", "dashed+area"],
             "type": "string"
         },
         "ChartAsCode": {
@@ -2526,6 +2558,20 @@
                 }
             },
             "required": ["color", "max", "min"],
+            "type": "object"
+        },
+        "GrafanaThresholdStep": {
+            "description": "Grafana threshold steps, as stored in a panel's\n`fieldConfig.defaults.thresholds`. The first step is the base step and\nhas `value: null` (Grafana's -Infinity); each later step starts at its\nvalue. In `percentage` mode step values are percentages of the min..max\nrange instead of absolute values.",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "value": {
+                    "format": "double",
+                    "type": ["number", "null"]
+                }
+            },
+            "required": ["color", "value"],
             "type": "object"
         },
         "GroupValueMatchType": {

@@ -17,6 +17,31 @@ export type GrafanaThresholds = {
     steps: GrafanaThresholdStep[];
 };
 
+/**
+ * How a cartesian chart draws its thresholds: a solid or dashed horizontal
+ * line at each step, shaded bands between steps, or lines plus bands.
+ */
+export type CartesianThresholdsStyle =
+    | 'line'
+    | 'dashed'
+    | 'area'
+    | 'line+area'
+    | 'dashed+area';
+
+/**
+ * Grafana-style thresholds on a cartesian chart (Grafana's time series
+ * `thresholdsStyle` plus its threshold steps). `mode` defaults to
+ * `absolute`.
+ */
+export type CartesianThresholds = {
+    /** Step values are absolute or percentages of the y range */
+    mode?: GrafanaThresholds['mode'];
+    /** Threshold steps; the base step has `value: null` */
+    steps: GrafanaThresholdStep[];
+    /** How the thresholds are drawn */
+    style: CartesianThresholdsStyle;
+};
+
 export type GrafanaThresholdRange = {
     min: number;
     max: number;

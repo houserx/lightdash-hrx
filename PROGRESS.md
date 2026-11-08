@@ -1243,3 +1243,23 @@ should add a dated line here per feature.
 - **Next.** The registry block is complete. Next is viz-cartesian-thresholds-config, in common/frontend, not the
   registry.
 - 2026-11-08T20:56:28Z supervisor: viz-registry-complete passed the gate in round 1
+
+## viz-cartesian-thresholds-config (round 1)
+- **What changed.** `packages/common/src/eng1799/grafanaThresholds.ts` gains `CartesianThresholdsStyle`
+  (`'line'|'dashed'|'area'|'line+area'|'dashed+area'`) and `CartesianThresholds` (`{mode?, steps: GrafanaThresholdStep[],
+  style}`; `mode` is optional and defaults to absolute). Both are exported through the existing `eng1799` re-export.
+  `CartesianChart` in `types/savedCharts.ts` has one new optional property, `thresholds?: CartesianThresholds`.
+  Regenerated with `pnpm -F backend generate-api:build` (swagger.json + routes.ts) and
+  `pnpm -F common generate:chart-as-code-schema`. The schema now has `$defs.CartesianThresholds`,
+  `$defs.CartesianThresholdsStyle` (enum) and `$defs.GrafanaThresholdStep` (`value: number|null`, `color: string`).
+- **Decisions.** `style` and `steps` are required whenever `thresholds` is present (the contract table's shape). The
+  download path (`CoderService`) passes `chartConfig` through unchanged, so no backend code change was needed.
+- **Tested as a user.** Wrote chart YAML the way `lightdash download` lays it out (`charts/chart.yml`) in
+  `../tmp/cartesian-thresholds/` and ran the real CLI linter (`../../node_modules/.bin/tsx src/index.ts lint -p <dir>`
+  from `packages/cli`). The plain cartesian chart was valid. With `style: dashed+area` and steps null green / 80 #FF9830 /
+  90 red, it was valid. `style: zigzag` failed at line 27 (exit 2). Check: schema in sync, acceptance test 8/8 after
+  `bash ./init.sh`. Regression: common, warehouses, backend, frontend and visualization typechecks all green. oxfmt and
+  oxlint are clean on the changed files.
+- **Next.** viz-cartesian-threshold-lines. The engine reads `config.thresholds` (`CartesianThresholds`) and draws
+  ECharts `markLine`s. Resolve palette names with `resolveGrafanaColor`.
+- 2026-11-08T20:59:36Z supervisor: viz-cartesian-thresholds-config passed the gate in round 1
