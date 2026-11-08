@@ -40,10 +40,91 @@ export type LogqlMetricTelemetryQuery = {
     source?: string;
 };
 
+export type CloudWatchDimension = { Name: string; Value: string };
+
+/**
+ * The CloudWatch `MetricDataQuery` shape Grafana's CloudWatch datasource stores: either a
+ * metric stat or a metric math / SEARCH expression (CONTRACTS §1.1).
+ */
+export type CloudWatchMetricDataQuery = {
+    Id: string;
+    MetricStat?: {
+        Metric: {
+            Namespace: string;
+            MetricName: string;
+            Dimensions?: CloudWatchDimension[];
+        };
+        Period: number;
+        Stat: string;
+        Unit?: string;
+    };
+    Expression?: string;
+    Label?: string;
+    Period?: number;
+    ReturnData?: boolean;
+};
+
+/** A CloudWatch metric query: `cloudwatch(metric_data_query json, start, end[, source])`. */
+export type CloudWatchTelemetryQuery = {
+    kind: 'cloudwatch';
+    metricDataQuery: CloudWatchMetricDataQuery;
+    source?: string;
+};
+
+/** The Investigate CloudWatch metric form. */
+export type CloudWatchMetricForm = {
+    namespace: string;
+    metricName: string;
+    /** Dimension name -> value, kept in insertion order. */
+    dimensions?: Record<string, string>;
+    /** CloudWatch statistic, e.g. Average, Sum, Maximum, p99. */
+    stat: string;
+    /** Period in seconds. */
+    period: number;
+};
+
+/** Id of the single query the form builds. */
+export const CLOUDWATCH_FORM_QUERY_ID = 'm1';
+
+/** Builds the `MetricDataQuery` for a metric stat filled in on the form. */
+export const buildCloudWatchMetricDataQuery = (
+    form: CloudWatchMetricForm,
+): CloudWatchMetricDataQuery => {
+    const namespace = form.namespace.trim();
+    const metricName = form.metricName.trim();
+    const stat = form.stat.trim();
+    if (namespace === '' || metricName === '' || stat === '') {
+        throw new Error(
+            'CloudWatch namespace, metric name and statistic are required',
+        );
+    }
+    if (!Number.isInteger(form.period) || form.period <= 0) {
+        throw new Error(
+            `CloudWatch period must be a positive whole number of seconds, got ${form.period}`,
+        );
+    }
+    return {
+        Id: CLOUDWATCH_FORM_QUERY_ID,
+        MetricStat: {
+            Metric: {
+                Namespace: namespace,
+                MetricName: metricName,
+                Dimensions: Object.entries(form.dimensions ?? {}).map(
+                    ([Name, Value]) => ({ Name, Value }),
+                ),
+            },
+            Period: form.period,
+            Stat: stat,
+        },
+        ReturnData: true,
+    };
+};
+
 export type TelemetryQuery =
     | PromqlTelemetryQuery
     | LogqlTelemetryQuery
-    | LogqlMetricTelemetryQuery;
+    | LogqlMetricTelemetryQuery
+    | CloudWatchTelemetryQuery;
 
 /** Reserved time parameter references, substituted before the query runs. */
 export const TELEMETRY_SQL_FROM = '${ld.parameters.__from}';
@@ -113,6 +194,19 @@ export const buildTelemetrySql = (telemetryQuery: TelemetryQuery): string => {
                     TELEMETRY_SQL_FROM,
                     TELEMETRY_SQL_TO,
                     TELEMETRY_SQL_INTERVAL,
+                ],
+                telemetryQuery.source,
+            );
+        case 'cloudwatch':
+            // Compact JSON, so the query stays one readable line in the SQL.
+            return tableFunctionSql(
+                'cloudwatch',
+                [
+                    toSqlStringLiteral(
+                        JSON.stringify(telemetryQuery.metricDataQuery),
+                    ),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
                 ],
                 telemetryQuery.source,
             );

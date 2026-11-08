@@ -1,4 +1,7 @@
-import { buildTelemetrySql } from './telemetrySql';
+import {
+    buildCloudWatchMetricDataQuery,
+    buildTelemetrySql,
+} from './telemetrySql';
 
 describe('buildTelemetrySql', () => {
     describe('promql', () => {
@@ -114,6 +117,69 @@ describe('buildTelemetrySql', () => {
             ).toBe(
                 "SELECT * FROM logql_metric('count_over_time({app=\"api\"}[1m])', ${ld.parameters.__from}, ${ld.parameters.__to}, ${ld.parameters.__interval}, 'loki')",
             );
+        });
+    });
+
+    describe('cloudwatch', () => {
+        it('builds the form query and embeds it as compact JSON', () => {
+            const metricDataQuery = buildCloudWatchMetricDataQuery({
+                namespace: ' AWS/Lambda ',
+                metricName: 'Errors',
+                dimensions: { FunctionName: 'rx-sync', Resource: 'rx-sync' },
+                stat: 'Sum',
+                period: 300,
+            });
+            expect(
+                metricDataQuery.MetricStat?.Metric.Dimensions?.map(
+                    (d) => d.Name,
+                ),
+            ).toEqual(['FunctionName', 'Resource']);
+            expect(
+                buildTelemetrySql({ kind: 'cloudwatch', metricDataQuery }),
+            ).toBe(
+                'SELECT * FROM cloudwatch(\'{"Id":"m1","MetricStat":{"Metric":{"Namespace":"AWS/Lambda","MetricName":"Errors","Dimensions":[{"Name":"FunctionName","Value":"rx-sync"},{"Name":"Resource","Value":"rx-sync"}]},"Period":300,"Stat":"Sum"},"ReturnData":true}\', ${ld.parameters.__from}, ${ld.parameters.__to})',
+            );
+        });
+
+        it('allows no dimensions', () => {
+            expect(
+                buildCloudWatchMetricDataQuery({
+                    namespace: 'AWS/SQS',
+                    metricName: 'NumberOfMessagesSent',
+                    stat: 'Average',
+                    period: 60,
+                }).MetricStat?.Metric.Dimensions,
+            ).toEqual([]);
+        });
+
+        it('refuses a missing field or a bad period', () => {
+            const form = {
+                namespace: 'AWS/SQS',
+                metricName: 'NumberOfMessagesSent',
+                stat: 'Sum',
+                period: 60,
+            };
+            expect(() =>
+                buildCloudWatchMetricDataQuery({ ...form, metricName: ' ' }),
+            ).toThrow(/required/);
+            expect(() =>
+                buildCloudWatchMetricDataQuery({ ...form, period: 0 }),
+            ).toThrow(/period/);
+            expect(() =>
+                buildCloudWatchMetricDataQuery({ ...form, period: 1.5 }),
+            ).toThrow(/period/);
+        });
+
+        it('doubles single quotes inside the JSON', () => {
+            expect(
+                buildTelemetrySql({
+                    kind: 'cloudwatch',
+                    metricDataQuery: {
+                        Id: 'e1',
+                        Expression: "SEARCH('{AWS/SQS} QueueName', 'Sum')",
+                    },
+                }),
+            ).toContain("SEARCH(''{AWS/SQS} QueueName'', ''Sum'')");
         });
     });
 });

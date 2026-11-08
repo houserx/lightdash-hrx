@@ -1130,3 +1130,17 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     escaping + source, bad limit, bad direction, metric with source). common tsc clean;
     oxfmt/oxlint clean (use `pnpm exec`, plain `npx` fails on the devEngines node pin).
 - 2026-11-08T20:26:44Z supervisor: ldq-investigate-sql-logql passed the gate in round 1
+- ldq-investigate-sql-cloudwatch (round 1):
+  - `packages/common/src/utils/telemetrySql.ts`: new `CloudWatchMetricDataQuery` type (metric
+    stat or Expression, the Grafana-stored shape), `CloudWatchMetricForm`
+    (`{namespace, metricName, dimensions?: Record<string,string>, stat, period}`) and
+    `buildCloudWatchMetricDataQuery(form)` -> `{Id:'m1', MetricStat:{Metric:{Namespace,
+    MetricName, Dimensions:[{Name,Value}]}, Period, Stat}, ReturnData:true}`. Dimensions keep
+    the record's insertion order; no dimensions -> `[]`. Blank namespace/metric/stat or a
+    non-positive/non-integer period throws. `TelemetryQuery` gains `cloudwatch`
+    (`{metricDataQuery, source?}`) -> `cloudwatch('<JSON.stringify(mdq)>', __from, __to[, '<source>'])`
+    (CONTRACTS §1.1; no step argument). Single quotes inside the JSON are doubled.
+  - Tested: no Investigate UI yet; surface is the exported common functions. Feature check 2/2,
+    logql acceptance 3/3 (regression), telemetrySql.test.ts 14/14 (4 new). common tsc clean;
+    oxfmt/oxlint clean on changed files.
+- 2026-11-08T20:28:41Z supervisor: ldq-investigate-sql-cloudwatch passed the gate in round 1
