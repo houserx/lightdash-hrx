@@ -448,3 +448,19 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     fixed clock and nonce give identical tokens. Use `pnpm exec`, not `npx`: npx fails the
     devEngines node-version check under node 26.
 - 2026-11-08T17:52:23Z supervisor: ldq-identity-token-mint passed the gate in round 1
+- 2026-11-08 ldq-identity-token-verify (session):
+  - Added `verifyIdentityToken(token, { secret, now? })` and `InvalidIdentityTokenError` to
+    `packages/backend/src/services/FederationIdentity/identityToken.ts`. The order of checks:
+    the shape (exactly two non-empty '.' parts), then the HMAC (constant-time compare, before
+    anything is parsed), then the JSON object, `v === 1`, numeric iat/exp, expiry, and finally
+    iat no more than 60 s ahead (`MAX_IDENTITY_TOKEN_CLOCK_SKEW_SECONDS`). It returns the parsed
+    payload as is. Other claims are not validated field by field.
+  - Contract assumptions: "exp has passed" means floor(now/1000) > exp, so a token is still
+    accepted at exactly `exp`. An iat exactly 60 s ahead is accepted; 61 s ahead is refused. An
+    empty secret throws a plain Error, not InvalidIdentityTokenError.
+  - Tested: init, then the feature check (5/5), identity-token-byte-exact (4/4) and backend
+    `tsc --noEmit`, and oxfmt passes. A tsx script under ../tmp/verify minted a token and ran
+    it through the verifier. It was accepted 100 s in and also at exactly exp. It was refused
+    1 s after exp ("expired"), 61 s before iat ("issued in the future"), and with a wrong
+    secret or a tampered token ("bad signature").
+- 2026-11-08T17:55:12Z supervisor: ldq-identity-token-verify passed the gate in round 1
