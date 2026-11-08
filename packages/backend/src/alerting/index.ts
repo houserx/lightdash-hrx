@@ -6,6 +6,7 @@
 import { type Router } from 'express';
 import { type Knex } from 'knex';
 import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
+import { AlertHeartbeatModel } from './AlertHeartbeatModel';
 import { AlertInstanceModel } from './AlertInstanceModel';
 import { AlertNotificationModel } from './AlertNotificationModel';
 import { AlertNotificationService } from './AlertNotificationService';
@@ -13,7 +14,11 @@ import { AlertNotifier } from './AlertNotifier';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
 import { AlertScheduleModel } from './AlertScheduleModel';
-import { AlertScheduler, type AlertJobQueue } from './AlertScheduler';
+import {
+    AlertScheduler,
+    type AlertHeartbeatConfig,
+    type AlertJobQueue,
+} from './AlertScheduler';
 import { AlertStateHistoryModel } from './AlertStateHistoryModel';
 import { ContactPointModel } from './ContactPointModel';
 import { ContactPointService } from './ContactPointService';
@@ -46,7 +51,8 @@ export type AlertingModuleDeps = {
     };
     /** graphile `addJob`: one queued job per `jobKey`. */
     jobQueue: AlertJobQueue;
-    heartbeat: { url: string; method: 'GET' | 'POST' } | null;
+    /** Called (GET or POST) after every completed scheduler cycle. */
+    heartbeat: AlertHeartbeatConfig | null;
     /** Exponential backoff for notification sends. */
     retry: { maxAttempts: number; initialDelayMs: number };
     siteUrl: string;
@@ -112,6 +118,9 @@ export const createAlertingModule = (
             alertScheduleModel,
             jobQueue: deps.jobQueue,
             clock: deps.clock,
+            notifier,
+            alertHeartbeatModel: new AlertHeartbeatModel(deps.database),
+            heartbeat: deps.heartbeat,
         }),
         notifier,
         // The database belongs to the caller; nothing of ours to release yet.

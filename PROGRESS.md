@@ -732,3 +732,19 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Recovery: DatasourceError left /rules/:uuid and /state, and resolved notifications were sent.
       - /state without a session gave 401.
 - 2026-11-08T21:41:04Z supervisor: alert-eval-error passed the gate in round 1
+- alert-cycle-heartbeat (round 1) — 2026-11-08
+  - Changed:
+    - New `alerting/AlertHeartbeatModel.ts` (`insert`) for the append-only `alert_evaluator_heartbeats` table.
+    - `AlertScheduler.tick()`: after it enqueues due rules, it now (1) calls `notifier.flush()`, (2) calls the heartbeat URL (`deps.heartbeat`: `{url, method: 'GET'|'POST'}` or null; no body; 10s timeout) and (3) inserts one heartbeat row: `cycle_started_at` = clock at the start of the tick, `completed_at` = clock at the end, `rules_evaluated` = number of rules enqueued this tick, `heartbeat_status` = HTTP status as text, `'failed'` on a network error or timeout, or null without a URL, and `error` = flush/heartbeat failure messages joined with `; `, or null. A failed flush or heartbeat is logged and never thrown, so the tick still resolves. A failed row insert does throw, because the cycle didn't complete.
+    - `index.ts`: the scheduler gets `notifier`, `alertHeartbeatModel` and `heartbeat`. `AlertHeartbeatConfig` is exported from `AlertScheduler.ts`.
+  - Contract assumptions: a "cycle" is one `scheduler.tick()`, since evaluations run as separate `alertRuleEvaluate` jobs. Non-2xx responses are recorded but not retried.
+  - Tested: after init, the check passes (2 passed, 5 skipped). scheduling.accept.ts fails only alert-worker-wiring and alert-health, which aren't built. notifications.accept.ts: 8/8 (flush now also runs from tick). Backend tsc, oxlint and oxfmt are clean. As a user: a scratch harness walk (tmp/walk, removed afterwards) ran these ticks:
+    - POST heartbeat: one POST /heartbeat and row 200.
+    - URL returning 503: the tick resolved and wrote row 503 with error "heartbeat POST returned HTTP 503".
+    - Mock server stopped: the tick resolved and wrote row `failed` with error "fetch failed".
+    - GET config: one GET /ping?x=1.
+    - No URL: a row with null status and no request.
+  - Next:
+    - alert-health can read the latest `completed_at` from this table. Add a `getLatest` to AlertHeartbeatModel; the test expects lastCycleAt = T0 and lag from the clock.
+    - alert-worker-wiring must map env `ALERTING_HEARTBEAT_URL`/`ALERTING_HEARTBEAT_METHOD` (assumption 4) into `deps.heartbeat`.
+- 2026-11-08T21:46:19Z supervisor: alert-cycle-heartbeat passed the gate in round 1

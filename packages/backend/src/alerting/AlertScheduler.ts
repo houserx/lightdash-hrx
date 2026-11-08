@@ -5,6 +5,7 @@ import {
     type AlertRuleEvaluatePayload,
 } from '@lightdash/common';
 import Logger from '../logging/logger';
+import { type AlertHeartbeatModel } from './AlertHeartbeatModel';
 import {
     type AlertScheduleModel,
     type SchedulableAlertRule,
@@ -18,6 +19,11 @@ export type AlertJobQueue = {
     ): Promise<void>;
 };
 
+export type AlertHeartbeatConfig = { url: string; method: 'GET' | 'POST' };
+
+/** A heartbeat call that hangs must not hold up the next cycle. */
+const HEARTBEAT_TIMEOUT_MS = 10_000;
+
 export type AlertSchedulerEnqueued = {
     ruleUuid: string;
     scheduledAt: string;
@@ -28,6 +34,9 @@ type AlertSchedulerArgs = {
     alertScheduleModel: AlertScheduleModel;
     jobQueue: AlertJobQueue;
     clock: { now(): Date };
+    notifier: { flush(): Promise<void> };
+    alertHeartbeatModel: AlertHeartbeatModel;
+    heartbeat: AlertHeartbeatConfig | null;
 };
 
 /** The interval slot `now` falls in: `floor(now / interval) * interval`. */
@@ -49,6 +58,11 @@ export const getAlertRuleEvaluateJobKey = (
  * side by side from enqueueing it twice. Paused rules are never due. Only
  * the current slot is enqueued; slots missed while nothing ticked are not
  * caught up.
+ *
+ * A cycle then flushes due notifications, records a row in
+ * `alert_evaluator_heartbeats` and calls the configured heartbeat URL. A
+ * failed flush or heartbeat call is logged and recorded on the row, never
+ * thrown, so the cycle still completes.
  */
 export class AlertScheduler {
     private readonly alertScheduleModel: AlertScheduleModel;
@@ -57,10 +71,19 @@ export class AlertScheduler {
 
     private readonly clock: { now(): Date };
 
+    private readonly notifier: { flush(): Promise<void> };
+
+    private readonly alertHeartbeatModel: AlertHeartbeatModel;
+
+    private readonly heartbeat: AlertHeartbeatConfig | null;
+
     constructor(args: AlertSchedulerArgs) {
         this.alertScheduleModel = args.alertScheduleModel;
         this.jobQueue = args.jobQueue;
         this.clock = args.clock;
+        this.notifier = args.notifier;
+        this.alertHeartbeatModel = args.alertHeartbeatModel;
+        this.heartbeat = args.heartbeat;
     }
 
     async tick(): Promise<{ enqueued: AlertSchedulerEnqueued[] }> {
@@ -82,7 +105,53 @@ export class AlertScheduler {
                 );
             }
         }
+        const errors: string[] = [];
+        try {
+            await this.notifier.flush();
+        } catch (error) {
+            const message = `notification flush failed: ${getErrorMessage(
+                error,
+            )}`;
+            Logger.error(`Alerting scheduler: ${message}`);
+            errors.push(message);
+        }
+        const heartbeat = await this.callHeartbeat();
+        if (heartbeat.error) errors.push(heartbeat.error);
+        await this.alertHeartbeatModel.insert({
+            cycleStartedAt: now,
+            completedAt: this.clock.now(),
+            rulesEvaluated: enqueued.length,
+            heartbeatStatus: heartbeat.status,
+            error: errors.length > 0 ? errors.join('; ') : null,
+        });
         return { enqueued };
+    }
+
+    /** Calls the heartbeat URL, if one is configured; never throws. */
+    private async callHeartbeat(): Promise<{
+        status: string | null;
+        error?: string;
+    }> {
+        if (!this.heartbeat) return { status: null };
+        const { url, method } = this.heartbeat;
+        try {
+            const response = await fetch(url, {
+                method,
+                signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
+            });
+            // Drain the body so the connection is released.
+            await response.arrayBuffer().catch(() => undefined);
+            if (response.ok) return { status: String(response.status) };
+            const error = `heartbeat ${method} returned HTTP ${response.status}`;
+            Logger.warn(`Alerting scheduler: ${error}`);
+            return { status: String(response.status), error };
+        } catch (error) {
+            const message = `heartbeat ${method} failed: ${getErrorMessage(
+                error,
+            )}`;
+            Logger.warn(`Alerting scheduler: ${message}`);
+            return { status: 'failed', error: message };
+        }
     }
 
     private async enqueueIfDue(
