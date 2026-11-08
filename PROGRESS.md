@@ -651,3 +651,19 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Log rows: `sent` with attempts 1; `failed` with attempts 1 and error `incident.io responded with HTTP 401 Unauthorized`; `failed` with attempts 1 and error `Secret "nope" could not be resolved`.
   - Next session (alert-contact-email): add an `email` branch in `sendIntegration`. The remaining unsupported types still return early without logging.
 - 2026-11-08T21:14:31Z supervisor: alert-contact-incident-io passed the gate in round 1
+- alert-contact-email (round 1) — 2026-11-08
+  - Changed:
+    - New `alerting/emailMessage.ts` (`buildEmailMessage`) plus `emailMessage.test.ts` (5 tests). It builds the subject, the text body and an HTML body (values HTML-escaped) from the group's template data.
+    - `AlertNotifier.ts`: new dep `email: AlertEmailClient` (`sendEmail({to, subject, text, html?})`, the same shape as `AlertingModuleDeps.email`), wired in `index.ts`. `sendIntegration` has an `email` branch: one `sendEmail` call per group, with every address of the integration in `to`. It goes through `sendWithRetry`, so a thrown error is retried unless it is a non-retryable `NotificationSendError`. An empty address list is a non-retryable failure (the API already rejects it with 400). The log row's `payload` is the message `{to, subject, text, html}`. The early "unsupported type" return is gone, since all five integration types are now handled.
+  - Contract assumptions: there are no ported email templates, and the email integration has no title or text fields, so the format is fixed and shaped like Grafana's default email.
+    - Subject: `[FIRING:n]`, `[FIRING:n, RESOLVED:m]` or `[RESOLVED]`, then the distinct `alertname`s (rule names, joined by ", "), then the other group-label values in parentheses. Line breaks are stripped from the subject.
+    - Body: Firing and Resolved sections, each listing every alert's summary, description, labels, runbook and rule link.
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). The other alert-contact tests in integrations.accept.ts pass, except `alert-contact-test-notification`, a later feature not yet built. notifications.accept.ts passes 8/8 and AlertNotifier.test.ts 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness over real HTTP, using a copy of the support files in `src/__walk__/alerting`, removed afterwards.
+      - POST /contact-points `oncall-email` with two addresses returned 200; with `addresses: []` it returned 400.
+      - Routed the root to it, then fired "Disk almost full" on db-1 and db-2 at t0. One email went to both addresses, with subject `[FIRING:2] Disk almost full` and both descriptions in the text and html.
+      - Recovered both at t+2m. One email went out with subject `[RESOLVED] Disk almost full`.
+      - /notifications showed two rows: `sent`, `email`, attempts 1.
+  - Next session: whoever wires `createAlertingModule` into the app must adapt Lightdash's `EmailClient` (`clients/EmailClient/EmailClient.ts`) to `email.sendEmail`. The adapter should throw `NotificationSendError(msg, false)` when SMTP isn't configured.
+- 2026-11-08T21:22:24Z supervisor: alert-contact-email passed the gate in round 1

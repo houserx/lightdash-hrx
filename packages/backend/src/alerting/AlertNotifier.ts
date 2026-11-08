@@ -32,6 +32,7 @@ import {
     type NotificationGroupState,
     type ResolvedAlert,
 } from './AlertNotificationModel';
+import { buildEmailMessage, type EmailMessage } from './emailMessage';
 import {
     buildAlertTemplateData,
     buildSlackAppText,
@@ -50,6 +51,7 @@ type AlertNotifierDeps = {
     notificationRouteModel: NotificationRouteTreeSource;
     secrets: { resolve(name: string): Promise<string | undefined> };
     slackApp: SlackAppClient;
+    email: AlertEmailClient;
     clock: { now(): Date };
     retry: NotificationRetryPolicy;
     siteUrl: string;
@@ -65,6 +67,16 @@ export type SlackAppClient = {
         channel: string;
         text: string;
         blocks?: unknown[];
+    }): Promise<void>;
+};
+
+/** Lightdash's email client: one message to every address in `to`. */
+export type AlertEmailClient = {
+    sendEmail(message: {
+        to: string[];
+        subject: string;
+        text: string;
+        html?: string;
     }): Promise<void>;
 };
 
@@ -426,16 +438,6 @@ export class AlertNotifier {
         integration: ContactPointIntegration,
         now: Date,
     ): Promise<void> {
-        // Generic webhooks, Slack webhooks, the Slack app and incident.io so
-        // far; the other integration types are added by their own features
-        // (alert-contact-*).
-        if (
-            integration.type !== 'webhook' &&
-            integration.type !== 'slack_webhook' &&
-            integration.type !== 'slack_app' &&
-            integration.type !== 'incident_io'
-        )
-            return;
         const alerts = integration.disableResolveMessage
             ? groupAlertsSorted.filter(
                   (alert) => alertStatus(alert) === 'firing',
@@ -496,34 +498,46 @@ export class AlertNotifier {
                     generatorURL: generatorURL(alert),
                 })),
             });
-            try {
-                const message = renderSlackMessage(integration, data);
-                if (integration.type === 'slack_webhook') {
-                    const slackPayload = buildSlackWebhookPayload({
-                        ...message,
-                        status: data.Status,
-                        at: now,
-                    });
-                    payload = slackPayload;
-                    post = () =>
-                        this.postSlackWebhook(integration, slackPayload);
-                } else {
-                    const slackMessage = {
-                        channel: integration.channel,
-                        text: buildSlackAppText(message),
-                    };
-                    payload = slackMessage;
-                    post = () =>
-                        this.postSlackApp(group.projectUuid, slackMessage);
+            if (integration.type === 'email') {
+                const email = {
+                    to: [...integration.addresses],
+                    ...buildEmailMessage({
+                        alerts: data.Alerts,
+                        groupLabels,
+                    }),
+                };
+                payload = email;
+                post = () => this.sendEmail(email);
+            } else {
+                try {
+                    const message = renderSlackMessage(integration, data);
+                    if (integration.type === 'slack_webhook') {
+                        const slackPayload = buildSlackWebhookPayload({
+                            ...message,
+                            status: data.Status,
+                            at: now,
+                        });
+                        payload = slackPayload;
+                        post = () =>
+                            this.postSlackWebhook(integration, slackPayload);
+                    } else {
+                        const slackMessage = {
+                            channel: integration.channel,
+                            text: buildSlackAppText(message),
+                        };
+                        payload = slackMessage;
+                        post = () =>
+                            this.postSlackApp(group.projectUuid, slackMessage);
+                    }
+                } catch (e) {
+                    // A template that doesn't render is a configuration error:
+                    // nothing is sent and trying again won't help.
+                    const renderError = new NotificationSendError(
+                        getErrorMessage(e),
+                        false,
+                    );
+                    post = () => Promise.reject(renderError);
                 }
-            } catch (e) {
-                // A template that doesn't render is a configuration error:
-                // nothing is sent and trying again won't help.
-                const renderError = new NotificationSendError(
-                    getErrorMessage(e),
-                    false,
-                );
-                post = () => Promise.reject(renderError);
             }
         }
         const { attempts, error } = await sendWithRetry(post, this.deps.retry);
@@ -629,6 +643,18 @@ export class AlertNotifier {
                 !/not installed/i.test(reason),
             );
         }
+    }
+
+    private async sendEmail(
+        message: EmailMessage & { to: string[] },
+    ): Promise<void> {
+        if (message.to.length === 0) {
+            throw new NotificationSendError(
+                'Email contact point has no addresses',
+                false,
+            );
+        }
+        await this.deps.email.sendEmail(message);
     }
 
     /** A missing secret is a configuration error, so it is not retried. */
