@@ -1819,3 +1819,30 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     write-agent-refused 3/3 and federation-access-route 3/3 all pass. Backend and common
     typecheck, oxlint and oxfmt are clean.
 - 2026-11-08T22:16:44Z supervisor: ldq-audit-route passed the gate in round 1
+- ldq-audit-browser-ui (round 1):
+  - New `features/auditBrowser/components/AuditBrowser.tsx` (`{canRead, fetchPage}`). It shows
+    Ticket, User and Month text fields with an "Apply filters" button, and a table with the
+    columns Time (UTC), User (`executedByEmail`), Description, Ticket (`linearTicketId`), Mode
+    (plus a preview badge), Status and Rows. On mount it calls `fetchPage({})`. Apply sends the
+    trimmed filters and leaves blank ones out. Without `canRead` it shows an alert naming
+    platform_read and never calls `fetchPage`. Fetch errors show the Lightdash error message in
+    an alert, and a stale response is dropped when a newer query starts.
+  - `features/auditBrowser/hooks/useAuditBrowserApi.ts` calls
+    `GET /api/v2/projects/{uuid}/federation/audit` with only the non-blank filters as query
+    params.
+  - New page `pages/AuditBrowser.tsx` at the route `/projects/:projectUuid/audit` (in
+    PROJECT_LAYOUT_ROUTES). It reads `useFederationAccess`. A non-federation project gets "only
+    available on Federation Engine projects". Otherwise it renders the browser with
+    `canRead = attrs.platform_read`. Investigate mode in the SQL Runner has an "Audit browser"
+    link next to the mode switch, shown to everyone in Investigate so that users without
+    platform_read can still see why.
+  - Next (ldq-audit-browser-pagination): the component keeps the applied filters in the `query`
+    state, and the effect refetches whenever it changes. Add a "Next page" button that's shown
+    only when `page.nextCursor` is set, and call `fetchPage({...query, cursor})`. Keep the
+    cursor out of the filter form. The pagination check currently fails only on the missing
+    "Next page" button.
+  - Tested: no Docker, running server or browser tool, so I rendered the real component in
+    jsdom. Feature check 2/2. New AuditBrowser.test.tsx 3/3 covers trimming and blank filters,
+    an API error message, and the hook's URL with and without filters. sql-runner-mode-switch
+    2/2. Frontend typecheck, plus oxlint and oxfmt on the changed files, are clean.
+- 2026-11-08T22:20:36Z supervisor: ldq-audit-browser-ui passed the gate in round 1

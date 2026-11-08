@@ -509,6 +509,15 @@ const METRICS_ROUTES: RouteObject[] = [
 const PROJECT_LAYOUT_ROUTES: RouteObject[] = [
     ...TABLES_ROUTES,
     ...SQL_RUNNER_ROUTES,
+    {
+        path: 'audit',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './pages/AuditBrowser',
+                () => import('./pages/AuditBrowser'),
+            ),
+        }),
+    },
     ...CHART_ROUTES,
     ...DASHBOARD_LIST_ROUTES,
     {

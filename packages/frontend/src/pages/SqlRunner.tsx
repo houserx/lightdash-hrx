@@ -1,8 +1,8 @@
 import { getFieldQuoteChar, isFederationProject } from '@lightdash/common';
-import { Box, Group, Stack } from '@mantine/core';
+import { Anchor, Box, Group, Stack } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
-import { useLocation, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { useMount, useUnmount } from 'react-use';
 import ErrorState from '../components/common/ErrorState';
 import Page from '../components/common/Page/Page';
@@ -304,6 +304,15 @@ const SqlRunner = ({
                                 mode={runnerMode}
                                 onModeChange={setRunnerMode}
                             />
+                            {isInvestigating && projectUuid && (
+                                <Anchor
+                                    component={Link}
+                                    to={`/projects/${projectUuid}/audit`}
+                                    size="sm"
+                                >
+                                    Audit browser
+                                </Anchor>
+                            )}
                         </Group>
                     )}
                     {isInvestigating ? (
