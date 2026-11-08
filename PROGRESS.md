@@ -1305,3 +1305,23 @@ should add a dated line here per feature.
 - **Trap.** ECharts SSR draws markArea as `<polygon>`, not `<path>`. Also call `chart.dispose()` in SSR scripts, or node
   never exits.
 - 2026-11-08T21:11:28Z supervisor: viz-cartesian-threshold-areas passed the gate in round 1
+
+## viz-thresholds-config-panel (round 1)
+- **What changed.** There is a new `packages/frontend/src/components/VisualizationConfigs/ThresholdsConfig/ThresholdsConfig.tsx`.
+  It is a presentational `ThresholdsConfig({thresholds, onChange})`. It lists the steps in stored order as "Threshold N", each
+  with a ColorSelector of the Grafana base hues. The base step (value null) shows "Base" and has no remove button. Other steps
+  have a NumberInput (aria-label `Threshold N value`) and a `Remove threshold N` button. "Add threshold" adds a step at the
+  highest value + 10 and cycles through the swatch colours. With no thresholds it creates Grafana's default: green base, red at
+  80, mode absolute, style line. If the steps have no base, it puts one back. There is also an Absolute/Percentage mode control
+  and style radios: Line, Dashed, Area, Line + area, Dashed + area. Steps are not re-sorted while you edit. The renderer
+  already sorts them. The hook `useCartesianEditorActions` gains `setThresholds`, which uses the generic `set('thresholds')`.
+  It is mounted in the cartesian **Display** tab (`ChartConfigPanel/Legend/index.tsx`) after Reference lines. It reads
+  `selectCartesianEditor(state).thresholds`, which `selectCartesianValidConfig` already passes into the saved config.
+- **Tested as a user.** The full app needs backend and Postgres, so I used a throwaway vitest drive, since deleted. It mounted the
+  real `VisualizationProvider` and the cartesian `ConfigTabs` in the explorer store, with a cartesian fixture and
+  `onChartConfigChange` recorded. I opened the Display tab and clicked Add threshold. The config got the green base and red
+  at 80. Add again gave 90 orange. Typing 65 into Threshold 2 changed the value to 65. Remove threshold 3 left 2 steps, and
+  the base step has no remove button. Picking Dashed changed the config's style to `dashed`. Check 5/5 after
+  `bash ./init.sh`. VisualizationProvider.consumers.test is 4/4. Frontend tsc, oxfmt and oxlint are clean.
+- **Next.** No thresholds-specific trap. To see the result drawn, use the earlier SSR drive scripts in `../tmp/drive-threshold-*`.
+- 2026-11-08T21:16:11Z supervisor: viz-thresholds-config-panel passed the gate in round 1
