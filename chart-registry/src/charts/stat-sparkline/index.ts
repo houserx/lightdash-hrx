@@ -1,5 +1,6 @@
 import { formatGrafanaValue } from '../../shared/grafanaFormat';
 import { parseThresholds, thresholdColor } from '../../shared/thresholds';
+import { mapValue, parseValueMappings } from '../../shared/valueMappings';
 import {
     onVizContext,
     rawValue,
@@ -128,6 +129,7 @@ const render = (root: HTMLElement, context: VizContext): void => {
     const colorMode = colorModeOption(options.colorMode);
     const graphMode = graphModeOption(options.graphMode);
     const thresholds = parseThresholds(options.thresholds);
+    const mappings = parseValueMappings(options.valueMappings);
 
     const points: StatPoint[] = orderPoints(
         context.rows.map((row) => ({
@@ -161,19 +163,15 @@ const render = (root: HTMLElement, context: VizContext): void => {
         'white-space:nowrap;font-variant-numeric:tabular-nums;' +
         'position:relative;z-index:1';
 
-    if (value === null) {
-        valueEl.textContent = 'No data';
-        valueEl.style.opacity = '0.6';
-        stat.setAttribute('data-empty', 'true');
-    } else {
-        const parts = formatGrafanaValue(value, unit, decimals);
-        stat.setAttribute('data-value', String(value));
-        valueEl.append(parts.prefix, parts.text);
-        const color = thresholdColor(
-            value,
-            thresholds,
-            dataRange(points.map((p) => p.value)),
-        );
+    // Grafana maps the reduced value (null when there is none): a mapping's
+    // text replaces the formatted value and unit, its colour replaces the
+    // threshold colour (value, background and sparkline alike).
+    const mapped = mapValue(value, mappings);
+    const mappedText = mapped?.text;
+    const mappedColor = mapped?.color?.trim() || undefined;
+    if (mapped) stat.setAttribute('data-mapped', 'true');
+
+    const applyColor = (color: string): void => {
         if (colorMode === 'value') {
             stat.setAttribute('data-color', color);
             valueEl.style.color = color;
@@ -182,8 +180,29 @@ const render = (root: HTMLElement, context: VizContext): void => {
             stat.style.background = color;
             stat.style.color = textOn(color);
         }
+    };
+
+    if (value === null) {
+        stat.setAttribute('data-empty', 'true');
+        if (mappedText !== undefined) valueEl.textContent = mappedText;
+        else {
+            valueEl.textContent = 'No data';
+            valueEl.style.opacity = '0.6';
+        }
+        if (mappedColor) applyColor(mappedColor);
+    } else {
+        const parts = formatGrafanaValue(value, unit, decimals);
+        stat.setAttribute('data-value', String(value));
+        const color =
+            mappedColor ??
+            thresholdColor(
+                value,
+                thresholds,
+                dataRange(points.map((p) => p.value)),
+            );
+        applyColor(color);
         if (graphMode === 'area') {
-            // Grafana draws the sparkline in the threshold colour, or in the
+            // Grafana draws the sparkline in the value's colour, or in the
             // text colour over a coloured background.
             const spark = sparklineSvg(
                 points,
@@ -193,13 +212,18 @@ const render = (root: HTMLElement, context: VizContext): void => {
             );
             if (spark) stat.appendChild(spark);
         }
-        if (parts.suffix) {
-            // Grafana draws the unit a little smaller than the number.
-            const suffix = document.createElement('span');
-            suffix.setAttribute('data-testid', 'stat-unit');
-            suffix.style.fontSize = '0.7em';
-            suffix.textContent = parts.suffix;
-            valueEl.appendChild(suffix);
+        if (mappedText !== undefined) {
+            valueEl.textContent = mappedText;
+        } else {
+            valueEl.append(parts.prefix, parts.text);
+            if (parts.suffix) {
+                // Grafana draws the unit a little smaller than the number.
+                const suffix = document.createElement('span');
+                suffix.setAttribute('data-testid', 'stat-unit');
+                suffix.style.fontSize = '0.7em';
+                suffix.textContent = parts.suffix;
+                valueEl.appendChild(suffix);
+            }
         }
     }
     stat.appendChild(valueEl);

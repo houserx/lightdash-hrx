@@ -1099,3 +1099,27 @@ should add a dated line here per feature.
   `bash ./init.sh`. Regressions: stat-sparkline-value 9/9, -thresholds 7/7, build 31/31, client-install 4/4. Typecheck
   and oxfmt clean. Scratch driver in `../tmp/drive-stat-sparkline/` (outside the repo).
 - 2026-11-08T20:38:37Z supervisor: viz-registry-stat-sparkline passed the gate in round 1
+
+## viz-registry-stat-value-mappings (round 1)
+- **What.** The stat entry now applies the `valueMappings` option (Grafana's mappings JSON, read by
+  `shared/valueMappings.ts`, matched by common's `applyValueMappings`) to the **reduced** value, or to null when the
+  reducer gives no value (no rows / all null). A mapping's `text` replaces the formatted value **and** its unit (no
+  `stat-unit` span), as Grafana does; a mapping without text keeps the formatted value. A mapping's colour (named colours
+  resolved to hex, so `red` -> `#F2495C`) replaces the threshold colour in value and background modes (`data-color`
+  set); colour mode none stays uncoloured. A matched mapping sets `data-mapped="true"` on `div[data-testid=stat]`.
+- **Null special.** With a null mapping, "No data" becomes the mapped text (full opacity) and takes the mapped colour
+  if any; `data-empty="true"` stays. No sparkline in the null case, as before.
+- **Decision: sparkline colour.** The sparkline follows the displayed colour, so a mapping colour wins over thresholds
+  (Grafana's BigValue draws the sparkline in the display value's colour, which includes the mapping colour). This
+  reverses the guess in the sparkline entry's notes. Background mode still uses the text colour for the line.
+- **Version.** stat-sparkline bumped to **1.3.0** with a changelog; option label now "Value mappings (Grafana mappings
+  JSON)", matching the thresholds label.
+- **Tested as a user.** Built the registry, untarred stat-sparkline@1.3.0 dist.tar and ran its bundle in jsdom with
+  Lightdash-style rows. Mappings 0->Down red and null->N/A: 0 -> "Down" in `#F2495C` (unit dropped, red sparkline); null
+  and no rows -> "N/A", uncoloured; 7 ms -> "7 ms" green; 90 with orange threshold -> orange; background mode -> red
+  background with a white line; colour mode none -> "Down", uncoloured; malformed JSON -> "0" unchanged; range 1..10
+  colour-only purple -> "5 ms" in `#B877D9`; no mappings and null -> "No data". `viz-rendered` ack sent each time. Check
+  `stat-sparkline-value-mappings.test.ts` 3/3 after `bash ./init.sh`. Regressions: stat-sparkline-value 9/9,
+  -thresholds 7/7, -graph 3/3, build 31/31. Typecheck and oxfmt clean. Scratch driver in `../tmp/drive-stat-mappings/`
+  (run it from that directory with `vitest run --globals --disableConsoleIntercept drive.test.ts`).
+- 2026-11-08T20:41:53Z supervisor: viz-registry-stat-value-mappings passed the gate in round 1
