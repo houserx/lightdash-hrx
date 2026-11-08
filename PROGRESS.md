@@ -1175,3 +1175,31 @@ token verification for a *valid* token, which feature 39 then hardens.
   22023; 'loki-a' → 42809; end before start → 22023. The check sources::eng_traceql_search passes,
   eng_logql_streams still passes, and the 4 traceql unit tests pass. No build warnings.
 - 2026-11-08T19:59:07Z supervisor: eng-traceql-search passed the gate in round 1
+- eng-trace-by-id (worker, round 1): new `src/trace.rs`, registered as `trace` in `pg.rs`.
+  trace(trace_id[, source]) sends `GET <url>/api/traces/<id>` (v1). The id is normalised first:
+  hex, case-insensitive, up to 32 digits, left-padded to 32 (the form traceql() prints). Anything
+  else → 22023. Columns are trace_id, span_id (both NOT NULL), parent_span_id, service, name
+  (NOT NULL, "" when OTLP omits it), start timestamptz, duration_ms float8 ((end-start)/1e6),
+  status (unset/ok/error), attributes json (Arrow JSON extension, as in cloudwatch_logs). One row
+  per span, in Tempo's order. Tempo 404 → zero rows. Other non-2xx → XX000 "tempo source ...: HTTP
+  <code>: <body>" via `traceql::tempo_answer`, which is now pub(crate) and says "not Tempo JSON"
+  instead of "not Tempo search JSON". `traceql::trace_id` is pub(crate) too. More spans than
+  max_rows → 54000. 0 or 3+ arguments → 42883.
+  - `base64 = "0.22"` moved into `[dependencies]` (it was dev-only). Cargo.lock is unchanged.
+  - Contract assumptions (CONTRACTS §1.1 names the columns only): ids are base64 (protobuf JSON),
+    and 32/16-digit hex ids are accepted too. A missing, empty or all-zero parentSpanId is NULL.
+    `service` is the resource's service.name, else NULL. `attributes` holds only the span's own
+    attributes, not resource attributes. AnyValue maps to JSON: intValue (int64 text) → number,
+    arrayValue → array, kvlistValue → object, bytesValue → its base64 text, empty → null. The
+    status code can be an enum name or a number. A missing start or end → NULL start/duration.
+    `batches`, `resourceSpans`, `trace.resourceSpans` and `instrumentationLibrarySpans` are all
+    read.
+  Tested as a user: `../tmp/trace/run.sh` starts a Python Tempo mock that serves base64 OTLP
+  batches, plus the engine, then runs queries over pg-wire. The step query returned 3 rows: root
+  b7ad…3331 with parent NULL, web, 250.0, unset; 00f0…02b7 with parent b7ad…, api, 100.5, error,
+  attributes {"db.system":"postgresql","http.status_code":500,"ratio":0.5,"retry":true}; 1111…
+  with status ok and attributes {}. An unknown id gave count 0. An uppercase id with 'tempo-a' and
+  GROUP BY worked. A Tempo 500 came back as XX000 with Tempo's text. 'not-hex' → 22023, 'loki-a' →
+  42809, trace() → 42883. The check sources::eng_trace_by_id passes, eng_traceql_search still
+  passes, and the 2 new trace unit tests plus the 4 traceql unit tests pass. No build warnings.
+- 2026-11-08T20:04:26Z supervisor: eng-trace-by-id passed the gate in round 1

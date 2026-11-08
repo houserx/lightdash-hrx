@@ -165,10 +165,10 @@ impl TraceqlQuery {
     }
 }
 
-/// A Tempo search answer, or an error naming the source and what it said. Tempo answers query
+/// A Tempo JSON answer (search or trace), or an error naming the source and what it said. Tempo answers query
 /// errors (a TraceQL parse error, a range too long) with a plain-text body, which is quoted
 /// (shortened).
-fn tempo_answer(source: &str, status: u16, body: &[u8]) -> Result<Value, DataFusionError> {
+pub(crate) fn tempo_answer(source: &str, status: u16, body: &[u8]) -> Result<Value, DataFusionError> {
     let fail =
         |what: String| DataFusionError::Execution(format!("tempo source \"{source}\": {what}"));
     if !(200..300).contains(&status) {
@@ -184,7 +184,7 @@ fn tempo_answer(source: &str, status: u16, body: &[u8]) -> Result<Value, DataFus
         .filter(|answer| answer.is_object())
         .ok_or_else(|| {
             fail(format!(
-                "HTTP {status} with a response that is not Tempo search JSON"
+                "HTTP {status} with a response that is not Tempo JSON"
             ))
         })
 }
@@ -249,7 +249,7 @@ fn search_batch(
 }
 
 /// A hex trace id, lowercase and padded to 32 digits.
-fn trace_id(id: &str) -> Option<String> {
+pub(crate) fn trace_id(id: &str) -> Option<String> {
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }

@@ -59,6 +59,7 @@ use crate::labels::{label_udf, series_name_udf};
 use crate::logql::Logql;
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
+use crate::trace::Trace;
 use crate::traceql::Traceql;
 use crate::transaction::{Transaction, aborted_block, check_not_aborted};
 
@@ -150,6 +151,8 @@ impl PgHandlers {
         sql.ctx.register_udtf("logql", Arc::new(logql));
         let traceql = Traceql::new(config, http.clone());
         sql.ctx.register_udtf("traceql", Arc::new(traceql));
+        let trace = Trace::new(config, http.clone());
+        sql.ctx.register_udtf("trace", Arc::new(trace));
         let promql = Promql::new(config, http);
         sql.ctx
             .register_udtf("promql_instant", Arc::new(promql.clone().instant()));
