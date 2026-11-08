@@ -6926,6 +6926,79 @@
                     }
                 ]
             },
+            "Pick_DashboardTimeRange.Exclude_keyofDashboardTimeRange.tileTimeDimensions__": {
+                "properties": {
+                    "from": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "refreshInterval": {
+                        "type": "string",
+                        "enum": [
+                            "10s",
+                            "30s",
+                            "1m",
+                            "5m",
+                            "15m",
+                            "30m",
+                            "1h",
+                            null
+                        ],
+                        "nullable": true,
+                        "description": "One of DASHBOARD_REFRESH_INTERVALS, or null when refresh is off."
+                    }
+                },
+                "required": ["from", "to", "refreshInterval"],
+                "type": "object",
+                "description": "From T, pick a set of properties whose keys are in the union K"
+            },
+            "Omit_DashboardTimeRange.tileTimeDimensions_": {
+                "$ref": "#/components/schemas/Pick_DashboardTimeRange.Exclude_keyofDashboardTimeRange.tileTimeDimensions__",
+                "description": "Construct a type with the properties of T except for those in type K."
+            },
+            "DashboardTileTimeDimension": {
+                "properties": {
+                    "tableName": {
+                        "type": "string"
+                    },
+                    "fieldId": {
+                        "type": "string"
+                    }
+                },
+                "required": ["tableName", "fieldId"],
+                "type": "object",
+                "description": "The time dimension a Tile is filtered on by the Dashboard Time Range."
+            },
+            "Record_string.DashboardTileTimeDimension_": {
+                "properties": {},
+                "additionalProperties": {
+                    "$ref": "#/components/schemas/DashboardTileTimeDimension"
+                },
+                "type": "object",
+                "description": "Construct a type with a set of properties K of type T"
+            },
+            "DashboardTimeRangeAsCode": {
+                "allOf": [
+                    {
+                        "$ref": "#/components/schemas/Omit_DashboardTimeRange.tileTimeDimensions_"
+                    },
+                    {
+                        "properties": {
+                            "tileTimeDimensions": {
+                                "$ref": "#/components/schemas/Record_string.DashboardTileTimeDimension_",
+                                "description": "Time dimension per tile slug; tiles not listed are not filtered."
+                            }
+                        },
+                        "required": ["tileTimeDimensions"],
+                        "type": "object"
+                    }
+                ],
+                "description": "The Dashboard Time Range in dashboard-as-code. Same shape as the saved range, except\n`tileTimeDimensions` is keyed by tile slug (not tile uuid) so the file is portable."
+            },
             "DashboardAsCode": {
                 "allOf": [
                     {
@@ -6933,6 +7006,15 @@
                     },
                     {
                         "properties": {
+                            "timeRange": {
+                                "allOf": [
+                                    {
+                                        "$ref": "#/components/schemas/DashboardTimeRangeAsCode"
+                                    }
+                                ],
+                                "nullable": true,
+                                "description": "Dashboard Time Range. Download writes it when the dashboard has one. On upload,\nomitting it or setting `null` saves the dashboard without a time range."
+                            },
                             "access": {
                                 "$ref": "#/components/schemas/ContentAsCodeDirectAccess",
                                 "description": "Direct user/group grants. Omission leaves the existing policy unchanged on upload."
@@ -9894,6 +9976,42 @@
                     }
                 ]
             },
+            "DashboardRefreshInterval": {
+                "type": "string",
+                "enum": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+            },
+            "DashboardTimeRange": {
+                "properties": {
+                    "tileTimeDimensions": {
+                        "$ref": "#/components/schemas/Record_string.DashboardTileTimeDimension_",
+                        "description": "Time dimension per tile uuid; tiles not listed are not filtered."
+                    },
+                    "refreshInterval": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardRefreshInterval"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "One of DASHBOARD_REFRESH_INTERVALS, or null when refresh is off."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    }
+                },
+                "required": [
+                    "tileTimeDimensions",
+                    "refreshInterval",
+                    "to",
+                    "from"
+                ],
+                "type": "object"
+            },
             "ProjectType": {
                 "enum": ["DEFAULT", "PREVIEW", "TRAINING"],
                 "type": "string"
@@ -9937,63 +10055,6 @@
                 "required": ["userUuid", "firstName", "lastName"],
                 "type": "object",
                 "additionalProperties": true
-            },
-            "DashboardRefreshInterval": {
-                "type": "string",
-                "enum": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"]
-            },
-            "DashboardTileTimeDimension": {
-                "properties": {
-                    "tableName": {
-                        "type": "string"
-                    },
-                    "fieldId": {
-                        "type": "string"
-                    }
-                },
-                "required": ["tableName", "fieldId"],
-                "type": "object",
-                "description": "The time dimension a Tile is filtered on by the Dashboard Time Range."
-            },
-            "Record_string.DashboardTileTimeDimension_": {
-                "properties": {},
-                "additionalProperties": {
-                    "$ref": "#/components/schemas/DashboardTileTimeDimension"
-                },
-                "type": "object",
-                "description": "Construct a type with a set of properties K of type T"
-            },
-            "DashboardTimeRange": {
-                "properties": {
-                    "tileTimeDimensions": {
-                        "$ref": "#/components/schemas/Record_string.DashboardTileTimeDimension_",
-                        "description": "Time dimension per tile uuid; tiles not listed are not filtered."
-                    },
-                    "refreshInterval": {
-                        "allOf": [
-                            {
-                                "$ref": "#/components/schemas/DashboardRefreshInterval"
-                            }
-                        ],
-                        "nullable": true,
-                        "description": "One of DASHBOARD_REFRESH_INTERVALS, or null when refresh is off."
-                    },
-                    "to": {
-                        "type": "string",
-                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
-                    },
-                    "from": {
-                        "type": "string",
-                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
-                    }
-                },
-                "required": [
-                    "tileTimeDimensions",
-                    "refreshInterval",
-                    "to",
-                    "from"
-                ],
-                "type": "object"
             },
             "DashboardOwner": {
                 "properties": {
@@ -10060,6 +10121,15 @@
                             "$ref": "#/components/schemas/DashboardTile"
                         },
                         "type": "array"
+                    },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRange"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Saved Dashboard Time Range of this version; null when it has none"
                     },
                     "organizationUuid": {
                         "type": "string"
@@ -10142,15 +10212,6 @@
                             }
                         ],
                         "nullable": true
-                    },
-                    "timeRange": {
-                        "allOf": [
-                            {
-                                "$ref": "#/components/schemas/DashboardTimeRange"
-                            }
-                        ],
-                        "nullable": true,
-                        "description": "Saved Dashboard Time Range of this version; null when it has none"
                     },
                     "colorPaletteUuid": {
                         "type": "string",
@@ -11221,6 +11282,15 @@
                         "type": "string",
                         "nullable": true,
                         "description": "Declarative dashboard owner, referenced by email so it is portable across projects.\nA string assigns the organization member with that email as owner, `null` unassigns\nthe owner, `undefined` leaves the current owner untouched. Download sets this to the\nowner's email when an owner is assigned."
+                    },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRangeAsCode"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Dashboard Time Range. Download writes it when the dashboard has one. On upload,\nomitting it or setting `null` saves the dashboard without a time range."
                     }
                 },
                 "required": ["name", "slug", "version", "spaceSlug", "tabs"],
@@ -72155,9 +72225,6 @@
                         },
                         "type": "array"
                     },
-                    "updatedByUser": {
-                        "$ref": "#/components/schemas/Pick_UpdatedByUser.userUuid_"
-                    },
                     "timeRange": {
                         "allOf": [
                             {
@@ -72166,6 +72233,9 @@
                         ],
                         "nullable": true,
                         "description": "Saved Dashboard Time Range; null or omitted for none"
+                    },
+                    "updatedByUser": {
+                        "$ref": "#/components/schemas/Pick_UpdatedByUser.userUuid_"
                     }
                 },
                 "required": ["tabs", "tiles"],

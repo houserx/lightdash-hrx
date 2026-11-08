@@ -13,6 +13,10 @@ import type {
     DashboardTile,
     DashboardTileTypes,
 } from '../dashboard';
+import type {
+    DashboardTileTimeDimension,
+    DashboardTimeRange,
+} from '../dashboardTimeRange';
 import type { DashboardFilterRule } from '../filter';
 import type { PromotionChanges } from '../promotion';
 import type { ContentAsCodeType } from './core';
@@ -131,6 +135,18 @@ export type DashboardTabAsCode = {
     hidden?: DashboardTab['hidden'];
 };
 
+/**
+ * The Dashboard Time Range in dashboard-as-code. Same shape as the saved range, except
+ * `tileTimeDimensions` is keyed by tile slug (not tile uuid) so the file is portable.
+ */
+export type DashboardTimeRangeAsCode = Omit<
+    DashboardTimeRange,
+    'tileTimeDimensions'
+> & {
+    /** Time dimension per tile slug; tiles not listed are not filtered. */
+    tileTimeDimensions: Record<string, DashboardTileTimeDimension>;
+};
+
 export type DashboardAsCode = Omit<
     Pick<
         Dashboard,
@@ -176,6 +192,11 @@ export type DashboardAsCode = Omit<
     verification?: ContentVerificationInfo | null;
     /** Direct user/group grants. Omission leaves the existing policy unchanged on upload. */
     access?: ContentAsCodeDirectAccess;
+    /**
+     * Dashboard Time Range. Download writes it when the dashboard has one. On upload,
+     * omitting it or setting `null` saves the dashboard without a time range.
+     */
+    timeRange?: DashboardTimeRangeAsCode | null;
 };
 
 export type ApiDashboardAsCodeListResponse = {

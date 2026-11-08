@@ -855,3 +855,27 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     version, read by uuid for rollback, still had now-24h. A dashboard without a range read null.
     The validator accepted 30s and null and refused 2m, 'off' and a reversed absolute range.
 - 2026-11-08T19:19:44Z supervisor: ldq-dashboard-time-range-persisted passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-as-code (session):
+  - Common: new `DashboardTimeRangeAsCode` (the `DashboardTimeRange` shape with `tileTimeDimensions`
+    keyed by tile slug) and `DashboardAsCode.timeRange?: DashboardTimeRangeAsCode | null`.
+    `schemas/json/dashboard-as-code-1.0.json` is regenerated from swagger, so `refreshInterval` is an
+    enum of 10s..1h or null and the schema refuses `2m`. TRAP: init regenerates routes/swagger but
+    NOT the as-code JSON schemas (root `postgenerate-api` is not run by `generate-api:build`). After
+    an as-code type change, run `pnpm -F common generate:dashboard-as-code-schema`, then init again
+    so common's dist (used by the CLI) picks up the new JSON.
+  - Backend `dashboardReferences.ts`: `getTimeRangeWithTileSlugs` (download; drops uuids with no tile
+    slug, like dateZoom tileTargets) and `getTimeRangeWithTileUuids` (upload; unknown slugs are dropped
+    and returned as upload warnings). CoderService writes `timeRange` on download only when the
+    dashboard has one (no `timeRange: null` noise in existing YAML). `upsertDashboard` refuses an
+    invalid range with ParameterError before any write (`isValidDashboardTimeRange`) and passes the
+    uuid-keyed range to create and to the promote update.
+  - Decision: on as-code upload an omitted or null `timeRange` saves the dashboard with no time range
+    (declarative, like `config`/`parameters`). This differs from the v1 API update, where omitted keeps
+    the saved range. A YAML downloaded before this feature will clear a UI-set range on re-upload.
+  - Tested: built CLI `lightdash lint -p` on a synthetic dashboard YAML (tmp, deleted): now-6h/now/30s
+    with a tile slug passed; the same file with `refreshInterval: 2m` failed at the timeRange line.
+    New unit tests: slug<->uuid round trip (CoderService.test, 90/90) and upsertDashboard saving the
+    uuid-keyed range with a warning for an unknown slug, and refusing 2m (upsertContentAccess,
+    268/268). Feature check 3/3, schema `--check` in sync, generator test 4/4, backend and common tsc
+    clean, oxlint/oxfmt clean.
+- 2026-11-08T19:28:35Z supervisor: ldq-dashboard-time-range-as-code passed the gate in round 1
