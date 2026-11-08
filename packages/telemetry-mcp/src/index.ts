@@ -91,6 +91,8 @@ export {
     parseAdvice,
     resolveModel,
 } from './ask/plan-advisor.service.js';
+export { extractFigures, unverifiedFigures } from './ask/answer-verification.js';
+export type { EvidenceQuery, Figure } from './ask/answer-verification.js';
 export type {
     AdvisePlanInput,
     ExistingIndex,

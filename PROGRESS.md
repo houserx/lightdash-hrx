@@ -1408,3 +1408,23 @@ docs/eng-1799/telemetry-mcp.md
   fails only on its ask_data case.
 - 2026-11-08T18:34:08Z supervisor: mcp-plan-advice passed the gate in round 1
 - 2026-11-08T18:35:23Z supervisor: mcp-answer-verification-port halted: worker mcp.feature.mcp-answer-verification-port.r1 stopped: STOP file present
+
+### mcp-answer-verification-port (session 2026-11-08, round 1 rerun after STOP-file halt)
+
+- Source: `~/Remotes/HouseRx/db-query-portal` at `aea73de` (`git show aea73de:api/src/services/answer-verification.ts`
+  and `.test.ts`, read-only).
+- New `src/ask/answer-verification.ts`, a port whose logic is verbatim from the portal (only re-indented to 4 spaces).
+  It exports `unverifiedFigures(answer, question, queries)` (figures in the answer not backed by rows, SQL, question,
+  row counts or simple arithmetic; deduped, at most 6), `extractFigures(text)`, and types `EvidenceQuery` and `Figure`
+  (`Figure` is now exported). All of these are re-exported from `src/index.ts`. It has no dependencies and no I/O.
+- New `src/ask/answer-verification.test.ts`: the portal's 7 cases come first, unchanged except that jest globals became
+  vitest imports. 4 more cases cover failed-query rows being ignored, dedupe with the cap of 6, and `extractFigures`
+  parsing (separators, currency, K/M/B, %, digits inside words).
+- **Hook for mcp-tool-ask-data:** after the model writes its answer, call
+  `unverifiedFigures(answer, question, queries.map(q => ({ status, sql, rows })))` and surface any non-empty result
+  as a warning. This mirrors how the portal uses it; check the portal's ask service for the exact wording.
+- Tested as a user: `pnpm exec vitest run src/ask/answer-verification.test.ts` gave 11 of 11 passing. Called the built
+  `dist/index.js` export directly, and `unverifiedFigures('30% paid, 31% rejected, 99 open', …rows n=30,70)` returned
+  `["31%","99"]`. After `bash ./init.sh` the feature check passes. Strict typecheck covered the test file through
+  `../tmp/answer-verification-port/tsconfig.json`. `pnpm typecheck` is clean, and the unit suite has 303 passing.
+- 2026-11-08T18:37:40Z supervisor: mcp-answer-verification-port passed the gate in round 1
