@@ -1,9 +1,9 @@
 {
     "name": "Histogram",
     "description": "Buckets a field's values into equal-width bars and counts how many fall in each, ignoring empty values.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "publishedAt": "2026-11-08T00:00:00.000Z",
-    "changelog": "Initial HouseRx release.",
+    "changelog": "A value that falls exactly on a bucket edge is counted in the bucket that edge starts, as the bar edges report.",
     "tags": ["houserx", "distribution"],
     "icon": "chart-histogram",
     "vizSchema": {

@@ -33,7 +33,13 @@ export const bucketValues = (
         }),
     );
     for (const value of values) {
-        const index = Math.min(Math.floor((value - min) / width), count - 1);
+        let index = Math.min(Math.floor((value - min) / width), count - 1);
+        // Floating-point division can land a value on an edge one bucket
+        // off; settle it against the edges the buckets actually report.
+        while (index > 0 && value < buckets[index].from) index -= 1;
+        while (index < count - 1 && value >= buckets[index + 1].from) {
+            index += 1;
+        }
         buckets[index].count += 1;
     }
     return buckets;

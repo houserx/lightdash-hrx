@@ -1177,3 +1177,24 @@ should add a dated line here per feature.
   The scratch driver is in `../tmp/drive-bar-gauge-modes/`. Run it from there with
   `../../repo/packages/backend/node_modules/.bin/vitest run --globals --disableConsoleIntercept drive.test.ts`.
 - 2026-11-08T20:48:29Z supervisor: viz-registry-bar-gauge-modes passed the gate in round 1
+
+## viz-registry-histogram (round 1)
+- **State found.** The histogram entry was already fully built by viz-registry-build (value field, `bucketCount`
+  number option default 10, `histogram-bar` SVG rects with `data-count`/`data-from`/`data-to`/`data-color`, "No data"
+  when nothing is numeric). `histogram.test.ts` passed 3/3 before any change.
+- **What changed.** `bucketValues` (histogram.ts) placed values by `floor((v - min) / width)`. Floating-point division
+  can put a value on a bucket edge one bucket away from the `[from, to)` range the bar reports. The index is now
+  corrected against the bucket's own `from` edges, so the counts always agree with `data-from`/`data-to`.
+  histogram 1.0.0 -> **1.0.1** with a changelog, following the earlier sessions' practice of bumping when an entry's
+  artifact changes.
+- **Tested as a user.** Built the registry (histogram@1.0.1), untarred dist.tar and ran the bundle in jsdom the way
+  the host does, with a Lightdash-style field id and a mix of numbers, numeric strings, nulls and ''. bucketCount 5
+  -> 5 bars, counts 3/3/0/2/2 = 10 = the non-null numeric rows, edges 3..60. Default -> 10 bars, total 10. Values
+  0, 0.1 .. 1 with 10 buckets -> total 11, each value in the bar whose reported range holds it. Single value 3 x2,
+  4 buckets -> range 2.5..3.5, total 2. All null -> "No data". Preview -> 6 bars, total 16. `viz-rendered` ack every
+  time. Check `histogram.test.ts` 3/3 after `bash ./init.sh`. Regressions: build 38/38, client-install 4/4.
+  Typecheck and oxfmt are clean. The scratch driver is in `../tmp/drive-histogram/`; run it from there with
+  `../../repo/packages/backend/node_modules/.bin/vitest run --globals --disableConsoleIntercept drive.test.ts`.
+- **Next.** viz-registry-status-grid is the last missing entry. previews.test.ts still fails on status-grid until
+  that entry exists.
+- 2026-11-08T20:50:51Z supervisor: viz-registry-histogram passed the gate in round 1
