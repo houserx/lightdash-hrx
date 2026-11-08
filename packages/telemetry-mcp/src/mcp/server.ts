@@ -33,7 +33,9 @@ import { registerQueryCloudwatchLogs } from '../tools/queryCloudwatchLogs.js';
 import { registerQueryLogql } from '../tools/queryLogql.js';
 import { registerQueryPromql } from '../tools/queryPromql.js';
 import { registerSearchTraces } from '../tools/searchTraces.js';
+import type { Logger } from '../log.js';
 import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js';
+import { logToolCalls } from './toolCallLog.js';
 
 /** `serverInfo.name` announced to MCP clients. */
 export const MCP_SERVER_NAME = 'telemetry-mcp';
@@ -50,10 +52,14 @@ export interface McpServerDeps {
     now: () => number;
 }
 
-/** What a request needs besides the config: the shared user resolver and the server clock (epoch ms). */
+/**
+ * What a request needs besides the config: the shared user resolver, the server clock (epoch ms) and the structured
+ * logger.
+ */
 export interface McpRequestContext {
     users: UserResolver;
     now: () => number;
+    logger: Logger;
 }
 
 /** Builds the MCP server for one request, with every tool registered. */
@@ -134,7 +140,9 @@ export async function serveMcpRequest(
             unmapped = err instanceof UserMappingError ? err.message : UNMAPPED_FALLBACK;
         }
     }
+    const sub = typeof auth.claims.sub === 'string' ? auth.claims.sub : undefined;
     if (unmapped !== undefined) {
+        context.logger.warn('user not mapped', { user: sub, reason: unmapped });
         server = createNoToolsServer(unmapped);
     } else {
         // Every tool call opens its own engine connection as the caller (SET hrx.identity, SET statement_timeout).
@@ -146,6 +154,7 @@ export async function serveMcpRequest(
             ]), now: context.now });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    logToolCalls(transport, parsedBody, context.logger, sub, context.now);
     res.on('close', () => {
         void transport.close();
         void server.close();

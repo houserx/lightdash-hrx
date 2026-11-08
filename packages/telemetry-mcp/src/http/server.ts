@@ -4,6 +4,7 @@ import { AccessTokenError, createOktaVerifier, type AccessTokenVerifier } from '
 import { createCachedUserResolver } from '../auth/userCache.js';
 import { createLightdashUserResolver } from '../auth/userMapping.js';
 import type { Config } from '../config.js';
+import { configSecrets, createLogger, type Logger } from '../log.js';
 import { serveMcpRequest, type McpRequestContext } from '../mcp/server.js';
 import { bearerChallenge, extractBearer, type BearerError } from './bearerChallenge.js';
 import { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './protectedResource.js';
@@ -12,6 +13,10 @@ import { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata 
 export interface ServerDeps {
     /** Server clock, epoch ms. Default: `Date.now`. */
     now: () => number;
+    /**
+     * Receives each structured log line (one JSON object, no newline), at or above `LOG_LEVEL`. Default: stdout.
+     */
+    log: (line: string) => void;
 }
 
 export interface RunningServer {
@@ -37,7 +42,27 @@ function allowGetOnly(req: http.IncomingMessage, res: http.ServerResponse): bool
     return false;
 }
 
-function sendUnauthorized(config: Config, res: http.ServerResponse, err?: BearerError): void {
+/** Paths named in request log lines; any other path is logged as `(other)`, so a probe's URL is never echoed. */
+const KNOWN_PATHS = new Set(['/healthz', MCP_PATH, ...PROTECTED_RESOURCE_METADATA_PATHS]);
+
+/** The request's path for a log line: a known path as is, anything else (or an unparseable URL) as `(other)`. */
+function loggedPath(url: string | undefined): string {
+    try {
+        const { pathname } = new URL(url ?? '/', 'http://localhost');
+        return KNOWN_PATHS.has(pathname) ? pathname : '(other)';
+    } catch {
+        return '(other)';
+    }
+}
+
+function sendUnauthorized(
+    config: Config,
+    logger: Logger,
+    reason: 'missing' | 'malformed' | 'invalid',
+    res: http.ServerResponse,
+    err?: BearerError,
+): void {
+    logger.warn('unauthorized request', { reason });
     res.setHeader('WWW-Authenticate', bearerChallenge(config, err));
     sendJson(res, 401, err ? { error: err.error, error_description: err.description } : { error: 'unauthorized' });
 }
@@ -53,13 +78,17 @@ async function handleMcp(
     req: http.IncomingMessage,
     res: http.ServerResponse,
 ): Promise<void> {
+    const { logger } = context;
     const bearer = extractBearer(req.headers);
     if (bearer.kind === 'missing') {
-        sendUnauthorized(config, res);
+        sendUnauthorized(config, logger, 'missing', res);
         return;
     }
     if (bearer.kind === 'malformed') {
-        sendUnauthorized(config, res, { error: 'invalid_token', description: 'The access token is malformed' });
+        sendUnauthorized(config, logger, 'malformed', res, {
+            error: 'invalid_token',
+            description: 'The access token is malformed',
+        });
         return;
     }
     let verified;
@@ -68,7 +97,7 @@ async function handleMcp(
     } catch (err) {
         // Fail closed: anything that stops verification (bad token, unreachable JWKS) is a 401.
         const description = err instanceof AccessTokenError ? err.description : 'The access token could not be verified';
-        sendUnauthorized(config, res, { error: 'invalid_token', description });
+        sendUnauthorized(config, logger, 'invalid', res, { error: 'invalid_token', description });
         return;
     }
     await serveMcpRequest(config, context, verified, req, res);
@@ -106,12 +135,29 @@ export async function startServer({
 }): Promise<RunningServer> {
     const verifier = createOktaVerifier(config.okta);
     const now = deps.now ?? Date.now;
+    const logger = createLogger({
+        level: config.logLevel,
+        write: deps.log,
+        secrets: configSecrets(config),
+        now,
+    });
     const context: McpRequestContext = {
         users: createCachedUserResolver(createLightdashUserResolver(config.lightdash), config.userCacheTtlMs, now),
         now,
+        logger,
     };
     const server = http.createServer((req, res) => {
-        handle(config, context, verifier, req, res).catch(() => {
+        const start = now();
+        res.once('finish', () => {
+            logger.debug('http request', {
+                method: req.method,
+                path: loggedPath(req.url),
+                status: res.statusCode,
+                durationMs: Math.max(0, now() - start),
+            });
+        });
+        handle(config, context, verifier, req, res).catch((err: unknown) => {
+            logger.error('request failed', { error: err instanceof Error ? err.name : typeof err });
             if (!res.headersSent) sendJson(res, 500, { error: 'internal_error' });
             else res.end();
         });
@@ -124,8 +170,10 @@ export async function startServer({
         });
     });
     const { port } = server.address() as AddressInfo;
+    const url = `http://127.0.0.1:${port}`;
+    logger.info('telemetry-mcp listening', { url });
     return {
-        url: `http://127.0.0.1:${port}`,
+        url,
         close: () =>
             new Promise<void>((resolve, reject) => {
                 server.closeAllConnections();

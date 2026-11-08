@@ -1250,3 +1250,50 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 6/6. Acceptance: 31 files pass and 22 fail. All 22 failures are unbuilt features
   (ask_data, platform_explain, write_preview, docs, dockerfile, readme, structured-logs, tool-catalog and others).
 - 2026-11-08T18:04:52Z supervisor: mcp-tool-platform-query passed the gate in round 1
+
+## mcp-structured-logs (2026-11-08)
+
+- New `src/log.ts`: `createLogger({level, write?, secrets?, now?})` writes one JSON object per line, as
+  `{time, level, msg, ...fields}`. Lines below `LOG_LEVEL` are dropped. It writes to stdout by default, or to `deps.log`
+  when given (the acceptance harness passes `deps.log`). Field values may only be scalars (string, number, boolean or
+  null). Objects and arrays are dropped and never serialized. Every string goes through `redactSecrets` (the configured
+  secrets plus any JWT-shaped string) and is cut to 200 characters. `configSecrets(config)` lists the secrets: identity
+  secret, Lightdash API token, engine PG password and Anthropic key. A writer that throws never breaks a request.
+- New `src/mcp/toolCallLog.ts`: `logToolCalls(transport, parsedBody, logger, sub, now)` wraps `transport.send`. It
+  writes one `tool call` line when the JSON-RPC response for each `tools/call` id is sent. The line holds `tool`
+  (`(invalid)` unless it is a plain identifier), `user` (the Okta `sub`), `durationMs`, `outcome`
+  (`ok`/`error`/`rejected`) and, for JSON-RPC errors, `code`. It holds `rowCount`/`truncated` only from
+  structuredContent. `ok` lines are logged at info and the others at warn.
+  - Decision: it hooks the transport rather than wrapping each `registerTool` handler. That way it also logs calls the
+    SDK answers itself: zod input rejections (SDK 1.31 returns them as isError results), unknown tools, and the
+    no-tools server used for unmapped users.
+  - Tool arguments, result content, error text and SQL are never read into a line.
+- `src/http/server.ts`: `ServerDeps.log` is new, and the logger is built in `startServer`. Each request logs:
+  - a 401 as warn `unauthorized request` with `reason` `missing`, `malformed` or `invalid` (the token and the verifier's
+    description are not logged);
+  - each finished request as debug `http request` with method, status, durationMs and path. A path that is not one of
+    the server's own is logged as `(other)`, so probe URLs or query strings are never echoed;
+  - an unhandled error as error `request failed` with the error *name* only;
+  - startup as `telemetry-mcp listening` with `url`. This moved here from `main.ts`.
+- `src/mcp/server.ts`: `McpRequestContext.logger` is new. An unmapped user logs warn `user not mapped` with the fixed
+  `UserMappingError` sentence.
+- `src/main.ts`: config and startup errors on stderr are now JSON lines too. Config errors name the variable and never
+  echo its value.
+- Contract assumptions: CONTRACTS/CONTEXT don't specify a log format, so the field names above are my own choice. The
+  `user` field is the Okta `sub`, not the email, so log lines carry no staff email. Change this if ops wants email.
+- Unit tests: `src/log.test.ts` and `src/mcp/toolCallLog.test.ts`. 263 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/structured-logs-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It starts the real `dist/main.js` on port 19003 with
+  LOG_LEVEL=debug and captures stdout and stderr. It then runs:
+  - promql;
+  - a platform_query whose SQL and result row contain a synthetic MRN and sentinels;
+  - a bad time, a zod rejection, an unknown tool, an audit failure and an unknown user;
+  - three 401s (junk, missing and bad-signature token) and a 404 probe with a token in the query string.
+  Results: 28 lines, all JSON with level and msg, and every tool call is named. There were 0 hits for row values, SQL,
+  the MRN, the access token or its signature, identity tokens or their payload, or any configured secret.
+  SIGTERM exited 0.
+- Results: the check passes 3/3. Acceptance: 32 files pass and 21 fail. All 21 failures are unbuilt features
+  (ask_data, platform_explain, write_preview, docs, dockerfile, readme, tool-catalog and others).
+- Next sessions: log through `context.logger` / `createLogger` with scalar metadata only. Never pass args, rows, SQL
+  or error text.
+- 2026-11-08T18:12:34Z supervisor: mcp-structured-logs passed the gate in round 1

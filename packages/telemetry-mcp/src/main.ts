@@ -6,11 +6,11 @@ async function main(): Promise<void> {
     try {
         config = loadConfig(process.env);
     } catch (err) {
-        process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+        // Config errors name the variable and never echo a secret value.
+        process.stderr.write(`${JSON.stringify({ level: 'error', msg: err instanceof Error ? err.message : String(err) })}\n`);
         process.exit(1);
     }
     const server = await startServer({ config });
-    process.stdout.write(`${JSON.stringify({ level: 'info', msg: 'telemetry-mcp listening', url: server.url })}\n`);
     const shutdown = () => {
         server.close().then(
             () => process.exit(0),
@@ -22,6 +22,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-    process.stderr.write(`telemetry-mcp failed to start: ${err instanceof Error ? err.message : String(err)}\n`);
+    const msg = `telemetry-mcp failed to start: ${err instanceof Error ? err.message : String(err)}`;
+    process.stderr.write(`${JSON.stringify({ level: 'error', msg })}\n`);
     process.exit(1);
 });

@@ -11,6 +11,8 @@ export type {
     MintIdentityTokenInput,
 } from './identity/token.js';
 export { startServer } from './http/server.js';
+export { MAX_LOG_STRING_LENGTH, configSecrets, createLogger } from './log.js';
+export type { LogFields, LogValue, Logger, LoggerOptions } from './log.js';
 export type { RunningServer, ServerDeps } from './http/server.js';
 export { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './http/protectedResource.js';
 export type { ProtectedResourceMetadata } from './http/protectedResource.js';
