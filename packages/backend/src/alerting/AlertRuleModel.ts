@@ -215,6 +215,14 @@ export class AlertRuleModel {
         return row ? toAlertRule(row) : undefined;
     }
 
+    /** A rule by uuid in any project (the evaluator has no request scope). */
+    async findByUuid(ruleUuid: string): Promise<AlertRule | undefined> {
+        const row = await this.selectRules()
+            .where(`${AlertRulesTableName}.alert_rule_uuid`, ruleUuid)
+            .first();
+        return row ? toAlertRule(row) : undefined;
+    }
+
     async list(projectUuid: string): Promise<AlertRule[]> {
         const rows = await this.selectRules()
             .where(`${AlertRulesTableName}.project_uuid`, projectUuid)

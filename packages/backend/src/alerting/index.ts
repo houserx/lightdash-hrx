@@ -3,12 +3,9 @@
 // The module is built from injected dependencies so the API, the evaluator
 // and the scheduler can run in the app, the worker and the acceptance
 // harness alike. See PROGRESS.md "Backend" for the full contract.
-import {
-    type AlertRuleQueryContext,
-    type WarehouseClient,
-} from '@lightdash/common';
 import { type Router } from 'express';
 import { type Knex } from 'knex';
+import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
 import { ContactPointModel } from './ContactPointModel';
@@ -21,12 +18,7 @@ export type AlertingModuleDeps = {
     database: Knex;
     /** Every "now" in alerting comes from here. */
     clock: { now(): Date };
-    warehouseClients: {
-        getWarehouseClient(args: {
-            projectUuid: string;
-            context: AlertRuleQueryContext;
-        }): Promise<Pick<WarehouseClient, 'runQuery'>>;
-    };
+    warehouseClients: AlertWarehouseClients;
     secrets: { resolve(name: string): Promise<string | undefined> };
     email: {
         sendEmail(message: {
@@ -62,6 +54,7 @@ export type AlertingModule = {
     alertRules: AlertRuleService;
     contactPoints: ContactPointService;
     notificationRoutes: NotificationRouteService;
+    evaluator: AlertEvaluator;
     close(): Promise<void>;
 };
 
@@ -83,6 +76,10 @@ export const createAlertingModule = (
         notificationRoutes: new NotificationRouteService({
             notificationRouteModel,
             clock: deps.clock,
+        }),
+        evaluator: new AlertEvaluator({
+            alertRuleModel,
+            warehouseClients: deps.warehouseClients,
         }),
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},

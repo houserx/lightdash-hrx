@@ -5,6 +5,7 @@ export * from './conditions';
 export * from './series';
 export * from './stateMachine';
 export * from './evaluatorIdentity';
+export * from './queryParameters';
 export * from './routingMatchers';
 export * from './routingTree';
 export * from './routingGrouping';
