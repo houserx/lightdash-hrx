@@ -308,3 +308,18 @@ should add a dated line here per feature.
   `20260624120004_add_data_app_viz_chart_type.ts` (complete, no heaviness), so no declaration is needed.
 - **Next.** Charts of both types can now be saved through the API. No other changes.
 - 2026-11-08T18:22:15Z supervisor: viz-chart-types-migration passed the gate in round 1
+
+### 2026-11-08 viz-log-levels (session)
+
+- **What.** `packages/common/src/eng1799/logStream.ts` (already exported from the common index) now has `LOG_LEVELS` (most
+  severe first), `DEFAULT_LOG_LEVEL_COLORS` (Grafana's defaults), `normalizeLogLevel(raw: unknown)` and
+  `getLogLevelColor(level, overrides?)`. The alias table copies Grafana's `LogLevel` enum: emerg/fatal/alert/crit/critical
+  map to critical, warn/warning to warning, err/eror/error to error, info/information/informational/notice to info,
+  dbug/debug to debug, and trace to trace. Matching ignores case and surrounding whitespace. Non-strings, empty strings
+  and unknown names give `unknown`. An override that is empty or falsy falls back to the default colour.
+- **Tested.** `bash ./init.sh`, then the check (25/25). The common typecheck, oxfmt and oxlint are clean. No log stream
+  UI exists yet, so I ran a tsx script through `@lightdash/common` on rows with levels ERR/warn/crit/notice/missing. It
+  got error/warning/critical/info/unknown with Grafana's colours, and an `error` override changed only the error colour.
+- **Next.** `viz-log-stream-model` and `viz-log-stream-level-bar` should use `normalizeLogLevel` and `getLogLevelColor`
+  with `config.levelColors`, not their own tables.
+- 2026-11-08T18:26:53Z supervisor: viz-log-levels passed the gate in round 1
