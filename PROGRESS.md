@@ -542,3 +542,29 @@ token verification for a *valid* token, which feature 39 then hardens.
   - `SET LOCAL` is still ignored rather than scoped to the block.
   - rustfmt and clippy are not installed on this machine, so formatting was done by hand.
 - 2026-11-08T16:49:41Z supervisor: eng-pg-transaction-statements passed the gate in round 1
+- 2026-11-08 eng-pg-cursor-batches (session 9): no engine code changed. The pg-cursor pattern
+  already worked after eng-pg-transaction-statements: pgwire 0.42's default `on_execute` stores
+  the `QueryResponse` in the portal and `Portal::fetch(max_rows)` pulls max_rows rows per Execute,
+  sending PortalSuspended until the stream ends.
+  - Decision: `do_query` (extended) still runs the plan to completion (`DataFrame::collect`) and
+    encodes every row before pgwire slices it. It does not hand pgwire a lazy
+    `execute_stream()`. The reason: pgwire only races `do_query` against the cancel receiver, so
+    with a lazy stream the query would run inside `Portal::fetch`, outside the cancel select.
+    eng-pg-cancel-request, statement_timeout (57014) and eng-platform-cancel-on-disconnect need
+    execution to stay cancellable. Collecting also means errors arrive before any DataRow, and
+    sources are bounded by max_rows (eng-max-rows-overflow). If bounded memory per portal is ever
+    needed, the change goes in pg.rs `do_query` (stream `execute_stream()` through
+    `encode_rows` per batch), and cancellation must then be wired into the row stream itself.
+  - On the wire it matches Postgres. Each Execute(100) gets 100 DataRows plus PortalSuspended. The
+    last batch gets `CommandComplete SELECT <rows in that batch>`. A result of exactly 100 rows
+    gives 100 + PortalSuspended, then 0 rows + `SELECT 0`. A runtime error (1/0) gets
+    ErrorResponse at the first Execute, and Sync gives ReadyForQuery I.
+  Tested as a user: a throwaway raw-socket Python client `../tmp/rawcursor.py` (SCRAM login,
+  config `../tmp/ver.toml`, engine `target/debug/engine` started by hand) sends Parse(unnamed),
+  Bind C_1, Describe portal, Flush, then Execute(100)+Flush until done, then Sync. Results:
+  ParseComplete, BindComplete, RowDescription n/oid 20; 1..100 + PortalSuspended, 101..200 +
+  PortalSuspended, 201..250 + CommandComplete SELECT 50; Sync gives ReadyForQuery I. With
+  generate_series(1, 100): 100 rows, then 0 rows + SELECT 0. With `$1::bigint` = '25' over 1..30:
+  rows 26..30. The connection stays usable afterwards. The check `pgwire::eng_pg_cursor_batches`,
+  the eight earlier checks, the 3 harness self-tests and 15 unit tests all pass.
+- 2026-11-08T16:55:05Z supervisor: eng-pg-cursor-batches passed the gate in round 1
