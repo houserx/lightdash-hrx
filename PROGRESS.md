@@ -935,3 +935,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   pgwire::eng_pg_tls, startup_auth, cancel_request, disconnect_cleanup and
   config::eng_config_check pass.
 - 2026-11-08T18:56:41Z supervisor: eng-pg-tls passed the gate in round 1
+- 2026-11-08 eng-lightdash-session-compat (worker, round 1): no code change was needed. The
+  check passed on the untouched tree right after `init.sh`, because the features already built
+  (session settings, cursor batches, type OIDs, version, information_schema, promql) together
+  cover the whole Lightdash PostgresWarehouseClient session. `SET hrx.identity` is stored as a
+  plain session setting for now. Verifying it and enforcing restricted sources belong to the
+  eng-identity-* features, which haven't been built yet.
+  Tested as a user: `../tmp/lightdash` has `mock.py` (a Prometheus mock with 5 pods × 50 points),
+  `engine.toml` and `session.py` (raw pg-wire, logs in with SCRAM, uses the pg-cursor message
+  pattern). The four SETs, sent one by one as simple queries, each returned `SET`. A 250-row
+  promql cursor gave batches 100/100/50, OIDs 1184/701/114/25, labels `{"pod":"p0"}` as JSON
+  text, and the first timestamp `2025-11-08 00:00:00+00`. current_setting('TIMEZONE') gave UTC,
+  and version() gave `PostgreSQL 16.0 (hrx-federation-engine 0.1.0)`. The getFields query with
+  $1/$2 ran without error, and a SELECT 1 afterwards worked.
+  - Gaps against real Postgres (not needed by this feature; leave them to the integration line
+    if Lightdash needs them): (1) getFields for information_schema.tables returns 0 rows,
+    because information_schema.columns doesn't describe information_schema itself. (2) The
+    version() column is named `version()`, where Postgres says `version`. (3) float8 text output
+    is `0.0`, where Postgres says `0`.
+- 2026-11-08T18:58:36Z supervisor: eng-lightdash-session-compat passed the gate in round 1
