@@ -350,6 +350,14 @@ export class PostgresClient<
         return Promise.resolve();
     }
 
+    /**
+     * Runs on the query's own connection after every session setting and
+     * immediately before the query itself. No-op for plain Postgres.
+     */
+    protected beforeQuery(_client: pg.PoolClient): Promise<void> {
+        return Promise.resolve();
+    }
+
     protected getAgentSessionStatement(): string {
         return `SET ${AI_AGENT_SESSION_SETTING} = 'true'`;
     }
@@ -663,6 +671,7 @@ export class PostgresClient<
                         }
                         return undefined;
                     })
+                    .then(() => this.beforeQuery(client))
                     .then(() => {
                         reportPhase(
                             'session',

@@ -6926,6 +6926,79 @@
                     }
                 ]
             },
+            "Pick_DashboardTimeRange.Exclude_keyofDashboardTimeRange.tileTimeDimensions__": {
+                "properties": {
+                    "from": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "refreshInterval": {
+                        "type": "string",
+                        "enum": [
+                            "10s",
+                            "30s",
+                            "1m",
+                            "5m",
+                            "15m",
+                            "30m",
+                            "1h",
+                            null
+                        ],
+                        "nullable": true,
+                        "description": "One of DASHBOARD_REFRESH_INTERVALS, or null when refresh is off."
+                    }
+                },
+                "required": ["from", "to", "refreshInterval"],
+                "type": "object",
+                "description": "From T, pick a set of properties whose keys are in the union K"
+            },
+            "Omit_DashboardTimeRange.tileTimeDimensions_": {
+                "$ref": "#/components/schemas/Pick_DashboardTimeRange.Exclude_keyofDashboardTimeRange.tileTimeDimensions__",
+                "description": "Construct a type with the properties of T except for those in type K."
+            },
+            "DashboardTileTimeDimension": {
+                "properties": {
+                    "tableName": {
+                        "type": "string"
+                    },
+                    "fieldId": {
+                        "type": "string"
+                    }
+                },
+                "required": ["tableName", "fieldId"],
+                "type": "object",
+                "description": "The time dimension a Tile is filtered on by the Dashboard Time Range."
+            },
+            "Record_string.DashboardTileTimeDimension_": {
+                "properties": {},
+                "additionalProperties": {
+                    "$ref": "#/components/schemas/DashboardTileTimeDimension"
+                },
+                "type": "object",
+                "description": "Construct a type with a set of properties K of type T"
+            },
+            "DashboardTimeRangeAsCode": {
+                "allOf": [
+                    {
+                        "$ref": "#/components/schemas/Omit_DashboardTimeRange.tileTimeDimensions_"
+                    },
+                    {
+                        "properties": {
+                            "tileTimeDimensions": {
+                                "$ref": "#/components/schemas/Record_string.DashboardTileTimeDimension_",
+                                "description": "Time dimension per tile slug; tiles not listed are not filtered."
+                            }
+                        },
+                        "required": ["tileTimeDimensions"],
+                        "type": "object"
+                    }
+                ],
+                "description": "The Dashboard Time Range in dashboard-as-code. Same shape as the saved range, except\n`tileTimeDimensions` is keyed by tile slug (not tile uuid) so the file is portable."
+            },
             "DashboardAsCode": {
                 "allOf": [
                     {
@@ -6933,6 +7006,15 @@
                     },
                     {
                         "properties": {
+                            "timeRange": {
+                                "allOf": [
+                                    {
+                                        "$ref": "#/components/schemas/DashboardTimeRangeAsCode"
+                                    }
+                                ],
+                                "nullable": true,
+                                "description": "Dashboard Time Range. Download writes it when the dashboard has one. On upload,\nomitting it or setting `null` saves the dashboard without a time range."
+                            },
                             "access": {
                                 "$ref": "#/components/schemas/ContentAsCodeDirectAccess",
                                 "description": "Direct user/group grants. Omission leaves the existing policy unchanged on upload."
@@ -9894,6 +9976,42 @@
                     }
                 ]
             },
+            "DashboardRefreshInterval": {
+                "type": "string",
+                "enum": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+            },
+            "DashboardTimeRange": {
+                "properties": {
+                    "tileTimeDimensions": {
+                        "$ref": "#/components/schemas/Record_string.DashboardTileTimeDimension_",
+                        "description": "Time dimension per tile uuid; tiles not listed are not filtered."
+                    },
+                    "refreshInterval": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardRefreshInterval"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "One of DASHBOARD_REFRESH_INTERVALS, or null when refresh is off."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    }
+                },
+                "required": [
+                    "tileTimeDimensions",
+                    "refreshInterval",
+                    "to",
+                    "from"
+                ],
+                "type": "object"
+            },
             "ProjectType": {
                 "enum": ["DEFAULT", "PREVIEW", "TRAINING"],
                 "type": "string"
@@ -10003,6 +10121,15 @@
                             "$ref": "#/components/schemas/DashboardTile"
                         },
                         "type": "array"
+                    },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRange"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Saved Dashboard Time Range of this version; null when it has none"
                     },
                     "organizationUuid": {
                         "type": "string"
@@ -11155,6 +11282,15 @@
                         "type": "string",
                         "nullable": true,
                         "description": "Declarative dashboard owner, referenced by email so it is portable across projects.\nA string assigns the organization member with that email as owner, `null` unassigns\nthe owner, `undefined` leaves the current owner untouched. Download sets this to the\nowner's email when an owner is assigned."
+                    },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRangeAsCode"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Dashboard Time Range. Download writes it when the dashboard has one. On upload,\nomitting it or setting `null` saves the dashboard without a time range."
                     }
                 },
                 "required": ["name", "slug", "version", "spaceSlug", "tabs"],
@@ -17381,6 +17517,15 @@
                     "colorPaletteUuid": {
                         "type": "string",
                         "nullable": true
+                    },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRange"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Saved Dashboard Time Range of this version; null when it has none"
                     },
                     "config": {
                         "$ref": "#/components/schemas/DashboardConfig"
@@ -29161,6 +29306,46 @@
                 ],
                 "description": "A compose-engine merge run, which may reference existing results."
             },
+            "QueryTimeRange": {
+                "properties": {
+                    "refreshInterval": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardRefreshInterval"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Relative bounds round down to this interval (10s when absent or null)."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    }
+                },
+                "required": ["to", "from"],
+                "type": "object",
+                "description": "The time range a query runs over: the Dashboard Time Range of a tile's\ndashboard (saved range overridden by the URL) or Investigate's range. The\nreserved time parameters (`__from`, `__to`, `__interval`, `__range`) and the\ntile time-dimension filters resolve from it before the query is compiled."
+            },
+            "QueryAudit": {
+                "properties": {
+                    "ticket": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Optional Linear ticket, e.g. `ENG-123`."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Why the query is run; required by the engine for Audited Queries."
+                    }
+                },
+                "required": ["description"],
+                "type": "object",
+                "description": "The fields an Audited Query carries into the identity token's audit block."
+            },
             "ExecuteAsyncSqlQueryRequestParams": {
                 "allOf": [
                     {
@@ -29168,6 +29353,14 @@
                     },
                     {
                         "properties": {
+                            "audit": {
+                                "$ref": "#/components/schemas/QueryAudit",
+                                "description": "Description and ticket of an Audited Query."
+                            },
+                            "timeRange": {
+                                "$ref": "#/components/schemas/QueryTimeRange",
+                                "description": "Resolves the reserved time parameters in the SQL."
+                            },
                             "warehouseConnectionUuid": {
                                 "type": "string",
                                 "nullable": true
@@ -29331,6 +29524,10 @@
                     },
                     {
                         "properties": {
+                            "timeRange": {
+                                "$ref": "#/components/schemas/QueryTimeRange",
+                                "description": "The dashboard's effective time range; filters a mapped tile."
+                            },
                             "includeUnpublishedDraft": {
                                 "type": "boolean"
                             },
@@ -29421,6 +29618,10 @@
                     },
                     {
                         "properties": {
+                            "timeRange": {
+                                "$ref": "#/components/schemas/QueryTimeRange",
+                                "description": "The dashboard's effective time range; resolves the reserved time parameters."
+                            },
                             "limit": {
                                 "type": "number",
                                 "format": "double"
@@ -50182,6 +50383,19 @@
                     },
                     {
                         "properties": {
+                            "httpBaseUrl": {
+                                "type": "string",
+                                "description": "Federation Engine HTTP base URL (CONTRACTS §1.3)."
+                            },
+                            "identitySigningSecret": {
+                                "type": "string",
+                                "description": "Federation Engine identity token secret. Sensitive."
+                            },
+                            "flavor": {
+                                "type": "string",
+                                "enum": ["postgres", "federation"],
+                                "description": "Absent means 'postgres'. 'federation' is the Federation Engine (CONTRACTS §4.1)."
+                            },
                             "timeoutSeconds": {
                                 "type": "number",
                                 "format": "double"
@@ -51526,6 +51740,15 @@
                     },
                     "searchPath": {
                         "type": "string"
+                    },
+                    "flavor": {
+                        "type": "string",
+                        "enum": ["postgres", "federation"],
+                        "description": "Absent means 'postgres'. 'federation' is the Federation Engine (CONTRACTS §4.1)."
+                    },
+                    "httpBaseUrl": {
+                        "type": "string",
+                        "description": "Federation Engine HTTP base URL (CONTRACTS §1.3)."
                     }
                 },
                 "required": ["type", "schema", "host", "port", "dbname"],
@@ -60850,6 +61073,15 @@
                     "colorPaletteUuid": {
                         "type": "string",
                         "nullable": true
+                    },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRange"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Saved Dashboard Time Range; null or omitted for none"
                     },
                     "config": {
                         "$ref": "#/components/schemas/DashboardConfig"
@@ -72007,7 +72239,7 @@
             "DashboardUnversionedFields": {
                 "$ref": "#/components/schemas/Pick_CreateDashboard.name-or-description-or-spaceUuid-or-colorPaletteUuid-or-ownerUserUuid_"
             },
-            "Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config_": {
+            "Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config-or-timeRange_": {
                 "properties": {
                     "config": {
                         "$ref": "#/components/schemas/DashboardConfig"
@@ -72049,6 +72281,15 @@
                         },
                         "type": "array"
                     },
+                    "timeRange": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardTimeRange"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Saved Dashboard Time Range; null or omitted for none"
+                    },
                     "updatedByUser": {
                         "$ref": "#/components/schemas/Pick_UpdatedByUser.userUuid_"
                     }
@@ -72058,7 +72299,7 @@
                 "description": "From T, pick a set of properties whose keys are in the union K"
             },
             "DashboardVersionedFields": {
-                "$ref": "#/components/schemas/Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config_"
+                "$ref": "#/components/schemas/Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config-or-timeRange_"
             },
             "PreserveContentVerification": {
                 "properties": {
@@ -72491,6 +72732,285 @@
                     }
                 },
                 "required": ["source"],
+                "type": "object"
+            },
+            "WriteConfirmation": {
+                "properties": {
+                    "expiresAt": {
+                        "type": "string"
+                    },
+                    "confirmationToken": {
+                        "type": "string"
+                    }
+                },
+                "required": ["expiresAt", "confirmationToken"],
+                "type": "object",
+                "description": "A single-statement Write Mode confirmation; `expiresAt` is the token's exp, ISO 8601."
+            },
+            "ApiWriteConfirmationResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/WriteConfirmation"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
+            "ApiWriteConfirmationRequest": {
+                "properties": {
+                    "statement": {
+                        "type": "string"
+                    }
+                },
+                "required": ["statement"],
+                "type": "object",
+                "description": "Body of POST /api/v2/projects/{projectUuid}/write/confirmations (CONTRACTS §4.2)."
+            },
+            "WriteResult": {
+                "properties": {
+                    "returning": {
+                        "items": {
+                            "$ref": "#/components/schemas/Record_string.unknown_"
+                        },
+                        "type": "array",
+                        "nullable": true
+                    },
+                    "preview": {
+                        "type": "boolean"
+                    },
+                    "rows_affected": {
+                        "type": "number",
+                        "format": "double"
+                    },
+                    "audit_id": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "returning",
+                    "preview",
+                    "rows_affected",
+                    "audit_id"
+                ],
+                "type": "object",
+                "description": "The Federation Engine's POST /v1/write result, passed back as the engine sent it."
+            },
+            "ApiWriteResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/WriteResult"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
+            "WriteMode": {
+                "type": "string",
+                "enum": ["preview", "commit"]
+            },
+            "ApiWriteRequest": {
+                "properties": {
+                    "ticket": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "confirmationToken": {
+                        "type": "string"
+                    },
+                    "mode": {
+                        "$ref": "#/components/schemas/WriteMode"
+                    },
+                    "statement": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "description",
+                    "confirmationToken",
+                    "mode",
+                    "statement"
+                ],
+                "type": "object",
+                "description": "Body of POST /api/v2/projects/{projectUuid}/write (CONTRACTS §4.2)."
+            },
+            "FederationAttrs": {
+                "properties": {
+                    "platform_explain": {
+                        "type": "boolean"
+                    },
+                    "platform_write": {
+                        "type": "boolean"
+                    },
+                    "platform_read": {
+                        "type": "boolean"
+                    },
+                    "telemetry_restricted": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "platform_explain",
+                    "platform_write",
+                    "platform_read",
+                    "telemetry_restricted"
+                ],
+                "type": "object",
+                "description": "The ldq claims a user can hold (CONTRACTS §3 `attrs`). Each comes from the Lightdash user\nattribute of the same name; only the value \"true\" is true."
+            },
+            "FederationAccess": {
+                "properties": {
+                    "attrs": {
+                        "$ref": "#/components/schemas/FederationAttrs"
+                    },
+                    "isFederation": {
+                        "type": "boolean"
+                    }
+                },
+                "required": ["attrs", "isFederation"],
+                "type": "object",
+                "description": "What the app may know about a project's federation access. Never carries a secret."
+            },
+            "ApiFederationAccessResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/FederationAccess"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
+            "AuditExecution": {
+                "properties": {
+                    "createdAtMonth": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string"
+                    },
+                    "integrityHash": {
+                        "type": "string"
+                    },
+                    "action": {
+                        "type": "string"
+                    },
+                    "preview": {
+                        "type": "boolean"
+                    },
+                    "errorMessage": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "durationMs": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "rowCount": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "executedBySub": {
+                        "type": "string"
+                    },
+                    "executedByEmail": {
+                        "type": "string"
+                    },
+                    "linearTicketId": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "database": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["read", "write"]
+                    },
+                    "sql": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": {},
+                "required": [
+                    "createdAtMonth",
+                    "createdAt",
+                    "integrityHash",
+                    "action",
+                    "preview",
+                    "errorMessage",
+                    "durationMs",
+                    "rowCount",
+                    "status",
+                    "executedBySub",
+                    "executedByEmail",
+                    "linearTicketId",
+                    "database",
+                    "description",
+                    "mode",
+                    "sql",
+                    "id"
+                ],
+                "type": "object",
+                "description": "One execution record from the Federation Engine's audit store: the db-query-portal\n`executions` item (CONTRACTS §6), passed through as the engine sent it."
+            },
+            "AuditPage": {
+                "properties": {
+                    "nextCursor": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "items": {
+                        "items": {
+                            "$ref": "#/components/schemas/AuditExecution"
+                        },
+                        "type": "array"
+                    }
+                },
+                "required": ["nextCursor", "items"],
+                "type": "object",
+                "description": "A page of the engine's GET /v1/audit; `nextCursor` is null on the last page."
+            },
+            "ApiAuditPageResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/AuditPage"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
                 "type": "object"
             },
             "FeatureFlag": {
@@ -118141,6 +118661,222 @@
                         }
                     }
                 }
+            }
+        },
+        "/api/v2/projects/{projectUuid}/write/confirmations": {
+            "post": {
+                "operationId": "createWriteConfirmation",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiWriteConfirmationResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Returns a single-use confirmation token bound to this statement, the current user and\nthe project, expiring within 120 seconds. Requires the platform_write user attribute.",
+                "summary": "Create a Write Mode confirmation",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiWriteConfirmationRequest"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2/projects/{projectUuid}/write": {
+            "post": {
+                "operationId": "runWrite",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiWriteResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Previews a Write Mode statement: forwards it to the Federation Engine's POST /v1/write\nwith a fresh identity token, and returns the engine's result. A description is\nrequired. Requires the platform_write user attribute.",
+                "summary": "Run a Write Mode statement",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiWriteRequest"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2/projects/{projectUuid}/federation/access": {
+            "get": {
+                "operationId": "getFederationAccess",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiFederationAccessResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Whether the project is a Federation Engine project, and which ldq claims\n(telemetry_restricted, platform_read, platform_write, platform_explain) the current\nuser holds through their user attributes.",
+                "summary": "Get federation access",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ]
+            }
+        },
+        "/api/v2/projects/{projectUuid}/federation/audit": {
+            "get": {
+                "operationId": "listFederationAudit",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiAuditPageResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Lists executions from the Federation Engine's audit store (GET /v1/audit), filtered by\nLinear ticket, user and month (YYYY-MM), one page at a time from `cursor`. Requires the\nplatform_read user attribute.",
+                "summary": "List federation audit executions",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "ticket",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "user",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "cursor",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ]
             }
         },
         "/api/v2/feature-flag": {

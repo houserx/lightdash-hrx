@@ -147,6 +147,7 @@ export const sensitiveCredentialsFieldNames = [
     'accessKeyId',
     'secretAccessKey',
     'sessionToken',
+    'identitySigningSecret',
 ] as const;
 export type SensitiveCredentialsFieldNames =
     (typeof sensitiveCredentialsFieldNames)[number];
@@ -242,6 +243,12 @@ export type CreatePostgresCredentials = SshTunnelConfiguration &
         startOfWeek?: WeekDay | null;
         dataTimezone?: string;
         timeoutSeconds?: number;
+        /** Absent means 'postgres'. 'federation' is the Federation Engine (CONTRACTS §4.1). */
+        flavor?: 'postgres' | 'federation';
+        /** Federation Engine identity token secret. Sensitive. */
+        identitySigningSecret?: string;
+        /** Federation Engine HTTP base URL (CONTRACTS §1.3). */
+        httpBaseUrl?: string;
     };
 export type PostgresCredentials = Omit<
     CreatePostgresCredentials,

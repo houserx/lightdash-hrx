@@ -1,6 +1,7 @@
 import {
     assertUnreachable,
     CreateWarehouseCredentials,
+    isFederationCredentials,
     UnexpectedServerError,
     WarehouseTypes,
 } from '@lightdash/common';
@@ -22,10 +23,25 @@ import {
     DuckdbWarehouseClient,
     type DuckdbWarehouseClientOptions,
 } from './warehouseClients/DuckdbWarehouseClient';
+import { FederationWarehouseClient } from './warehouseClients/FederationWarehouseClient';
 import { PostgresWarehouseClient } from './warehouseClients/PostgresWarehouseClient';
 import { RedshiftWarehouseClient } from './warehouseClients/RedshiftWarehouseClient';
 import { SnowflakeWarehouseClient } from './warehouseClients/SnowflakeWarehouseClient';
 import { TrinoWarehouseClient } from './warehouseClients/TrinoWarehouseClient';
+
+/** What a federation client tells the token provider about the query it is about to run. */
+export type IdentityTokenContext = {
+    /** True when the client was created for an AI agent session (`agentSession`). */
+    agent: boolean;
+};
+
+/**
+ * Returns a freshly minted CONTRACTS §3 identity token. A federation-flavour client calls it
+ * once per query, so every query carries its own token and nonce.
+ */
+export type IdentityTokenProvider = (
+    context: IdentityTokenContext,
+) => Promise<string>;
 
 export type WarehouseClientOptions = DuckdbWarehouseClientOptions &
     ClickhouseWarehouseClientOptions &
@@ -33,6 +49,8 @@ export type WarehouseClientOptions = DuckdbWarehouseClientOptions &
     BigqueryWarehouseClientOptions & {
         agentSession?: boolean;
         agentJobControls?: boolean;
+        /** Federation-flavour Postgres only (CONTRACTS §4.1); ignored by other clients. */
+        getIdentityToken?: IdentityTokenProvider;
     };
 
 export const warehouseClientFromCredentials = (
@@ -43,7 +61,9 @@ export const warehouseClientFromCredentials = (
         case WarehouseTypes.SNOWFLAKE:
             return new SnowflakeWarehouseClient(credentials, options);
         case WarehouseTypes.POSTGRES:
-            return new PostgresWarehouseClient(credentials, options);
+            return isFederationCredentials(credentials)
+                ? new FederationWarehouseClient(credentials, options)
+                : new PostgresWarehouseClient(credentials, options);
         case WarehouseTypes.REDSHIFT:
             return new RedshiftWarehouseClient(credentials, options);
         case WarehouseTypes.BIGQUERY:

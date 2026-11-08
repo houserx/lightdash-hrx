@@ -177,4 +177,5 @@ examples/metricflow-demo/.fusion/
 
 # ENG-1799 Federation Engine: cargo build output and throwaway test state
 /federation-engine/target/
+# ENG-1799 build lines' scratch: throwaway Postgres clusters and init stamps
 /tmp/

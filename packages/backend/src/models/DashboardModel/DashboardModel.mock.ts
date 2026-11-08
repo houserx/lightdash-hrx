@@ -192,6 +192,7 @@ export const dashboardVersionEntry: DashboardVersionTable['base'] = {
     created_at: new Date(),
     updated_by_user_uuid: 'userUuid',
     config: undefined,
+    time_range: null,
 };
 
 export const dashboardViewEntry: DashboardViewTable['base'] = {
@@ -227,6 +228,7 @@ export const dashboardWithVersionEntry: GetDashboardQuery = {
     views_count: 1,
     first_viewed_at: new Date(1),
     config: undefined,
+    time_range: null,
     owner_user_uuid: null,
     owner_first_name: null,
     owner_last_name: null,
@@ -345,6 +347,7 @@ export const expectedDashboard: DashboardDAO = {
     views: 1,
     firstViewedAt: new Date(1),
     tabs: [],
+    timeRange: null,
     colorPaletteUuid: null,
 };
 

@@ -7,6 +7,7 @@ import {
     type IResultsRunner,
     type ParametersValuesMap,
     type QueryExecutionContext,
+    type QueryTimeRange,
     type RawResultRow,
     type ResultColumns,
     type SortField,
@@ -52,6 +53,8 @@ type SavedSqlChartRegisteredDashboardArgs = SavedSqlChartDashboardCommonArgs & {
     isEmbed?: false;
     /** Skips the results cache, set by the dashboard refresh */
     invalidateCache?: boolean;
+    /** The dashboard's effective time range, for the reserved time parameters */
+    timeRange?: QueryTimeRange;
 };
 
 // Embed callers don't pass dashboardUuid — the JWT carries it server-side.
@@ -182,6 +185,7 @@ export const useSavedSqlChartResults = (
                             context: args.context as QueryExecutionContext,
                             parameters,
                             invalidateCache: args.invalidateCache,
+                            timeRange: args.timeRange,
                         },
                     );
                 } else {
@@ -307,6 +311,7 @@ export const useSavedSqlChartResults = (
                             context: args.context as QueryExecutionContext,
                             limit: limit ?? MAX_SAFE_INTEGER,
                             parameters,
+                            timeRange: args.timeRange,
                         },
                     );
                 } else {

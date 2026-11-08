@@ -19,6 +19,7 @@ import {
     DashboardSqlChartTile,
     DashboardTab,
     DashboardTileTypes,
+    DashboardTimeRange,
     DashboardUnversionedFields,
     DashboardVersionedFields,
     HTML_SANITIZE_MARKDOWN_TILE_RULES,
@@ -118,6 +119,7 @@ export type GetDashboardQuery = Pick<
         | 'dashboard_version_uuid'
         | 'created_at'
         | 'config'
+        | 'time_range'
     > &
     Pick<ProjectTable['base'], 'project_uuid'> &
     Pick<UserTable['base'], 'user_uuid' | 'first_name' | 'last_name'> &
@@ -241,6 +243,8 @@ export class DashboardModel {
                 dashboard_version_uuid: uuidv4(),
                 updated_by_user_uuid: version.updatedByUser?.userUuid,
                 config,
+                // Each version stores its own range: omitted or null means none
+                time_range: version.timeRange ?? null,
             },
             [
                 'dashboard_version_id',
@@ -1173,6 +1177,7 @@ export class DashboardModel {
                 `${DashboardVersionsTableName}.dashboard_version_uuid`,
                 `${DashboardVersionsTableName}.created_at`,
                 `${DashboardVersionsTableName}.config`,
+                `${DashboardVersionsTableName}.time_range`,
                 `${UserTableName}.user_uuid`,
                 `${UserTableName}.first_name`,
                 `${UserTableName}.last_name`,
@@ -1625,6 +1630,7 @@ export class DashboardModel {
             },
             slug: dashboard.slug,
             config: dashboard?.config,
+            timeRange: dashboard.time_range ?? null,
             colorPaletteUuid: dashboard.color_palette_uuid ?? null,
             owner: dashboard.owner_user_uuid
                 ? {
@@ -1704,6 +1710,55 @@ export class DashboardModel {
         }
 
         return row.parameters ?? undefined;
+    }
+
+    /**
+     * Lightweight query for the Dashboard Time Range of a dashboard's latest
+     * version (null when it has none), without loading tiles or metadata.
+     * Used by dashboard chart query execution to find a tile's time dimension.
+     */
+    async getDashboardTimeRangeByIdOrSlug(
+        dashboardUuidOrSlug: string,
+        projectUuid: string,
+    ): Promise<DashboardTimeRange | null> {
+        const query = this.database(DashboardsTableName)
+            .innerJoin(
+                DashboardVersionsTableName,
+                `${DashboardsTableName}.dashboard_id`,
+                `${DashboardVersionsTableName}.dashboard_id`,
+            )
+            .select<{ time_range: DashboardTimeRange | null } | undefined>(
+                `${DashboardVersionsTableName}.time_range`,
+            )
+            .where(`${DashboardsTableName}.project_uuid`, projectUuid)
+            .whereNull(`${DashboardsTableName}.deleted_at`)
+            .orderBy(`${DashboardVersionsTableName}.created_at`, 'desc');
+
+        const fetchByUuid = (dashboardUuid: string) =>
+            query
+                .clone()
+                .where(`${DashboardsTableName}.dashboard_uuid`, dashboardUuid)
+                .first();
+
+        let row = isValidUuid(dashboardUuidOrSlug)
+            ? await fetchByUuid(dashboardUuidOrSlug)
+            : undefined;
+
+        if (!row) {
+            const resolvedDashboardUuid = await this.resolveDashboardUuidBySlug(
+                dashboardUuidOrSlug,
+                projectUuid,
+            );
+            row = resolvedDashboardUuid
+                ? await fetchByUuid(resolvedDashboardUuid)
+                : undefined;
+        }
+
+        if (!row) {
+            throw new NotFoundError('Dashboard not found');
+        }
+
+        return row.time_range ?? null;
     }
 
     /*
@@ -2737,6 +2792,7 @@ export class DashboardModel {
                 `${DashboardVersionsTableName}.dashboard_version_uuid`,
                 `${DashboardVersionsTableName}.created_at`,
                 `${DashboardVersionsTableName}.config`,
+                `${DashboardVersionsTableName}.time_range`,
                 `${UserTableName}.user_uuid`,
                 `${UserTableName}.first_name`,
                 `${UserTableName}.last_name`,
@@ -3134,6 +3190,7 @@ export class DashboardModel {
             },
             slug: dashboard.slug,
             config: dashboard?.config,
+            timeRange: dashboard.time_range ?? null,
             colorPaletteUuid: dashboard.color_palette_uuid ?? null,
             owner: dashboard.owner_user_uuid
                 ? {

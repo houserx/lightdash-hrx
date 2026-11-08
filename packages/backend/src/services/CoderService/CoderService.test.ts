@@ -18,7 +18,11 @@ import {
     withAgentActionScope,
 } from '../AiAccessService/agentActionTestUtils.mock';
 import { CoderService } from './CoderService';
-import { withTileWarnings } from './dashboardReferences';
+import {
+    getTimeRangeWithTileSlugs,
+    getTimeRangeWithTileUuids,
+    withTileWarnings,
+} from './dashboardReferences';
 
 describe('CoderService', () => {
     describe('getMissingIds', () => {
@@ -1130,6 +1134,63 @@ describe('CoderService', () => {
                     tableName: 'orders',
                 },
             });
+        });
+    });
+
+    describe('dashboard time range round-trip', () => {
+        const dimension = { fieldId: 'orders_created_at', tableName: 'orders' };
+
+        it('keys tile time dimensions by tile slug on download and by the new tile uuid on upload', () => {
+            const mockDashboard = {
+                timeRange: {
+                    from: 'now-6h',
+                    to: 'now',
+                    refreshInterval: '1m',
+                    tileTimeDimensions: {
+                        'original-uuid': dimension,
+                        'deleted-tile-uuid': dimension,
+                    },
+                },
+                tiles: [
+                    {
+                        uuid: 'original-uuid',
+                        type: DashboardTileTypes.SAVED_CHART,
+                        properties: { chartSlug: 'orders-per-hour' },
+                    },
+                ],
+            } as AnyType;
+
+            const asCode = getTimeRangeWithTileSlugs(mockDashboard);
+            expect(asCode).toEqual({
+                from: 'now-6h',
+                to: 'now',
+                refreshInterval: '1m',
+                tileTimeDimensions: { 'orders-per-hour': dimension },
+            });
+
+            const { timeRange, warnings } = getTimeRangeWithTileUuids(asCode!, [
+                {
+                    uuid: 'regenerated-uuid',
+                    type: DashboardTileTypes.SAVED_CHART,
+                    properties: { chartSlug: 'orders-per-hour' },
+                },
+            ] as AnyType);
+            expect(timeRange).toEqual({
+                from: 'now-6h',
+                to: 'now',
+                refreshInterval: '1m',
+                tileTimeDimensions: { 'regenerated-uuid': dimension },
+            });
+            expect(warnings).toEqual([]);
+        });
+
+        it('returns undefined on download when the dashboard has no time range', () => {
+            expect(
+                getTimeRangeWithTileSlugs({
+                    timeRange: null,
+                    tiles: [],
+                } as AnyType),
+            ).toBeUndefined();
         });
     });
 

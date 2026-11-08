@@ -132,6 +132,8 @@ import {
 } from '../../features/dashboard/store';
 import { useTileQueryQueueVisibility } from '../../features/dashboard/tileQueryQueue/useTileQueryQueue';
 import { FilterDashboardTo } from '../../features/dashboardFilters/FilterDashboardTo';
+import { TileTimeRangeIndicator } from '../../features/dashboardTimeRange/components/TileTimeRangeIndicator';
+import { isTileMarkedNotAffectedByTimeRange } from '../../features/dashboardTimeRange/utils/tileTimeRangeIndicator';
 import { DateZoomInfoOnTile } from '../../features/dateZoom';
 import { ExportToGoogleSheet } from '../../features/export';
 import { getExploreFromHereUrl } from '../../features/mergeQuery/utils/getExploreFromHereUrl';
@@ -1100,6 +1102,13 @@ const DashboardChartTileMain: FC<DashboardChartTileMainProps> = memo(
         const tileHasComments = useDashboardContext((c) =>
             c.hasTileComments(tileUuid),
         );
+        const dashboardTimeRange = useDashboardContext(
+            (c) => c.dashboard?.timeRange,
+        );
+        const isNotAffectedByTimeRange = isTileMarkedNotAffectedByTimeRange({
+            timeRange: dashboardTimeRange,
+            tile: props.tile,
+        });
         const dashboardComments = useMemo(
             () =>
                 !!showComments && (
@@ -1168,7 +1177,17 @@ const DashboardChartTileMain: FC<DashboardChartTileMainProps> = memo(
                     chartKind={chartKind}
                     visibleHeaderElement={
                         // Dashboard comments button is always visible if they exist
-                        tileHasComments ? dashboardComments : undefined
+                        tileHasComments || isNotAffectedByTimeRange ? (
+                            <>
+                                {isNotAffectedByTimeRange && (
+                                    <TileTimeRangeIndicator
+                                        timeRange={dashboardTimeRange}
+                                        tile={props.tile}
+                                    />
+                                )}
+                                {tileHasComments && dashboardComments}
+                            </>
+                        ) : undefined
                     }
                     extraHeaderElement={
                         <>

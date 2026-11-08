@@ -4,6 +4,7 @@ import {
     type ParametersValuesMap,
     type PivotChartData,
     type QueryExecutionContext,
+    type QueryTimeRange,
     type ResultColumns,
     type RunPivotQuery,
     type SortField,
@@ -211,6 +212,7 @@ export const getDashboardSqlChartPivotChartData = async (
         context,
         parameters,
         invalidateCache,
+        timeRange,
     }: {
         projectUuid: string;
         dashboardUuid: string;
@@ -222,6 +224,7 @@ export const getDashboardSqlChartPivotChartData = async (
         context?: QueryExecutionContext;
         parameters?: ParametersValuesMap;
         invalidateCache?: boolean;
+        timeRange?: QueryTimeRange;
     },
 ): Promise<
     PivotChartData & { queryUuid: string; originalColumns: ResultColumns }
@@ -239,6 +242,7 @@ export const getDashboardSqlChartPivotChartData = async (
             limit,
             parameters,
             invalidateCache,
+            ...(timeRange && { timeRange }),
         },
     );
 

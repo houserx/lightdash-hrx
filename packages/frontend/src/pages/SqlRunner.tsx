@@ -1,8 +1,8 @@
-import { getFieldQuoteChar } from '@lightdash/common';
-import { Stack } from '@mantine/core';
+import { getFieldQuoteChar, isFederationProject } from '@lightdash/common';
+import { Anchor, Box, Group, Stack } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
-import { useLocation, useNavigate, useParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { useMount, useUnmount } from 'react-use';
 import ErrorState from '../components/common/ErrorState';
 import Page from '../components/common/Page/Page';
@@ -11,6 +11,17 @@ import {
     resetChartState,
     setChartConfig,
 } from '../components/DataViz/store/actions/commonChartActions';
+import { InvestigateWorkspace } from '../features/investigate/components/InvestigateWorkspace';
+import {
+    SqlRunnerModeSwitch,
+    type SqlRunnerMode,
+} from '../features/investigate/components/SqlRunnerModeSwitch';
+import { useFederationAccess } from '../features/investigate/hooks/useFederationAccess';
+import { useInvestigateRunQuery } from '../features/investigate/hooks/useInvestigateRunQuery';
+import { useInvestigateSaveAsChart } from '../features/investigate/hooks/useInvestigateSaveAsChart';
+import { useOperationsSavedSql } from '../features/investigate/hooks/useOperationsSavedSql';
+import { usePlatformSchemaLoaders } from '../features/investigate/hooks/usePlatformSchemaLoaders';
+import { useWriteModeApi } from '../features/investigate/hooks/useWriteModeApi';
 import { SqlRunnerSidebar } from '../features/sqlRunner';
 import { ContentPanel } from '../features/sqlRunner/components/ContentPanel';
 import { Header } from '../features/sqlRunner/components/Header';
@@ -79,6 +90,16 @@ const SqlRunner = ({
     });
 
     const { data: project } = useProject(projectUuid);
+    const [runnerMode, setRunnerMode] = useState<SqlRunnerMode>('sql');
+    const runInvestigateQuery = useInvestigateRunQuery(projectUuid);
+    const saveInvestigateChart = useInvestigateSaveAsChart(projectUuid);
+    const { data: federationAccess } = useFederationAccess(
+        projectUuid,
+        isFederationProject(project),
+    );
+    const platformSchema = usePlatformSchemaLoaders(projectUuid);
+    const operationsSavedSql = useOperationsSavedSql(projectUuid);
+    const writeModeApi = useWriteModeApi(projectUuid);
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
             projectUuid,
@@ -248,6 +269,12 @@ const SqlRunner = ({
         return <ErrorState error={chartError.error} />;
     }
 
+    const isVirtualView = mode === 'virtualView' && !!virtualViewState;
+    // Investigate is a mode of a new SQL Runner query on federation projects only.
+    const canInvestigate =
+        !params.slug && !isVirtualView && isFederationProject(project);
+    const isInvestigating = canInvestigate && runnerMode === 'investigate';
+
     return (
         <SqlRunnerConnectionScope
             isEditingSavedChart={!!params.slug}
@@ -263,21 +290,51 @@ const SqlRunner = ({
                 sidebarTitle="Tables"
             >
                 <Stack gap={0} flex={1} miw={0}>
-                    {mode === 'virtualView' && virtualViewState ? (
+                    {isVirtualView && virtualViewState ? (
                         <HeaderVirtualView
                             virtualViewState={virtualViewState}
                         />
                     ) : (
                         params.slug && <Header mode="edit" />
                     )}
-                    <ContentPanel
-                        toolbarActions={
-                            !params.slug &&
-                            !(mode === 'virtualView' && virtualViewState) ? (
-                                <HeaderCreate />
-                            ) : undefined
-                        }
-                    />
+                    {canInvestigate && (
+                        <Group px="md" py="xs">
+                            <SqlRunnerModeSwitch
+                                project={project}
+                                mode={runnerMode}
+                                onModeChange={setRunnerMode}
+                            />
+                            {isInvestigating && projectUuid && (
+                                <Anchor
+                                    component={Link}
+                                    to={`/projects/${projectUuid}/audit`}
+                                    size="sm"
+                                >
+                                    Audit browser
+                                </Anchor>
+                            )}
+                        </Group>
+                    )}
+                    {isInvestigating ? (
+                        <Box px="md" py="sm">
+                            <InvestigateWorkspace
+                                runQuery={runInvestigateQuery}
+                                onSaveAsChart={saveInvestigateChart}
+                                platformSchema={platformSchema}
+                                savedSql={operationsSavedSql}
+                                access={federationAccess?.attrs}
+                                writeApi={writeModeApi}
+                            />
+                        </Box>
+                    ) : (
+                        <ContentPanel
+                            toolbarActions={
+                                !params.slug && !isVirtualView ? (
+                                    <HeaderCreate />
+                                ) : undefined
+                            }
+                        />
+                    )}
                 </Stack>
             </Page>
         </SqlRunnerConnectionScope>

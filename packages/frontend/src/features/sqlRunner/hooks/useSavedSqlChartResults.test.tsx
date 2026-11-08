@@ -128,4 +128,53 @@ describe('useSavedSqlChartResults', () => {
             );
         },
     );
+
+    it('sends the dashboard time range with a dashboard tile query', async () => {
+        const chart = {
+            savedSqlUuid: 'sql-uuid',
+            lastUpdatedAt: new Date('2026-01-01T00:00:00Z'),
+        } as SqlChart;
+        vi.mocked(fetchSavedSqlChart).mockResolvedValue(chart);
+        vi.mocked(getDashboardSqlChartPivotChartData).mockReturnValue(
+            new Promise(() => {}),
+        );
+        const client = new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+        });
+        const wrapper = ({ children }: PropsWithChildren) => (
+            <QueryClientProvider client={client}>
+                {children}
+            </QueryClientProvider>
+        );
+        const timeRange = {
+            from: 'now-1h',
+            to: 'now',
+            refreshInterval: '30s' as const,
+        };
+
+        renderHook(
+            () =>
+                useSavedSqlChartResults({
+                    projectUuid: 'project',
+                    savedSqlUuid: 'sql-uuid',
+                    dashboardUuid: 'dashboard',
+                    tileUuid: 'tile',
+                    dashboardFilters: {
+                        dimensions: [],
+                        metrics: [],
+                        tableCalculations: [],
+                    },
+                    dashboardSorts: [],
+                    timeRange,
+                }),
+            { wrapper },
+        );
+
+        await waitFor(() =>
+            expect(getDashboardSqlChartPivotChartData).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.objectContaining({ timeRange }),
+            ),
+        );
+    });
 });
