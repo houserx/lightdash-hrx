@@ -132,8 +132,9 @@ export function placeholders(count: number): string {
 }
 
 /**
- * The `structuredContent` of every query tool. `rows` holds at most `MCP_MAX_ROWS` rows; `truncated` says the engine
- * had more, and `rowCount` is the number of rows returned.
+ * The `structuredContent` of every query tool. `rows` holds at most `MCP_MAX_ROWS` rows and its JSON at most
+ * `MCP_MAX_OUTPUT_BYTES`; `truncated` says rows were left out (the engine had more, or rows were dropped to fit the
+ * byte cap), and `rowCount` is the number of rows returned.
  */
 export interface TableResult {
     [key: string]: unknown;
@@ -159,8 +160,39 @@ export function tableResult(result: EngineResult): TableResult {
     return { columns: [...result.columns], rows, rowCount: rows.length, truncated: result.truncated };
 }
 
-export function successResult(table: TableResult): CallToolResult {
-    return { content: [{ type: 'text', text: JSON.stringify(table) }], structuredContent: table };
+/**
+ * The longest prefix of `table.rows` whose JSON stays within `maxBytes` (UTF-8), with `rowCount` set to the rows kept
+ * and `truncated` set when any row was dropped. Returns undefined when not even an empty table fits.
+ *
+ * The size is computed, not probed: the table's JSON is the JSON of the same table with no rows, plus each kept row's
+ * JSON, plus one comma between rows. Each row is serialised once.
+ */
+export function capTableBytes(table: TableResult, maxBytes: number): TableResult | undefined {
+    const sizeOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
+    if (sizeOf(table) <= maxBytes) return table;
+    const shellBytes = (kept: number) => sizeOf({ ...table, rows: [], rowCount: kept, truncated: true });
+    let kept = 0;
+    let rowBytes = 0;
+    for (const row of table.rows) {
+        const next = rowBytes + sizeOf(row) + (kept > 0 ? 1 : 0);
+        if (shellBytes(kept + 1) + next > maxBytes) break;
+        rowBytes = next;
+        kept += 1;
+    }
+    if (shellBytes(kept) + rowBytes > maxBytes) return undefined;
+    return { ...table, rows: table.rows.slice(0, kept), rowCount: kept, truncated: true };
+}
+
+/**
+ * A query tool's success result. Its text content is the JSON of its `structuredContent`, so both stay within
+ * `MCP_MAX_OUTPUT_BYTES` once rows are dropped by `capTableBytes`.
+ */
+export function successResult(table: TableResult, maxBytes: number): CallToolResult {
+    const capped = capTableBytes(table, maxBytes);
+    if (capped === undefined) {
+        return errorResult('The result is too large to return even without rows (MCP_MAX_OUTPUT_BYTES)');
+    }
+    return { content: [{ type: 'text', text: JSON.stringify(capped) }], structuredContent: capped };
 }
 
 export function errorResult(text: string): CallToolResult {

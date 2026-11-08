@@ -97,7 +97,7 @@ export function registerQueryLogql(
                 '(the stream selector); limit and direction control how many lines and from which end. With step it ' +
                 'is a metric query (such as sum(count_over_time({app="api"}[5m]))) and returns the Time series long ' +
                 'shape: timestamp, value, labels and series. Both include rowCount and truncated (true when the result ' +
-                'was cut at the server row cap; narrow the range, lower the limit or coarsen the step to see the rest).',
+                'was cut at the server row or size cap; narrow the range, lower the limit or coarsen the step to see the rest).',
             inputSchema: {
                 query: z
                     .string()
@@ -136,7 +136,8 @@ export function registerQueryLogql(
         async (args) => {
             try {
                 const { sql, params } = buildLogqlQuery(config, args, now());
-                return successResult(tableResult(await engine.query(sql, params, { maxRows: config.maxRows })));
+                const result = await engine.query(sql, params, { maxRows: config.maxRows });
+                return successResult(tableResult(result), config.maxOutputBytes);
             } catch (err) {
                 return failureResult(err, 'The LogQL query');
             }

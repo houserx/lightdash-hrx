@@ -51,7 +51,7 @@ export { QUERY_PROMQL_TOOL, buildPromqlQuery } from './tools/queryPromql.js';
 export { QUERY_LOGQL_TOOL, buildLogqlQuery } from './tools/queryLogql.js';
 export type { QueryLogqlArgs } from './tools/queryLogql.js';
 export type { QueryPromqlArgs } from './tools/queryPromql.js';
-export { ToolInputError, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
+export { ToolInputError, capTableBytes, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
 export type { TableResult } from './tools/telemetryArgs.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';

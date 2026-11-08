@@ -894,3 +894,36 @@ docs/eng-1799/telemetry-mcp.md
   - `output-size-cap` still fails. It needs `MCP_MAX_OUTPUT_BYTES`, which is its own feature.
   - In `sql-injection-safety`, the logql cases pass. Its cloudwatch and traces cases are unbuilt.
 - 2026-11-08T17:01:06Z supervisor: mcp-tool-query-logql passed the gate in round 1
+
+## mcp-output-size-cap (2026-11-08)
+
+- New `capTableBytes(table, maxBytes)` in `src/tools/telemetryArgs.ts`, exported from `src/index.ts`.
+  `successResult(table, maxBytes)` now requires the cap. `query_promql` and `query_logql` pass
+  `config.maxOutputBytes` (`MCP_MAX_OUTPUT_BYTES`, default 200000). The tool descriptions now say "row or size cap".
+  - It keeps the longest prefix of rows whose JSON fits. Rows keep the engine order. It sets `rowCount` to the rows
+    kept and `truncated: true` whenever any row was dropped. The size is computed in UTF-8 bytes: the empty-rows table
+    JSON, plus each row's JSON, plus the commas. Each row is serialised once, so there is no repeated stringify. A table
+    that already fits is returned unchanged, keeping the engine's own `truncated` flag.
+  - The text content is `JSON.stringify(structuredContent)`, so one size check covers both.
+  - Decision: if not even an empty table fits (a tiny cap), the result is `isError` "The result is too large to return
+    even without rows (MCP_MAX_OUTPUT_BYTES)". It is not an over-cap success.
+- Contract assumption: only the query tools' table results are capped, because §"Row cap / Output cap" names row
+  dropping. `list_sources` output is not row-shaped and has no `truncated` field, so it is left as is.
+  - Next sessions: new tools that return a `TableResult` must call `successResult(table, config.maxOutputBytes)`.
+  - Tools with other shapes (alert_state `{results}`) need their own byte check if their output can grow.
+- Unit tests are in the new `src/tools/telemetryArgs.test.ts`. They cover an exact-boundary prefix for every k, UTF-8
+  bytes, an oversized middle row, and the no-fit error. 150 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/output-cap-ut/run.mts`. Run it from the repo root as `node_modules/.bin/tsx <abs path>
+  $PWD/packages/telemetry-mcp <MCP_MAX_ROWS> <MCP_MAX_OUTPUT_BYTES>`. It runs the real `dist/main.js`, the fake engine
+  with 500 log lines of about 370 B each, and the fake Lightdash.
+  - Rows 1000, bytes 20000: 47 rows, 19867 B structured and text, rowCount 47, truncated true. The rows are an in-order
+    prefix.
+  - Rows 1000, bytes 200000: 473 rows, 199587 B.
+  - Rows 10, bytes 200000: 10 rows, truncated true, from the row cap.
+  - Rows 1000, bytes 300: 0 rows, truncated true.
+  - Bytes 1: isError.
+  - A 1-row metric query is never truncated. SIGTERM exits 0.
+  - Trap: in zsh, `$a` with a space doesn't word-split. Pass the script's args separately.
+- Results: the check passes 1/1. 22 acceptance files pass: the earlier 21 plus this one. The 31 failing files belong
+  to unbuilt features.
+- 2026-11-08T17:11:11Z supervisor: mcp-output-size-cap passed the gate in round 1
