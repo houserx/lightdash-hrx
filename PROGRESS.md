@@ -872,3 +872,21 @@ should add a dated line here per feature.
 - **For later sessions.** Grafana unit / panel-type / option mapping features can live next to this in `eng1799/`.
   Run oxlint via `pnpm -F common run linter <files>` (`pnpm exec oxlint` at the root is not found).
 - 2026-11-08T20:03:24Z supervisor: viz-grafana-thresholds passed the gate in round 1
+
+## viz-value-mappings (round 1)
+- **What.** New `packages/common/src/eng1799/grafanaValueMappings.ts`, exported from `@lightdash/common` index:
+  `GrafanaValueMapping` (value / range / regex / special, shaped like a panel's `fieldConfig.defaults.mappings`) and
+  `applyValueMappings(value, mappings)` -> `{text, color, icon, index}` or undefined.
+  - value: `String(value)` looked up in the options (so `0` matches key `'0'`); range: inclusive, null/missing bound is
+    open, numeric strings are parsed; regex: Grafana's `stringToJsRegex` (bare pattern anchored `^...$`, `/p/flags`
+    literal as written), only for string values, text substituted with `value.replace(regex, text)` so `$1` works;
+    special: `null` (null/undefined), `nan`, `null+nan`, `true`, `false`, `empty`.
+  - Precedence: the matching result with the lowest `index` wins (Grafana editor row order); results with no index
+    come after, in array order. Colours go through `resolveGrafanaColor` (palette names -> hex).
+- **Decision.** Grafana treats a `null` range bound as 0 (`isNaN(null)` is false); here null/missing bounds are open,
+  which is what the editor shows for an empty bound.
+- **Tested as a user.** No UI consumer yet. Throwaway node script (deleted) against built `dist/cjs` with 0->Down red,
+  10-20->Busy orange, null->N/A: 0 and '0' -> Down #F2495C; 10/15/20 -> Busy #FF9830; 21 and 5 -> undefined; null and
+  undefined -> N/A; regex `host-(\d+)` -> 'Host $1' gave "Host 7" for host-7 and nothing for xhost-7; overlapping
+  range(index 1)/value(index 0) on 5 -> Early. Check 7/7 after `bash ./init.sh`; linter, oxfmt, `tsc --noEmit` clean.
+- 2026-11-08T20:05:47Z supervisor: viz-value-mappings passed the gate in round 1
