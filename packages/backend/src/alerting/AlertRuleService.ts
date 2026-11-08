@@ -1,12 +1,20 @@
 import { subject } from '@casl/ability';
 import {
+    ALERT_CONDITION_OPERATORS,
+    ALERT_ERROR_STATES,
+    ALERT_NO_DATA_STATES,
+    ALERT_RANGE_OPERATORS,
+    ALERT_REDUCERS,
     ALERT_RULE_DEFAULTS,
+    ALERT_RULE_MIN_INTERVAL,
+    ALERT_THRESHOLD_OPERATORS,
     AlreadyExistsError,
     ForbiddenError,
     generateSlug,
     getAlertRuleState,
     NotFoundError,
     ParameterError,
+    parsePrometheusDuration,
     type AlertRule,
     type AlertRuleDefinition,
     type AlertRuleSummary,
@@ -143,10 +151,68 @@ const parseRuleBody = (
     return body as Partial<AlertRuleDefinition> & { slug?: string };
 };
 
+const isOneOf = <T extends string>(
+    values: readonly T[],
+    value: unknown,
+): value is T =>
+    typeof value === 'string' && (values as readonly string[]).includes(value);
+
+const isFiniteNumber = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value);
+
+/** Milliseconds of a Prometheus duration, or a 400 naming the field. */
+const parseDurationField = (key: string, value: string): number => {
+    try {
+        return parsePrometheusDuration(value);
+    } catch {
+        throw new ParameterError(
+            `${key} must be a duration such as 30s, 5m or 1h30m`,
+        );
+    }
+};
+
+const validateCondition = (condition: Record<string, unknown>) => {
+    const { operator } = condition;
+    const expectKeys = (keys: readonly string[]) => {
+        const extra = Object.keys(condition).filter((k) => !keys.includes(k));
+        if (extra.length > 0) {
+            throw new ParameterError(
+                `Unknown condition field for operator ${String(operator)}: ${extra.join(', ')}`,
+            );
+        }
+    };
+    if (isOneOf(ALERT_THRESHOLD_OPERATORS, operator)) {
+        expectKeys(['operator', 'threshold']);
+        if (!isFiniteNumber(condition.threshold)) {
+            throw new ParameterError('condition.threshold must be a number');
+        }
+        return;
+    }
+    if (isOneOf(ALERT_RANGE_OPERATORS, operator)) {
+        expectKeys(['operator', 'min', 'max']);
+        if (!isFiniteNumber(condition.min) || !isFiniteNumber(condition.max)) {
+            throw new ParameterError(
+                'condition.min and condition.max must be numbers',
+            );
+        }
+        if (condition.min > condition.max) {
+            throw new ParameterError(
+                'condition.min must not be greater than condition.max',
+            );
+        }
+        return;
+    }
+    throw new ParameterError(
+        `condition.operator must be one of ${ALERT_CONDITION_OPERATORS.join(', ')}`,
+    );
+};
+
 /**
- * Value checks for a complete definition. Kept as one seam so the rule
- * validation (durations, minimum interval, reducers, operators, states,
- * folder) lives in one place for create, update and upload.
+ * Value checks for a complete definition (create, and the merged
+ * definition of an update): durations, minimum interval, reducer,
+ * condition, no-data and error states, and the folder's uuid shape. That
+ * the folder is a space of the project needs the database; see
+ * `assertFolder`.
  */
 const validateDefinition = (definition: AlertRuleDefinition) => {
     if (
@@ -154,6 +220,38 @@ const validateDefinition = (definition: AlertRuleDefinition) => {
         !UUID_PATTERN.test(definition.spaceUuid)
     ) {
         throw new ParameterError('spaceUuid must be a uuid');
+    }
+    if (definition.valueColumn.trim() === '') {
+        throw new ParameterError('valueColumn must not be blank');
+    }
+    parseDurationField('for', definition.for);
+    parseDurationField('keepFiringFor', definition.keepFiringFor);
+    if (parseDurationField('timeRange', definition.timeRange) <= 0) {
+        throw new ParameterError('timeRange must be longer than 0s');
+    }
+    if (
+        parseDurationField('interval', definition.interval) <
+        parsePrometheusDuration(ALERT_RULE_MIN_INTERVAL)
+    ) {
+        throw new ParameterError(
+            `interval must be at least ${ALERT_RULE_MIN_INTERVAL}`,
+        );
+    }
+    if (!isOneOf(ALERT_REDUCERS, definition.reducer)) {
+        throw new ParameterError(
+            `reducer must be one of ${ALERT_REDUCERS.join(', ')}`,
+        );
+    }
+    validateCondition(definition.condition);
+    if (!isOneOf(ALERT_NO_DATA_STATES, definition.noDataState)) {
+        throw new ParameterError(
+            `noDataState must be one of ${ALERT_NO_DATA_STATES.join(', ')}`,
+        );
+    }
+    if (!isOneOf(ALERT_ERROR_STATES, definition.errorState)) {
+        throw new ParameterError(
+            `errorState must be one of ${ALERT_ERROR_STATES.join(', ')}`,
+        );
     }
 };
 
@@ -186,6 +284,22 @@ export class AlertRuleService {
             )
         ) {
             throw new ForbiddenError();
+        }
+    }
+
+    /** 400 unless the folder is null or a space of this project. */
+    private async assertFolder(projectUuid: string, spaceUuid: string | null) {
+        if (spaceUuid === null) return;
+        if (
+            !UUID_PATTERN.test(spaceUuid) ||
+            !(await this.deps.alertRuleModel.isProjectSpace(
+                projectUuid,
+                spaceUuid,
+            ))
+        ) {
+            throw new ParameterError(
+                'spaceUuid must be a space of this project',
+            );
         }
     }
 
@@ -277,6 +391,7 @@ export class AlertRuleService {
             ...fields,
         });
         validateDefinition(definition);
+        await this.assertFolder(projectUuid, definition.spaceUuid);
         const ruleUuid = await this.insertRule({
             user,
             projectUuid,
@@ -329,6 +444,11 @@ export class AlertRuleService {
             allowSlug: false,
         });
         await this.getRuleOrThrow(projectUuid, ruleUuid);
+        // Only a new folder needs the lookup; the rule's own was checked
+        // when it was set.
+        if (change.spaceUuid !== undefined) {
+            await this.assertFolder(projectUuid, change.spaceUuid);
+        }
         const result = await this.deps.alertRuleModel.update({
             projectUuid,
             ruleUuid,

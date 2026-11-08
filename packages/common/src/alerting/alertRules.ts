@@ -19,6 +19,9 @@ export const ALERT_RULE_DEFAULTS = {
     shadow: false,
 } as const satisfies Partial<AlertRuleDefinition>;
 
+/** Rules are evaluated at most this often (a Prometheus duration). */
+export const ALERT_RULE_MIN_INTERVAL = '30s';
+
 /** The editable part of an Alert Rule; also the body of a saved version. */
 export type AlertRuleDefinition = {
     name: string;

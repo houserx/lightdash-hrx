@@ -9,6 +9,8 @@ import {
     type AlertRuleInstance,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
+import { ProjectTableName } from '../database/entities/projects';
+import { SpaceTableName } from '../database/entities/spaces';
 
 // Tables from migration 20261108120000_create_alerting_tables.
 export const AlertRulesTableName = 'alert_rules';
@@ -186,6 +188,26 @@ export class AlertRuleModel {
                 'organizations.organization_uuid',
             );
         return row?.organization_uuid;
+    }
+
+    /** Whether the space exists in the project and isn't in the trash. */
+    async isProjectSpace(
+        projectUuid: string,
+        spaceUuid: string,
+    ): Promise<boolean> {
+        const row = await this.database(SpaceTableName)
+            .innerJoin(
+                ProjectTableName,
+                `${ProjectTableName}.project_id`,
+                `${SpaceTableName}.project_id`,
+            )
+            .where(`${ProjectTableName}.project_uuid`, projectUuid)
+            .andWhere(`${SpaceTableName}.space_uuid`, spaceUuid)
+            .whereNull(`${SpaceTableName}.deleted_at`)
+            .first<{ space_uuid: string } | undefined>(
+                `${SpaceTableName}.space_uuid`,
+            );
+        return row !== undefined;
     }
 
     async find(
