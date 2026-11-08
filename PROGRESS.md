@@ -1156,3 +1156,28 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
   - For the next session (pages): wire `onEdit` on the rule page to navigate to the editor route. A managed rule opened by URL is still read-only in the editor.
   - Trap: the acceptance file's `rule()` defaults `managed: false`. Keep the `managed` check on `rule.managed`, not the `version` or `slug`.
 - 2026-11-08T23:39:19Z supervisor: alert-ui-managed-readonly passed the gate in round 1
+- alert-ui-contact-points (round 1) — 2026-11-08
+  - Changes:
+    - New `ContactPointsList` with props `contactPoints`, `onSendTest(uuid) => Promise<ContactPointTestResult>` and `onOpen(uuid)`.
+      - Each row shows the name, `ManagedInGitBadge` and one icon per integration. The icon has `role="img"`, an `aria-label` and a tooltip naming the type.
+      - "Send test notification" shows "Test notification sent", or the failures as `<Type>: <error>`. A rejected promise shows its `error.message` or `Error.message`. Clicks in the Test cell don't open the row.
+      - It has its own `ContactPointsList.module.css`.
+    - New `ContactPointEditor` with props `contactPoint?`, `onSubmit({ name, integrations })` and `onCancel?`. The body is valid for both Create and Update (PATCH).
+      - A new Contact Point starts with one Slack webhook integration. The "Integration type" Select uses `allowDeselect={false}`, because without it, picking the already-selected option clears it.
+      - Each integration has its type-specific fields. Secrets are entered only as "Webhook URL secret reference", "Token secret reference" or "Authorization secret reference" (optional), and are submitted as `{ secretRef }`.
+      - Secret references are checked against the schema's name pattern (`^[A-Za-z0-9][A-Za-z0-9_.-]*$`), so a pasted URL or token is refused. URLs must be http(s). Email addresses, Slack app channel and webhook max alerts are validated too.
+      - "Add integration" and "Remove integration" (only shown when there are 2 or more integrations).
+      - Managed: shows the badge and a violet Alert, all fields and Save are disabled, the add/remove buttons are hidden, and submit returns early.
+    - `utils.ts` adds `CONTACT_POINT_INTEGRATION_LABELS`, `isSecretRefName` and `describeContactPointTestFailure`, with 4 new unit tests (15 in `utils.test.ts`).
+  - Decision / trap: the list shows integration types as icons, not text. The acceptance test calls `within(row).getByText(/slack/i)` and `/incident\.io/i`, and the Contact Point names already match those, so a visible "Slack webhook" or "incident.io" label would be a second match and getByText would throw. Don't add type text to the list rows.
+  - Tested:
+    - After init, the check passes (2 passed, 4 skipped). Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) clicked through the components.
+      - A rejected test request showed the API error message and did not open the row. Clicking the name opened the row.
+      - The icons read `incident.io` and `Email`.
+      - Saving an empty editor showed "Name is required" and "Webhook URL secret reference is required". A pasted `https://hooks.slack.com/...` was refused, and a bad email was refused.
+      - A two-integration contact point submitted `{ name, integrations: [{ type: 'slack_webhook', url: { secretRef } }, { type: 'email', addresses: [..] }] }`.
+      - The managed editor had every input disabled, Save disabled and no Add integration button. Saving an unmanaged contact point unchanged submitted exactly its integrations.
+  - For the next session (routes editor / pages):
+    - The pages feature should map `onSendTest` to `testContactPoint`, `onSubmit` to `createContactPoint` or `updateContactPoint`, and `onOpen` to the editor route.
+- 2026-11-08T23:45:11Z supervisor: alert-ui-contact-points passed the gate in round 1

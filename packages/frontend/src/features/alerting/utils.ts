@@ -2,6 +2,8 @@ import {
     type AlertCondition,
     type AlertInstanceState,
     type AlertStateHistoryEntry,
+    type ContactPointIntegrationType,
+    type ContactPointTestResult,
 } from '@lightdash/common';
 
 export const ALERT_STATE_LABELS: Record<AlertInstanceState, string> = {
@@ -96,4 +98,44 @@ export const parseLabelsText = (
         labels[key] = line.slice(eq + 1).trim();
     }
     return { labels };
+};
+
+/** How each Contact Point integration type is named in the UI. */
+export const CONTACT_POINT_INTEGRATION_LABELS: Record<
+    ContactPointIntegrationType,
+    string
+> = {
+    slack_webhook: 'Slack webhook',
+    slack_app: 'Slack app',
+    incident_io: 'incident.io',
+    email: 'Email',
+    webhook: 'Webhook',
+};
+
+/**
+ * A secret reference's name, as the contact_point schema allows it. Secrets
+ * themselves (webhook URLs, tokens) never pass: they contain `:` or `/`.
+ */
+const SECRET_REF_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+export const isSecretRefName = (value: string): boolean =>
+    SECRET_REF_NAME.test(value);
+
+/**
+ * The outcome of "Send test notification" in one line: null when every
+ * integration succeeded, else each failure as `<type>: <error>`.
+ */
+export const describeContactPointTestFailure = (
+    result: ContactPointTestResult,
+): string | null => {
+    if (result.ok) return null;
+    const failures = result.results
+        .filter((integration) => !integration.ok)
+        .map(
+            (integration) =>
+                `${CONTACT_POINT_INTEGRATION_LABELS[integration.type] ?? integration.type}: ${integration.error ?? 'failed'}`,
+        );
+    return failures.length > 0
+        ? failures.join('; ')
+        : 'The test notification failed';
 };

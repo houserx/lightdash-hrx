@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+    describeContactPointTestFailure,
     describeHistoryEntry,
     formatAlertCondition,
     formatLabels,
+    isSecretRefName,
     labelsToText,
     matchesLabelFilter,
     parseLabelsText,
@@ -115,5 +117,45 @@ describe('labelsToText / parseLabelsText', () => {
             'Expected key=value, got "broken"',
         );
         expect(parseLabelsText('=x').error).toMatch(/Expected key=value/);
+    });
+});
+
+describe('isSecretRefName', () => {
+    it('accepts secret names', () => {
+        expect(isSecretRefName('slack-infra-alerts-webhook')).toBe(true);
+        expect(isSecretRefName('incident_io.token2')).toBe(true);
+    });
+
+    it('rejects inline secrets and blanks', () => {
+        expect(isSecretRefName('https://hooks.slack.com/services/T/B/x')).toBe(
+            false,
+        );
+        expect(isSecretRefName('Bearer abc')).toBe(false);
+        expect(isSecretRefName('-leading-dash')).toBe(false);
+        expect(isSecretRefName('')).toBe(false);
+    });
+});
+
+describe('describeContactPointTestFailure', () => {
+    it('is null when every integration succeeded', () => {
+        expect(
+            describeContactPointTestFailure({
+                ok: true,
+                results: [{ type: 'slack_webhook', ok: true }],
+            }),
+        ).toBeNull();
+    });
+
+    it('names each failed integration and its error', () => {
+        expect(
+            describeContactPointTestFailure({
+                ok: false,
+                results: [
+                    { type: 'email', ok: true },
+                    { type: 'slack_webhook', ok: false, error: 'HTTP 500' },
+                    { type: 'incident_io', ok: false },
+                ],
+            }),
+        ).toBe('Slack webhook: HTTP 500; incident.io: failed');
     });
 });
