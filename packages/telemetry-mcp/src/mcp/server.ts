@@ -26,6 +26,7 @@ import { registerAlertHistory } from '../tools/alertHistory.js';
 import { registerAlertState } from '../tools/alertState.js';
 import { registerGetTrace } from '../tools/getTrace.js';
 import { registerListSources } from '../tools/listSources.js';
+import { registerPlatformQuery } from '../tools/platformQuery.js';
 import { registerPlatformSchema } from '../tools/platformSchema.js';
 import { registerQueryCloudwatch } from '../tools/queryCloudwatch.js';
 import { registerQueryCloudwatchLogs } from '../tools/queryCloudwatchLogs.js';
@@ -71,6 +72,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerAlertState(server, config, alerting);
     registerAlertHistory(server, config, alerting, now);
     registerPlatformSchema(server, config, engine);
+    registerPlatformQuery(server, config, engine);
     return server;
 }
 

@@ -1214,3 +1214,39 @@ docs/eng-1799/telemetry-mcp.md
   (ask_data, platform_query, platform_explain, write_preview, docs, dockerfile, readme, structured-logs, tool-catalog
   and others).
 - 2026-11-08T18:01:07Z supervisor: mcp-tool-platform-schema passed the gate in round 1
+
+## mcp-tool-platform-query (2026-11-08)
+
+- New `src/tools/platformQuery.ts`: `platform_query` takes `sql` and `description` (both required in the input schema)
+  and an optional `ticket`. `buildPlatformQuery(args)` returns `{sql: 'SELECT * FROM platform_query($1)', params: [sql],
+  audit: {description, ticket}}`. The caller's SQL is only ever the bind parameter. The tool runs as an Audited Query:
+  `engine.query(..., { maxRows, audit })`, and the result goes through `successResult(tableResult(...))`, so the row cap
+  and output cap apply. Errors go through `failureResult(err, 'The Platform Database query')`. A 58000 becomes
+  "Audit write failed ... withheld the result and no rows were returned" with no rows, and a 42501 becomes "Access denied".
+  - Refused before the engine: a missing or blank `sql`, a missing or blank or non-string `description`, and a bad ticket.
+    A missing `description` is refused by the SDK's zod validation as an isError -32602. A blank one is refused by our
+    check.
+  - The description is sent unchanged, not trimmed. The ticket is `null` when omitted or `null`.
+  - Contract assumptions:
+    - Ticket format. CONTEXT/ADR 0004 say "optional Linear ticket, validated against Linear". The MCP has no Linear
+      credential, so it only checks the shape `^[A-Z][A-Z0-9]{0,9}-[1-9]\d{0,8}$` (upper-case team key, issue number
+      ≥ 1). An empty string, a lower-case key and `ENG-0` are refused. Whether the issue exists in Linear is left to the
+      integration line or the engine.
+    - The MCP does not parse or check the SQL for being read-only. CONTRACTS §1.1/§5 put that on the engine's read-only
+      role and guard. The MCP also does not check `platform_read`; the engine enforces it.
+- `src/mcp/server.ts`: `platform_query` is registered after `platform_schema`.
+- Unit tests: `src/tools/platformQuery.test.ts`. 252 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/platform-query-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 19002 with an
+  RS256 Okta token and a fake engine that enforces `platform_read` and a non-blank description, and fails with 58000
+  when the SQL contains `audit_will_fail`.
+  - tools/list showed props sql, description and ticket, required [sql, description], and readOnlyHint true.
+  - With ticket ENG-123, the engine got `SELECT * FROM platform_query($1)` with the SQL as its only param, and the result
+    had 2 rows. The audit block was `{description, ticket:"ENG-123", source:"mcp", resource_uuid:null}` and agent was true.
+  - A call with no ticket sent ticket null.
+  - A missing description, a blank description and a bad ticket each returned isError, with 0 engine calls.
+  - A 58000 returned isError with "Audit write failed ... no rows were returned" and no structured content.
+  - A user without `platform_read` got a 42501 "Access denied" result, and no secret leaked. SIGTERM exited 0.
+- Results: the check passes 6/6. Acceptance: 31 files pass and 22 fail. All 22 failures are unbuilt features
+  (ask_data, platform_explain, write_preview, docs, dockerfile, readme, structured-logs, tool-catalog and others).
+- 2026-11-08T18:04:52Z supervisor: mcp-tool-platform-query passed the gate in round 1
