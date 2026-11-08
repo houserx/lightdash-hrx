@@ -1749,3 +1749,22 @@ docs/eng-1799/telemetry-mcp.md
   - Abstention (schema_gap) that proposed a lesson: `memory.learned` was empty, and the store still held 1 note.
 - Feature check: 4/4.
 - 2026-11-08T19:07:08Z supervisor: mcp-ask-data-memory passed the gate in round 1
+
+## mcp-ask-data-example-queries (2026-11-08)
+
+- No code changes. The ported example-queries service (mcp-example-queries-port) is already wired into the
+  data-assistant loop's `find_example_queries` tool by mcp-tool-ask-data. It reads `GET /v1/audit` with the caller's
+  identity token. This session checked it and recorded the result.
+- Tested as a user: after `bash ./init.sh`, `../tmp/ask-data-example-queries/drive.test.ts` (run with
+  `pnpm exec vitest run --root ../../../tmp/ask-data-example-queries --disableConsoleIntercept drive.test.ts` from the
+  package) started the built `dist/index.js` against the fake Okta, Lightdash and engine, plus a `ScriptedLlm`. A real
+  MCP client connected over streamable HTTP with an Okta bearer token. The audit page held 2 reads of the same shape
+  with different string literals and 7-digit ids, a write, a failed read and a read on another database.
+  - The model called `find_example_queries` for "orders status". The tool result showed one example, "run 2× by 2
+    people; tables: orders", reading `status = '?' AND id > ?`. No literals, write, failure or other database appeared.
+  - The engine saw 1 `GET /v1/audit` call. Its bearer was an identity token with iss `telemetry-mcp`, `agent: true`
+    and the caller's email.
+- Trap: `scrubSql` (portal behaviour, kept) replaces only quoted strings and numbers of 5 or more digits. Small numeric
+  constants stay, so `id > 17` and `id > 99` are two different shapes and are not merged.
+- Feature check: 2/2.
+- 2026-11-08T19:08:40Z supervisor: mcp-ask-data-example-queries passed the gate in round 1
