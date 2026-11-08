@@ -158,11 +158,18 @@ async fn hung_up(watcher: &TcpStream) {
 }
 
 /// The HTTP side port (CONTRACTS §1.3). `/healthz` does not probe sources yet (eng-healthz).
-/// `POST /v1/write` is Write Mode (§4.2).
+/// `POST /v1/write` is Write Mode (§4.2). `POST /v1/write/confirmations/verify` exists only with
+/// `test_mode = true`; otherwise it is 404 like any unknown path.
 fn http_router(config: &Config) -> Router {
     let write = Arc::new(WriteMode::new(config, SOURCE_CONNECT_TIMEOUT));
-    Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(|| async { "ok\n" }))
-        .route("/v1/write", post(crate::write::handle))
-        .with_state(write)
+        .route("/v1/write", post(crate::write::handle));
+    if config.test_mode {
+        router = router.route(
+            "/v1/write/confirmations/verify",
+            post(crate::write::handle_verify),
+        );
+    }
+    router.with_state(write)
 }

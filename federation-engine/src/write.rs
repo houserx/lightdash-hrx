@@ -104,6 +104,12 @@ impl WriteMode {
         spent.insert(signature.to_string(), exp);
         true
     }
+
+    /// True if the confirmation token with signature `signature` has been used and not expired.
+    fn is_spent(&self, signature: &str, now: i64) -> bool {
+        let spent = self.spent.lock().unwrap_or_else(|e| e.into_inner());
+        spent.get(signature).is_some_and(|until| *until > now)
+    }
 }
 
 impl Target {
@@ -339,6 +345,50 @@ async fn run(write: &WriteMode, headers: &HeaderMap, body: &[u8]) -> Result<Valu
     }))
 }
 
+/// `POST /v1/write/confirmations/verify`, routed only with `test_mode = true` (assumption A8).
+///
+/// A bearer identity (else 401) and `{statement, confirmation_token}` (else 400) give
+/// `{"valid": bool}`: true when `/v1/write` would accept the token for this statement and
+/// identity, that is when it is bound to them, unexpired, signed with the identity secret and
+/// not used yet. Verifying never spends the token.
+pub async fn handle_verify(
+    State(write): State<Arc<WriteMode>>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    match verify(&write, &headers, &body) {
+        Ok(valid) => Json(json!({"valid": valid})).into_response(),
+        Err(failure) => failure.into_response(),
+    }
+}
+
+fn verify(write: &WriteMode, headers: &HeaderMap, body: &[u8]) -> Result<bool, Failure> {
+    let now = chrono::Utc::now().timestamp();
+    let identity = bearer(headers)
+        .and_then(|token| identity::verify(token, &write.identity_secret, now))
+        .ok_or_else(|| {
+            Failure::new(
+                StatusCode::UNAUTHORIZED,
+                "verifying a confirmation needs a valid identity token (Authorization: Bearer)",
+            )
+        })?;
+    let bad = || {
+        Failure::new(
+            StatusCode::BAD_REQUEST,
+            "the body must be a JSON object with string statement and confirmation_token",
+        )
+    };
+    let body: Value = serde_json::from_slice(body).map_err(|_| bad())?;
+    let text = |name: &str| body.get(name).and_then(Value::as_str);
+    let (Some(statement), Some(token)) = (text("statement"), text("confirmation_token")) else {
+        return Err(bad());
+    };
+    Ok(
+        verify_confirmation(token, statement, &identity, &write.identity_secret, now)
+            .is_some_and(|c| !write.is_spent(&c.signature, now)),
+    )
+}
+
 /// The token in `Authorization: Bearer <token>`.
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
@@ -548,6 +598,21 @@ mod tests {
             );
         }
         assert!(verify_confirmation("garbage", stmt, &id, SECRET, NOW).is_none());
+    }
+
+    #[test]
+    fn is_spent_reads_without_spending() {
+        let write = WriteMode {
+            identity_secret: SECRET.to_vec(),
+            target: Err("off".into()),
+            audit: None,
+            spent: Mutex::default(),
+        };
+        assert!(!write.is_spent("sig", NOW));
+        assert!(!write.is_spent("sig", NOW), "checking does not spend");
+        assert!(write.spend("sig", NOW + 120, NOW));
+        assert!(write.is_spent("sig", NOW));
+        assert!(!write.is_spent("sig", NOW + 120), "expired entries no longer count");
     }
 
     #[test]

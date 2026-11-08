@@ -179,6 +179,9 @@ These are narrowest compatible readings where `CONTRACTS.md` is silent. The test
   objects. `audit_id` is the audit item id. The body's `description` and `ticket` go into the audit record.
 - **A8 `POST /v1/write/confirmations/verify`** (test_mode only, else 404): bearer identity plus
   `{statement, confirmation_token}` returns `{"valid": bool}`. It does not spend the token.
+  `valid` means `/v1/write` would accept the token now: bound to the statement and the bearer's
+  sub and project, unexpired, signed, and not already spent (so after a commit it is false).
+  No bearer is 401; a body without string `statement` and `confirmation_token` is 400.
 - **A9 Guard on pg-wire.** A rejection is SQLSTATE `42501` carrying the portal's exact message. Read mode
   applies to `platform_query` and `platform_explain`; write mode applies to `/v1/write`. Rejected statements are not audited.
 - **A10 Audit content.** `sql` is the SQL text as received over pg-wire (for writes, the statement).
@@ -1978,3 +1981,24 @@ token verification for a *valid* token, which feature 39 then hardens.
   action query/query/ai_ask, every hash matched, plus 3 S3 objects. With the store refusing, a
   preview gave 500 sqlstate 58000 "audit write failed". Check passes.
 - 2026-11-08T22:18:24Z supervisor: eng-write-audit-records passed the gate in round 1
+- eng-write-confirmations-verify-endpoint (functional): `server::http_router` routes
+  `POST /v1/write/confirmations/verify` only when `config.test_mode` (the key was already parsed);
+  without it axum's default 404 answers. Its handler is `write::handle_verify`. It takes the
+  bearer identity (401 otherwise) and `{statement, confirmation_token}` (400 otherwise), and returns
+  `{"valid": verify_confirmation(..) && !is_spent(..)}`. `WriteMode::is_spent` only reads the
+  spent map, so verifying never spends a token. A8 above now spells out that a spent token
+  verifies as false. I added the unit test `write::tests::is_spent_reads_without_spending`.
+  Tested as a user: `../tmp/write-verify/run.sh <out>` uses ports 59671-59677: a test_mode engine
+  on HTTP 59672 and an engine without test_mode on 59677, sharing one Postgres and one audit
+  store. With curl:
+  - Verifying a fresh token for its statement gave 200 {"valid":true}, and again true on a second call.
+  - Verifying it for `UPDATE widgets SET note = 'other'` gave {"valid":false}.
+  - With no bearer, verify gave 401.
+  - A commit with the token then gave 200 with rows_affected 1, so verifying had not spent it.
+  - Verifying it after the commit gave {"valid":false}.
+  - The same call on the engine without test_mode gave 404.
+  Check passes, and so do write::eng_write_confirmation_single_use, _binding and eng_write_commit.
+  Trap: `cargo fmt --check` with the tmp/rustup toolchain reports diffs in nearly every src file
+  already at HEAD. The code is laid out wider than default rustfmt and there is no rustfmt.toml.
+  I didn't reformat anything. Clippy is clean.
+- 2026-11-08T22:23:01Z supervisor: eng-write-confirmations-verify-endpoint passed the gate in round 1
