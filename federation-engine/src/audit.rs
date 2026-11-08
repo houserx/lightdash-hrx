@@ -3,8 +3,12 @@
 //! (`api/src/dynamo/executions.ts`) and its `computeIntegrityHash`
 //! (`api/src/services/audit.service.ts`).
 //!
-//! The put is append-only (`attribute_not_exists(id)`). It happens after the query ran and
-//! before any row is sent: if it fails, the client gets SQLSTATE 58000 and no rows.
+//! The same record is also written to the S3 Object Lock bucket, as the portal does: the body is
+//! `JSON.stringify(record, null, 2)`, the key `executions/<createdAt>/<id>.json`, COMPLIANCE mode
+//! retained for `s3_retention_days`.
+//!
+//! The put is append-only (`attribute_not_exists(id)`). Both writes happen after the query ran
+//! and before any row is sent: if either fails, the client gets SQLSTATE 58000 and no rows.
 
 use std::time::Duration;
 
@@ -34,7 +38,9 @@ pub struct Execution<'a> {
 pub struct AuditWriter {
     settings: Audit,
     connect_timeout: Duration,
+    shared: OnceCell<aws_config::SdkConfig>,
     dynamodb: OnceCell<aws_sdk_dynamodb::Client>,
+    s3: OnceCell<aws_sdk_s3::Client>,
 }
 
 impl AuditWriter {
@@ -42,7 +48,9 @@ impl AuditWriter {
         AuditWriter {
             settings,
             connect_timeout,
+            shared: OnceCell::new(),
             dynamodb: OnceCell::new(),
+            s3: OnceCell::new(),
         }
     }
 
@@ -56,10 +64,10 @@ impl AuditWriter {
         let key = self.settings.integrity_key.as_ref().map(|k| k.expose());
         let record = record(execution, &id, &created_at, key);
         let item = record
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), attribute(&v)))
+            .iter()
+            .map(|(k, v)| (k.to_string(), attribute(v)))
             .collect();
-        self.client()
+        self.dynamodb()
             .await
             .put_item()
             .table_name(&self.settings.dynamodb_table)
@@ -74,13 +82,41 @@ impl AuditWriter {
                     aws_sdk_dynamodb::error::DisplayErrorContext(e)
                 )
             })?;
+
+        let key = format!("executions/{created_at}/{id}.json");
+        let days = self.settings.s3_retention_days;
+        let retain_until = i64::try_from(days)
+            .ok()
+            .and_then(chrono::TimeDelta::try_days)
+            .and_then(|d| chrono::Utc::now().checked_add_signed(d))
+            .ok_or_else(|| format!("s3_retention_days {days} is out of range"))?;
+        self.s3()
+            .await
+            .put_object()
+            .bucket(&self.settings.s3_bucket)
+            .key(&key)
+            .body(js_pretty(&record).into_bytes().into())
+            .content_type("application/json")
+            .object_lock_mode(aws_sdk_s3::types::ObjectLockMode::Compliance)
+            .object_lock_retain_until_date(aws_sdk_s3::primitives::DateTime::from_millis(
+                retain_until.timestamp_millis(),
+            ))
+            .send()
+            .await
+            .map_err(|e| {
+                format!(
+                    "S3 PutObject s3://{}/{key}: {}",
+                    self.settings.s3_bucket,
+                    aws_sdk_s3::error::DisplayErrorContext(e)
+                )
+            })?;
         Ok(())
     }
 
-    /// The DynamoDB client: the default credential chain in `[audit] region` (else the chain's
-    /// region), at `dynamodb_endpoint_url` when one is set.
-    async fn client(&self) -> &aws_sdk_dynamodb::Client {
-        self.dynamodb
+    /// The shared AWS config: the default credential chain in `[audit] region` (else the
+    /// chain's region).
+    async fn shared(&self) -> &aws_config::SdkConfig {
+        self.shared
             .get_or_init(|| async {
                 let timeouts = aws_config::timeout::TimeoutConfig::builder()
                     .connect_timeout(self.connect_timeout)
@@ -90,12 +126,33 @@ impl AuditWriter {
                 if let Some(region) = &self.settings.region {
                     loader = loader.region(Region::new(region.clone()));
                 }
-                let shared = loader.load().await;
-                let mut config = aws_sdk_dynamodb::config::Builder::from(&shared);
+                loader.load().await
+            })
+            .await
+    }
+
+    /// The DynamoDB client, at `dynamodb_endpoint_url` when one is set.
+    async fn dynamodb(&self) -> &aws_sdk_dynamodb::Client {
+        self.dynamodb
+            .get_or_init(|| async {
+                let mut config = aws_sdk_dynamodb::config::Builder::from(self.shared().await);
                 if let Some(url) = &self.settings.dynamodb_endpoint_url {
                     config = config.endpoint_url(url);
                 }
                 aws_sdk_dynamodb::Client::from_conf(config.build())
+            })
+            .await
+    }
+
+    /// The S3 client, at `s3_endpoint_url` (path-style) when one is set.
+    async fn s3(&self) -> &aws_sdk_s3::Client {
+        self.s3
+            .get_or_init(|| async {
+                let mut config = aws_sdk_s3::config::Builder::from(self.shared().await);
+                if let Some(url) = &self.settings.s3_endpoint_url {
+                    config = config.endpoint_url(url).force_path_style(true);
+                }
+                aws_sdk_s3::Client::from_conf(config.build())
             })
             .await
     }
@@ -208,6 +265,16 @@ pub fn js_json(v: &Value) -> String {
     out
 }
 
+/// `JSON.stringify(record, null, 2)` of a flat record, in its key order.
+pub fn js_pretty(fields: &[(&'static str, Value)]) -> String {
+    let lines = fields
+        .iter()
+        .map(|(k, v)| format!("  {}: {}", js_json(&json!(k)), js_json(v)))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    format!("{{\n{lines}\n}}")
+}
+
 /// A record field as a DynamoDB attribute, as the portal's DocumentClient marshals it.
 fn attribute(v: &Value) -> AttributeValue {
     match v {
@@ -276,6 +343,21 @@ mod tests {
         assert_eq!(
             r.iter().find(|(k, _)| *k == "integrityHash").unwrap().1,
             json!(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))
+        );
+    }
+
+    #[test]
+    fn js_pretty_is_two_space_json_stringify() {
+        let fields = vec![
+            ("id", json!("x")),
+            ("description", json!("a\nb \"q\" ü")),
+            ("rowCount", json!(2)),
+            ("errorMessage", Value::Null),
+            ("preview", json!(false)),
+        ];
+        assert_eq!(
+            js_pretty(&fields),
+            "{\n  \"id\": \"x\",\n  \"description\": \"a\\nb \\\"q\\\" ü\",\n  \"rowCount\": 2,\n  \"errorMessage\": null,\n  \"preview\": false\n}"
         );
     }
 

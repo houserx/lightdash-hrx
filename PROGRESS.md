@@ -1288,3 +1288,34 @@ token verification for a *valid* token, which feature 39 then hardens.
   identity/audit. No build warnings. rustfmt is not installed here, so lines were wrapped by
   hand.
 - 2026-11-08T20:17:35Z supervisor: eng-audit-dynamodb-item passed the gate in round 1
+- 2026-11-08 eng-audit-s3-object (round 1): every audit record is now also written to the S3
+  Object Lock bucket.
+  - `audit.rs`: `AuditWriter::write` does the DynamoDB PutItem first, then S3 PutObject to
+    `[audit] s3_bucket`, key `executions/<createdAt>/<id>.json`. The body is `js_pretty(&record)`,
+    which is `JSON.stringify(record, null, 2)` in the portal key order with V8 escaping (it reuses
+    `js_json`), so non-ASCII stays raw. It sets content-type application/json, ObjectLockMode
+    COMPLIANCE and retain-until = now + `s3_retention_days` (default 2555, from engine-config).
+    With `s3_endpoint_url` set the client uses path-style addressing (`/<bucket>/<key>`).
+    Both clients share one lazily loaded `SdkConfig` (`shared()`). If the S3 put fails, the
+    write returns an error and the client gets 58000. That means `audit::eng_audit_fail_closed`
+    already passes; the session for that feature should verify it, not rebuild it. Retention
+    day counts too large for chrono are an error, not a panic.
+  - Dep added: aws-sdk-s3 1.157 (resolved offline; new lock entries aws-sdk-s3,
+    aws-smithy-checksums, crc-fast, lru, sha1, spin). `cargo fetch --offline` fails on the
+    Windows-only schannel crate. That is harmless: the build doesn't need it.
+  - Contract assumption: DynamoDB is written before S3, and both writes must succeed. A failed
+    S3 put therefore leaves a DynamoDB item with no S3 object (the item is append-only, so it
+    can't be rolled back).
+  - Trap: the SDK adds `?x-id=PutObject` to the S3 PUT path. Strip it if you match paths in a mock.
+  Tested as a user: `../tmp/audit-s3/run.sh <out> [extra [audit] line]` starts the open and
+  restricted Prometheus mocks, a Python DynamoDB+S3 logger and the engine. It sets a token whose
+  description is multi-line with quotes, unicode and an emoji, plus ticket ENG-7, then runs the
+  restricted query over the extended protocol and gets 2 rows. `verify.js` (node) found 1
+  PutItem and 1 S3 PUT to /db-query-portal-audit/executions/<createdAt>/<id>.json. The body was
+  byte-equal to node's own JSON.stringify(item, null, 2) of the DynamoDB item (717 bytes).
+  Content-type was application/json and the lock mode COMPLIANCE. Retain-until was 2555.00
+  days ahead, and 30.00 days with `s3_retention_days = 30`. Checks passed after init:
+  audit::eng_audit_s3_object, eng_audit_dynamodb_item, eng_audit_integrity_hash,
+  eng_audit_fail_closed, and the audit unit tests (new: js_pretty_is_two_space_json_stringify).
+  No build warnings.
+- 2026-11-08T20:22:30Z supervisor: eng-audit-s3-object passed the gate in round 1
