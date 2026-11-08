@@ -1702,3 +1702,17 @@ token verification for a *valid* token, which feature 39 then hardens.
   execute. (The protected acceptance test polls on first sight. It still passes, but it may be
   catching the describe phase. This is not changed, since the file is protected.)
 - 2026-11-08T21:31:38Z supervisor: eng-platform-cancel-on-disconnect passed the gate in round 1
+- 2026-11-08 eng-platform-max-rows (round 1): no source change needed. `PlatformTable::fetch`
+  (platform.rs) already counts rows as they stream and fails with 54000 "result exceeds max_rows
+  (N) for source \"platform\"" on row N+1. N is the source's `max_rows`, else the top-level one
+  (platform.rs `s.max_rows.unwrap_or(config.max_rows)`). Exactly N rows is fine. On the error,
+  `CancelOnDrop` is still armed, so the rest of the statement is cancelled in Postgres. The check
+  passed on the first run after init.
+  Tested as a user: `../tmp/platform-maxrows/run.sh <out>` (throwaway cluster, audit store mock,
+  engine with top-level max_rows = 1000 and max_rows = 50 on the platform source; pgclient
+  `platform` bin). generate_series(1, 51) fails with 54000 "result exceeds max_rows (50) for
+  source \"platform\"" through both extended and simple protocol. 50 rows come back through both.
+  widgets id <= 51 fails the same way. count(*) over a 50-row platform_query gives 50.
+  Trap: pgclient's `platform` bin panics while printing int4 rows (its printer reads them as
+  String). Use int8 columns, or count rows only.
+- 2026-11-08T21:33:38Z supervisor: eng-platform-max-rows passed the gate in round 1
