@@ -1898,3 +1898,18 @@ docs/eng-1799/telemetry-mcp.md
 - Trap for later features: a new tool, a renamed tool or an undescribed input property now fails both the
   acceptance test and `src/mcp/server.test.ts`. Write descriptions in CONTEXT.md glossary terms.
 - 2026-11-08T19:20:06Z supervisor: mcp-tool-catalog passed the gate in round 1
+
+## mcp-no-ee-imports (2026-11-08)
+
+- No source change was needed: the package was already independent of packages/backend. The feature check passed
+  on arrival (4/4).
+- Verified by hand after `bash ./init.sh`:
+  - `grep -rnE "packages/backend|@lightdash/backend|/ee/|backend" src` in packages/telemetry-mcp found no match,
+    and neither did the built `dist/` or the tsconfig files.
+  - package.json depends only on @modelcontextprotocol/sdk, jose, pg, pg-cursor and zod (dev: @types/*,
+    typescript, vitest). There are no workspace: dependencies.
+  - `git diff --stat 6855d0840 -- packages/backend/src/ee` was empty, there were no untracked files under it, and
+    nothing under packages/backend changed at all since the base commit.
+- Trap for later features: don't import shared types from the backend (e.g. warehouse or ee code). If a type is
+  needed, copy the narrow shape into the package, and never touch packages/backend/src/ee (decision no_ee_changes).
+- 2026-11-08T19:20:55Z supervisor: mcp-no-ee-imports passed the gate in round 1
