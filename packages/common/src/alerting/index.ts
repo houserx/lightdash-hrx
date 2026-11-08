@@ -3,3 +3,4 @@ export * from './durations';
 export * from './reducers';
 export * from './conditions';
 export * from './series';
+export * from './stateMachine';
