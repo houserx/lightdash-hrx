@@ -1948,3 +1948,26 @@ docs/eng-1799/telemetry-mcp.md
   documented unit-test command (`src/config.test.ts`, 6/6). After `bash ./init.sh` the feature check passed 3/3.
 - Trap: if a tool or env var is added or renamed, update the README tables too (the readme test pins the names).
 - 2026-11-08T19:24:51Z supervisor: mcp-readme passed the gate in round 1
+
+## mcp-docs-attach-guide (2026-11-08)
+
+- Added `docs/eng-1799/telemetry-mcp.md`. It has sections on prerequisites, attaching the server to a Lightdash
+  agent (an Operations Project MCP server with auth type `oauth` and credential scope `user`, OAuth credential sharing
+  off, then enabled per agent), attaching it to Claude Code (`claude mcp add --transport http telemetry <url>/mcp`,
+  then `/mcp` to sign in), Auth (the 401 `WWW-Authenticate` challenge, then protected-resource metadata, Okta with
+  PKCE, the JWKS/RS256/iss/aud/exp checks and key rotation, mapping the user by email, the user attributes table, and
+  `hrx.identity` tokens) and "Preview only" (`write_preview`, which nothing can commit).
+- Checked each claim against the source. The identity token lifetime is 60 s (`IDENTITY_TOKEN_LIFETIME_SECONDS`);
+  CONTRACTS allows up to 300 s. The audit source is `mcp`. The Lightdash agent fields (authType
+  none/bearer/oauth, credentialScope shared/user, allowOAuthCredentialSharing) come from
+  `packages/common/src/ee/AiAgent/index.ts` (read only).
+- Fixed one README sentence that said Restricted Telemetry was readable with `telemetry_restricted`. MCP tokens
+  always carry `agent = true`, so the engine never returns it through MCP (CONTRACTS §7). The readme check still
+  passes 3/3.
+- Tested as a user: ran `dist/main.js` with dummy env on 127.0.0.1. POST /mcp with no token got 401 and the
+  challenge to `/.well-known/oauth-protected-resource/mcp`. A bad token got 401 with `error="invalid_token"`. The
+  metadata named the `/mcp` resource and the Okta issuer. I stopped the server afterwards. Scanned the doc for the
+  CONTEXT.md _Avoid_ terms and found none. Feature check 5/5.
+- Open item for deployment: Okta must accept Claude Code and Lightdash as OAuth clients (redirect URIs or dynamic
+  registration). The doc calls this Okta app setup; nobody has confirmed it against the real Okta.
+- 2026-11-08T19:27:32Z supervisor: mcp-docs-attach-guide passed the gate in round 1

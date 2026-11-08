@@ -17,7 +17,8 @@ How to attach the server to a Lightdash agent or to Claude Code, and how the aut
   email to an active Lightdash user and reads that user's attributes (`telemetry_restricted`, `platform_read`,
   `platform_explain`, `platform_write`). A caller with no Lightdash user sees no tools.
 - Runs each tool against the Federation Engine as the caller, using a short-lived signed `hrx.identity` token.
-  Restricted Telemetry is readable only by callers with the `telemetry_restricted` attribute.
+  These tokens always carry `agent = true`, so the engine never returns Restricted Telemetry through MCP, even to
+  callers with the `telemetry_restricted` attribute.
 - Caps every result by row count and by size, and marks a cut result with `truncated: true`.
 - Answers `GET /healthz` with `200` for health checks.
 - Writes structured JSON logs to stdout.
