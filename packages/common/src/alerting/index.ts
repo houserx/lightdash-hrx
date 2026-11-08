@@ -6,3 +6,4 @@ export * from './series';
 export * from './stateMachine';
 export * from './evaluatorIdentity';
 export * from './routingMatchers';
+export * from './routingTree';
