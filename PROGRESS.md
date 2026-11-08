@@ -1285,3 +1285,23 @@ should add a dated line here per feature.
 - **Next.** viz-cartesian-threshold-areas: add markArea bands in `thresholds.ts` the same way, using the same host-series
   choice. The area style currently draws nothing.
 - 2026-11-08T21:04:49Z supervisor: viz-cartesian-threshold-lines passed the gate in round 1
+
+## viz-cartesian-threshold-areas (round 1)
+- **What changed.** `packages/visualization/src/cartesian/thresholds.ts` gains `applyThresholdAreas`. For style `area`,
+  `line+area` or `dashed+area` it adds one markArea band per step, from the step's value to the next step's value. The
+  steps are sorted with the null base step first, and the band takes `itemStyle {color: resolveGrafanaColor, opacity 0.15}`.
+  The base band's start and the top band's end leave out the axis key, so ECharts stretches them to the bottom or top of
+  the grid (missing markArea coords default to ±Infinity). Bands use `xAxis` with flipAxes, and percentage mode works as
+  it does for the lines. They go on the same host series as the lines and are appended to any markArea the series already
+  has. The host and percentage-range logic moved into a shared `getThresholdHost`. `echartsOption.ts` runs
+  `applyThresholdLines` and then `applyThresholdAreas`. `EChartsSeries` (common `visualizations/types/index.ts`) gains
+  an optional `markArea`. There are 9 new unit tests in `cartesian/thresholds.test.ts` (17 in total).
+- **Tested as a user.** I used the real render path (`renderChart` from the built dist, set into real ECharts with SVG SSR at
+  600x300) through `../tmp/drive-threshold-areas/drive.cjs <repo>`. Style area drew three polygons at fill-opacity 0.15:
+  #73BF69 from y=250 (grid bottom) to y=74 (80), #FF9830 from 74 to 52 (90), and #F2495C from 52 to 30 (grid top). There
+  were no lines. line+area drew the same bands plus solid lines at 74.5 and 52.5. dashed+area drew the same bands with
+  dashed lines (4,2). line drew lines only and no bands. Check 4/4 after `bash ./init.sh`. echartsOption.test 178/178.
+  Visualization and frontend typechecks are clean, and oxfmt and oxlint are clean on the changed files.
+- **Trap.** ECharts SSR draws markArea as `<polygon>`, not `<path>`. Also call `chart.dispose()` in SSR scripts, or node
+  never exits.
+- 2026-11-08T21:11:28Z supervisor: viz-cartesian-threshold-areas passed the gate in round 1

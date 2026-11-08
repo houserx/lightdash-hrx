@@ -4,7 +4,7 @@ import {
     type EChartsSeries,
 } from '@lightdash/common';
 import { describe, expect, test } from 'vitest';
-import { applyThresholdLines } from './thresholds';
+import { applyThresholdAreas, applyThresholdLines } from './thresholds';
 
 const serie = (
     y: string,
@@ -123,5 +123,90 @@ describe('applyThresholdLines', () => {
             apply('line', { thresholds: thresholds('line', 'percentage') }),
         );
         expect(lines.map((l) => l.yAxis)).toEqual([160, 180]);
+    });
+});
+
+const areasOf = (series: EChartsSeries[]) =>
+    series.flatMap(
+        (s) =>
+            (s.markArea as { data?: Record<string, unknown>[][] })?.data ?? [],
+    );
+
+const applyAreas = (
+    style: CartesianThresholds['style'],
+    extra: Partial<Parameters<typeof applyThresholdAreas>[0]> = {},
+) =>
+    applyThresholdAreas({
+        series: [serie('a'), serie('b')],
+        thresholds: thresholds(style),
+        rows,
+        flipAxes: false,
+        isVisible: () => true,
+        ...extra,
+    });
+
+describe('applyThresholdAreas', () => {
+    test('shades base, middle and top bands on the first series', () => {
+        const series = applyAreas('area');
+        expect(areasOf([series[1]])).toHaveLength(0);
+        const bands = areasOf(series);
+        expect(bands.map(([from, to]) => [from.yAxis, to.yAxis])).toEqual([
+            [undefined, 80],
+            [80, 90],
+            [90, undefined],
+        ]);
+        expect(
+            bands.map(([from]) => (from.itemStyle as { color: string }).color),
+        ).toEqual(['#73BF69', '#FF9830', '#F2495C']);
+    });
+
+    test.each(['area', 'line+area', 'dashed+area'] as const)(
+        '%s draws areas',
+        (style) => {
+            expect(areasOf(applyAreas(style))).toHaveLength(3);
+        },
+    );
+
+    test.each(['line', 'dashed'] as const)('%s draws no areas', (style) => {
+        expect(areasOf(applyAreas(style))).toHaveLength(0);
+    });
+
+    test('sorts steps and uses the x axis when flipped', () => {
+        const bands = areasOf(
+            applyAreas('area', {
+                flipAxes: true,
+                thresholds: {
+                    style: 'area',
+                    steps: [
+                        { value: 90, color: 'red' },
+                        { value: null, color: 'green' },
+                        { value: 80, color: 'orange' },
+                    ],
+                },
+            }),
+        );
+        expect(bands.map(([from, to]) => [from.xAxis, to.xAxis])).toEqual([
+            [undefined, 80],
+            [80, 90],
+            [90, undefined],
+        ]);
+    });
+
+    test('reads percentage steps against the value range', () => {
+        const bands = areasOf(
+            applyAreas('area', {
+                thresholds: thresholds('area', 'percentage'),
+            }),
+        );
+        // first-axis series a and b span 0..200
+        expect(bands[1][0].yAxis).toBe(160);
+        expect(bands[1][1].yAxis).toBe(180);
+    });
+
+    test('keeps markArea entries the series already has', () => {
+        const series = applyAreas('area', {
+            series: [serie('a', { markArea: { data: [[{ xAxis: 1 }, {}]] } })],
+        });
+        expect(areasOf(series)).toHaveLength(4);
     });
 });
