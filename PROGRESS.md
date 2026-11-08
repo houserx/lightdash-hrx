@@ -379,3 +379,29 @@ largest files. Do them inside the features they serve, with unit tests, and keep
   - Trap: running the whole `src/__acceptance__/ldq/` folder shows many failures. Those belong to
     features that aren't built yet. Run single check files.
 - 2026-11-08T17:37:29Z supervisor: ldq-federation-secret-stripping passed the gate in round 1
+- 2026-11-08 ldq-federation-warehouse-client (session):
+  - New `packages/warehouses/src/warehouseClients/FederationWarehouseClient.ts`: an empty
+    `class FederationWarehouseClient extends PostgresWarehouseClient {}`, exported from the
+    package index. `warehouseClientFromCredentials` returns it for Postgres credentials where
+    `isFederationCredentials` is true (from common). `flavor: 'postgres'` and no flavor still get
+    `PostgresWarehouseClient`. It deliberately has no overrides yet. Later features add them here:
+    the information_schema catalog (ldq-federation-catalog), `SET hrx.identity`
+    (ldq-federation-identity-set) and turning off `pg_matviews`/version gating.
+  - Backend `WarehouseClientFactory.buildClient`: compile-group (multi-connection compile)
+    acquisitions used to build `ListedDatabasesPostgresWarehouseClient` for every Postgres
+    connection. That bypassed the factory, so a federation connection would have lost its client.
+    Federation credentials are now excluded from that branch and go through
+    `getWarehouseClientFromCredentials`. Contract assumption: the engine exposes a single database
+    (`operations`), so listing other databases does not apply to it.
+  - Trap for ldq-federation-catalog and the identity features: `PostgresWarehouseClient`
+    internally does `new PostgresWarehouseClient({...credentials, dbname})` (in
+    `withClientForDatabase`, and in `ListedDatabasesPostgresWarehouseClient`) for other databases.
+    Those inner clients are plain Postgres and skip any federation override.
+  - Tested: init, then the feature check (3/3). Loaded the built `dist` the way the backend does and
+    called `warehouseClientFromCredentials` with federation, postgres and no-flavor credentials. I
+    got FederationWarehouseClient, PostgresWarehouseClient and PostgresWarehouseClient; all are
+    instanceof PostgresWarehouseClient with adapter 'postgres'. Also ran the warehouses and
+    backend typechecks, oxlint on the changed files, the backend WarehouseClientFactory unit tests
+    (839 pass) and PostgresWarehouseClient.test.ts (35 pass). Root `prettier --check` finds no config
+    and flags even unchanged HEAD files for quote style. Ignore that.
+- 2026-11-08T17:44:13Z supervisor: ldq-federation-warehouse-client passed the gate in round 1

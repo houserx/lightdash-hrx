@@ -1,6 +1,7 @@
 import {
     assertUnreachable,
     CreateWarehouseCredentials,
+    isFederationCredentials,
     UnexpectedServerError,
     WarehouseTypes,
 } from '@lightdash/common';
@@ -22,6 +23,7 @@ import {
     DuckdbWarehouseClient,
     type DuckdbWarehouseClientOptions,
 } from './warehouseClients/DuckdbWarehouseClient';
+import { FederationWarehouseClient } from './warehouseClients/FederationWarehouseClient';
 import { PostgresWarehouseClient } from './warehouseClients/PostgresWarehouseClient';
 import { RedshiftWarehouseClient } from './warehouseClients/RedshiftWarehouseClient';
 import { SnowflakeWarehouseClient } from './warehouseClients/SnowflakeWarehouseClient';
@@ -43,7 +45,9 @@ export const warehouseClientFromCredentials = (
         case WarehouseTypes.SNOWFLAKE:
             return new SnowflakeWarehouseClient(credentials, options);
         case WarehouseTypes.POSTGRES:
-            return new PostgresWarehouseClient(credentials, options);
+            return isFederationCredentials(credentials)
+                ? new FederationWarehouseClient(credentials, options)
+                : new PostgresWarehouseClient(credentials, options);
         case WarehouseTypes.REDSHIFT:
             return new RedshiftWarehouseClient(credentials, options);
         case WarehouseTypes.BIGQUERY:
