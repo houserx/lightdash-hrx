@@ -177,4 +177,45 @@ describe('InvestigateWorkspace', () => {
             sql: expect.stringContaining("promql('up'"),
         });
     });
+
+    it('opens the schema browser on demand and inserts a clicked column into the Platform SQL', async () => {
+        const loadTables = vi.fn(async () => [
+            { table_schema: 'public', table_name: 'refills' },
+        ]);
+        const loadColumns = vi.fn(async () => [
+            { column_name: 'status', data_type: 'text', is_nullable: true },
+        ]);
+        render(
+            <MantineProvider env="test" forceColorScheme="light">
+                <InvestigateWorkspace
+                    runQuery={vi.fn()}
+                    platformSchema={{ loadTables, loadColumns }}
+                />
+            </MantineProvider>,
+        );
+        expect(
+            screen.queryByRole('button', { name: 'Browse tables' }),
+        ).toBeNull();
+        fireEvent.click(
+            screen.getByRole('radio', { name: 'Platform Database' }),
+        );
+        fireEvent.change(screen.getByLabelText('Platform SQL'), {
+            target: { value: 'SELECT  FROM refills' },
+        });
+        // Catalog reads are Audited Queries: nothing loads until the browser is opened.
+        expect(loadTables).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Browse tables' }));
+        fireEvent.click(await screen.findByText('refills'));
+        const platformSql = screen.getByLabelText(
+            'Platform SQL',
+        ) as HTMLTextAreaElement;
+        platformSql.setSelectionRange(7, 7);
+        fireEvent.click(await screen.findByText('status'));
+        expect(platformSql).toHaveValue('SELECT status FROM refills');
+        await waitFor(() =>
+            expect(screen.getByLabelText('SQL')).toHaveValue(
+                "SELECT * FROM platform_query('SELECT status FROM refills')",
+            ),
+        );
+    });
 });

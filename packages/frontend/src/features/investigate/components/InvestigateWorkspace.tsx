@@ -30,6 +30,7 @@ import {
     type InvestigateEditorChange,
 } from './InvestigateEditor';
 import { InvestigateResults } from './InvestigateResults';
+import { type PlatformSchemaLoaders } from './PlatformSchemaBrowser';
 
 /** Investigate opens over the last 6 hours unless the caller says otherwise. */
 const DEFAULT_INVESTIGATE_TIME_RANGE: TimeRangeInput = {
@@ -58,6 +59,8 @@ export type InvestigateWorkspaceProps = {
     initialTimeRange?: TimeRangeInput;
     /** Saves the SQL in the SQL box as a SQL chart; Save as chart is hidden without it. */
     onSaveAsChart?: (chart: InvestigateSaveAsChartRequest) => Promise<void>;
+    /** Reads the Platform Database catalog for the schema browser; hidden without it. */
+    platformSchema?: PlatformSchemaLoaders;
 };
 
 /** What Save as chart sends: the chart's name and the SQL exactly as shown in the SQL box. */
@@ -90,6 +93,7 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     runQuery,
     initialTimeRange = DEFAULT_INVESTIGATE_TIME_RANGE,
     onSaveAsChart,
+    platformSchema,
 }) => {
     const [timeRange, setTimeRange] =
         useState<TimeRangeInput>(initialTimeRange);
@@ -185,7 +189,10 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                     </Button>
                 </Group>
             </Group>
-            <InvestigateEditor onChange={handleEditorChange} />
+            <InvestigateEditor
+                onChange={handleEditorChange}
+                platformSchema={platformSchema}
+            />
             {isAudited && (
                 <Group align="flex-start" grow>
                     <TextInput

@@ -1479,3 +1479,34 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     auditedSql.test.ts 7/7: new cases cover quotes in both schema and table names, and both
     statements counting as audited. common tsc, oxfmt and oxlint are clean.
 - 2026-11-08T21:16:56Z supervisor: ldq-platform-schema-sql passed the gate in round 1
+- ldq-platform-schema-browser (round 1):
+  - New `PlatformSchemaBrowser` (features/investigate/components). Props are `loadTables()`,
+    `loadColumns(schema, table)` and `onInsert(text)`. The row types follow CONTRACTS §1.1
+    (`PlatformTable`, `PlatformColumn`), and the loaders are grouped as `PlatformSchemaLoaders`.
+    Tables load once on mount and are grouped by schema, with schemas and tables sorted. The
+    "Search tables" field filters by table name, case-insensitively. Clicking a table expands it
+    and loads its columns once, cached per table (a failed load retries on the next open). Each
+    column shows its name, data type and "not null" when `is_nullable` is false. Clicking a column
+    calls `onInsert(column_name)` with the raw, unquoted name. A failed table load shows its
+    message in a "Could not load tables" alert.
+  - Wiring: `InvestigateWorkspace` and `InvestigateEditor` take an optional
+    `platformSchema?: PlatformSchemaLoaders`. With it, the Platform Database source shows a
+    "Browse tables" / "Hide tables" toggle under the Platform SQL box. The browser mounts, and so
+    reads the catalog, only when the user opens it. A clicked column replaces the selection in
+    the Platform SQL box, or is appended at the end if the box was never focused. That regenerates
+    the platform_query SQL as usual. `pages/SqlRunner.tsx` passes in
+    `usePlatformSchemaLoaders(projectUuid)` (features/investigate/hooks), which runs
+    `PLATFORM_TABLES_SQL` / `buildPlatformColumnsSql` through `executeSqlQuery`, the same path
+    Investigate runs on, with no time range. It coerces values to strings, and `is_nullable`
+    from true/'true'/'t'.
+  - Contract assumption (the spec doesn't say which description catalog reads carry): the
+    loaders send fixed audit descriptions, "Schema browser: list Platform Database tables" and
+    "Schema browser: list columns of <schema>.<table>", with no ticket. The user is not asked
+    for a description to browse.
+  - Tested: no browser or backend (no Docker), so I drove the components through their rendered
+    UI in vitest. Feature check 3/3. InvestigateWorkspace.test.tsx 8/8: the new test covers no
+    toggle without loaders, no catalog read before opening, and a column inserted at the cursor
+    flowing into the SQL box. Regressions investigate-audit-fields 3/3,
+    investigate-editor-sources 6/6 and investigate-editor-sql-editable 2/2. frontend tsc, oxlint
+    and oxfmt are clean. The page hook has no unit test.
+- 2026-11-08T21:22:01Z supervisor: ldq-platform-schema-browser passed the gate in round 1

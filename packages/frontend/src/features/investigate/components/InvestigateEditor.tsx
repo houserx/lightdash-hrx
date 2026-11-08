@@ -4,13 +4,16 @@ import {
     type TelemetryQuery,
 } from '@lightdash/common';
 import {
+    Button,
     Checkbox,
     SegmentedControl,
     Stack,
     Textarea,
     TextInput,
 } from '@mantine/core';
+import { IconTable } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState, type FC } from 'react';
+import MantineIcon from '../../../components/common/MantineIcon';
 import {
     DEFAULT_CLOUDWATCH_FORM,
     metricDataQueryJsonFromForm,
@@ -22,6 +25,10 @@ import {
     CloudWatchLogsEditor,
     CloudWatchMetricsEditor,
 } from './CloudWatchEditors';
+import {
+    PlatformSchemaBrowser,
+    type PlatformSchemaLoaders,
+} from './PlatformSchemaBrowser';
 
 /** The source languages Investigate offers (CONTRACTS §1.1). */
 export type InvestigateSource =
@@ -50,6 +57,8 @@ type Props = {
     onChange: (change: InvestigateEditorChange) => void;
     /** SQL to show in the SQL box before anything is generated, e.g. a query being reopened. */
     initialSql?: string;
+    /** Reads the Platform Database catalog; the schema browser is offered only with it. */
+    platformSchema?: PlatformSchemaLoaders;
 };
 
 const kindOfSource = (
@@ -82,13 +91,19 @@ const kindOfSource = (
  * The SQL box is editable and its text is what runs: a manual edit is reported through
  * onChange and kept until the user changes the source query, which regenerates the SQL.
  */
-export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
+export const InvestigateEditor: FC<Props> = ({
+    onChange,
+    initialSql,
+    platformSchema,
+}) => {
     const [source, setSource] = useState<InvestigateSource>('prometheus');
     const [promql, setPromql] = useState('');
     const [logql, setLogql] = useState('');
     const [isLogqlMetric, setIsLogqlMetric] = useState(false);
     const [traceql, setTraceql] = useState('');
     const [platformSql, setPlatformSql] = useState('');
+    const [isSchemaBrowserOpen, setIsSchemaBrowserOpen] = useState(false);
+    const platformSqlInput = useRef<HTMLTextAreaElement>(null);
     const [cloudWatchForm, setCloudWatchForm] = useState<CloudWatchFormValues>(
         DEFAULT_CLOUDWATCH_FORM,
     );
@@ -204,6 +219,21 @@ export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
         onChangeRef.current(change);
     }, [change]);
 
+    // A column picked in the schema browser replaces the selection in the Platform SQL box, or
+    // goes at its end when the box has never been focused.
+    const insertIntoPlatformSql = (text: string) => {
+        const input = platformSqlInput.current;
+        const start = input?.selectionStart ?? platformSql.length;
+        const end = input?.selectionEnd ?? platformSql.length;
+        setPlatformSql(
+            platformSql.slice(0, start) + text + platformSql.slice(end),
+        );
+        requestAnimationFrame(() => {
+            input?.focus();
+            input?.setSelectionRange(start + text.length, start + text.length);
+        });
+    };
+
     const handleSqlEdit = (editedSql: string) => {
         setSql(editedSql);
         const kind = kindOfSource(source, isLogqlMetric);
@@ -261,15 +291,41 @@ export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
                 />
             )}
             {source === 'platform' && (
-                <Textarea
-                    label="Platform SQL"
-                    autosize
-                    minRows={4}
-                    value={platformSql}
-                    onChange={(event) =>
-                        setPlatformSql(event.currentTarget.value)
-                    }
-                />
+                <>
+                    <Textarea
+                        ref={platformSqlInput}
+                        label="Platform SQL"
+                        autosize
+                        minRows={4}
+                        value={platformSql}
+                        onChange={(event) =>
+                            setPlatformSql(event.currentTarget.value)
+                        }
+                    />
+                    {platformSchema && (
+                        <Button
+                            size="xs"
+                            variant="subtle"
+                            w="fit-content"
+                            leftSection={<MantineIcon icon={IconTable} />}
+                            aria-expanded={isSchemaBrowserOpen}
+                            onClick={() =>
+                                setIsSchemaBrowserOpen((isOpen) => !isOpen)
+                            }
+                        >
+                            {isSchemaBrowserOpen
+                                ? 'Hide tables'
+                                : 'Browse tables'}
+                        </Button>
+                    )}
+                    {platformSchema && isSchemaBrowserOpen && (
+                        <PlatformSchemaBrowser
+                            loadTables={platformSchema.loadTables}
+                            loadColumns={platformSchema.loadColumns}
+                            onInsert={insertIntoPlatformSql}
+                        />
+                    )}
+                </>
             )}
             {source === 'cloudwatch' && (
                 <CloudWatchMetricsEditor
