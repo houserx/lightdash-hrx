@@ -1,8 +1,10 @@
 import {
     ALERTING_AS_CODE_VERSION,
     AlreadyExistsError,
+    ConflictError,
     ForbiddenError,
     generateSlug,
+    getNotificationRouteContactPoints,
     NotFoundError,
     ParameterError,
     validateAlertingAsCode,
@@ -21,6 +23,7 @@ import {
     type AlertingAction,
 } from './alertingAccess';
 import { type ContactPointModel } from './ContactPointModel';
+import { type NotificationRouteModel } from './NotificationRouteModel';
 
 const CREATE_KEYS = ['name', 'slug', 'integrations'] as const;
 const UPDATE_KEYS = ['name', 'integrations'] as const;
@@ -85,6 +88,7 @@ export class ContactPointService {
     constructor(
         private readonly deps: {
             contactPointModel: ContactPointModel;
+            notificationRouteModel: NotificationRouteModel;
             clock: { now(): Date };
         },
     ) {}
@@ -255,10 +259,29 @@ export class ContactPointService {
                 'This Contact Point is managed in git; remove it there instead',
             );
         }
-        const deleted = await this.deps.contactPointModel.delete(
+        const deleted = await this.deps.contactPointModel.delete({
             projectUuid,
             contactPointUuid,
-        );
+            // Read under the deleted row's lock: a tree save that names this
+            // Contact Point either committed already or waits and fails.
+            beforeCommit: async (trx, removed) => {
+                const tree = await this.deps.notificationRouteModel.find(
+                    projectUuid,
+                    trx,
+                );
+                if (
+                    tree &&
+                    getNotificationRouteContactPoints(tree).includes(
+                        removed.slug,
+                    )
+                ) {
+                    throw new ConflictError(
+                        `Contact Point "${removed.slug}" is used by the Notification Route tree; change the tree first`,
+                        { slug: removed.slug },
+                    );
+                }
+            },
+        });
         if (!deleted) throw new NotFoundError('Contact Point not found');
     }
 }

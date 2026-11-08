@@ -13,3 +13,4 @@ export * from './alertmanagerPayload';
 export * from './asCode';
 export * from './alertRules';
 export * from './contactPoints';
+export * from './notificationRoutes';

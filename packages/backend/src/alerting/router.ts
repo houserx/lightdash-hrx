@@ -13,6 +13,7 @@ import express, {
 import Logger from '../logging/logger';
 import { type AlertRuleService } from './AlertRuleService';
 import { type ContactPointService } from './ContactPointService';
+import { type NotificationRouteService } from './NotificationRouteService';
 
 export const ALERTING_PROJECT_API_PATH =
     '/api/v2/projects/:projectUuid/alerting';
@@ -20,6 +21,7 @@ export const ALERTING_PROJECT_API_PATH =
 type AlertingRouterServices = {
     alertRules: AlertRuleService;
     contactPoints: ContactPointService;
+    notificationRoutes: NotificationRouteService;
 };
 
 type Handler = (user: SessionUser, req: Request) => Promise<unknown>;
@@ -201,6 +203,23 @@ export const createAlertingApiRouter = (
             );
             return undefined;
         }),
+    );
+
+    router.get(
+        `${base}/notification-routes`,
+        route((user, req) =>
+            services.notificationRoutes.get(user, req.params.projectUuid),
+        ),
+    );
+    router.put(
+        `${base}/notification-routes`,
+        route((user, req) =>
+            services.notificationRoutes.save(
+                user,
+                req.params.projectUuid,
+                req.body,
+            ),
+        ),
     );
 
     router.use(base, handleErrors);

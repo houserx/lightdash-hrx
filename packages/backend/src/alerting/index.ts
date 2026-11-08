@@ -13,6 +13,8 @@ import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
 import { ContactPointModel } from './ContactPointModel';
 import { ContactPointService } from './ContactPointService';
+import { NotificationRouteModel } from './NotificationRouteModel';
+import { NotificationRouteService } from './NotificationRouteService';
 import { createAlertingApiRouter } from './router';
 
 export type AlertingModuleDeps = {
@@ -59,6 +61,7 @@ export type AlertingModuleDeps = {
 export type AlertingModule = {
     alertRules: AlertRuleService;
     contactPoints: ContactPointService;
+    notificationRoutes: NotificationRouteService;
     close(): Promise<void>;
 };
 
@@ -66,6 +69,7 @@ export const createAlertingModule = (
     deps: AlertingModuleDeps,
 ): AlertingModule => {
     const alertRuleModel = new AlertRuleModel(deps.database);
+    const notificationRouteModel = new NotificationRouteModel(deps.database);
     return {
         alertRules: new AlertRuleService({
             alertRuleModel,
@@ -73,6 +77,11 @@ export const createAlertingModule = (
         }),
         contactPoints: new ContactPointService({
             contactPointModel: new ContactPointModel(deps.database),
+            notificationRouteModel,
+            clock: deps.clock,
+        }),
+        notificationRoutes: new NotificationRouteService({
+            notificationRouteModel,
             clock: deps.clock,
         }),
         // The database belongs to the caller; nothing of ours to release yet.
@@ -85,4 +94,5 @@ export const createAlertingRouter = (module: AlertingModule): Router =>
     createAlertingApiRouter({
         alertRules: module.alertRules,
         contactPoints: module.contactPoints,
+        notificationRoutes: module.notificationRoutes,
     });

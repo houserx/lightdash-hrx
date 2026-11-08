@@ -139,17 +139,30 @@ export class ContactPointModel {
         });
     }
 
-    /** Deletes it; its send log entries keep a null contact point. */
-    async delete(
-        projectUuid: string,
-        contactPointUuid: string,
-    ): Promise<boolean> {
-        const deleted = await this.database(ContactPointsTableName)
-            .where({
-                project_uuid: projectUuid,
-                contact_point_uuid: contactPointUuid,
-            })
-            .delete();
-        return deleted > 0;
+    /**
+     * Deletes it; its send log entries keep a null contact point.
+     * `beforeCommit` runs in the same transaction once the row is deleted
+     * (and locked), and can throw to keep it. Returns false when it's gone.
+     */
+    async delete(args: {
+        projectUuid: string;
+        contactPointUuid: string;
+        beforeCommit: (
+            trx: Knex.Transaction,
+            deleted: ContactPoint,
+        ) => Promise<void>;
+    }): Promise<boolean> {
+        return this.database.transaction(async (trx) => {
+            const [row] = await trx(ContactPointsTableName)
+                .where({
+                    project_uuid: args.projectUuid,
+                    contact_point_uuid: args.contactPointUuid,
+                })
+                .delete()
+                .returning<DbContactPoint[]>('*');
+            if (!row) return false;
+            await args.beforeCommit(trx, toContactPoint(row));
+            return true;
+        });
     }
 }
