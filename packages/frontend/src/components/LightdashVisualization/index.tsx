@@ -25,6 +25,7 @@ import SimpleSankey from '../SimpleSankey';
 import SimpleStatistic from '../SimpleStatistic';
 import SimpleTable from '../SimpleTable';
 import SimpleTreemap from '../SimpleTreemap';
+import TelemetryChart from '../TelemetryChart';
 import classes from './LightdashVisualization.module.css';
 import {
     useVisualizationConfig,
@@ -293,6 +294,15 @@ const LightdashVisualization = memo(
                     chartContent = (
                         <DataAppVizRenderer
                             isInDashboard={!!isDashboard}
+                            onScreenshotReady={onScreenshotReady}
+                            onScreenshotError={onScreenshotError}
+                        />
+                    );
+                    break;
+                case ChartType.LOG_STREAM:
+                case ChartType.TRACE_WATERFALL:
+                    chartContent = (
+                        <TelemetryChart
                             onScreenshotReady={onScreenshotReady}
                             onScreenshotError={onScreenshotError}
                         />

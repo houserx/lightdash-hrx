@@ -179,3 +179,5 @@ examples/metricflow-demo/.fusion/
 /federation-engine/target/
 # ENG-1799 build lines' scratch: throwaway Postgres clusters and init stamps
 /tmp/
+# ENG-1799 viz line: chart registry build output
+/chart-registry/dist/

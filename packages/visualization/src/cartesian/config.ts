@@ -856,6 +856,7 @@ export const buildValidCartesianConfig = ({
     tooltipSort,
     rowLimit,
     columnLimit,
+    thresholds,
 }: {
     layout: CartesianLayout;
     eChartsConfig: CartesianEchartsConfig;
@@ -865,6 +866,7 @@ export const buildValidCartesianConfig = ({
     tooltipSort: TooltipSortBy | undefined;
     rowLimit: CartesianChart['rowLimit'];
     columnLimit: number | undefined;
+    thresholds?: CartesianChart['thresholds'];
 }): CartesianChart => ({
     layout: isCompleteLayout(layout)
         ? layout
@@ -883,6 +885,7 @@ export const buildValidCartesianConfig = ({
     metadata,
     rowLimit,
     columnLimit,
+    ...(thresholds && { thresholds }),
 });
 
 export type ResolveCartesianChartConfigArgs = {
@@ -1051,5 +1054,6 @@ export const resolveCartesianChartConfig = ({
         tooltipSort: eChartsConfig?.tooltipSort,
         rowLimit: initialChartConfig?.rowLimit,
         columnLimit,
+        thresholds: initialChartConfig?.thresholds,
     });
 };

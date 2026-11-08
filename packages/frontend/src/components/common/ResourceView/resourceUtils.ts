@@ -54,6 +54,10 @@ export const getResourceTypeName = (item: ResourceViewItem) => {
                     return 'Sankey';
                 case ChartKind.DATA_APP_VIZ:
                     return 'Custom chart';
+                case ChartKind.LOG_STREAM:
+                    return 'Log stream';
+                case ChartKind.TRACE_WATERFALL:
+                    return 'Trace waterfall';
                 default:
                     return 'Chart';
             }

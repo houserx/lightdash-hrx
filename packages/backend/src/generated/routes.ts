@@ -4766,11 +4766,72 @@ const models: TsoaRoute.Models = {
         },
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaThresholdStep: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                color: { dataType: 'string', required: true },
+                value: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'double' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
+                    required: true,
+                },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    CartesianThresholdsStyle: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { dataType: 'enum', enums: ['line'] },
+                { dataType: 'enum', enums: ['dashed'] },
+                { dataType: 'enum', enums: ['area'] },
+                { dataType: 'enum', enums: ['line+area'] },
+                { dataType: 'enum', enums: ['dashed+area'] },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    CartesianThresholds: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                style: { ref: 'CartesianThresholdsStyle', required: true },
+                steps: {
+                    dataType: 'array',
+                    array: {
+                        dataType: 'refAlias',
+                        ref: 'GrafanaThresholdStep',
+                    },
+                    required: true,
+                },
+                mode: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'enum', enums: ['absolute'] },
+                        { dataType: 'enum', enums: ['percentage'] },
+                    ],
+                },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     CartesianChart: {
         dataType: 'refAlias',
         type: {
             dataType: 'nestedObjectLiteral',
             nestedProperties: {
+                thresholds: { ref: 'CartesianThresholds' },
                 columnLimit: { dataType: 'double' },
                 rowLimit: { ref: 'RowLimit' },
                 metadata: { ref: 'Record_string.SeriesMetadata_' },
@@ -5006,11 +5067,166 @@ const models: TsoaRoute.Models = {
         enums: ['table'],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaValueMappingResult: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                index: { dataType: 'double' },
+                icon: { dataType: 'string' },
+                color: { dataType: 'string' },
+                text: { dataType: 'string' },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'Record_string.GrafanaValueMappingResult_': {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {},
+            additionalProperties: { ref: 'GrafanaValueMappingResult' },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaValueToTextMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    ref: 'Record_string.GrafanaValueMappingResult_',
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['value'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaRangeToTextMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    dataType: 'nestedObjectLiteral',
+                    nestedProperties: {
+                        result: {
+                            ref: 'GrafanaValueMappingResult',
+                            required: true,
+                        },
+                        to: {
+                            dataType: 'union',
+                            subSchemas: [
+                                { dataType: 'double' },
+                                { dataType: 'enum', enums: [null] },
+                            ],
+                        },
+                        from: {
+                            dataType: 'union',
+                            subSchemas: [
+                                { dataType: 'double' },
+                                { dataType: 'enum', enums: [null] },
+                            ],
+                        },
+                    },
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['range'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaRegexToTextMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    dataType: 'nestedObjectLiteral',
+                    nestedProperties: {
+                        result: {
+                            ref: 'GrafanaValueMappingResult',
+                            required: true,
+                        },
+                        pattern: { dataType: 'string', required: true },
+                    },
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['regex'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaSpecialValueMatch: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { dataType: 'enum', enums: ['null'] },
+                { dataType: 'enum', enums: ['nan'] },
+                { dataType: 'enum', enums: ['null+nan'] },
+                { dataType: 'enum', enums: ['true'] },
+                { dataType: 'enum', enums: ['false'] },
+                { dataType: 'enum', enums: ['empty'] },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaSpecialValueMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    dataType: 'nestedObjectLiteral',
+                    nestedProperties: {
+                        result: {
+                            ref: 'GrafanaValueMappingResult',
+                            required: true,
+                        },
+                        match: {
+                            ref: 'GrafanaSpecialValueMatch',
+                            required: true,
+                        },
+                    },
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['special'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaValueMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { ref: 'GrafanaValueToTextMapping' },
+                { ref: 'GrafanaRangeToTextMapping' },
+                { ref: 'GrafanaRegexToTextMapping' },
+                { ref: 'GrafanaSpecialValueMapping' },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     ColumnProperties: {
         dataType: 'refAlias',
         type: {
             dataType: 'nestedObjectLiteral',
             nestedProperties: {
+                valueMappings: {
+                    dataType: 'array',
+                    array: { dataType: 'refAlias', ref: 'GrafanaValueMapping' },
+                },
                 width: { dataType: 'double' },
                 negativeColor: { dataType: 'string' },
                 color: { dataType: 'string' },
@@ -5371,6 +5587,136 @@ const models: TsoaRoute.Models = {
         },
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'ChartType.LOG_STREAM': {
+        dataType: 'refEnum',
+        enums: ['log_stream'],
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'Partial_Record_LogLevel.string__': {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                error: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                critical: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                warning: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                info: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                debug: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                trace: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                unknown: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    LogStreamChart: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                levelColors: { ref: 'Partial_Record_LogLevel.string__' },
+                showLabels: { dataType: 'boolean' },
+                newestFirst: { dataType: 'boolean' },
+                wrapLines: { dataType: 'boolean' },
+                labelsFieldId: { dataType: 'string' },
+                levelFieldId: { dataType: 'string' },
+                timestampFieldId: { dataType: 'string' },
+                lineFieldId: { dataType: 'string' },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    LogStreamChartConfig: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                config: { ref: 'LogStreamChart' },
+                type: { ref: 'ChartType.LOG_STREAM', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'ChartType.TRACE_WATERFALL': {
+        dataType: 'refEnum',
+        enums: ['trace_waterfall'],
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    TraceWaterfallChart: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                attributesFieldId: { dataType: 'string' },
+                statusFieldId: { dataType: 'string' },
+                durationMsFieldId: { dataType: 'string' },
+                startFieldId: { dataType: 'string' },
+                nameFieldId: { dataType: 'string' },
+                serviceFieldId: { dataType: 'string' },
+                parentSpanIdFieldId: { dataType: 'string' },
+                spanIdFieldId: { dataType: 'string' },
+                traceIdFieldId: { dataType: 'string' },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    TraceWaterfallChartConfig: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                config: { ref: 'TraceWaterfallChart' },
+                type: { ref: 'ChartType.TRACE_WATERFALL', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     'ChartType.DATA_APP_VIZ': {
         dataType: 'refEnum',
         enums: ['data_app_viz'],
@@ -5538,6 +5884,8 @@ const models: TsoaRoute.Models = {
                 { ref: 'GaugeChartConfig' },
                 { ref: 'MapChartConfig' },
                 { ref: 'SankeyChartConfig' },
+                { ref: 'LogStreamChartConfig' },
+                { ref: 'TraceWaterfallChartConfig' },
                 { ref: 'DataAppVizChartConfigAsCode' },
             ],
             validators: {},
@@ -7071,6 +7419,8 @@ const models: TsoaRoute.Models = {
             'map',
             'sankey',
             'data_app_viz',
+            'log_stream',
+            'trace_waterfall',
         ],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
@@ -10057,6 +10407,8 @@ const models: TsoaRoute.Models = {
                 { ref: 'DataAppVizChartConfig' },
                 { ref: 'MapChartConfig' },
                 { ref: 'SankeyChartConfig' },
+                { ref: 'LogStreamChartConfig' },
+                { ref: 'TraceWaterfallChartConfig' },
             ],
             validators: {},
         },
@@ -11181,6 +11533,8 @@ const models: TsoaRoute.Models = {
                 { ref: 'GaugeChartConfig' },
                 { ref: 'MapChartConfig' },
                 { ref: 'SankeyChartConfig' },
+                { ref: 'LogStreamChartConfig' },
+                { ref: 'TraceWaterfallChartConfig' },
                 { ref: 'DataAppVizChartConfigAsCode' },
             ],
             validators: {},
@@ -62197,6 +62551,8 @@ const models: TsoaRoute.Models = {
             'map',
             'sankey',
             'data_app_viz',
+            'log_stream',
+            'trace_waterfall',
         ],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa

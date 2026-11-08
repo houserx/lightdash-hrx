@@ -17,5 +17,6 @@
         "skipLibCheck": true,
         "types": ["node", "vitest/globals"]
     },
-    "include": ["src/**/*.ts", "src/**/*.json"]
+    "include": ["src/**/*.ts", "src/**/*.json"],
+    "exclude": ["src/__acceptance__/viz"]
 }

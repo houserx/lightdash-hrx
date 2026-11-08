@@ -454,6 +454,7 @@ export type EChartsSeries = {
         | number
         | ((value: unknown, params: { dataIndex: number }) => number);
     markLine?: { z?: number; [key: string]: unknown };
+    markArea?: { [key: string]: unknown };
     colorBy?: 'series' | 'data';
     itemStyle?: {
         borderRadius?: number | number[];

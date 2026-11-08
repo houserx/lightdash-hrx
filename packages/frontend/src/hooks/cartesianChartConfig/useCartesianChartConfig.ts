@@ -117,6 +117,7 @@ export type CartesianEditorActions = {
     updateReferenceLine: (update: ReferenceLineUpdate) => void;
     setTooltip: (tooltip: string | undefined) => void;
     setTooltipSort: (tooltipSort: TooltipSortBy | undefined) => void;
+    setThresholds: (thresholds: CartesianChart['thresholds']) => void;
     mergeMetadata: (metadata: Record<string, SeriesMetadata>) => void;
     setRowLimit: (rowLimit: RowLimit | undefined) => void;
     setColumnLimit: (columnLimit: number | undefined) => void;
@@ -262,6 +263,7 @@ export const useCartesianEditorActions = (): CartesianEditorActions => {
                 dispatch(cartesianEditorActions.referenceLineUpdate(update)),
             setTooltip: (tooltip) => set('tooltip', tooltip),
             setTooltipSort: (tooltipSort) => set('tooltipSort', tooltipSort),
+            setThresholds: (thresholds) => set('thresholds', thresholds),
             mergeMetadata: (metadata) =>
                 dispatch(cartesianEditorActions.metadataMerge(metadata)),
             setRowLimit: (rowLimit) => set('rowLimit', rowLimit),

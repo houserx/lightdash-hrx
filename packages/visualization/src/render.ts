@@ -49,6 +49,12 @@ import {
     resolveGaugeChartConfig,
 } from './gauge';
 import {
+    buildLogStreamModel,
+    resolveLogStreamChartConfig,
+    type LogStreamModel,
+    type ResolvedLogStreamChartConfig,
+} from './logStream';
+import {
     buildPieEchartsOption,
     getPieFieldPools,
     resolvePieChartConfig,
@@ -58,6 +64,7 @@ import { buildSankeyEchartsOption, resolveSankeyChartConfig } from './sankey';
 import { type SankeySeriesDataPoint } from './sankey/transform';
 import {
     buildTableModel,
+    getTableColumnValueMappings,
     getTableColumnWidth,
     getTableFieldLabelOverride,
     isTableColumnFrozen,
@@ -68,6 +75,12 @@ import {
 } from './table';
 import { LIGHT_VISUALIZATION_THEME, type VisualizationTheme } from './theme';
 import { resolveThemeColors } from './themeColors';
+import {
+    buildTraceWaterfallModel,
+    resolveTraceWaterfallChartConfig,
+    type ResolvedTraceWaterfallChartConfig,
+    type TraceWaterfallModel,
+} from './traceWaterfall';
 import {
     buildTreemapEchartsOption,
     resolveTreemapChartConfig,
@@ -112,6 +125,9 @@ export type RenderOptions = {
     parameters?: ParametersValuesMap;
 };
 
+/** Chart types this package resolves but does not draw. */
+export type UnsupportedChartType = ChartType.MAP | ChartType.DATA_APP_VIZ;
+
 export type EChartsChartType =
     | ChartType.CARTESIAN
     | ChartType.PIE
@@ -147,11 +163,21 @@ export type RenderOutput =
           spec: CustomVis['spec'];
           data: CustomVisualizationData;
       }
+    | {
+          kind: 'logStream';
+          chartType: ChartType.LOG_STREAM;
+          model: LogStreamModel;
+      }
+    | {
+          kind: 'traceWaterfall';
+          chartType: ChartType.TRACE_WATERFALL;
+          model: TraceWaterfallModel;
+      }
     | { kind: 'empty'; chartType: ChartType; reason: EmptyReason }
-    /** Drawn outside this package: maps and data-app visualizations. */
+    /** Not drawn by this package (yet): maps and data-app visualizations. */
     | {
           kind: 'unsupported';
-          chartType: ChartType.MAP | ChartType.DATA_APP_VIZ;
+          chartType: UnsupportedChartType;
       };
 
 /** A drawn chart, and the colour assignments including its own. */
@@ -201,7 +227,9 @@ export type ResolvedChart =
           }
       >
     | Resolved<ChartType.CUSTOM, CustomVis>
-    | Resolved<ChartType.MAP | ChartType.DATA_APP_VIZ, unknown>;
+    | Resolved<ChartType.LOG_STREAM, ResolvedLogStreamChartConfig>
+    | Resolved<ChartType.TRACE_WATERFALL, ResolvedTraceWaterfallChartConfig>
+    | Resolved<UnsupportedChartType, unknown>;
 
 const DEFAULT_SIZE = { width: 600, height: 400 };
 
@@ -327,6 +355,24 @@ export const resolveChart = (
                 chartType: ChartType.CUSTOM,
                 config: resolveCustomVisualizationConfig({
                     chartConfig: chartConfig.config,
+                }),
+                derived: {},
+            };
+        case ChartType.LOG_STREAM:
+            return {
+                chartType: ChartType.LOG_STREAM,
+                config: resolveLogStreamChartConfig({
+                    chartConfig: chartConfig.config,
+                    data,
+                }),
+                derived: {},
+            };
+        case ChartType.TRACE_WATERFALL:
+            return {
+                chartType: ChartType.TRACE_WATERFALL,
+                config: resolveTraceWaterfallChartConfig({
+                    chartConfig: chartConfig.config,
+                    data,
                 }),
                 derived: {},
             };
@@ -527,6 +573,8 @@ export const buildChart = (
                         isTableColumnFrozen(columnProperties, id),
                     getColumnWidth: (id) =>
                         getTableColumnWidth(columnProperties, id),
+                    getColumnValueMappings: (id) =>
+                        getTableColumnValueMappings(columnProperties, id),
                     showTableNames: config.showTableNames ?? false,
                     getFieldLabelOverride: (id) =>
                         getTableFieldLabelOverride(columnProperties, id),
@@ -549,6 +597,33 @@ export const buildChart = (
                 chartType: ChartType.CUSTOM,
                 spec: resolved.config.spec,
                 data: buildCustomVisualizationData(resultsData),
+            });
+        case ChartType.LOG_STREAM:
+            if (noRows) return empty(ChartType.LOG_STREAM, 'noRows');
+            if (!resolved.config.lineFieldId) {
+                return empty(ChartType.LOG_STREAM, 'incompleteConfig');
+            }
+            return done({
+                kind: 'logStream',
+                chartType: ChartType.LOG_STREAM,
+                model: buildLogStreamModel({
+                    rows: data.rows,
+                    config: resolved.config,
+                }),
+            });
+        case ChartType.TRACE_WATERFALL:
+            if (noRows) return empty(ChartType.TRACE_WATERFALL, 'noRows');
+            if (!resolved.config.spanIdFieldId) {
+                return empty(ChartType.TRACE_WATERFALL, 'incompleteConfig');
+            }
+            return done({
+                kind: 'traceWaterfall',
+                chartType: ChartType.TRACE_WATERFALL,
+                model: buildTraceWaterfallModel({
+                    rows: data.rows,
+                    config: resolved.config,
+                    palette: colorPalette,
+                }),
             });
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:

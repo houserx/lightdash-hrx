@@ -85,6 +85,8 @@ const BUILT_IN_LABELS = [
     'Sankey',
     'Map',
     'Big value',
+    'Log stream',
+    'Trace waterfall',
     'Vega (JSON editor)',
 ];
 

@@ -538,6 +538,8 @@ export function derivePivotConfigurationFromChart(
         case ChartType.BIG_NUMBER:
         case ChartType.MAP:
         case ChartType.SANKEY:
+        case ChartType.LOG_STREAM:
+        case ChartType.TRACE_WATERFALL:
             newConfig = undefined;
             break;
         case ChartType.DATA_APP_VIZ:

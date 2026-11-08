@@ -11,10 +11,12 @@ import {
     IconFilter,
     IconGauge,
     IconGitMerge,
+    IconListDetails,
     IconMap,
     IconPuzzle,
     IconSquareNumber1,
     IconTable,
+    IconTimeline,
 } from '@tabler/icons-react';
 
 export const getChartIcon = (chartKind: ChartKind | undefined) => {
@@ -52,6 +54,10 @@ export const getChartIcon = (chartKind: ChartKind | undefined) => {
             return IconGitMerge;
         case ChartKind.DATA_APP_VIZ:
             return IconPuzzle;
+        case ChartKind.LOG_STREAM:
+            return IconListDetails;
+        case ChartKind.TRACE_WATERFALL:
+            return IconTimeline;
         default:
             return IconChartBar;
     }

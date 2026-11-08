@@ -14,6 +14,7 @@ import { ConfigTabs as MapConfigTabs } from '../../VisualizationConfigs/MapConfi
 import { ConfigTabs as PieChartConfigTabs } from '../../VisualizationConfigs/PieChartConfig/PieChartConfigTabs';
 import { ConfigTabs as SankeyConfigTabs } from '../../VisualizationConfigs/SankeyConfig/SankeyConfigTabs';
 import { ConfigTabs as TableConfigTabs } from '../../VisualizationConfigs/TableConfigPanel/TableConfigTabs';
+import { ConfigTabs as TelemetryConfigTabs } from '../../VisualizationConfigs/TelemetryConfig/TelemetryConfigTabs';
 import { ConfigTabs as TreemapConfigTabs } from '../../VisualizationConfigs/TreemapConfig/TreemapConfigTabs';
 import classes from './VisualizationConfig.module.css';
 
@@ -72,6 +73,9 @@ const VisualizationConfig: FC<Props> = ({ chartType }) => {
                 return SankeyConfigTabs;
             case ChartType.DATA_APP_VIZ:
                 return DataAppVizConfigTabs;
+            case ChartType.LOG_STREAM:
+            case ChartType.TRACE_WATERFALL:
+                return TelemetryConfigTabs;
             default:
                 return assertUnreachable(
                     chartType,

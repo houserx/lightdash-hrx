@@ -130,6 +130,7 @@ export const selectCartesianValidConfig = createSelector(
             tooltipSort: editor.tooltipSort,
             rowLimit: editor.rowLimit,
             columnLimit: editor.columnLimit,
+            thresholds: editor.thresholds,
         }),
 );
 

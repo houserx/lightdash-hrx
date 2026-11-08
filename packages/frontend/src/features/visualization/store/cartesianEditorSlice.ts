@@ -43,6 +43,7 @@ export type CartesianEditorState = {
     isStacked: boolean;
     rowLimit: RowLimit | undefined;
     referenceLines: ReferenceLineField[];
+    thresholds: CartesianChart['thresholds'];
     tooltip: string | undefined;
     tooltipSort: TooltipSortBy | undefined;
 };
@@ -72,6 +73,7 @@ export const buildCartesianEditorState = (
             dirtyEchartsConfig?.series,
             initialChartConfig?.layout?.flipAxes,
         ),
+        thresholds: initialChartConfig?.thresholds,
         tooltip: dirtyEchartsConfig?.tooltip,
         tooltipSort: dirtyEchartsConfig?.tooltipSort,
     };
