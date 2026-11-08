@@ -3,6 +3,7 @@
  * Engine project. The token's `attrs` are read from the user's Lightdash user attributes.
  */
 import type { UserAttributesModel } from '../../models/UserAttributesModel';
+import { agentExecutionContext } from '../AiAccessService/agentExecutionContext';
 import {
     identityAttrsFromUserAttributes,
     mintIdentityToken,
@@ -21,7 +22,16 @@ export type MintForUserArgs = {
     user: FederationIdentityUser;
     projectUuid: string;
     audit: Partial<IdentityAudit> & Pick<IdentityAudit, 'source'>;
+    /**
+     * Whether the query runs in an AI agent session, as WarehouseClientFactory passes it
+     * to PostgresWarehouseClient. When omitted, a live agent execution context means agent.
+     */
+    agentSession?: boolean;
 };
+
+/** An explicit flag wins; otherwise any live agent execution context is an agent session. */
+export const isAgentSession = (agentSession?: boolean): boolean =>
+    agentSession ?? agentExecutionContext.getStore() !== undefined;
 
 type FederationIdentityServiceArguments = {
     userAttributesModel: Pick<
@@ -51,6 +61,7 @@ export class FederationIdentityService {
         user,
         projectUuid,
         audit,
+        agentSession,
     }: MintForUserArgs): Promise<string> {
         const userAttributes =
             await this.userAttributesModel.getAttributeValuesForOrgMember({
@@ -64,6 +75,7 @@ export class FederationIdentityService {
                 email: user.email,
                 org: user.organizationUuid,
                 project: projectUuid,
+                agent: isAgentSession(agentSession),
                 attrs: identityAttrsFromUserAttributes(userAttributes),
                 audit,
             },

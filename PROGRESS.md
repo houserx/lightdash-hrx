@@ -486,3 +486,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     for that user on a project gave a validly signed token with platform_read true,
     platform_write false and the other attrs false, and exp-iat=300.
 - 2026-11-08T17:58:57Z supervisor: ldq-identity-token-user-attrs passed the gate in round 1
+- 2026-11-08 ldq-identity-token-agent (session):
+  - `FederationIdentityService.mintForUser` takes an optional `agentSession?: boolean` and sets
+    the token's `agent` from the new exported `isAgentSession(agentSession)`. An explicit flag
+    wins, the same way WarehouseClientFactory's `overrides.agentSession` reaches
+    PostgresWarehouseClient. When the flag is absent, a live
+    `agentExecutionContext.getStore()` (services/AiAccessService/agentExecutionContext) means
+    agent. `sys` stays false, and attrs are still reported for agents (the engine refuses
+    restricted reads).
+  - Contract assumption: an explicit `agentSession: false` inside an agent context gives
+    agent=false (the explicit flag wins, as in the factory). Whoever wires the query path
+    (ldq-identity-token-provider) should pass WarehouseClientFactory's computed
+    `agentSession` through, not leave it out.
+  - Tested: init, then the feature check (3/3), plus the attrs, byte-exact and verify tests
+    (15/15 together), backend `tsc --noEmit` and oxfmt. As a user: a scratch vitest (deleted
+    afterwards) minted tokens through the service and verified each one. A person gave
+    agent=false; agentSession:true gave true; inside a real MCP agent execution context it
+    gave true (sys false, telemetry_restricted still true); explicit false inside the context
+    gave false; after the context ended it gave false. Note: a standalone tsx script can't
+    import these modules because parseConfig needs LIGHTDASH_SECRET, S3 and so on, so use a
+    scratch vitest instead.
+- 2026-11-08T18:02:35Z supervisor: ldq-identity-token-agent passed the gate in round 1
