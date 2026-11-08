@@ -1,6 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Config } from '../config.js';
+import { PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './protectedResource.js';
 
 export interface RunningServer {
     /** Base URL, e.g. `http://127.0.0.1:8080` (no path). */
@@ -18,15 +19,21 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
     res.end(payload);
 }
 
-async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+function allowGetOnly(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    if (req.method === 'GET' || req.method === 'HEAD') return true;
+    res.setHeader('Allow', 'GET, HEAD');
+    sendJson(res, 405, { error: 'method_not_allowed' });
+    return false;
+}
+
+async function handle(config: Config, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
     if (pathname === '/healthz') {
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-            res.setHeader('Allow', 'GET, HEAD');
-            sendJson(res, 405, { error: 'method_not_allowed' });
-            return;
-        }
-        sendJson(res, 200, { status: 'ok' });
+        if (allowGetOnly(req, res)) sendJson(res, 200, { status: 'ok' });
+        return;
+    }
+    if (PROTECTED_RESOURCE_METADATA_PATHS.includes(pathname)) {
+        if (allowGetOnly(req, res)) sendJson(res, 200, protectedResourceMetadata(config));
         return;
     }
     sendJson(res, 404, { error: 'not_found' });
@@ -34,7 +41,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
 export async function startServer({ config }: { config: Config }): Promise<RunningServer> {
     const server = http.createServer((req, res) => {
-        handle(req, res).catch(() => {
+        handle(config, req, res).catch(() => {
             if (!res.headersSent) sendJson(res, 500, { error: 'internal_error' });
             else res.end();
         });

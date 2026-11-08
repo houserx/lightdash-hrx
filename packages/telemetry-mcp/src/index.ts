@@ -12,3 +12,5 @@ export type {
 } from './identity/token.js';
 export { startServer } from './http/server.js';
 export type { RunningServer } from './http/server.js';
+export { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './http/protectedResource.js';
+export type { ProtectedResourceMetadata } from './http/protectedResource.js';

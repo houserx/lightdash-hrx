@@ -356,3 +356,21 @@ docs/eng-1799/telemetry-mcp.md
   iss telemetry-mcp, agent true, sys false. `identity-token`, `config-validation`, `package-skeleton` acceptance
   checks, unit tests and typecheck pass.
 - 2026-11-08T15:50:38Z supervisor: mcp-identity-token passed the gate in round 1
+
+### mcp-protected-resource-metadata (2026-11-08)
+
+- `src/http/protectedResource.ts`: `protectedResourceMetadata(config)` → RFC 9728 document `{resource:
+  "${publicUrl}/mcp", authorization_servers: [okta.issuer], bearer_methods_supported: ["header"], resource_name}`;
+  `MCP_PATH = '/mcp'` and `PROTECTED_RESOURCE_METADATA_PATHS` (bare and `/mcp`-suffixed well-known paths). All exported
+  from `src/index.ts`.
+- `src/http/server.ts`: `handle` now takes `config`; both metadata paths answer GET/HEAD with 200 JSON, no auth, no
+  Lightdash call; other methods 405 with `Allow: GET, HEAD` (shared `allowGetOnly` helper with `/healthz`).
+- Next session (Okta auth on `/mcp`): the 401 `WWW-Authenticate` header should point `resource_metadata` at
+  `${publicUrl}/.well-known/oauth-protected-resource/mcp`; reuse `MCP_PATH`. No `scopes_supported` published (spec
+  names none).
+- Note: prettier isn't installed in this checkout (`pnpm exec prettier` not found); formatting kept by hand.
+- Tested as a user: started `dist/main.js` with a full env (public URL with trailing `/`), fetched both well-known
+  paths → identical 200 `application/json` documents with resource `https://telemetry-mcp.example.test/mcp`, the
+  issuer, `["header"]`; `/…/other` → 404; POST → 405; SIGTERM exit 0. Acceptance checks protected-resource-metadata,
+  package-skeleton, config-validation, identity-token pass; unit tests and typecheck pass.
+- 2026-11-08T15:52:10Z supervisor: mcp-protected-resource-metadata passed the gate in round 1

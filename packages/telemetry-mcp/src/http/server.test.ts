@@ -37,4 +37,33 @@ describe('http server', () => {
         const res = await fetch(`${server.url}/nope`);
         expect(res.status).toBe(404);
     });
+
+    for (const path of ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp']) {
+        it(`serves protected-resource metadata at ${path} without auth`, async () => {
+            server = await startServer({ config: loadConfig(ENV) });
+            const res = await fetch(`${server.url}${path}`);
+            expect(res.status).toBe(200);
+            expect(res.headers.get('content-type')).toContain('application/json');
+            expect(await res.json()).toEqual({
+                resource: 'https://telemetry-mcp.example.test/mcp',
+                authorization_servers: ['https://okta.example.test/oauth2/default'],
+                bearer_methods_supported: ['header'],
+                resource_name: 'HouseRx telemetry MCP',
+            });
+        });
+    }
+
+    it('strips a trailing slash from MCP_PUBLIC_URL in the metadata resource', async () => {
+        const config = loadConfig({ ...ENV, MCP_PUBLIC_URL: 'https://telemetry-mcp.example.test/' });
+        server = await startServer({ config });
+        const res = await fetch(`${server.url}/.well-known/oauth-protected-resource`);
+        expect(((await res.json()) as { resource: string }).resource).toBe('https://telemetry-mcp.example.test/mcp');
+    });
+
+    it('rejects non-GET methods on the metadata path', async () => {
+        server = await startServer({ config: loadConfig(ENV) });
+        const res = await fetch(`${server.url}/.well-known/oauth-protected-resource`, { method: 'POST' });
+        expect(res.status).toBe(405);
+        expect(res.headers.get('allow')).toBe('GET, HEAD');
+    });
 });
