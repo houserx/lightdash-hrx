@@ -9,6 +9,8 @@ import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
 import { AlertInstanceModel } from './AlertInstanceModel';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
+import { AlertScheduleModel } from './AlertScheduleModel';
+import { AlertScheduler, type AlertJobQueue } from './AlertScheduler';
 import { AlertStateHistoryModel } from './AlertStateHistoryModel';
 import { ContactPointModel } from './ContactPointModel';
 import { ContactPointService } from './ContactPointService';
@@ -39,13 +41,8 @@ export type AlertingModuleDeps = {
             blocks?: unknown[];
         }): Promise<void>;
     };
-    jobQueue: {
-        addJob(
-            taskName: string,
-            payload: object,
-            opts: { jobKey: string; runAt?: Date },
-        ): Promise<void>;
-    };
+    /** graphile `addJob`: one queued job per `jobKey`. */
+    jobQueue: AlertJobQueue;
     heartbeat: { url: string; method: 'GET' | 'POST' } | null;
     /** Exponential backoff for notification sends. */
     retry: { maxAttempts: number; initialDelayMs: number };
@@ -57,6 +54,7 @@ export type AlertingModule = {
     contactPoints: ContactPointService;
     notificationRoutes: NotificationRouteService;
     evaluator: AlertEvaluator;
+    scheduler: AlertScheduler;
     close(): Promise<void>;
 };
 
@@ -87,6 +85,11 @@ export const createAlertingModule = (
             clock: deps.clock,
         }),
         evaluator,
+        scheduler: new AlertScheduler({
+            alertScheduleModel: new AlertScheduleModel(deps.database),
+            jobQueue: deps.jobQueue,
+            clock: deps.clock,
+        }),
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},
     };
