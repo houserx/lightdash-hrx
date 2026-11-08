@@ -1224,3 +1224,22 @@ should add a dated line here per feature.
   Typecheck and oxfmt are clean. The scratch driver is in `../tmp/drive-status-grid/`.
 - **Next.** viz-registry-complete: all six entries are now in the index, and previews.test.ts passes.
 - 2026-11-08T20:54:35Z supervisor: viz-registry-status-grid passed the gate in round 1
+
+## viz-registry-complete (round 1)
+- **What changed.** No code change was needed. The earlier entry sessions (heatmap through status-grid) had already
+  completed the registry, and `previews.test.ts` was green on arrival (7/7). This session verified it end to end and
+  wrote this entry.
+- **Tested as a user.** I could not open the chart type library UI itself: it is EE code and needs backend, Postgres
+  and a registry host, so this used the same jsdom path as the earlier sessions. `bash ./init.sh`, then the check
+  (which builds dist: bar-gauge@1.1.0, heatmap@1.0.0, histogram@1.0.1, stat-sparkline@1.3.0, state-timeline@1.0.0,
+  status-grid@1.0.0). Served `chart-registry/dist` over HTTP on an ephemeral port and fetched `index.json` the way
+  the gallery does: all six were listed with names and icons, and `index-next.json` lists the same six. For each
+  entry I fetched `dist.tar` (sha256 matches the index), ran its bundle in jsdom with its own `preview.rows` and
+  `optionValues`, and answered the viz-context request. Every entry sent `viz-rendered`, with no errors and no
+  console.error. DOM: bar-gauge 4 bars, heatmap 24 cells (4x6), histogram 6 bars, stat value + sparkline,
+  state-timeline 3 rows / 9 segments + legend, status-grid 6 cells. Check `previews.test.ts` 7/7. Regression:
+  build 45/45. The scratch driver is in `../tmp/drive-complete/` (run it from there with
+  `../../repo/packages/backend/node_modules/.bin/vitest run --config vitest.config.mjs --disableConsoleIntercept drive.test.ts`).
+- **Next.** The registry block is complete. Next is viz-cartesian-thresholds-config, in common/frontend, not the
+  registry.
+- 2026-11-08T20:56:28Z supervisor: viz-registry-complete passed the gate in round 1
