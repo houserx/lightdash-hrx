@@ -1850,3 +1850,26 @@ token verification for a *valid* token, which feature 39 then hardens.
   `DELETE FROM widgets WHERE id > 190` gave 200, rows_affected 10, returning null. Through
   platform_query the table still had 200 rows and 0 notes. Check passes.
 - 2026-11-08T21:59:22Z supervisor: eng-write-preview-returning-cap passed the gate in round 1
+- eng-write-commit (functional): `mode: "commit"` now runs. write.rs: removed the 501
+  "eng-write-commit builds this" branch; `preview_statement` became `run_statement(target, sql,
+  preview)`, which ends the transaction with ROLLBACK for a Preview and COMMIT for a commit. The
+  same rules hold for both: the guard, the single-use confirmation token, agents refused (403)
+  before anything is spent, the 100-row RETURNING cap, audit with `preview: false`. A dropped
+  request before COMMIT cancels the backend and closes the connection, so nothing is kept.
+  Contract assumption: CONTRACTS §4.2 runs the statement (step 3) before the audit write
+  (step 4), so a commit whose audit write fails has still changed the table, though the response
+  is 500 58000 and no result is returned. If the integration line wants fail-closed commits
+  (audit before COMMIT, or a pending record), that is a contract change, not a bug here.
+  Tested as a user: `../tmp/write-commit/run.sh <out>` (the write-preview rig plus a synthetic
+  2-row `patients` table with a bigserial id). Commit of `UPDATE widgets SET note = current_user
+  WHERE id = 7` gave 200, preview false, rows_affected 1, returning null; through platform_query
+  widget 7's note was engine_write and 6 and 8 were still NULL. Commit of the INSERT ... RETURNING
+  id gave 200 and returning [{"id": 3}]; patients had 3 rows. A DELETE commit with no RETURNING
+  gave rows_affected 2, returning null, and the rows were gone; a Preview DELETE afterwards still
+  rolled back. A reused commit token gave 409, an agent commit 403, a duplicate-key commit 422
+  23505 (audited as error), DROP 422. No engine_write backend was left open. The audit items had
+  mode write, preview false for commits, and every hash matched. Check passes; write::
+  _preview and _preview_returning_cap and the write unit tests pass too. Clippy is clean.
+  Note: rustfmt (in tmp/rustup) flags lines across the crate that were there before; I did not
+  reformat files I didn't touch.
+- 2026-11-08T22:04:32Z supervisor: eng-write-commit passed the gate in round 1

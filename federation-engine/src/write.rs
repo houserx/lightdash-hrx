@@ -16,13 +16,15 @@
 //!    120 s, signed with the identity secret (assumption A6), else 403;
 //! 9. the token has not been used before, else 409. It is spent here, before the statement runs.
 //!
-//! A Preview then runs `BEGIN; <statement>; ROLLBACK` on one write-pool connection and returns
-//! the rows affected and at most [`MAX_RETURNING`] `RETURNING` rows (`null` without a RETURNING
-//! clause). Every request that passes the checks above is audited (§6) with `mode` `write`, also
-//! when its statement fails or no write-pool connection could be had (as for platform reads);
-//! the response's `audit_id` is the record's id. If the audit write fails, the result is not
-//! returned: 500 with SQLSTATE 58000 "audit write failed". A statement Postgres rejects is 422
-//! with its SQLSTATE and message.
+//! A Preview then runs `BEGIN; <statement>; ROLLBACK` on one write-pool connection, a commit
+//! `BEGIN; <statement>; COMMIT`; both return the rows affected and at most [`MAX_RETURNING`]
+//! `RETURNING` rows (`null` without a RETURNING clause). Every request that passes the checks
+//! above is audited (§6) with `mode` `write`, also when its statement fails or no write-pool
+//! connection could be had (as for platform reads); the response's `audit_id` is the record's
+//! id. If the audit write fails, the result is not returned: 500 with SQLSTATE 58000 "audit
+//! write failed". As §4.2 orders it, the record is written after the statement ends, so a
+//! commit whose audit write fails has still changed the table. A statement Postgres rejects is
+//! 422 with its SQLSTATE and message.
 //!
 //! The statement is first prepared (Parse/Describe, extended protocol), which refuses more than
 //! one statement whatever the guard decided, and gives the result's column types. It then runs
@@ -273,13 +275,6 @@ async fn run(write: &WriteMode, headers: &HeaderMap, body: &[u8]) -> Result<Valu
             "an AI agent identity (agent = true) may only Preview, never commit",
         ));
     }
-    if !preview {
-        // eng-write-commit builds this; refuse before anything is checked or spent.
-        return Err(Failure::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "mode \"commit\" is not available yet",
-        ));
-    }
     let sql = engine_guard::guard(&request.statement, GuardMode::Write).map_err(|r| {
         Failure::new(
             StatusCode::from_u16(r.status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY),
@@ -310,7 +305,7 @@ async fn run(write: &WriteMode, headers: &HeaderMap, body: &[u8]) -> Result<Valu
     };
 
     let started = Instant::now();
-    let result = preview_statement(target, &sql).await;
+    let result = run_statement(target, &sql, preview).await;
     let message;
     let outcome = match &result {
         Ok(ran) => Ok(ran.rows_affected),
@@ -401,10 +396,11 @@ struct Ran {
     returning: Value,
 }
 
-/// Runs `sql` in a transaction that is always rolled back, on one write-pool connection. The
-/// connection goes back to the pool only after a clean rollback; otherwise it is closed, which
-/// ends the transaction too. If the request goes away mid-statement, the backend is cancelled.
-async fn preview_statement(target: &Target, sql: &str) -> Result<Ran, DataFusionError> {
+/// Runs `sql` in a transaction on one write-pool connection: a Preview always rolls it back, a
+/// commit commits it. The connection goes back to the pool only after a clean ROLLBACK or
+/// COMMIT; otherwise it is closed, which rolls the transaction back. If the request goes away
+/// before the transaction ends, the backend is cancelled and nothing is kept.
+async fn run_statement(target: &Target, sql: &str, preview: bool) -> Result<Ran, DataFusionError> {
     let error = |e| pg_error(&target.source, e);
     let client = target.pool.acquire().await?;
     let mut running = CancelOnDrop(Some(client.cancel_token()));
@@ -414,7 +410,8 @@ async fn preview_statement(target: &Target, sql: &str) -> Result<Ran, DataFusion
     let types: Vec<Type> = statement.columns().iter().map(|c| c.type_().clone()).collect();
     drop(statement);
     let messages = client.simple_query(sql).await.map_err(error)?;
-    client.batch_execute("ROLLBACK").await.map_err(error)?;
+    let end = if preview { "ROLLBACK" } else { "COMMIT" };
+    client.batch_execute(end).await.map_err(error)?;
     running.finished();
     client.release().await;
 
