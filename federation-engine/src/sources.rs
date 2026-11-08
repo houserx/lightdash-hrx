@@ -1,5 +1,6 @@
 //! Picking the source a table-function call reads: the named one or the kind's default
-//! (CONTRACTS §1.1), with its base URL and row cap, for the HTTP sources (`prometheus`, `loki`).
+//! (CONTRACTS §1.1), with its row cap, and for the HTTP sources (`prometheus`, `loki`) its base
+//! URL.
 
 use std::collections::HashMap;
 
@@ -68,8 +69,20 @@ impl HttpSources {
         }
     }
 
-    /// The source a call names, or the kind's default source.
+    /// The source a call names, or the kind's default source, with its base URL.
     pub fn resolve(&self, name: Option<String>) -> Result<HttpSource, DataFusionError> {
+        let (name, max_rows) = self.pick(name)?;
+        let url = self.urls.get(&name).cloned().unwrap_or_default();
+        Ok(HttpSource {
+            name,
+            url,
+            max_rows,
+        })
+    }
+
+    /// The name and row cap of the source a call names, or of the kind's default source. Any
+    /// kind, including ones without a base URL (`cloudwatch`).
+    pub fn pick(&self, name: Option<String>) -> Result<(String, usize), DataFusionError> {
         let kind = self.kind.as_str();
         let name = match name {
             Some(name) => name,
@@ -80,15 +93,16 @@ impl HttpSources {
                 )
             })?,
         };
-        let Some(url) = self.urls.get(&name) else {
-            return Err(match self.kinds.get(&name) {
-                Some(other) => sqlstate(
+        match self.kinds.get(&name) {
+            Some(k) if *k == self.kind => {}
+            Some(other) => {
+                return Err(sqlstate(
                     "42809",
                     format!("source \"{name}\" is a {} source, not {kind}", other.as_str()),
-                ),
-                None => sqlstate("42704", format!("source \"{name}\" does not exist")),
-            });
-        };
+                ));
+            }
+            None => return Err(sqlstate("42704", format!("source \"{name}\" does not exist"))),
+        }
         if self.restricted.contains(&name) {
             // Fail closed until identity tokens are verified (CONTRACTS §1.2).
             return Err(sqlstate(
@@ -97,11 +111,7 @@ impl HttpSources {
             ));
         }
         let max_rows = self.max_rows.get(&name).copied().unwrap_or(usize::MAX);
-        Ok(HttpSource {
-            name,
-            url: url.clone(),
-            max_rows,
-        })
+        Ok((name, max_rows))
     }
 }
 

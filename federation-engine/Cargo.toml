@@ -22,6 +22,9 @@ path = "tests/acceptance/main.rs"
 
 [dependencies]
 async-trait = "0.1.92"
+# AWS sources: the default credential chain and SigV4, over aws-smithy's rustls (aws-lc-rs) client.
+aws-config = { version = "1.13", default-features = false, features = ["behavior-version-latest", "credentials-process", "default-https-client", "rt-tokio"] }
+aws-sdk-cloudwatch = { version = "1.140", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 axum = "0.8"
 chrono = "0.4"
 chrono-tz = "0.10"

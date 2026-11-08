@@ -1008,3 +1008,47 @@ token verification for a *valid* token, which feature 39 then hardens.
   promql::eng_promql_range, eng_promql_instant and eng_max_rows_overflow pass, and so do the
   logql/promql unit tests. rustfmt is not installed on this machine, so `cargo fmt` was not run.
 - 2026-11-08T19:07:59Z supervisor: eng-logql-metric passed the gate in round 1
+- 2026-11-08 eng-cloudwatch-metric-stat (worker, round 1): `cloudwatch(metric_data_query, start,
+  end[, source])` is `Cloudwatch` in the new `src/cloudwatch.rs`, registered in pg.rs. It returns
+  the promql columns (`sample_schema`). New deps: `aws-config` 1.13 and `aws-sdk-cloudwatch` 1.140
+  with `default-features = false` (features behavior-version-latest, default-https-client,
+  rt-tokio, plus credentials-process for aws-config; no sso). That keeps one rustls (0.23) in the
+  lockfile, so the legacy hyper 0.14/rustls 0.21 stack stays out. The first build of the SDK takes
+  about 5 min with CARGO_BUILD_JOBS=2.
+  - Plan time: 3 or 4 constant arguments (else 42883), end > start (22023), source picked by the new
+    `HttpSources::pick` (name + max_rows for any kind; `resolve` now wraps it and adds the URL, so
+    the promql/logql messages are unchanged). The Grafana target is parsed (A19) into a `Target`:
+    `id` if it matches `^[a-z][a-zA-Z0-9_]*$`, else `query<refId>` (Grafana's own rule), else
+    `query`. Dimensions are a string or a one-element array. `statistic` (or a one-element
+    `statistics`). `period` as "300", 300 or "5m"; "auto"/empty/missing uses Grafana's auto rule
+    (≤2000 datapoints, retention-tiered periods). Non-empty `label` becomes the AWS Label and the
+    series of every row, otherwise series = each result's Label. `region` other than
+    "default"/empty overrides the source's region for that call. Bad JSON → 22P02. A missing
+    namespace, metricName or statistic → 22023.
+  - Scan time: one SDK client per source, built on first use (`tokio::sync::OnceCell`) from
+    `aws_config::defaults` with the source's region, a 10 s connect timeout and the source's
+    `endpoint_url`. GetMetricData uses ScanBy TimestampAscending and follows NextToken until there
+    is none. A Forbidden/InternalError result status is an error, and so is a timestamps/values
+    length mismatch. More than max_rows datapoints in all → 54000. `labels` = the dimensions plus
+    namespace, metric_name, statistic, label (A19 leaves the content open).
+  - Left for the next features (fail closed, clear errors, no request sent): an expression target
+    (`metricEditorMode = 1` or a non-empty `expression`) → 0A000 "not supported yet". That is
+    eng-cloudwatch-expression. A source with `role_arn` → 0A000 at plan time (sign with an
+    AssumeRoleProvider from aws-config's `sts` module, `sts_endpoint_url` as the STS endpoint),
+    which is eng-cloudwatch-role-assumption. Multi-value or `*` dimensions and `matchExact = false`
+    → 0A000 (Grafana's SEARCH translation, untested per A19).
+  Tested as a user: `../tmp/cloudwatch/run.sh` starts a Python CloudWatch mock (`mock.py`, with a
+  small CBOR codec because the SDK speaks Smithy RPC v2 CBOR, logs every decoded request) and the
+  real engine with a cleared env (fake AWS env credentials, AWS_REGION=eu-west-1, a dead
+  AWS_ENDPOINT_URL), then queries through `../tmp/pgclient` bin `sql` (port 55541 is hard-coded
+  there). The test's Grafana target gave 3 rows ordered by time (10.5, 20.0, 30.25 at 00:00/00:05/00:10)
+  with series cpu-db-1. The mock saw two GetMetricData calls (the second with NextToken page-2)
+  carrying MetricStat AWS/RDS/CPUUtilization, both dimensions, Period 300, Stat Average, Id queryA,
+  Label cpu-db-1 and the hour's Start/EndTime. The credential scope was
+  `<env key>/…/us-east-2/monitoring`, so the source region won over AWS_REGION. With an empty label,
+  the series was the result label CPUUtilization. An expression target gave 0A000, bad JSON 22P02,
+  a prometheus source 42809, an unknown source 42704 and 2 arguments 42883, each with no request.
+  Checks sources::eng_cloudwatch_metric_stat, eng_logql_metric, eng_logql_streams,
+  promql::eng_promql_source_selection and eng_max_rows_overflow pass, and so do the 5 cloudwatch
+  unit tests. clippy and rustfmt are not installed here; I formatted by hand (lines ≤ 100).
+- 2026-11-08T19:33:11Z supervisor: eng-cloudwatch-metric-stat passed the gate in round 1
