@@ -1683,3 +1683,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   the variable). eng-platform-cancel-on-disconnect may already pass thanks to CancelOnDrop. It
   was not run here.
 - 2026-11-08T21:28:52Z supervisor: eng-platform-statement-timeout passed the gate in round 1
+- 2026-11-08 eng-platform-cancel-on-disconnect (round 1): no source change needed. `CancelOnDrop`
+  in `PlatformTable::fetch` (added by eng-platform-statement-timeout) already covers it. A
+  disconnect drops the session's query future (server.rs, eng-pg-disconnect-cleanup), and a pg-wire
+  CancelRequest drops it too. Either way the drop sends `cancel_query` to the Platform Database
+  backend. The check passed on the first run after init.
+  Tested as a user: `../tmp/platform-cancel/run.sh <out>` (throwaway cluster, audit store mock,
+  engine; new pgclient bin `pcancel` plus a superuser pg_stat_activity probe). (1) In session A,
+  platform_query('SELECT pg_sleep(60) AS s') was active in pg_stat_activity for 300 ms. Then the
+  client socket was dropped. The backend was gone about 270 ms later, and the Postgres log shows
+  "canceling statement due to user request". (2) Session B did the same, then a CancelRequest was
+  sent. The client got 57014 "canceling statement due to user request", and the backend was gone
+  about 55 ms later. Afterwards platform_query('SELECT 1 AS x') still works in B. Two runs, the
+  same result both times.
+  Trap: when waiting for "Postgres runs it", require the statement to stay active a while. The
+  describe-only round trip briefly shows `SELECT pg_sleep(60) AS s` as active in pg_stat_activity
+  for a few ms, before the execute. A probe that latches onto that observes the describe, not the
+  execute. (The protected acceptance test polls on first sight. It still passes, but it may be
+  catching the describe phase. This is not changed, since the file is protected.)
+- 2026-11-08T21:31:38Z supervisor: eng-platform-cancel-on-disconnect passed the gate in round 1
