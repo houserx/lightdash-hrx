@@ -1,7 +1,7 @@
 //! The pg-wire side (CONTRACTS §1): SCRAM-SHA-256 login against the config's `[[users]]`, then SQL
 //! through DataFusion.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -26,6 +26,8 @@ use datafusion::logical_expr::{
     Cast, ColumnarValue, Expr, LogicalPlan, ScalarUDF, TryCast, Volatility, create_udf,
 };
 use datafusion::prelude::{SessionConfig, SessionContext};
+use datafusion::sql::parser::{DFParserBuilder, Statement as DFStatement};
+use datafusion::sql::sqlparser::dialect::dialect_from_str;
 use chrono::{DateTime, NaiveDateTime, Offset, TimeZone, Timelike};
 use engine_config::User;
 use futures::{Sink, stream};
@@ -46,9 +48,11 @@ use pgwire::api::{ClientInfo, ClientPortalStore, PgWireServerHandlers, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 use pgwire::messages::data::DataRow;
+use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
-use crate::session::{Change, Settings, SqlStateError, current_setting_udf};
+use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
+use crate::transaction::{Transaction, aborted_block, check_not_aborted};
 
 /// PBKDF2 iterations for SCRAM-SHA-256 (the Postgres default).
 const SCRAM_ITERATIONS: usize = 4096;
@@ -144,7 +148,8 @@ impl PgWireServerHandlers for PgHandlers {
 }
 
 /// SQL planning and execution on DataFusion. Read-only: DDL and DML are refused; `SET` and
-/// `RESET` change the connection's [`Settings`] and DataFusion's own statements are refused.
+/// `RESET` change the connection's [`Settings`], transaction statements its transaction status,
+/// and DataFusion's own statements are refused.
 pub struct Sql {
     ctx: SessionContext,
 }
@@ -154,6 +159,18 @@ pub struct Sql {
 enum Action {
     Query(LogicalPlan),
     Change(Change),
+    Transaction(Transaction),
+}
+
+impl Action {
+    /// Refuses the action in a failed transaction block unless it ends the block (25P02).
+    fn check_not_aborted(&self, status: TransactionStatus) -> PgWireResult<()> {
+        let ends_block = matches!(self, Action::Transaction(t) if t.ends_block());
+        if status == TransactionStatus::Error && !ends_block {
+            return Err(query_error(aborted_block()));
+        }
+        Ok(())
+    }
 }
 
 impl Sql {
@@ -182,12 +199,55 @@ impl Sql {
         Ok(state)
     }
 
-    async fn plan(&self, sql: &str, settings: &Settings) -> Result<Action, DataFusionError> {
-        let state = self.state_for(settings)?;
-        let statement = state.sql_to_statement(sql, &state.config().options().sql_parser.dialect)?;
+    /// The statements in a query string, in order (`BEGIN; ROLLBACK` is two).
+    fn statements(&self, sql: &str) -> Result<VecDeque<DFStatement>, DataFusionError> {
+        let config = self.ctx.copied_config();
+        let options = &config.options().sql_parser;
+        let dialect = dialect_from_str(&options.dialect).ok_or_else(|| {
+            DataFusionError::Plan(format!("unsupported SQL dialect: {}", options.dialect))
+        })?;
+        DFParserBuilder::new(sql)
+            .with_dialect(dialect.as_ref())
+            .with_recursion_limit(options.recursion_limit.get())
+            .build()?
+            .parse_statements()
+    }
+
+    /// Plans a query string that must hold exactly one statement (a Parse message).
+    async fn plan(
+        &self,
+        sql: &str,
+        settings: &Settings,
+        status: TransactionStatus,
+    ) -> Result<Action, DataFusionError> {
+        let mut statements = self.statements(sql)?;
+        if statements.len() > 1 {
+            return Err(sqlstate(
+                "42601",
+                "cannot insert multiple commands into a prepared statement".to_string(),
+            ));
+        }
+        let statement = statements.pop_front().ok_or_else(|| {
+            DataFusionError::Plan("no SQL statement in the query string".to_string())
+        })?;
+        self.plan_statement(statement, settings, status).await
+    }
+
+    /// Plans one statement in a connection's settings and transaction status.
+    async fn plan_statement(
+        &self,
+        statement: DFStatement,
+        settings: &Settings,
+        status: TransactionStatus,
+    ) -> Result<Action, DataFusionError> {
+        check_not_aborted(status, &statement)?;
         if let Some(change) = Change::of(&statement) {
             return Ok(Action::Change(change?));
         }
+        if let Some(txn) = Transaction::of(&statement) {
+            return Ok(Action::Transaction(txn?));
+        }
+        let state = self.state_for(settings)?;
         let plan = state.statement_to_plan(statement).await?;
         SQLOptions::new()
             .with_allow_ddl(false)
@@ -239,13 +299,55 @@ impl SimpleQueryHandler for QueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
+        let statements = self.sql.statements(query).map_err(query_error)?;
+        // Each statement sees the settings and transaction status the ones before it left.
+        let mut status = client.transaction_status();
+        let mut responses = Vec::with_capacity(statements.len());
+        for statement in statements {
+            let response = match self.run_simple(client, statement, status).await {
+                Ok(response) => response,
+                // Postgres stops at the first failing statement; earlier results stand.
+                Err(PgWireError::UserError(info)) => {
+                    responses.push(Response::Error(info));
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
+            status = match &response {
+                Response::TransactionStart(_) => status.to_in_transaction_state(),
+                Response::TransactionEnd(_) => status.to_idle_state(),
+                _ => status,
+            };
+            responses.push(response);
+        }
+        Ok(responses)
+    }
+}
+
+impl QueryHandler {
+    /// Runs one statement of a simple query.
+    async fn run_simple<C>(
+        &self,
+        client: &mut C,
+        statement: DFStatement,
+        status: TransactionStatus,
+    ) -> PgWireResult<Response>
+    where
+        C: ClientInfo,
+    {
         let settings = Settings::of(client.metadata());
-        let plan = match self.sql.plan(query, &settings).await.map_err(query_error)? {
+        let action = self
+            .sql
+            .plan_statement(statement, &settings, status)
+            .await
+            .map_err(query_error)?;
+        let plan = match action {
             Action::Query(plan) => plan,
             Action::Change(change) => {
                 change.apply(client.metadata_mut());
-                return Ok(vec![Response::Execution(Tag::new(change.tag()))]);
+                return Ok(Response::Execution(Tag::new(change.tag())));
             }
+            Action::Transaction(txn) => return Ok(txn.response(status)),
         };
         let (schema, batches) = self
             .sql
@@ -255,10 +357,10 @@ impl SimpleQueryHandler for QueryHandler {
         let columns = columns_of(&schema);
         let fields = Arc::new(field_infos(&columns, &Format::UnifiedText)?);
         let rows = encode_rows(&fields, &batches)?;
-        Ok(vec![Response::Query(QueryResponse::new(
+        Ok(Response::Query(QueryResponse::new(
             fields,
             stream::iter(rows.into_iter().map(Ok)),
-        ))])
+        )))
     }
 }
 
@@ -289,10 +391,14 @@ impl QueryParser for Sql {
         C: ClientInfo + Unpin + Send + Sync,
     {
         let settings = Settings::of(client.metadata());
-        let prepared = match self.plan(sql, &settings).await.map_err(query_error)? {
+        let action = self
+            .plan(sql, &settings, client.transaction_status())
+            .await
+            .map_err(query_error)?;
+        let prepared = match action {
             Action::Query(plan) => prepare(plan, types)?,
-            Action::Change(change) => Prepared {
-                action: Action::Change(change),
+            action @ (Action::Change(_) | Action::Transaction(_)) => Prepared {
+                action,
                 params: vec![],
                 param_types: vec![],
                 columns: vec![],
@@ -373,6 +479,8 @@ impl ExtendedQueryHandler for QueryHandler {
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
         let stmt = &portal.statement.statement;
+        let status = client.transaction_status();
+        stmt.action.check_not_aborted(status)?;
         let values = bind_params(stmt, portal)?;
         let plan = match &stmt.action {
             Action::Query(plan) => plan.clone(),
@@ -380,6 +488,7 @@ impl ExtendedQueryHandler for QueryHandler {
                 change.apply(client.metadata_mut());
                 return Ok(Response::Execution(Tag::new(change.tag())));
             }
+            Action::Transaction(txn) => return Ok(txn.response(status)),
         };
         let plan = plan.with_param_values(values).map_err(query_error)?;
         let settings = Settings::of(client.metadata());
@@ -846,9 +955,9 @@ mod tests {
         futures::executor::block_on(async {
             let sql_ = Sql::new();
             let settings = Settings::default();
-            match sql_.plan(sql, &settings).await? {
+            match sql_.plan(sql, &settings, TransactionStatus::Idle).await? {
                 Action::Query(plan) => sql_.execute(plan, &settings).await,
-                Action::Change(c) => panic!("not a query: {c:?}"),
+                other => panic!("not a query: {other:?}"),
             }
         })
     }
@@ -913,7 +1022,12 @@ mod tests {
 
     fn prepared(sql: &str, declared: &[Option<Type>]) -> Prepared {
         let sql_ = Sql::new();
-        let action = futures::executor::block_on(sql_.plan(sql, &Settings::default())).unwrap();
+        let action = futures::executor::block_on(sql_.plan(
+            sql,
+            &Settings::default(),
+            TransactionStatus::Idle,
+        ))
+        .unwrap();
         let Action::Query(plan) = action else {
             panic!("not a query: {sql}")
         };

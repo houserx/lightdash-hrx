@@ -500,3 +500,45 @@ token verification for a *valid* token, which feature 39 then hardens.
   - Simple queries are still one statement each (`a; b` is refused by `sql_to_statement`).
     eng-pg-transaction-statements needs `BEGIN; ROLLBACK`, so it will have to split statements.
 - 2026-11-08T16:41:36Z supervisor: eng-pg-session-settings passed the gate in round 1
+- 2026-11-08 eng-pg-transaction-statements (session 8): BEGIN/START TRANSACTION, COMMIT/END and
+  ROLLBACK are accepted in both protocols. Simple queries can hold several statements, and a named
+  portal inside a transaction is fetched in max_rows batches.
+  - New `src/transaction.rs`. `Transaction::of(statement)` recognises Begin/Commit/Rollback.
+    Access and isolation modes (`READ ONLY`, `ISOLATION LEVEL ...`) are accepted and do nothing,
+    because the engine is read-only and keeps no transaction state. `AND CHAIN`, savepoints
+    (`SAVEPOINT`, `RELEASE`, `ROLLBACK TO`) and procedural `BEGIN ... END` blocks get 0A000. The
+    statements answer pgwire's `Response::TransactionStart/End`, so pgwire tracks the ReadyForQuery
+    status (I/T/E). `COMMIT` of a failed block answers `ROLLBACK`, as in Postgres.
+  - A failed block works as in Postgres. Every statement except COMMIT/ROLLBACK gets 25P02
+    ("current transaction is aborted..."). This is checked when a statement is planned
+    (`check_not_aborted`, both protocols) and again at Execute (`Action::check_not_aborted`) for
+    statements that were prepared before the failure.
+  - pg.rs: `Action::Transaction` is new. `Sql::statements` splits a query string with
+    `DFParserBuilder` using the configured dialect. `Sql::plan` (Parse) still needs exactly one
+    statement; more than one gets 42601 "cannot insert multiple commands into a prepared statement".
+    `Sql::plan_statement` plans a single statement. The simple `do_query` runs the statements in
+    order. Each one sees the settings and transaction status the earlier ones left, and the
+    first failure becomes `Response::Error` and stops the rest, so earlier results stand. A syntax
+    error anywhere in the string fails the whole string before anything runs, as in Postgres.
+    `session::sqlstate` is now `pub`.
+  - Portals: pgwire 0.42's default `on_execute` already suspends and resumes portals by max_rows
+    (PortalSuspended). `do_query` still collects the whole result before pgwire slices it, so
+    nothing streams yet. If eng-pg-cursor-batches needs real streaming or bounded memory, that is
+    where the work is.
+  Tested as a user: a throwaway tokio-postgres program `../tmp/pgclient/src/bin/txn.rs` (config
+  `../tmp/ver.toml`) spawns `target/debug/engine`. Simple protocol: BEGIN, SELECT 1 (row 1), COMMIT,
+  `BEGIN; ROLLBACK` (two completes), START TRANSACTION READ ONLY, ROLLBACK and END are all accepted.
+  `SELECT 1; SELECT 2` returns both rows. After an error inside BEGIN, both SELECT 1 and SET get
+  25P02, COMMIT recovers, and SELECT 1 works again. COMMIT AND CHAIN and ROLLBACK TO SAVEPOINT get
+  0A000. Extended protocol (`execute`): BEGIN/SELECT/COMMIT/START TRANSACTION READ ONLY/ROLLBACK
+  all work, and `SELECT 1; SELECT 2` gets 42601. Portal: `transaction()`, then prepare
+  generate_series(1, 250), bind, and query_portal(100) gives batches of 100 (1..100), 100
+  (101..200) and 50 (201..250). Commit succeeds and the connection keeps working. The check
+  `pgwire::eng_pg_transaction_statements`, the six earlier checks (config + 5 pgwire, plus
+  session-settings), the harness self-tests and 15 unit tests (4 new in transaction.rs) all pass.
+  For later sessions:
+  - Postgres closes named portals at transaction end. Here, only pgwire's unnamed portal is dropped
+    (extended COMMIT only). Named portals live until Close or the end of the connection.
+  - `SET LOCAL` is still ignored rather than scoped to the block.
+  - rustfmt and clippy are not installed on this machine, so formatting was done by hand.
+- 2026-11-08T16:49:41Z supervisor: eng-pg-transaction-statements passed the gate in round 1

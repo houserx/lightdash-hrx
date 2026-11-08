@@ -47,7 +47,8 @@ impl fmt::Display for SqlStateError {
 
 impl std::error::Error for SqlStateError {}
 
-fn sqlstate(code: &'static str, message: String) -> DataFusionError {
+/// A DataFusion error carrying the given SQLSTATE.
+pub fn sqlstate(code: &'static str, message: String) -> DataFusionError {
     DataFusionError::External(Box::new(SqlStateError { code, message }))
 }
 
@@ -85,8 +86,8 @@ pub enum Change {
     Set { name: String, value: Option<String> },
     /// `RESET ALL`.
     ResetAll,
-    /// Accepted and without effect: `SET LOCAL` (there are no transaction blocks), `SET ROLE`,
-    /// `SET NAMES`, `SET TRANSACTION ...`.
+    /// Accepted and without effect: `SET LOCAL` (transaction blocks hold no state to scope it
+    /// to), `SET ROLE`, `SET NAMES`, `SET TRANSACTION ...`.
     Ignored,
 }
 

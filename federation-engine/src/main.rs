@@ -7,6 +7,7 @@
 mod pg;
 mod server;
 mod session;
+mod transaction;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
