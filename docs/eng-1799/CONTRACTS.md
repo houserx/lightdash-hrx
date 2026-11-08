@@ -177,21 +177,25 @@ Encoding uses base64url without padding. The engine rejects a token whose `exp` 
 
 ## 4. Lightdash
 
-### 4.1 Warehouse type
+### 4.1 Warehouse type: a flavour of Postgres (amended 2026-11-08)
 
-- **Name.** `WarehouseTypes.FEDERATION = 'federation'`.
-- **Credentials (`CreateFederationCredentials`):**
-  - `host`, `port` (default 5433), `user`, `password`, `dbname` (default `operations`)
-  - `sslmode`
-  - `timeoutSeconds`
-  - `identitySigningSecret`: sensitive, stripped like `password` everywhere credentials are returned
-  - `httpBaseUrl`: the engine's §1.3 base URL
-- **SQL builder.** The Postgres builder.
-- **`FederationWarehouseClient`** extends `PostgresWarehouseClient`.
-  - `getAllTables`, `getFields` and `getCatalog` use `information_schema` only.
-  - It sends the `SET hrx.identity` described in §3.
+The Federation Engine is **not** a new `WarehouseTypes` member. It is the Postgres warehouse type with a flavour.
+
+- **Why.** Adding `WarehouseTypes.FEDERATION` makes two files under `packages/backend/src/ee/` fail typecheck: `ai/prompts/systemV2RunSql.ts` has a `Record<WarehouseTypes, string>`, and `AiWritebackService/skills.ts` has an `assertUnreachable`. Q14 forbids changing `ee/`. The flavour approach also removes about 137 type switches from the fork's rebase surface. The controls engineer decided this on 2026-11-08, from the ldq init session's measurement.
+- **Credentials.** `CreatePostgresCredentials` gains three optional fields:
+  - `flavor?: 'postgres' | 'federation'` (absent means `'postgres'`);
+  - `identitySigningSecret?: string`, which is sensitive and stripped like `password` everywhere credentials are returned;
+  - `httpBaseUrl?: string`, the engine's §1.3 base URL.
+
+  When `flavor === 'federation'`, the defaults are port 5433 and `dbname` `operations`.
+- **Client.** `warehouseClientFromCredentials` returns `FederationWarehouseClient` (extends `PostgresWarehouseClient`) when `flavor === 'federation'`. The SQL builder, the dialect and every `WarehouseTypes` switch stay Postgres's.
+- **`FederationWarehouseClient`:**
+  - `getAllTables`, `getFields` and `getCatalog` use `information_schema` only;
+  - it sends the `SET hrx.identity` described in §3;
   - `version()` gating that queries `pg_matviews` is turned off.
-- **Project types.** It works with the `none` and native-git (`semanticLayer: 'lightdash'`) project types. No dbt target is required: `toDbtTarget` raises a clear "dbt is not supported for federation" error.
+- **"Federation project".** Wherever this document or the ADRs say a "federation project" or "the federation warehouse type", read it as a project whose warehouse credentials have `flavor: 'federation'`.
+- **Connection form.** The Postgres connection form gains a "Federation Engine" flavour switch that shows the extra fields.
+- **Project types.** It works with the `none` and native-git (`semanticLayer: 'lightdash'`) project types. dbt with a federation-flavour connection fails with a clear "dbt is not supported for the Federation Engine" error at the point where the dbt target is built.
 
 ### 4.2 Write Mode and Preview (never through `AsyncQueryService`)
 

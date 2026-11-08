@@ -4,7 +4,7 @@ status: accepted
 
 # A DataFusion Federation Engine is a Lightdash warehouse type
 
-Telemetry Sources are queried through a separate Rust service built on Apache DataFusion, called the Federation Engine. Lightdash registers it as a new warehouse type for a dedicated Operations Project. Each source (Prometheus, Loki, CloudWatch, Tempo) is a table function that takes the source's own query language, e.g. `promql('rate(x[5m])', …)`. The engine also federates BigQuery, so telemetry and business data can be joined in one query. The semantic layer and the AI agents then work over telemetry with no special path.
+Telemetry Sources are queried through a separate Rust service built on Apache DataFusion, called the Federation Engine. Lightdash registers it as a dedicated Operations Project's warehouse: Postgres credentials with `flavor: 'federation'`, not a new warehouse type. A new type would force edits under `ee/`, which Q14 forbids, and would touch about 137 type switches (amended 2026-11-08, CONTRACTS §4.1). Each source (Prometheus, Loki, CloudWatch, Tempo) is a table function that takes the source's own query language, e.g. `promql('rate(x[5m])', …)`. The engine also federates BigQuery, so telemetry and business data can be joined in one query. The semantic layer and the AI agents then work over telemetry with no special path.
 
 ## Considered Options
 
