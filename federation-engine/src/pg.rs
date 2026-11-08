@@ -52,7 +52,7 @@ use pgwire::messages::data::DataRow;
 use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
-use crate::labels::label_udf;
+use crate::labels::{label_udf, series_name_udf};
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
 use crate::transaction::{Transaction, aborted_block, check_not_aborted};
@@ -202,6 +202,7 @@ impl Sql {
         let ctx = SessionContext::new_with_config(config);
         ctx.register_udf(version_udf());
         ctx.register_udf(label_udf());
+        ctx.register_udf(series_name_udf());
         Sql { ctx }
     }
 

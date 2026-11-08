@@ -750,3 +750,19 @@ token verification for a *valid* token, which feature 39 then hardens.
   `promql::series_name`. rustfmt/clippy are not installed on this toolchain, so formatting is by
   hand.
 - 2026-11-08T18:12:43Z supervisor: eng-label-function passed the gate in round 1
+- 2026-11-08 eng-series-name-function (worker, round 1): added `series_name(labels json) -> text`
+  as a DataFusion scalar UDF (`series_name_udf()` in `federation-engine/src/labels.rs`), registered
+  in `Sql::new` (src/pg.rs) next to `label`. It parses the labels JSON and calls the existing
+  `promql::series_name`, so it is the same code path as the `series` column and cannot drift from
+  it. NULL in gives NULL. JSON that is not an object gives NULL (contract assumption: CONTRACTS
+  §1.1 doesn't say; this matches `label`). Text that is not JSON fails with 22P02, as `label` does.
+  JSON parsing is shared via `parse()` in labels.rs. One more unit test in labels.rs.
+  Tested as a user: `../tmp/pgclient/src/bin/seriesname.rs` (mock prom-a on 127.0.0.1:59097,
+  config `../tmp/promql/seriesname.toml`, one series whose pod value has quotes, backslashes and a
+  newline) spawns `target/debug/engine` and runs SQL over tokio-postgres.
+  `series_name('{"b":"2","a":"1"}')` = `{a="1",b="2"}`; the quote/backslash/newline literal gave
+  `{k="say \"hi\" \\ now\nplease"}`; `'{}'` gave `{}`; NULL and `'[1]'` gave NULL;
+  `series_name(labels) = series` was true on all 6 promql rows (including the escaped one); `'{not
+  json'` gave 22P02. The check `promql::eng_series_name_function` passes, and every feature in the
+  passing list still passes.
+- 2026-11-08T18:16:45Z supervisor: eng-series-name-function passed the gate in round 1
