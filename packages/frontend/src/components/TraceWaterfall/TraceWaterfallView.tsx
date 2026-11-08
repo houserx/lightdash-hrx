@@ -2,10 +2,22 @@ import {
     type TraceWaterfallModel,
     type TraceWaterfallSpan,
 } from '@lightdash/visualization';
-import { Box, Center, Group, ScrollArea, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import {
+    ActionIcon,
+    Box,
+    Center,
+    Group,
+    ScrollArea,
+    Stack,
+    Text,
+} from '@mantine/core';
+import {
+    IconAlertTriangle,
+    IconChevronDown,
+    IconChevronRight,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
-import { type FC } from 'react';
+import { useCallback, useMemo, useState, type FC } from 'react';
 import MantineIcon from '../common/MantineIcon';
 import {
     formatDurationMs,
@@ -87,10 +99,42 @@ const ServiceLegend: FC<{ spans: TraceWaterfallSpan[] }> = ({ spans }) => (
     </Group>
 );
 
-const SpanRow: FC<{ span: TraceWaterfallSpan; traceDurationMs: number }> = ({
-    span,
-    traceDurationMs,
-}) => {
+/** A span with its place in the drawn tree. */
+type SpanRowItem = {
+    span: TraceWaterfallSpan;
+    hasChildren: boolean;
+    isCollapsed: boolean;
+};
+
+/**
+ * The rows to draw: the spans in the model's depth-first order, minus the
+ * subtree of every collapsed span. In that order a span's subtree is the run
+ * of spans right after it that are deeper than it.
+ */
+const visibleRows = (
+    spans: TraceWaterfallSpan[],
+    collapsed: ReadonlySet<string>,
+): SpanRowItem[] => {
+    const rows: SpanRowItem[] = [];
+    let hiddenBelowDepth: number | null = null;
+    spans.forEach((span, index) => {
+        if (hiddenBelowDepth !== null && span.depth > hiddenBelowDepth) return;
+        hiddenBelowDepth = null;
+        const next = spans[index + 1];
+        const hasChildren = next !== undefined && next.depth > span.depth;
+        const isCollapsed = hasChildren && collapsed.has(span.spanId);
+        if (isCollapsed) hiddenBelowDepth = span.depth;
+        rows.push({ span, hasChildren, isCollapsed });
+    });
+    return rows;
+};
+
+const SpanRow: FC<
+    SpanRowItem & {
+        traceDurationMs: number;
+        onToggle: (spanId: string) => void;
+    }
+> = ({ span, hasChildren, isCollapsed, traceDurationMs, onToggle }) => {
     const isError = isErrorStatus(span.status);
     const duration = formatDurationMs(span.durationMs);
     return (
@@ -109,6 +153,27 @@ const SpanRow: FC<{ span: TraceWaterfallSpan; traceDurationMs: number }> = ({
                 className={classes.labelColumn}
                 style={{ '--span-depth': span.depth }}
             >
+                {hasChildren ? (
+                    <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        size="xs"
+                        aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${
+                            span.name
+                        }`}
+                        aria-expanded={!isCollapsed}
+                        onClick={() => onToggle(span.spanId)}
+                    >
+                        <MantineIcon
+                            icon={
+                                isCollapsed ? IconChevronRight : IconChevronDown
+                            }
+                            size="sm"
+                        />
+                    </ActionIcon>
+                ) : (
+                    <Box className={classes.togglePlaceholder} />
+                )}
                 {isError && (
                     <MantineIcon
                         icon={IconAlertTriangle}
@@ -152,9 +217,25 @@ const SpanRow: FC<{ span: TraceWaterfallSpan; traceDurationMs: number }> = ({
  * duration and a bar placed on a time axis that runs from 0 ms to the
  * trace's duration. Bars take their service's colour, and a legend above
  * names each service in it. Spans whose status is an error are marked in red.
+ * A span with children has a Collapse / Expand button that hides or shows
+ * its whole subtree.
  */
 export const TraceWaterfallView: FC<Props> = ({ model }) => {
     const trace = model.traces[0];
+    const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
+        () => new Set(),
+    );
+    const toggle = useCallback((spanId: string) => {
+        setCollapsed((current) => {
+            const next = new Set(current);
+            if (!next.delete(spanId)) next.add(spanId);
+            return next;
+        });
+    }, []);
+    const rows = useMemo(
+        () => (trace ? visibleRows(trace.spans, collapsed) : []),
+        [trace, collapsed],
+    );
     if (!trace || trace.spans.length === 0) {
         return (
             <Center h="100%" mih={80}>
@@ -169,11 +250,12 @@ export const TraceWaterfallView: FC<Props> = ({ model }) => {
             <ServiceLegend spans={trace.spans} />
             <TimeAxis durationMs={trace.durationMs} />
             <ScrollArea flex={1} type="auto">
-                {trace.spans.map((span) => (
+                {rows.map((row) => (
                     <SpanRow
-                        key={span.spanId}
-                        span={span}
+                        key={row.span.spanId}
+                        {...row}
                         traceDurationMs={trace.durationMs}
+                        onToggle={toggle}
                     />
                 ))}
             </ScrollArea>

@@ -725,3 +725,20 @@ should add a dated line here per feature.
   `bash ./init.sh` the check passes 2/2; `trace-waterfall-view` 5/5 still passes; frontend `tsc --noEmit` clean;
   oxlint and oxfmt clean on the component folder.
 - 2026-11-08T19:35:13Z supervisor: viz-trace-waterfall-service-colours passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-collapse (session)
+
+- **What.** `TraceWaterfallView.tsx`: every span with children gets a chevron `ActionIcon` before its name, labelled
+  "Collapse <name>" / "Expand <name>" with `aria-expanded`; leaves get a same-width placeholder (`.togglePlaceholder`
+  in the CSS module) so names stay aligned. The view keeps a `Set` of collapsed span ids in state; `visibleRows`
+  walks the model's depth-first spans and skips, after a collapsed span, the run of following spans deeper than it
+  (that run is exactly its subtree). "Has children" = the next span is deeper.
+- **Decisions.** Collapse state is per span id and survives collapsing an ancestor: collapse b, collapse a, expand
+  a → b is still collapsed. All spans start expanded. State is not reset when the model changes (ids that vanish
+  are harmless); revisit if the trace picker needs a reset per trace.
+- **Tested as a user.** No app mounts the view yet, so I drove it with user-event from a throwaway vitest file
+  (deleted) on BASIC_TRACE: buttons only on "GET /orders" and "orders.list", both expanded; collapse orders.list →
+  rows a e b; collapse GET /orders → a; Enter on "Expand GET /orders" → a e b with orders.list still collapsed;
+  expand orders.list → a e b c d. After `bash ./init.sh` the check passes 3/3; `trace-waterfall-view` 5/5 and
+  `trace-waterfall-service-colours` 2/2 still pass; frontend `tsc --noEmit` clean; oxlint and oxfmt clean.
+- 2026-11-08T19:38:11Z supervisor: viz-trace-waterfall-collapse passed the gate in round 1

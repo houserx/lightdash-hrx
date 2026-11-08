@@ -77,6 +77,12 @@
     background-color: var(--mantine-color-red-light-hover);
 }
 
+/* Keeps leaf names in line with the names of spans that have a toggle. */
+.togglePlaceholder {
+    flex: 0 0 auto;
+    width: var(--ai-size-xs, 18px);
+}
+
 .name {
     flex: 0 1 auto;
     min-width: 0;
