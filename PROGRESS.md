@@ -1790,3 +1790,48 @@ docs/eng-1799/telemetry-mcp.md
   the SDK dependency and the model id.
 - Feature check: 2/2.
 - 2026-11-08T19:10:05Z supervisor: mcp-ai-not-configured passed the gate in round 1
+
+## mcp-tool-write-preview (2026-11-08)
+
+- Added `write_preview` (`src/tools/writePreview.ts`). Its input is `{statement, description, ticket?}`, with no mode
+  argument. `statement` and `description` must be non-blank, and `ticket` must match `LINEAR_TICKET` from
+  `platformQuery.ts`. Bad input is refused before any engine call. Annotations: `readOnlyHint: false`,
+  `destructiveHint: false` (a Preview never commits), `idempotentHint: true`, `openWorldHint: false`.
+- Added `src/engine/write.ts` (`createEngineWriter`). It sends `POST ENGINE_HTTP_URL/v1/write` with
+  `Authorization: Bearer <fresh §3 identity token>`. The token's audit block holds the description and ticket. The
+  body is `{statement, mode:"preview", confirmation_token, description, ticket|null}`. These become an
+  `EngineWriteError`, with tokens and secrets redacted:
+  - a non-2xx reply: "The Preview failed with HTTP <status>: <engine message>";
+  - an unreachable engine;
+  - `preview !== true`;
+  - a malformed reply (audit_id must be a non-empty string, rows_affected an integer ≥ 0, returning an array of
+    objects or null).
+  The timeout is `MCP_STATEMENT_TIMEOUT_MS + 10 s`. `engineErrorMessage` in `engine/audit.ts` is now exported so the
+  writer can reuse it.
+- Added `src/identity/confirmation.ts`, which implements Contract assumption 4: `mintConfirmationToken` returns
+  `base64url(json{v:1, stmt_sha256, sub, project, exp, nonce}).base64url(HMAC-SHA256(HRX_IDENTITY_SECRET, payload))`
+  with a 60 s lifetime. `sub` and `project` are read back from the identity token the writer has just minted, so the
+  `EngineSession` interface stays the same.
+- `createMcpServer` registers the tool with `deps.writer`. `serveMcpRequest` builds the writer from the request's
+  identity session. Without `deps.writer` (unit tests), the default writer refuses every Preview before any HTTP call.
+- If the engine's RETURNING reply is over `MCP_MAX_OUTPUT_BYTES`, the tool returns an error that names the audit id
+  and says nothing was committed. The rows are never cut.
+- **Not in this feature:** the `platform_write` check before the HTTP call belongs to
+  mcp-write-preview-requires-platform-write, the next feature. Right now a user without the attribute reaches the
+  engine, which refuses them. Add the check in the tool handler before `writer.preview`; the mapped user's attrs are
+  reachable through the session's resolver.
+- Unit tests: `src/engine/write.test.ts` (9) and `src/tools/writePreview.test.ts` (9).
+- Tested as a user: after `bash ./init.sh`, `../tmp/tool-write-preview/drive.test.ts` (run with
+  `pnpm exec vitest run --root ../../../tmp/tool-write-preview --disableConsoleIntercept drive.test.ts` from the
+  package) spawned the production entry `node dist/main.js` against the fake Okta, Lightdash and engine. The analyst
+  was given `platform_write`. A real MCP client connected to `/mcp` over streamable HTTP with an Okta bearer token.
+  - tools/list showed write_preview with `statement`, `description` and `ticket`, and readOnlyHint false.
+  - The engine received body keys statement, mode `preview`, confirmation_token (354 chars), description and ticket.
+    Its bearer verified as iss `telemetry-mcp`, agent true and platform_write true, with audit
+    `{description, ticket ENG-456, source mcp}`.
+  - The tool returned `{audit_id, rows_affected 1, preview true, returning [...]}`.
+  - With no description, the call failed with an input validation error and the engine got 0 calls. An engine 400
+    returned "The Preview failed with HTTP 400: DDL is always blocked". A reply with preview false was an error. No
+    SQL text appeared in the server logs.
+- Feature check: 6/6.
+- 2026-11-08T19:14:05Z supervisor: mcp-tool-write-preview passed the gate in round 1

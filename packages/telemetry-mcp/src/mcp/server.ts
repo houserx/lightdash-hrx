@@ -26,6 +26,7 @@ import type { Config } from '../config.js';
 import { createEngineAuditBrowser } from '../engine/audit.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
+import { EngineWriteError, createEngineWriter, type EngineWriter } from '../engine/write.js';
 import { createAlertingClient, type AlertingClient } from '../lightdash/alerting.js';
 import { registerAlertHistory } from '../tools/alertHistory.js';
 import { registerAlertState } from '../tools/alertState.js';
@@ -40,6 +41,7 @@ import { registerQueryCloudwatchLogs } from '../tools/queryCloudwatchLogs.js';
 import { registerQueryLogql } from '../tools/queryLogql.js';
 import { registerQueryPromql } from '../tools/queryPromql.js';
 import { registerSearchTraces } from '../tools/searchTraces.js';
+import { registerWritePreview } from '../tools/writePreview.js';
 import type { Logger } from '../log.js';
 import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js';
 import { logToolCalls } from './toolCallLog.js';
@@ -65,7 +67,14 @@ export interface McpServerDeps {
      * ask fails before any query.
      */
     ask?: Pick<AskDataDeps, 'memory' | 'examples' | 'user' | 'onError'>;
+    /** Write Mode Previews through the engine's `POST /v1/write`, as the caller. Default (unit tests): none. */
+    writer?: EngineWriter;
 }
+
+/** The writer used when `McpServerDeps.writer` is not given: every Preview fails before any engine call. */
+const NO_WRITER: EngineWriter = {
+    preview: () => Promise.reject(new EngineWriteError('The Preview failed: Write Mode is not available in this server')),
+};
 
 /**
  * What a request needs besides the config: the shared user resolver, the server clock (epoch ms) and the structured
@@ -112,6 +121,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerPlatformQuery(server, config, engine);
     registerPlatformExplain(server, config, engine, llm);
     registerAskData(server, config, { engine, llm, now, ...(deps.ask ?? standaloneAsk(now)) });
+    registerWritePreview(server, config, deps.writer ?? NO_WRITER);
     return server;
 }
 
@@ -201,6 +211,13 @@ export async function serveMcpRequest(
                 },
                 onError,
             },
+            writer: createEngineWriter({
+                httpUrl: config.engine.httpUrl,
+                session,
+                identitySecret: config.identitySecret,
+                now: context.now,
+                secrets,
+            }),
         });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

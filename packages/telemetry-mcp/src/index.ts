@@ -39,6 +39,12 @@ export {
 export { createIdentitySession } from './engine/session.js';
 export { AUDIT_BROWSER_TIMEOUT_MS, AuditBrowserError, auditPath, createEngineAuditBrowser } from './engine/audit.js';
 export type { AuditBrowser, AuditPage, AuditQuery, Execution } from './engine/audit.js';
+export { ENGINE_WRITE_TIMEOUT_MARGIN_MS, EngineWriteError, createEngineWriter } from './engine/write.js';
+export type { EngineWriter, EngineWriterOptions, PreviewRequest, PreviewResult } from './engine/write.js';
+export { CONFIRMATION_TOKEN_LIFETIME_SECONDS, mintConfirmationToken } from './identity/confirmation.js';
+export type { MintConfirmationTokenInput } from './identity/confirmation.js';
+export { WRITE_PREVIEW_TOOL, buildPreviewRequest, previewResult } from './tools/writePreview.js';
+export type { WritePreviewArgs } from './tools/writePreview.js';
 export {
     LIGHTDASH_GROUPS_PER_USER,
     LIGHTDASH_TIMEOUT_MS,

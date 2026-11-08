@@ -73,7 +73,8 @@ export function auditPath(query: AuditQuery = {}): string {
     return `/v1/audit${search ? `?${search}` : ''}`;
 }
 
-function engineErrorMessage(body: unknown): string | undefined {
+/** The engine's own message in a JSON error body (`{message}`, `{error}` or `{error: {message}}`), if any. */
+export function engineErrorMessage(body: unknown): string | undefined {
     const b = body as { error?: unknown; message?: unknown } | null | undefined;
     const nested = (b?.error as { message?: unknown } | null | undefined)?.message;
     for (const candidate of [b?.message, b?.error, nested]) {
