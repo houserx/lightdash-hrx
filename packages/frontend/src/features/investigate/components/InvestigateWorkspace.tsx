@@ -16,6 +16,7 @@ import {
     Loader,
     Modal,
     Stack,
+    Switch,
     Text,
     TextInput,
 } from '@mantine/core';
@@ -40,6 +41,7 @@ import {
 import { InvestigateResults } from './InvestigateResults';
 import { type PlatformSchemaLoaders } from './PlatformSchemaBrowser';
 import { SavedSqlPicker, type SavedSqlItem } from './SavedSqlPicker';
+import { WriteModePanel, type WriteModeApi } from './WriteModePanel';
 
 /** Investigate opens over the last 6 hours unless the caller says otherwise. */
 const DEFAULT_INVESTIGATE_TIME_RANGE: TimeRangeInput = {
@@ -78,6 +80,11 @@ export type InvestigateWorkspaceProps = {
      * decides. The engine enforces every claim either way.
      */
     access?: FederationAttrs;
+    /**
+     * Write Mode's API. The Write Mode toggle is offered on the Platform Database only with it
+     * and only to users whose access says platform_write.
+     */
+    writeApi?: WriteModeApi;
 };
 
 /** How Investigate reads shared saved SQL: the list when it opens, a script's SQL when picked. */
@@ -148,6 +155,9 @@ const errorMessage = (error: unknown, fallback: string) =>
  *
  * Saved SQL lists the Operations Project's shared saved SQL; opening one shows its SQL in the
  * SQL box of a fresh editor, ready to run.
+ *
+ * Users with platform_write get a Write Mode toggle on the Platform Database. Write Mode shows
+ * the Platform SQL statement in the Write Mode panel in place of Run, Explain and the result.
  */
 export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     runQuery,
@@ -156,6 +166,7 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     platformSchema,
     savedSql,
     access,
+    writeApi,
 }) => {
     const [source, setSource] = useState<InvestigateSource>('prometheus');
     const [platformStatement, setPlatformStatement] = useState('');
@@ -172,6 +183,7 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     // The SQL being saved while the Save as chart dialog is open.
     const [saveAsChartSql, setSaveAsChartSql] = useState<string | null>(null);
     const [isSavedSqlOpen, setIsSavedSqlOpen] = useState(false);
+    const [isWriteModeOn, setIsWriteModeOn] = useState(false);
     // Opening saved SQL starts a fresh editor showing that SQL in the SQL box.
     const [editor, setEditor] = useState<{ key: number; initialSql?: string }>({
         key: 0,
@@ -199,6 +211,10 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     const canExplain =
         isPlatformSource &&
         (!access || access.platform_read || access.platform_explain);
+    // Write Mode needs an explicit platform_write claim; it is never offered by default.
+    const canWrite =
+        isPlatformSource && !!writeApi && access?.platform_write === true;
+    const isWriteMode = canWrite && isWriteModeOn;
 
     // Platform Database SQL is an Audited Query: the engine refuses it without a description.
     // The engine's own request counts for exactly the SQL it refused.
@@ -302,7 +318,16 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                             Save as chart
                         </Button>
                     )}
-                    {canExplain && (
+                    {canWrite && (
+                        <Switch
+                            label="Write Mode"
+                            checked={isWriteModeOn}
+                            onChange={(event) =>
+                                setIsWriteModeOn(event.currentTarget.checked)
+                            }
+                        />
+                    )}
+                    {canExplain && !isWriteMode && (
                         <Button
                             size="xs"
                             variant={canRun ? 'default' : 'filled'}
@@ -318,7 +343,7 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                             Explain
                         </Button>
                     )}
-                    {canRun && (
+                    {canRun && !isWriteMode && (
                         <Button
                             size="xs"
                             leftSection={<MantineIcon icon={IconPlayerPlay} />}
@@ -342,7 +367,10 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                 onPlatformSqlChange={setPlatformStatement}
                 platformSchema={platformSchema}
             />
-            {showAuditFields && (
+            {isWriteMode && writeApi && (
+                <WriteModePanel statement={platformStatement} api={writeApi} />
+            )}
+            {showAuditFields && !isWriteMode && (
                 <Group align="flex-start" grow>
                     <TextInput
                         label="Description"
@@ -381,7 +409,7 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                     onSave={onSaveAsChart}
                 />
             )}
-            {run.status !== 'idle' && (
+            {run.status !== 'idle' && !isWriteMode && (
                 <Stack gap="xs" data-testid="investigate-result">
                     {'timeRange' in run &&
                         !('action' in run && run.action === 'explain') && (

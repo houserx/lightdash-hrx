@@ -356,4 +356,76 @@ describe('InvestigateWorkspace', () => {
             ),
         );
     });
+
+    describe('Write Mode toggle', () => {
+        const writeApi = { createConfirmation: vi.fn(), write: vi.fn() };
+        const writer = {
+            telemetry_restricted: false,
+            platform_read: true,
+            platform_write: true,
+            platform_explain: false,
+        };
+
+        it('is not offered without a platform_write claim or off the Platform Database', () => {
+            const { rerender } = render(
+                <MantineProvider env="test" forceColorScheme="light">
+                    <InvestigateWorkspace
+                        runQuery={vi.fn()}
+                        writeApi={writeApi}
+                    />
+                </MantineProvider>,
+            );
+            fireEvent.click(
+                screen.getByRole('radio', { name: 'Platform Database' }),
+            );
+            // Unknown access never offers Write Mode.
+            expect(screen.queryByLabelText('Write Mode')).toBeNull();
+
+            rerender(
+                <MantineProvider env="test" forceColorScheme="light">
+                    <InvestigateWorkspace
+                        runQuery={vi.fn()}
+                        writeApi={writeApi}
+                        access={writer}
+                    />
+                </MantineProvider>,
+            );
+            expect(screen.getByLabelText('Write Mode')).toBeInTheDocument();
+            fireEvent.click(screen.getByRole('radio', { name: 'Prometheus' }));
+            expect(screen.queryByLabelText('Write Mode')).toBeNull();
+        });
+
+        it('replaces Run and Explain with the Write Mode panel until turned off', () => {
+            render(
+                <MantineProvider env="test" forceColorScheme="light">
+                    <InvestigateWorkspace
+                        runQuery={vi.fn()}
+                        writeApi={writeApi}
+                        access={writer}
+                    />
+                </MantineProvider>,
+            );
+            fireEvent.click(
+                screen.getByRole('radio', { name: 'Platform Database' }),
+            );
+            fireEvent.change(screen.getByLabelText('Platform SQL'), {
+                target: { value: 'DELETE FROM refill_locks WHERE id = 1' },
+            });
+            fireEvent.click(screen.getByLabelText('Write Mode'));
+            expect(screen.getByTestId('write-mode-panel')).toHaveTextContent(
+                'DELETE FROM refill_locks WHERE id = 1',
+            );
+            expect(screen.queryByRole('button', { name: 'Run' })).toBeNull();
+            expect(
+                screen.queryByRole('button', { name: 'Explain' }),
+            ).toBeNull();
+
+            fireEvent.click(screen.getByLabelText('Write Mode'));
+            expect(screen.queryByTestId('write-mode-panel')).toBeNull();
+            expect(
+                screen.getByRole('button', { name: 'Run' }),
+            ).toBeInTheDocument();
+            expect(screen.getByLabelText(/Description/)).toBeInTheDocument();
+        });
+    });
 });

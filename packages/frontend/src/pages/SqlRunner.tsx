@@ -21,6 +21,7 @@ import { useInvestigateRunQuery } from '../features/investigate/hooks/useInvesti
 import { useInvestigateSaveAsChart } from '../features/investigate/hooks/useInvestigateSaveAsChart';
 import { useOperationsSavedSql } from '../features/investigate/hooks/useOperationsSavedSql';
 import { usePlatformSchemaLoaders } from '../features/investigate/hooks/usePlatformSchemaLoaders';
+import { useWriteModeApi } from '../features/investigate/hooks/useWriteModeApi';
 import { SqlRunnerSidebar } from '../features/sqlRunner';
 import { ContentPanel } from '../features/sqlRunner/components/ContentPanel';
 import { Header } from '../features/sqlRunner/components/Header';
@@ -98,6 +99,7 @@ const SqlRunner = ({
     );
     const platformSchema = usePlatformSchemaLoaders(projectUuid);
     const operationsSavedSql = useOperationsSavedSql(projectUuid);
+    const writeModeApi = useWriteModeApi(projectUuid);
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
             projectUuid,
@@ -312,6 +314,7 @@ const SqlRunner = ({
                                 platformSchema={platformSchema}
                                 savedSql={operationsSavedSql}
                                 access={federationAccess?.attrs}
+                                writeApi={writeModeApi}
                             />
                         </Box>
                     ) : (

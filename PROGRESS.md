@@ -1724,3 +1724,26 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     with token agent=true; person commit 200. write-commit-route 4/4 and write-preview-route
     3/3. Backend tsc --noEmit, oxlint and oxfmt are clean.
 - 2026-11-08T22:02:32Z supervisor: ldq-write-agent-refused passed the gate in round 1
+- ldq-write-mode-toggle (round 1):
+  - New `features/investigate/components/WriteModePanel.tsx` exports `WriteModeApi`
+    ({ createConfirmation(statement), write(ApiWriteRequest) }) and `WriteModePanel`
+    ({ statement, api }), the interface the write-mode-preview/commit acceptance tests use. For
+    now the panel (data-testid write-mode-panel) shows the statement in a code block and a
+    Preview button that is **always disabled**. `api` is accepted but not used yet.
+  - `InvestigateWorkspace` takes an optional `writeApi`. A "Write Mode" Switch shows only on
+    the Platform Database source, only with writeApi, and only when `access.platform_write ===
+    true`. Unknown access (undefined) never offers it, unlike Run/Explain, which default to
+    offered. While Write Mode is on, Run, Explain, the audit Description/ticket fields and the
+    run result are hidden, and the panel shows the raw Platform SQL statement (not the
+    wrapped SQL box). Leaving the Platform source hides the toggle and the panel.
+  - New hook `hooks/useWriteModeApi.ts` POSTs to /api/v2/projects/{uuid}/write/confirmations
+    and /api/v2/projects/{uuid}/write. SqlRunner passes it as writeApi.
+  - Next (ldq-write-mode-preview): wire Preview in WriteModePanel and add the panel's own
+    Description and Linear ticket fields. The workspace hides its own audit fields in Write
+    Mode, so the labels won't clash. Commit (COMMIT typed confirmation) comes after that.
+  - Tested: no Docker or backend server and no browser tool, so I rendered the real
+    InvestigateWorkspace in jsdom. Feature check 2/2. Added 2 InvestigateWorkspace unit tests:
+    toggle hidden with no access info, with platform_write it shows, and it is hidden again on
+    Prometheus; Write Mode replaces Run/Explain and turning it off brings them back. 12/12.
+    platform-explain-only 3/3. Frontend typecheck, oxlint and oxfmt are clean.
+- 2026-11-08T22:06:23Z supervisor: ldq-write-mode-toggle passed the gate in round 1
