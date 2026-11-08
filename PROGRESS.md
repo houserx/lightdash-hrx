@@ -879,3 +879,26 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     268/268). Feature check 3/3, schema `--check` in sync, generator test 4/4, backend and common tsc
     clean, oxlint/oxfmt clean.
 - 2026-11-08T19:28:35Z supervisor: ldq-dashboard-time-range-as-code passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-tile-filters (session):
+  - Common: new `utils/dashboardTimeRangeFilters.ts` (exported from index).
+    `getDashboardTimeRangeFilterRules({ timeRange, tileUuids, now })` returns one `inBetween`
+    DashboardFilterRule per mapped tile: target = that tile's `{ fieldId, tableName }`, values = the
+    range resolved by `resolveTimeRange` with the dashboard's refresh interval (10s when off;
+    absolute bounds unrounded), `tileTargets` = own target for that tile and `false` for every other
+    tile in `tileUuids`. No range or no mappings gives []. Mappings for tiles not in `tileUuids`
+    (deleted tiles) are ignored.
+  - Decision: rule ids are deterministic (`dashboard-time-range:<tileUuid>`, via
+    `getDashboardTimeRangeFilterId`), not uuidv4, so the tile query and cache key only change when
+    the resolved range does. Label is undefined.
+  - TRAP for callers: `getDashboardFilterRulesForTile` applies a rule to any tile that is missing
+    from `tileTargets`. Pass EVERY tile uuid of the dashboard as `tileUuids`, or unmapped tiles get
+    the time filter.
+  - Not done here (later features): sending the rules with dashboard tile queries / the query
+    route (ldq-query-routes-time-range-audit), URL override, settings UI, tile-status.
+  - Tested: unit tests `utils/dashboardTimeRangeFilters.test.ts` (6/6) feed the rules through the
+    real `getDashboardFiltersForTile`: the orders tile gets only its orders_created_at rule over
+    04:37:00Z..10:37:00Z for now-6h/1m at 10:37:43Z, the fills tile only fills_filled_at, the
+    markdown tile nothing; same rules within one minute bucket; `renderFilterRuleSql` compiles the
+    rule to a bounded Postgres timestamp filter. init, feature check 2/2, common tsc clean,
+    oxlint/oxfmt clean.
+- 2026-11-08T19:32:51Z supervisor: ldq-dashboard-time-range-tile-filters passed the gate in round 1
