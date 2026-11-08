@@ -6,6 +6,7 @@
 import { type Router } from 'express';
 import { type Knex } from 'knex';
 import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
+import { AlertInstanceModel } from './AlertInstanceModel';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
 import { ContactPointModel } from './ContactPointModel';
@@ -79,6 +80,7 @@ export const createAlertingModule = (
         }),
         evaluator: new AlertEvaluator({
             alertRuleModel,
+            alertInstanceModel: new AlertInstanceModel(deps.database),
             warehouseClients: deps.warehouseClients,
         }),
         // The database belongs to the caller; nothing of ours to release yet.

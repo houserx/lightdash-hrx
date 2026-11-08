@@ -5,7 +5,9 @@ import {
     type AlertRuleQueryContext,
     type WarehouseClient,
 } from '@lightdash/common';
+import { type AlertInstanceModel } from './AlertInstanceModel';
 import { type AlertRuleModel } from './AlertRuleModel';
+import { evaluateAlertSeries } from './evaluateAlertSeries';
 
 export type AlertEvaluationOutcome = {
     status: 'evaluated' | 'skipped';
@@ -22,21 +24,26 @@ export type AlertWarehouseClients = {
 
 type AlertEvaluatorArgs = {
     alertRuleModel: AlertRuleModel;
+    alertInstanceModel: AlertInstanceModel;
     warehouseClients: AlertWarehouseClients;
 };
 
 /**
  * Evaluates Alert Rules: runs a rule's SQL through the project's
  * WarehouseClient as `system:alert-evaluator`, over the window that ends at
- * the scheduled time.
+ * the scheduled time, then gives every series of the result its own state
+ * and value, stored per series in `alert_instances`.
  */
 export class AlertEvaluator {
     private readonly alertRuleModel: AlertRuleModel;
+
+    private readonly alertInstanceModel: AlertInstanceModel;
 
     private readonly warehouseClients: AlertWarehouseClients;
 
     constructor(args: AlertEvaluatorArgs) {
         this.alertRuleModel = args.alertRuleModel;
+        this.alertInstanceModel = args.alertInstanceModel;
         this.warehouseClients = args.warehouseClients;
     }
 
@@ -63,10 +70,17 @@ export class AlertEvaluator {
                 description: rule.description,
             }),
         });
-        await warehouseClient.runQuery(sql, {
+        const { rows } = await warehouseClient.runQuery(sql, {
             alert_rule_uuid: rule.uuid,
             project_uuid: rule.projectUuid,
         });
+        const evaluation = evaluateAlertSeries({
+            rule,
+            rows,
+            previous: await this.alertInstanceModel.listForRule(rule.uuid),
+            at: scheduledAt,
+        });
+        await this.alertInstanceModel.save(rule.uuid, evaluation);
         return { status: 'evaluated' };
     }
 }
