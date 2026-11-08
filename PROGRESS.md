@@ -1602,3 +1602,32 @@ token verification for a *valid* token, which feature 39 then hardens.
   renders it as "300". Extended/binary is unaffected. This existed before this feature; the
   pg-compat line could align float text output with Postgres if a client compares text.
 - 2026-11-08T21:09:27Z supervisor: eng-platform-sql-over-results passed the gate in round 1
+- 2026-11-08 eng-platform-tables-columns (round 1): added `PlatformCatalog` in
+  `federation-engine/src/platform.rs` (registered in `src/pg.rs` as `platform_tables` and
+  `platform_columns`). Both reuse platform_query's source and `PlatformTable`: same read pool (read
+  role), same `Access::require(.., Claim::PlatformRead)` (42501 naming platform_read, and it makes the
+  statement an Audited Query), same max_rows. Source lookup moved into
+  `PlatformSource::from_config`/`for_call`, shared by all three. `PlatformTable` gained `params`
+  (bound text parameters) and `signature` (for its error messages).
+  The SQL is the engine's own: `information_schema.tables` without `information_schema` and `pg_*`
+  schemas, ordered by schema and name; `information_schema.columns` for `$1::text`/`$2::text`
+  ordered by `ordinal_position`, `data_type` as information_schema reports it, and
+  `is_nullable = 'YES'` as bool. The names are bound, so there is no injection and no read guard. The
+  columns are fixed, so planning has no Postgres round trip, and each call runs once at execution.
+  Contract assumptions: "user tables" includes views and foreign tables (anything
+  information_schema.tables shows to the read role outside system schemas). That means only what
+  the read role has a privilege on. An unknown table gives zero rows, not an error.
+  Tested as a user: `../tmp/platform-catalog/run.sh <out>` (throwaway cluster with widgets, patients,
+  t and an `other.hidden` table without USAGE for engine_read, audit store mock, engine; pgclient's
+  `platform` bin). With a garbage token or a token without attrs, both functions -> 42501 "...
+  needs platform_read", and 0 audit store calls. With the reader token, platform_tables -> text
+  columns table_schema/table_name, rows public.patients, public.t, public.widgets (other.hidden
+  not visible), in both extended and simple protocol. platform_columns('public','widgets') -> text,
+  text, bool; id bigint false, name text false, active boolean false, created_at timestamp with
+  time zone false, score double precision true, note text true. ('public','nope') -> 0 rows. The
+  Postgres log shows one execute per call (a prepare alone runs nothing there). 4 calls gave 4
+  DynamoDB and 4 S3 audit writes. The check, the platform unit tests, platform::eng_platform_query_basic
+  and _enforcement pass. clippy -D warnings is clean (private toolchain).
+  For platform_explain: `PlatformSource::for_call` checks only platform_read. Give it a claim
+  parameter (or check platform_explain separately) and keep explain on the read pool.
+- 2026-11-08T21:17:21Z supervisor: eng-platform-tables-columns passed the gate in round 1

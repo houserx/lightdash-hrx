@@ -1,5 +1,7 @@
 //! `platform_query(sql)` (CONTRACTS §1.1): a read on the Platform Database (the
 //! `platform_postgres` source), as a table of whatever columns Postgres returns for `sql`.
+//! `platform_tables()` and `platform_columns(table_schema, table_name)` list its tables and
+//! columns ([`PlatformCatalog`]).
 //!
 //! The columns are found at plan time by a describe-only round trip (Parse and Describe, never
 //! Execute), so extended-protocol clients see the real column types before running the query.
@@ -115,18 +117,11 @@ fn cause(e: &tokio_postgres::Error) -> String {
     }
 }
 
-/// The `platform_query` table function.
-#[derive(Debug, Clone)]
-pub struct PlatformQuery {
-    /// `Err` holds why there is no source to read (none configured, or no default among many).
-    source: Result<PlatformSource, String>,
-    connect_timeout: Duration,
-}
-
-impl PlatformQuery {
-    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformQuery {
+impl PlatformSource {
+    /// The config's default `platform_postgres` source, or why there is none to read.
+    fn from_config(config: &Config) -> Result<PlatformSource, String> {
         let kind = SourceKind::PlatformPostgres;
-        let source = match config.default_source(kind) {
+        match config.default_source(kind) {
             Some(s) => match &s.settings {
                 SourceSettings::PlatformPostgres { read_url, .. } => Ok(PlatformSource {
                     name: s.name.clone(),
@@ -141,9 +136,36 @@ impl PlatformQuery {
                 "there are several platform_postgres sources and none is the default".to_string(),
             ),
             None => Err("there is no platform_postgres source in the config".to_string()),
-        };
+        }
+    }
+
+    /// The source for a call of `signature`, once the session may read it (42501 otherwise,
+    /// before anything reaches the Platform Database). The statement becomes an Audited Query.
+    fn for_call(
+        source: &Result<PlatformSource, String>,
+        session: &dyn Session,
+        signature: &str,
+    ) -> Result<PlatformSource, DataFusionError> {
+        let source = source
+            .clone()
+            .map_err(|why| sqlstate("42704", format!("{signature}: {why}")))?;
+        Access::require(session, &source.name, Claim::PlatformRead)?;
+        Ok(source)
+    }
+}
+
+/// The `platform_query` table function.
+#[derive(Debug, Clone)]
+pub struct PlatformQuery {
+    /// `Err` holds why there is no source to read (none configured, or no default among many).
+    source: Result<PlatformSource, String>,
+    connect_timeout: Duration,
+}
+
+impl PlatformQuery {
+    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformQuery {
         PlatformQuery {
-            source,
+            source: PlatformSource::from_config(config),
             connect_timeout,
         }
     }
@@ -163,12 +185,7 @@ impl TableFunctionImpl for PlatformQuery {
         }
         let session = args.session();
         let sql = text_argument(constant(&exprs[0], session, SIGNATURE)?, "sql", SIGNATURE)?;
-        let source = self
-            .source
-            .clone()
-            .map_err(|why| sqlstate("42704", format!("{SIGNATURE}: {why}")))?;
-        // Refused before anything reaches the Platform Database.
-        Access::require(session, &source.name, Claim::PlatformRead)?;
+        let source = PlatformSource::for_call(&self.source, session, SIGNATURE)?;
         let sql =
             engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
         let timeout = self.connect_timeout;
@@ -187,8 +204,118 @@ impl TableFunctionImpl for PlatformQuery {
         Ok(Arc::new(PlatformTable {
             source,
             connect_timeout: timeout,
+            signature: SIGNATURE,
             sql,
+            params: vec![],
             types: types.into_iter().map(|(_, ty)| ty).collect(),
+            schema,
+        }))
+    }
+}
+
+/// `platform_tables()` and `platform_columns(table_schema, table_name)` (CONTRACTS §1.1): the
+/// Platform Database's user tables, and a table's columns, from its `information_schema` as the
+/// read-only role sees it. Each call needs `attrs.platform_read` and is an Audited Query, like
+/// `platform_query`. Their SQL is the engine's own (the names are bound parameters), so it does
+/// not go through the read guard, and their columns are fixed, so planning needs no round trip.
+#[derive(Debug, Clone)]
+pub struct PlatformCatalog {
+    listing: Listing,
+    source: Result<PlatformSource, String>,
+    connect_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Listing {
+    Tables,
+    Columns,
+}
+
+/// Every table and view outside the system schemas (`pg_*` names are reserved for them).
+const TABLES_SQL: &str = "SELECT table_schema::text AS table_schema, table_name::text AS table_name \
+     FROM information_schema.tables \
+     WHERE table_schema::text <> 'information_schema' AND table_schema::text !~ '^pg_' \
+     ORDER BY 1, 2";
+
+/// A table's columns in ordinal order; `data_type` as `information_schema` names it.
+const COLUMNS_SQL: &str = "SELECT column_name::text AS column_name, data_type::text AS data_type, \
+     is_nullable::text = 'YES' AS is_nullable \
+     FROM information_schema.columns \
+     WHERE table_schema::text = $1::text AND table_name::text = $2::text \
+     ORDER BY ordinal_position";
+
+impl PlatformCatalog {
+    pub fn tables(config: &Config, connect_timeout: Duration) -> PlatformCatalog {
+        PlatformCatalog {
+            listing: Listing::Tables,
+            source: PlatformSource::from_config(config),
+            connect_timeout,
+        }
+    }
+
+    pub fn columns(config: &Config, connect_timeout: Duration) -> PlatformCatalog {
+        PlatformCatalog {
+            listing: Listing::Columns,
+            ..PlatformCatalog::tables(config, connect_timeout)
+        }
+    }
+}
+
+impl TableFunctionImpl for PlatformCatalog {
+    fn call_with_args(
+        &self,
+        args: TableFunctionArgs,
+    ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        let (signature, names, sql, columns): (_, &[&str], _, &[(&str, Type)]) = match self.listing
+        {
+            Listing::Tables => (
+                "platform_tables()",
+                &[],
+                TABLES_SQL,
+                &[("table_schema", Type::TEXT), ("table_name", Type::TEXT)],
+            ),
+            Listing::Columns => (
+                "platform_columns(table_schema, table_name)",
+                &["table_schema", "table_name"],
+                COLUMNS_SQL,
+                &[
+                    ("column_name", Type::TEXT),
+                    ("data_type", Type::TEXT),
+                    ("is_nullable", Type::BOOL),
+                ],
+            ),
+        };
+        let exprs = args.exprs();
+        if exprs.len() != names.len() {
+            return Err(sqlstate(
+                "42883",
+                format!(
+                    "{signature} takes {} argument{}, not {}",
+                    names.len(),
+                    if names.len() == 1 { "" } else { "s" },
+                    exprs.len()
+                ),
+            ));
+        }
+        let session = args.session();
+        let params = exprs
+            .iter()
+            .zip(names)
+            .map(|(e, name)| text_argument(constant(e, session, signature)?, name, signature))
+            .collect::<Result<Vec<_>, _>>()?;
+        let source = PlatformSource::for_call(&self.source, session, signature)?;
+        let columns: Vec<(String, Type)> = columns
+            .iter()
+            .map(|(name, ty)| (name.to_string(), ty.clone()))
+            .collect();
+        let schema = schema_of(&columns)?;
+        Ok(Arc::new(PlatformTable {
+            source,
+            connect_timeout: self.connect_timeout,
+            signature,
+            sql: sql.to_string(),
+            params,
+            types: columns.into_iter().map(|(_, ty)| ty).collect(),
             schema,
         }))
     }
@@ -265,12 +392,16 @@ fn schema_of(columns: &[(String, Type)]) -> Result<SchemaRef, DataFusionError> {
     Ok(Arc::new(Schema::new(fields)))
 }
 
-/// One `platform_query` call: the statement, and the columns it was planned with.
+/// One Platform Database call: the statement, its text parameters, and the columns it was
+/// planned with.
 #[derive(Debug)]
 struct PlatformTable {
     source: PlatformSource,
     connect_timeout: Duration,
+    /// The calling function, for error messages.
+    signature: &'static str,
     sql: String,
+    params: Vec<String>,
     /// The Postgres type of each column, as described at plan time.
     types: Vec<Type>,
     schema: SchemaRef,
@@ -292,13 +423,14 @@ impl PlatformTable {
             return Err(sqlstate(
                 "0A000",
                 format!(
-                    "{SIGNATURE}: the result's columns changed since the statement was planned; \
-                     run it again"
+                    "{}: the result's columns changed since the statement was planned; run it \
+                     again",
+                    self.signature
                 ),
             ));
         }
         let stream = client
-            .query_raw(&statement, std::iter::empty::<i32>())
+            .query_raw(&statement, &self.params)
             .await
             .map_err(|e| source.error(e))?;
         pin_mut!(stream);
