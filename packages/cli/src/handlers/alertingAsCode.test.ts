@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+    assertValidAlertingAsCodeFiles,
     dumpAlertingAsCodeYaml,
     getAlertingAsCodeFilePath,
     readAlertingAsCodeFiles,
@@ -141,5 +142,58 @@ describe('readAlertingAsCodeFiles', () => {
         await expect(readAlertingAsCodeFiles(dir)).rejects.toThrow(
             /broken\.yml: invalid YAML/,
         );
+    });
+});
+
+describe('assertValidAlertingAsCodeFiles', () => {
+    const slack = (url: unknown) =>
+        ({
+            version: 1,
+            type: 'contact_point',
+            slug: 'slack-infra',
+            name: 'Slack infra',
+            integrations: [{ type: 'slack_webhook', url }],
+        }) as AlertingAsCodeDocument;
+    const leakyUrl = 'https://hooks.slack.com/services/T0/B0/not-a-real-secret';
+
+    it('accepts documents whose secrets are references', () => {
+        expect(() =>
+            assertValidAlertingAsCodeFiles([
+                {
+                    filePath: 'contact-points/slack-infra.yml',
+                    document: slack({ secretRef: 'slack-infra-webhook' }),
+                },
+            ]),
+        ).not.toThrow();
+    });
+
+    it('names the file and field of an inlined secret, without its value', () => {
+        let message = '';
+        try {
+            assertValidAlertingAsCodeFiles([
+                {
+                    filePath: 'contact-points/slack-infra.yml',
+                    document: slack(leakyUrl),
+                },
+            ]);
+        } catch (error) {
+            message = (error as Error).message;
+        }
+        expect(message).toMatch(
+            /contact-points\/slack-infra\.yml: integrations\[0\]\.url: .*secretRef/,
+        );
+        expect(message).not.toContain(leakyUrl);
+    });
+
+    it('lists the problems of every file', () => {
+        expect(() =>
+            assertValidAlertingAsCodeFiles([
+                { filePath: 'contact-points/a.yml', document: slack(leakyUrl) },
+                {
+                    filePath: 'alert-rules/b.yml',
+                    document: { ...rule, condition: undefined } as never,
+                },
+            ]),
+        ).toThrow(/a\.yml: integrations\[0\]\.url[\s\S]*b\.yml: condition/);
     });
 });

@@ -1000,3 +1000,14 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - An empty folder gave exit 0 with a warning and no POST.
     - Trap: don't run an in-process mock server with `spawnSync` of the CLI. It deadlocks, so use async `spawn`.
 - 2026-11-08T23:06:09Z supervisor: alert-cli-upload passed the gate in round 1
+- alert-cli-upload-validation (round 1) — 2026-11-08
+  - Changes:
+    - `alertingAsCode.ts`: the new `assertValidAlertingAsCodeFiles(files)` runs common's `validateAlertingAsCode` (the as-code JSON schemas plus semantic checks) on every file read by `readAlertingAsCodeFiles`. Problems from all files are collected and thrown as one ParameterError: "Invalid alerting documents; nothing was uploaded:", then one `<file path>: <field path>: <error>` line per problem. `uploadAlertingAsCode` calls it before the POST, so nothing is sent. An inlined secret reads `integrations[0].url: must be a secret reference { secretRef: <name> }; secrets are never written inline`. The message names the field and never prints the secret value.
+    - Decision: the validation is a separate function, not part of `readAlertingAsCodeFiles`. That keeps the reader tests (minimal, schema-incomplete docs) as they were and keeps reading and validating apart.
+    - `alertingAsCode.test.ts`: 3 new tests. One accepts a secretRef. One checks that an inline secret names the file and field and leaves the value out. One checks that problems from several files are all listed.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped), and the alert-cli-upload check still passes. `alertingAsCode.test.ts` passes 10/10. CLI tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock server and the real CLI via tsx, in repo tmp/ and removed afterwards.
+      - A contact-points/leaky.yml with a Slack webhook URL inline gave exit 1. The message named the full path of leaky.yml and `secretRef`, and the URL did not appear. The only request was the health check, with no POST.
+      - After changing the url to `{ secretRef: slack-webhook }`, exit was 0 with one POST to /alerting/as-code.
+- 2026-11-08T23:09:03Z supervisor: alert-cli-upload-validation passed the gate in round 1

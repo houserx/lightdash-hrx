@@ -8,6 +8,7 @@
 //   <path>/notification-routes/notification-routes.yml
 import {
     ParameterError,
+    validateAlertingAsCode,
     type AlertingAsCodeDocument,
     type AlertingAsCodeDownload,
     type AlertingAsCodeType,
@@ -179,8 +180,8 @@ const readAlertingAsCodeFile = async (
 /**
  * Reads every alerting document under `basePath`, in upload order: Contact
  * Points, the route tree, then Alert Rules (files by name within a folder).
- * Each file must hold one document of its folder's type. The server checks
- * the documents themselves against the JSON schemas.
+ * Each file must hold one document of its folder's type; see
+ * `assertValidAlertingAsCodeFiles` for the documents' contents.
  */
 export const readAlertingAsCodeFiles = async (
     basePath: string,
@@ -199,6 +200,28 @@ export const readAlertingAsCodeFiles = async (
     return perFolder.flat();
 };
 
+/**
+ * Checks every document against its as-code JSON schema before anything is
+ * sent, and throws one error listing each problem with its file. Above all
+ * this keeps an inlined secret (a Slack webhook URL, a token) on the user's
+ * machine: such fields must be `{ secretRef: <name> }`. Error messages name
+ * the field, never its value.
+ */
+export const assertValidAlertingAsCodeFiles = (
+    files: AlertingAsCodeFile[],
+): void => {
+    const problems = files.flatMap(({ filePath, document }) =>
+        validateAlertingAsCode(document).errors.map(
+            (error) => `  ${filePath}: ${error}`,
+        ),
+    );
+    if (problems.length > 0) {
+        throw new ParameterError(
+            `Invalid alerting documents; nothing was uploaded:\n${problems.join('\n')}`,
+        );
+    }
+};
+
 export const uploadAlertingAsCode = async (
     projectUuid: string,
     customPath?: string,
@@ -213,6 +236,7 @@ export const uploadAlertingAsCode = async (
         );
         return undefined;
     }
+    assertValidAlertingAsCodeFiles(files);
     files.forEach(({ filePath, document }) => {
         GlobalState.debug(`> Uploading ${document.type} from ${filePath}`);
     });
