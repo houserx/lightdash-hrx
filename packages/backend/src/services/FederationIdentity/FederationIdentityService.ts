@@ -2,6 +2,7 @@
  * Mints CONTRACTS §3 identity tokens for a Lightdash user running a query on a Federation
  * Engine project. The token's `attrs` are read from the user's Lightdash user attributes.
  */
+import type { IdentityTokenProvider } from '@lightdash/warehouses';
 import type { UserAttributesModel } from '../../models/UserAttributesModel';
 import { agentExecutionContext } from '../AiAccessService/agentExecutionContext';
 import {
@@ -28,6 +29,9 @@ export type MintForUserArgs = {
      */
     agentSession?: boolean;
 };
+
+/** Everything a token needs except the agent flag, which the client reports per query. */
+export type CreateTokenProviderArgs = Omit<MintForUserArgs, 'agentSession'>;
 
 /** An explicit flag wins; otherwise any live agent execution context is an agent session. */
 export const isAgentSession = (agentSession?: boolean): boolean =>
@@ -81,5 +85,15 @@ export class FederationIdentityService {
             },
             { secret, now: this.clock() },
         );
+    }
+
+    /**
+     * The `getIdentityToken` option for a federation-flavour warehouse client: every call
+     * mints a fresh token (new nonce, iat and exp, current user attributes). The client
+     * reports whether it runs in an agent session, and that flag is passed through as is.
+     */
+    createTokenProvider(args: CreateTokenProviderArgs): IdentityTokenProvider {
+        return ({ agent }) =>
+            this.mintForUser({ ...args, agentSession: agent });
     }
 }

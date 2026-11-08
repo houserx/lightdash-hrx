@@ -527,3 +527,31 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     'investigate', resource_uuid null}. A tile gave {null, null, 'tile', the tile uuid}.
     Source 'dashboard', a missing source, and a numeric ticket were all refused.
 - 2026-11-08T18:07:03Z supervisor: ldq-identity-token-audit-block passed the gate in round 1
+- 2026-11-08 ldq-identity-token-provider (session):
+  - `@lightdash/warehouses` (warehouseClientFromCredentials.ts) now exports
+    `IdentityTokenContext` ({ agent: boolean }) and `IdentityTokenProvider`
+    ((context) => Promise<string>). `WarehouseClientOptions` gains an optional
+    `getIdentityToken?: IdentityTokenProvider`, documented as federation-only. No client reads
+    it yet: ldq-federation-identity-set makes FederationWarehouseClient call it once per query
+    with `{ agent: this-client's agentSession }` and send `SET hrx.identity`. Its acceptance
+    test expects exactly that shape.
+  - `FederationIdentityService.createTokenProvider(args)` (args = MintForUserArgs without
+    `agentSession`, exported as `CreateTokenProviderArgs`) returns an IdentityTokenProvider.
+    Every call goes through `mintForUser` with `agentSession: agent`, so each query gets a new
+    nonce, iat and exp, and re-reads the user's attributes. The explicit agent flag from the
+    client wins, which follows the agent session's contract assumption.
+  - Not wired into WarehouseClientFactory/AsyncQueryService yet. The factory has no
+    user/audit context; ldq-query-routes-time-range-audit ("passed to the async query service
+    that ... mints the identity token") or an integration feature must build the provider
+    there and pass it as `getIdentityToken` in the client options.
+  - Tested: init, then the feature check (2/2) and all six identity-token acceptance tests
+    (20/20). The warehouses catalog and factory acceptance tests passed (4/4). Backend and
+    warehouses `tsc --noEmit` and oxfmt --check are clean. As a user: a scratch vitest
+    (deleted afterwards) used a migrated throwaway DB with the real UserAttributesModel
+    (org defaults platform_read 'true' and platform_write 'yes'). It passed the provider to
+    warehouseClientFromCredentials for federation credentials and got a
+    FederationWarehouseClient. Two calls in a row gave different tokens with different
+    nonces, and both verified with verifyIdentityToken: platform_read true, platform_write
+    false, agent false, ttl 300, audit kept. `{ agent: true }` gave agent true and sys false.
+    A wrong secret was rejected.
+- 2026-11-08T18:13:07Z supervisor: ldq-identity-token-provider passed the gate in round 1

@@ -29,12 +29,28 @@ import { RedshiftWarehouseClient } from './warehouseClients/RedshiftWarehouseCli
 import { SnowflakeWarehouseClient } from './warehouseClients/SnowflakeWarehouseClient';
 import { TrinoWarehouseClient } from './warehouseClients/TrinoWarehouseClient';
 
+/** What a federation client tells the token provider about the query it is about to run. */
+export type IdentityTokenContext = {
+    /** True when the client was created for an AI agent session (`agentSession`). */
+    agent: boolean;
+};
+
+/**
+ * Returns a freshly minted CONTRACTS §3 identity token. A federation-flavour client calls it
+ * once per query, so every query carries its own token and nonce.
+ */
+export type IdentityTokenProvider = (
+    context: IdentityTokenContext,
+) => Promise<string>;
+
 export type WarehouseClientOptions = DuckdbWarehouseClientOptions &
     ClickhouseWarehouseClientOptions &
     AthenaWarehouseClientOptions &
     BigqueryWarehouseClientOptions & {
         agentSession?: boolean;
         agentJobControls?: boolean;
+        /** Federation-flavour Postgres only (CONTRACTS §4.1); ignored by other clients. */
+        getIdentityToken?: IdentityTokenProvider;
     };
 
 export const warehouseClientFromCredentials = (
