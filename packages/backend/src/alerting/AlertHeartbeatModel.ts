@@ -26,4 +26,12 @@ export class AlertHeartbeatModel {
             error: heartbeat.error,
         });
     }
+
+    /** When the most recent cycle completed, or null before the first. */
+    async getLatestCompletedAt(): Promise<Date | null> {
+        const row = await this.database(AlertEvaluatorHeartbeatsTableName)
+            .max<{ completed_at: Date | null }>('completed_at as completed_at')
+            .first();
+        return row?.completed_at ?? null;
+    }
 }

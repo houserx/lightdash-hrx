@@ -11,6 +11,7 @@ import express, {
     type Router,
 } from 'express';
 import Logger from '../logging/logger';
+import { type AlertHealthService } from './AlertHealthService';
 import {
     parseAlertNotificationListQuery,
     type AlertNotificationService,
@@ -25,7 +26,10 @@ import { type NotificationRouteService } from './NotificationRouteService';
 export const ALERTING_PROJECT_API_PATH =
     '/api/v2/projects/:projectUuid/alerting';
 
+export const ALERTING_HEALTH_API_PATH = '/api/v1/alerting/health';
+
 type AlertingRouterServices = {
+    alertHealth: AlertHealthService;
     alertRules: AlertRuleService;
     alertNotifications: AlertNotificationService;
     contactPoints: ContactPointService;
@@ -290,6 +294,19 @@ export const createAlertingApiRouter = (
         ),
     );
 
-    router.use(base, handleErrors);
+    // Evaluator lag for uptime checks: no session, and nothing project-specific.
+    router.get(
+        ALERTING_HEALTH_API_PATH,
+        async (_req: Request, res: Response, next: NextFunction) => {
+            try {
+                const results = await services.alertHealth.getHealth();
+                res.status(200).json({ status: 'ok', results });
+            } catch (error) {
+                next(error);
+            }
+        },
+    );
+
+    router.use([base, ALERTING_HEALTH_API_PATH], handleErrors);
     return router;
 };

@@ -748,3 +748,23 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - alert-health can read the latest `completed_at` from this table. Add a `getLatest` to AlertHeartbeatModel; the test expects lastCycleAt = T0 and lag from the clock.
     - alert-worker-wiring must map env `ALERTING_HEARTBEAT_URL`/`ALERTING_HEARTBEAT_METHOD` (assumption 4) into `deps.heartbeat`.
 - 2026-11-08T21:46:19Z supervisor: alert-cycle-heartbeat passed the gate in round 1
+- alert-health (round 1) — 2026-11-08
+  - Changed:
+    - `AlertHeartbeatModel.getLatestCompletedAt()`: `max(completed_at)` from `alert_evaluator_heartbeats`, or null.
+    - New `alerting/AlertHealthService.ts`: `getHealth()` returns `{status, lastCycleAt, lagSeconds}`. With no rows it returns `never_run` with lastCycleAt and lagSeconds both null. Otherwise lagSeconds = whole seconds from the latest `completed_at` to `clock.now()` (floored, never below 0), and status is `stale` when lagSeconds > 60 (`ALERTING_STALE_AFTER_SECONDS`), else `ok`.
+    - `router.ts`: `GET /api/v1/alerting/health` (`ALERTING_HEALTH_API_PATH`) answers `{status: 'ok', results}` **without a session**. `handleErrors` now covers this path as well as the project base. `index.ts`: the module exposes `alertHealth`, and the scheduler and health service share one AlertHeartbeatModel.
+    - Unit file `AlertHealthService.test.ts` (4 tests: never_run, 60s still ok, 61s stale, flooring and negative clamp).
+  - Contract assumptions:
+    - The endpoint is unauthenticated, like the engine's `/healthz` (CONTRACTS §1.3), because uptime checks have no session. It reveals only the evaluator's lag and last cycle time, nothing about any project.
+    - "Stale after a minute of silence" is read as lag strictly greater than 60s. Exactly 60s is still `ok`.
+    - It always answers HTTP 200: staleness is in the body, not a 503.
+  - Tested:
+    - After init the check passes (1 passed, 6 skipped). The unit file passes 4/4. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch harness walk (tmp/walk, removed afterwards) over real HTTP with real Postgres and no session:
+      - never_run before any tick.
+      - Ticked at wall-clock now, then really waited 20s: `ok`, lagSeconds 20.
+      - Clock moved forward: +60s `ok`, +61s `stale`, +5min `stale` with lag 300.
+      - A new tick: back to `ok` with lag 0.
+      - POST to the health path: 404. Project `/state` without a session: still 401.
+  - Next: alert-worker-wiring mounts `createAlertingRouter` in the app. The health route comes with it, but the app's own auth middleware must not shadow `/api/v1/alerting/health`.
+- 2026-11-08T21:51:31Z supervisor: alert-health passed the gate in round 1

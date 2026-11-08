@@ -6,6 +6,7 @@
 import { type Router } from 'express';
 import { type Knex } from 'knex';
 import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
+import { AlertHealthService } from './AlertHealthService';
 import { AlertHeartbeatModel } from './AlertHeartbeatModel';
 import { AlertInstanceModel } from './AlertInstanceModel';
 import { AlertNotificationModel } from './AlertNotificationModel';
@@ -59,6 +60,7 @@ export type AlertingModuleDeps = {
 };
 
 export type AlertingModule = {
+    alertHealth: AlertHealthService;
     alertRules: AlertRuleService;
     alertNotifications: AlertNotificationService;
     contactPoints: ContactPointService;
@@ -76,6 +78,7 @@ export const createAlertingModule = (
     const notificationRouteModel = new NotificationRouteModel(deps.database);
     const alertScheduleModel = new AlertScheduleModel(deps.database);
     const alertNotificationModel = new AlertNotificationModel(deps.database);
+    const alertHeartbeatModel = new AlertHeartbeatModel(deps.database);
     const evaluator = new AlertEvaluator({
         alertRuleModel,
         alertInstanceModel: new AlertInstanceModel(deps.database),
@@ -94,6 +97,10 @@ export const createAlertingModule = (
         siteUrl: deps.siteUrl,
     });
     return {
+        alertHealth: new AlertHealthService({
+            alertHeartbeatModel,
+            clock: deps.clock,
+        }),
         alertRules: new AlertRuleService({
             alertRuleModel,
             alertStateHistoryModel: new AlertStateHistoryModel(deps.database),
@@ -119,7 +126,7 @@ export const createAlertingModule = (
             jobQueue: deps.jobQueue,
             clock: deps.clock,
             notifier,
-            alertHeartbeatModel: new AlertHeartbeatModel(deps.database),
+            alertHeartbeatModel,
             heartbeat: deps.heartbeat,
         }),
         notifier,
@@ -131,6 +138,7 @@ export const createAlertingModule = (
 /** The alerting HTTP API, with full paths: mount it at the app root. */
 export const createAlertingRouter = (module: AlertingModule): Router =>
     createAlertingApiRouter({
+        alertHealth: module.alertHealth,
         alertRules: module.alertRules,
         alertNotifications: module.alertNotifications,
         contactPoints: module.contactPoints,
