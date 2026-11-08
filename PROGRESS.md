@@ -1051,3 +1051,26 @@ should add a dated line here per feature.
   Check `stat-sparkline-value.test.ts` 9/9 after `bash ./init.sh`; regressions build 31/31, client-install 4/4,
   state-timeline 3/3; `tsc --noEmit` and oxfmt clean. Scratch driver in `../tmp/drive-stat/` (outside the repo).
 - 2026-11-08T20:31:14Z supervisor: viz-registry-stat-value passed the gate in round 1
+
+## viz-registry-stat-thresholds (round 1)
+- **What.** Stat entry now colours by Grafana threshold steps. New shared helper `chart-registry/src/shared/thresholds.ts`
+  (`parseThresholds`, `thresholdColor`) bundles common's `eng1799/grafanaThresholds.ts` from source, like
+  `valueMappings.ts` does. The `thresholds` option is Grafana JSON text: `{mode, steps}` or a bare steps array; step
+  value null / "-Infinity" = base; named Grafana colours or hex; blank/malformed/step-less = no thresholds = Grafana base
+  green `#73BF69` (decision: no implicit red-80 default). Percentage mode reads steps against the series' data min..max
+  (Grafana's behaviour with no min/max), or 0..100 when the series has no spread.
+- **Colour mode** (`colorMode`, unknown -> `value`): `div[data-testid=stat]` always carries `data-color-mode`.
+  `value` -> `data-color` on the stat and the number (and unit) drawn in it; `background` -> `data-color` on the stat,
+  stat background = colour, text white or near-black by luminance; `none` -> no colour, no `data-color`. "No data" has no
+  `data-color` (value-mappings may give the null special a colour later - set `data-color` there).
+- **Version.** stat-sparkline bumped to **1.1.0** in `registry.json` with a changelog; threshold label now
+  "Thresholds (Grafana steps JSON)" (config options have no `description` key in `DataAppVizConfigOption`).
+  bar-gauge / status-grid should reuse `shared/thresholds.ts` (bar-gauge passes its min/max as `range`).
+- **Tested as a user.** Built the registry, untarred stat-sparkline@1.1.0 dist.tar and ran its bundle in jsdom with
+  Lightdash-style rows: thresholds green / 80 orange / 90 red -> 50 green `#73BF69`, 85 orange `#FF9830`, 95 red
+  `#F2495C`, 80 exactly orange; background mode 95 -> red background, white text, mode recorded; none -> mode recorded,
+  uncoloured; bare array with hex base + `semi-dark-red` -> `#E02F44`; blank / malformed -> green; percentage 50% over
+  data 0..200: 150 red, 40 green; no rows -> "No data", uncoloured; `viz-rendered` ack each time. Check
+  `stat-sparkline-thresholds.test.ts` 7/7 after `bash ./init.sh`; regressions stat-sparkline-value 9/9, build 31/31,
+  client-install 4/4; chart-registry typecheck and oxfmt clean. Scratch driver in `../tmp/drive-stat-thresholds/`.
+- 2026-11-08T20:34:52Z supervisor: viz-registry-stat-thresholds passed the gate in round 1

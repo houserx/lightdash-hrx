@@ -1,4 +1,5 @@
 import { formatGrafanaValue } from '../../shared/grafanaFormat';
+import { parseThresholds, thresholdColor } from '../../shared/thresholds';
 import {
     onVizContext,
     rawValue,
@@ -32,6 +33,46 @@ const decimalsOption = (raw: unknown): number | null => {
     return Math.min(Math.round(value), 20);
 };
 
+const COLOR_MODES = ['value', 'background', 'none'] as const;
+type ColorMode = (typeof COLOR_MODES)[number];
+
+const colorModeOption = (raw: unknown): ColorMode =>
+    COLOR_MODES.find((mode) => mode === raw) ?? 'value';
+
+/**
+ * Text colour readable on a background: near-black on light colours, white
+ * on dark ones (relative luminance of a #RRGGBB colour; white otherwise).
+ */
+const textOn = (background: string): string => {
+    const hex = /^#([0-9a-f]{6})$/i.exec(background.trim());
+    if (!hex) return '#FFFFFF';
+    const channel = (offset: number): number => {
+        const c = parseInt(hex[1].slice(offset, offset + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance =
+        0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+    return luminance > 0.5 ? '#202226' : '#FFFFFF';
+};
+
+/**
+ * The range percentage threshold steps are read against: the min..max of
+ * the series (Grafana uses the field's data range when no min/max is set),
+ * or Grafana's default 0..100 when the series has no spread.
+ */
+const dataRange = (
+    values: readonly (number | null)[],
+): { min: number; max: number } | undefined => {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const v of values) {
+        if (v === null) continue;
+        if (v < min) min = v;
+        if (v > max) max = v;
+    }
+    return min < max ? { min, max } : undefined;
+};
+
 const render = (root: HTMLElement, context: VizContext): void => {
     root.textContent = '';
     const options = context.options ?? {};
@@ -40,6 +81,8 @@ const render = (root: HTMLElement, context: VizContext): void => {
         : DEFAULT_REDUCER;
     const unit = typeof options.unit === 'string' ? options.unit : '';
     const decimals = decimalsOption(options.decimals);
+    const colorMode = colorModeOption(options.colorMode);
+    const thresholds = parseThresholds(options.thresholds);
 
     const points: StatPoint[] = orderPoints(
         context.rows.map((row) => ({
@@ -55,6 +98,7 @@ const render = (root: HTMLElement, context: VizContext): void => {
     const stat = document.createElement('div');
     stat.setAttribute('data-testid', 'stat');
     stat.setAttribute('data-reducer', reducer);
+    stat.setAttribute('data-color-mode', colorMode);
     stat.style.cssText =
         'display:flex;flex-direction:column;align-items:center;' +
         'justify-content:center;height:100%;box-sizing:border-box;padding:8px';
@@ -78,6 +122,19 @@ const render = (root: HTMLElement, context: VizContext): void => {
         const parts = formatGrafanaValue(value, unit, decimals);
         stat.setAttribute('data-value', String(value));
         valueEl.append(parts.prefix, parts.text);
+        const color = thresholdColor(
+            value,
+            thresholds,
+            dataRange(points.map((p) => p.value)),
+        );
+        if (colorMode === 'value') {
+            stat.setAttribute('data-color', color);
+            valueEl.style.color = color;
+        } else if (colorMode === 'background') {
+            stat.setAttribute('data-color', color);
+            stat.style.background = color;
+            stat.style.color = textOn(color);
+        }
         if (parts.suffix) {
             // Grafana draws the unit a little smaller than the number.
             const suffix = document.createElement('span');
