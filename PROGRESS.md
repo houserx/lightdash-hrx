@@ -661,3 +661,24 @@ should add a dated line here per feature.
 - **For the next sessions.** A span whose parent id is its own id is rooted and flagged `isOrphan: true`, the same
   as a missing parent. Clock skew is still not done (see the model entry above).
 - 2026-11-08T19:26:41Z supervisor: viz-trace-waterfall-orphans passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-clock-skew (session)
+
+- **What.** `packages/visualization/src/traceWaterfall/model.ts`: `placeSpans` now records each placed span's drawn
+  parent (`PlacedSpan.parent`), and a new `spanWindows` pass (depth-first order, so a parent is known before its
+  children) clamps each child's reported window `[start, start + duration]` into its parent's already clamped
+  window. `offsetMs`/`durationMs` come from the clamped window; `reportedDurationMs` stays as the data reported;
+  `isClamped` is true when the start or the end moved.
+- **Decisions.** Roots (including orphans and cycle-rooted spans) are never clamped, so the trace window is still
+  measured from the roots. A child with no time, or whose parent has no time, keeps its reported window (offset 0 if
+  no time, as before). A child entirely outside its parent becomes a zero-length bar at the nearer parent edge, flagged.
+  Clamping cascades: a grandchild is clamped against its parent's clamped window.
+- **Tested as a user.** No app mounts the waterfall yet, so I drove the built `dist/cjs` `renderChart` from a throwaway
+  Node script (deleted) with root 0–200 ms, `early` at −20 ms for 30 ms, its child `grand` at −15 ms for 20 ms, `late`
+  at 190 ms for 50 ms and `fine` at 40 ms for 20 ms. Got trace 200 ms; early +0 ms/10 ms clamped, grand +0 ms/5 ms
+  clamped, fine +40 ms/20 ms not clamped, late +190 ms/10 ms clamped (reported 50). After `bash ./init.sh` the check
+  passes 5/5; `trace-waterfall-model` 7/7 and `trace-waterfall-orphans` 3/3 still pass; visualization typecheck,
+  oxlint and oxfmt clean on the file.
+- **For the next sessions.** The span drawer feature ("See a note when the span was clamped") can read `isClamped` and
+  compare `durationMs` with `reportedDurationMs`.
+- 2026-11-08T19:29:03Z supervisor: viz-trace-waterfall-clock-skew passed the gate in round 1

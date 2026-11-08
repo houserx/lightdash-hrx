@@ -60,7 +60,16 @@ type RawSpan = {
 /** The bar colour when the palette given is empty. */
 const NO_PALETTE_COLOR = '#8E8E8E';
 
-type PlacedSpan = { span: RawSpan; depth: number; isOrphan: boolean };
+type PlacedSpan = {
+    span: RawSpan;
+    /** The span it is drawn under; null for a root. */
+    parent: RawSpan | null;
+    depth: number;
+    isOrphan: boolean;
+};
+
+/** A span's drawn window, in milliseconds since the epoch. */
+type SpanWindow = { startMs: number; endMs: number; isClamped: boolean };
 
 const rawOf = (row: ResultRow, fieldId: string | undefined): unknown =>
     fieldId === undefined ? undefined : row[fieldId]?.value?.raw;
@@ -165,21 +174,28 @@ const placeSpans = (spans: RawSpan[]): PlacedSpan[] => {
     const placed: PlacedSpan[] = [];
     const visited = new Set<number>();
     const visit = (root: RawSpan) => {
-        const stack: { span: RawSpan; depth: number }[] = [
-            { span: root, depth: 0 },
-        ];
+        const stack: {
+            span: RawSpan;
+            parent: RawSpan | null;
+            depth: number;
+        }[] = [{ span: root, parent: null, depth: 0 }];
         while (stack.length > 0) {
-            const { span, depth } = stack.pop()!;
+            const { span, parent, depth } = stack.pop()!;
             if (!visited.has(span.index)) {
                 visited.add(span.index);
                 placed.push({
                     span,
+                    parent,
                     depth,
                     isOrphan: depth === 0 && span.parentSpanId !== null,
                 });
                 const kids = children.get(span.spanId) ?? [];
                 for (let i = kids.length - 1; i >= 0; i -= 1) {
-                    stack.push({ span: kids[i], depth: depth + 1 });
+                    stack.push({
+                        span: kids[i],
+                        parent: span,
+                        depth: depth + 1,
+                    });
                 }
             }
         }
@@ -192,6 +208,45 @@ const placeSpans = (spans: RawSpan[]): PlacedSpan[] => {
         rest = rest.filter((s) => !visited.has(s.index));
     }
     return placed;
+};
+
+/**
+ * Each placed span's drawn window. A child whose reported window starts
+ * before or ends after its parent's (clock skew between services) is clamped
+ * into the parent's already clamped window and marked; a child entirely
+ * outside it shrinks to a zero-length bar at the nearer edge. Roots, and
+ * spans or parents with no time, keep their reported window.
+ */
+const spanWindows = (placed: PlacedSpan[]): Map<number, SpanWindow | null> => {
+    const windows = new Map<number, SpanWindow | null>();
+    // Depth first order: a parent's window is known before its children's.
+    placed.forEach(({ span, parent }) => {
+        if (span.startMs === null) {
+            windows.set(span.index, null);
+            return;
+        }
+        const startMs = span.startMs;
+        const endMs = startMs + span.reportedDurationMs;
+        const bounds = parent === null ? null : windows.get(parent.index);
+        if (!bounds) {
+            windows.set(span.index, { startMs, endMs, isClamped: false });
+            return;
+        }
+        const clampedStart = Math.min(
+            Math.max(startMs, bounds.startMs),
+            bounds.endMs,
+        );
+        const clampedEnd = Math.max(
+            Math.min(endMs, bounds.endMs),
+            clampedStart,
+        );
+        windows.set(span.index, {
+            startMs: clampedStart,
+            endMs: clampedEnd,
+            isClamped: clampedStart !== startMs || clampedEnd !== endMs,
+        });
+    });
+    return windows;
 };
 
 const buildTrace = (
@@ -217,26 +272,33 @@ const buildTrace = (
                   ...windowSpans.map((s) => s.startMs! + s.reportedDurationMs),
               )
             : startMs;
+    const windows = spanWindows(placed);
     return {
         traceId,
         startMs,
         durationMs: endMs - startMs,
-        spans: placed.map(({ span, depth, isOrphan }) => ({
-            spanId: span.spanId,
-            parentSpanId: span.parentSpanId,
-            traceId: span.traceId,
-            service: span.service,
-            name: span.name,
-            status: span.status,
-            attributes: span.attributes,
-            offsetMs: span.startMs === null ? 0 : span.startMs - startMs,
-            durationMs: span.reportedDurationMs,
-            reportedDurationMs: span.reportedDurationMs,
-            depth,
-            isOrphan,
-            isClamped: false,
-            color: colorOf(span.service),
-        })),
+        spans: placed.map(({ span, depth, isOrphan }) => {
+            const window = windows.get(span.index) ?? null;
+            return {
+                spanId: span.spanId,
+                parentSpanId: span.parentSpanId,
+                traceId: span.traceId,
+                service: span.service,
+                name: span.name,
+                status: span.status,
+                attributes: span.attributes,
+                offsetMs: window === null ? 0 : window.startMs - startMs,
+                durationMs:
+                    window === null
+                        ? span.reportedDurationMs
+                        : window.endMs - window.startMs,
+                reportedDurationMs: span.reportedDurationMs,
+                depth,
+                isOrphan,
+                isClamped: window?.isClamped ?? false,
+                color: colorOf(span.service),
+            };
+        }),
     };
 };
 
