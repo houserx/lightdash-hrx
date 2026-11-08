@@ -594,3 +594,4 @@ token verification for a *valid* token, which feature 39 then hardens.
 - 2026-11-08T17:02:32Z supervisor: eng-pg-information-schema passed the gate in round 1
 - 2026-11-08T17:22:01Z supervisor: eng-promql-range halted: the worker halted on eng-promql-range
 - 2026-11-08T17:22:56Z supervisor: eng-promql-instant halted: the worker halted on eng-promql-instant
+- 2026-11-08T17:23:35Z supervisor: eng-time-arguments halted: the worker halted on eng-time-arguments
