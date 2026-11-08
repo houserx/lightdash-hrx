@@ -1879,3 +1879,21 @@ largest files. Do them inside the features they serve, with unit tests, and keep
   - Next session: any new call to the engine should go through `requestEngine` (or use
     `redactIdentityToken`), so engine text never reaches a user or a log unredacted.
 - 2026-11-08T22:25:45Z supervisor: ldq-identity-token-not-logged passed the gate in round 1
+- ldq-docs (round 1):
+  - New `docs/eng-1799/ldq.md` for admins. It covers what was built: the Federation Engine
+    flavour, Dashboard Time Range with the `__from`/`__to`/`__interval`/`__range` parameters,
+    Investigate, Audited Query, schema browser/Explain/saved SQL, Write Mode and Preview, the
+    audit browser and `lightdash import portal-scripts`. It also covers how to configure the
+    Operations Project, with a table of the connection fields (form label, credential key, value)
+    and a YAML example with `flavor: 'federation'`, port 5433, `identitySigningSecret` and
+    `httpBaseUrl`, plus the four user attributes (`telemetry_restricted`, `platform_read`,
+    `platform_write`, `platform_explain`) and what each grants.
+  - I checked each statement against CONTRACTS.md, this file and the code: PostgresForm labels
+    ("Federation Engine", "Identity signing secret", "Engine HTTP URL"; Port is in the advanced
+    section), the audit route `/projects/:projectUuid/audit`, and the CLI's "Run lightdash upload"
+    hint. The doc uses only glossary terms and none of the `_Avoid_` terms.
+  - Tested: I read the doc as an admin would against the steps. Feature check 2/2. No code
+    changed.
+  - Not verified: the settings nav label for User attributes. The doc names the page by its
+    panel title and its `/userAttributes` settings route.
+- 2026-11-08T22:28:24Z supervisor: ldq-docs passed the gate in round 1
