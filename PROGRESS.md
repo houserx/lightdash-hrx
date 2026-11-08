@@ -1096,3 +1096,22 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     backend, frontend typecheck clean; oxfmt/oxlint clean on changed files (run oxfmt per file:
     one run over AsyncQueryService.test.ts plus others was killed, exit 137).
 - 2026-11-08T20:21:47Z supervisor: ldq-query-routes-time-range-audit passed the gate in round 1
+- ldq-investigate-sql-promql (round 1):
+  - New `packages/common/src/utils/telemetrySql.ts`, exported from common's index:
+    `buildTelemetrySql(telemetryQuery)` returns
+    `SELECT * FROM promql('<query>', ${ld.parameters.__from}, ${ld.parameters.__to}, ${ld.parameters.__interval}[, '<source>'])`
+    (CONTRACTS §1.1/§2). Single quotes are doubled in the query and the source. A missing or
+    empty source is left out so the engine's `default_source` applies. `TelemetryQuery` is a
+    discriminated union on `kind` with only `promql` so far, and the switch has a `never`
+    default. The next sql-* features (logql/logql_metric, cloudwatch, cloudwatch_logs,
+    traceql/trace) add union members and cases here, and reuse the private
+    `tableFunctionSql(name, args, source)` / `toSqlStringLiteral` helpers. Exported
+    `TELEMETRY_SQL_FROM/TO/INTERVAL` constants hold the reserved parameter references.
+  - The backend AsyncQueryService.test.ts SQL-runner time-range cases now build their SQL with
+    `buildTelemetrySql({kind:'promql', query:'up'})`, so the generated SQL is checked through
+    real parameter substitution (-> `promql('up', '<from>', '<to>', '5m')`).
+  - Tested: Investigate has no UI yet (source editors come in a later feature), so the
+    user-facing surface is the common function plus the SQL runner path. Feature check 3/3.
+    New telemetrySql.test.ts 5/5. Backend "reserved time parameters" cases 3/3 using the
+    builder. common tsc clean; oxfmt/oxlint clean on changed files.
+- 2026-11-08T20:24:34Z supervisor: ldq-investigate-sql-promql passed the gate in round 1

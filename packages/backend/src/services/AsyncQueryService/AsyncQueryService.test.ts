@@ -14,6 +14,7 @@ import {
     BigqueryTokenError,
     BinType,
     buildAgentIdentityClaim,
+    buildTelemetrySql,
     ChartType,
     CreateWarehouseCredentials,
     CustomDimensionType,
@@ -13600,8 +13601,10 @@ describe('AsyncQueryService', () => {
                 expect(streamQuery).not.toHaveBeenCalled();
             });
 
-            const telemetrySql =
-                "SELECT * FROM promql('up', ${ld.parameters.__from}, ${ld.parameters.__to}, ${ld.parameters.__interval})";
+            const telemetrySql = buildTelemetrySql({
+                kind: 'promql',
+                query: 'up',
+            });
 
             it('resolves the reserved time parameters from the request time range', async () => {
                 const { service, streamQuery } = buildService();
