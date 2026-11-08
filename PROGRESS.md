@@ -459,3 +459,49 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - A failing T+16 threw. T+17 → evaluated, because the throw cleared the marker.
       - GET /rules/{uuid}/history as viewer listed evaluation_skipped/overrun at 09:13, 09:02 and 09:01, plus the firing transition at 09:00.
 - 2026-11-08T20:22:19Z supervisor: alert-eval-overrun passed the gate in round 1
+- alert-notify-firing (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108160000_create_alert_notification_groups.ts` adds the dispatcher state table `alert_notification_groups`. It has a uuid PK, `project_uuid` (CASCADE), `contact_point_slug`, `group_key`, `last_sent_at` NOT NULL, `sent_alerts` jsonb `{"<ruleUuid>:<fingerprint>": "firing"|"resolved"}` and `created_at`, with unique (project_uuid, contact_point_slug, group_key). A row exists only once a group has been sent.
+    - New `AlertNotificationModel.ts`:
+      - `listActiveAlerts()`: instances in `firing`/`nodata`/`error` of non-shadow rules. `startsAt` = `state_since`.
+      - `listGroups`, `listContactPoints(projectUuid)`, `deleteGroups`.
+      - `claimGroupSend`: an insert-on-conflict-ignore for a new group, or an update guarded on the `last_sent_at` that was read. Only one notifier wins.
+      - `insertNotification`: one `alert_notifications` row per integration send. `alert_rule_uuid` is set only when the group holds one rule; `alerts` jsonb lists `{ruleUuid, fingerprint, status}`.
+    - New `AlertNotifier.ts`, on `module.notifier`, wired in index.ts:
+      - `flush()` routes each project's active alerts with `routeAlert` + `alertGroupKey`. A group is (contact point slug, group key).
+      - `isNotificationGroupDue` decides when a group sends:
+        - new group: once `now ≥ min(startsAt) + groupWait`;
+        - an alert not yet sent as firing: once `now ≥ last_sent_at + groupInterval`;
+        - otherwise: once `now ≥ last_sent_at + repeatInterval`.
+      - The send is claimed **before** anything leaves the process. That is at-most-once: a crash between the claim and the POST loses that notification. That beats a duplicate here; retries (alert-contact-retries) happen inside the send.
+      - Generic `webhook` integrations POST `buildAlertmanagerWebhookPayload`:
+        - receiver = Contact Point name; externalURL = siteUrl;
+        - generatorURL = `<siteUrl>/projects/<projectUuid>/alerting/rules/<ruleUuid>`;
+        - `maxAlerts` is passed through; `authorization.secretRef` → `Authorization: Bearer <secret>`;
+        - 10s timeout. A non-2xx response is logged as `failed` with `attempts: 1`.
+      - Groups that have no alerts any more are deleted at the end of a flush, so a refire waits group_wait again. A project whose flush throws keeps its groups.
+    - Unit tests: `AlertNotifier.test.ts` (4) covers the due rules and grouping.
+  - Decisions / for the next sessions:
+    - grouping, repeat and routing in notifications.accept.ts already pass with this dispatcher, because the timing rules above are the whole Alertmanager decision. Those sessions should verify them and may need only small changes.
+    - alert-notify-resolve:
+      - Today a group with no alerts is deleted silently, and resolved/normal series aren't loaded at all.
+      - Resolve needs to load recently resolved instances (state `resolved`, or a transition to normal), send them with `endsAt` when the group is next due (changed → groupInterval), honour `disableResolveMessage` per integration, and only then drop the group.
+      - `sent_alerts` already has room for a `resolved` status.
+    - alert-contact-retries: wrap `postWebhook` in the backoff loop (`deps.retry`, which isn't wired into the notifier yet) and record the real `attempts`. 4xx is not retried.
+    - alert-notifications-log: rows are already written. It needs the `GET /notifications` and `GET /rules/:uuid/notifications` routes. Map `ruleUuids` from `alerts[].ruleUuid`, and `alertStatus` from the payload status.
+    - Integrations other than `webhook` are skipped (nothing sent, nothing logged) until their alert-contact-* features. alert-contact-incident-io can reuse the same payload.
+    - Shadow rules are excluded from `listActiveAlerts`. alert-shadow-no-notify must add the `status: 'shadow'` log rows.
+    - `notifier.flush()` isn't called from `scheduler.tick()` yet. That belongs to alert-cycle-heartbeat/worker-wiring.
+  - Tested:
+    - The check passes (1 passed, 7 skipped).
+    - notifications.accept.ts: firing, grouping, repeat and routing pass. resolve, log and the two retries tests fail, because their features aren't built.
+    - Regressions: db-migrations 1/1, contact-points 3/3, scheduling 3 pass (the 4 failures are worker-wiring/heartbeat/health, unbuilt), evaluation 8 pass (nodata/error/annotation-templates unbuilt, as before).
+    - tsc (backend) is clean, and oxlint (src/alerting + migration) and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (`tmp/walk` and `src/alerting/__walk__`, both removed; the walk config needs `backendRoot = '../../..'` from `src/alerting/__walk__`):
+      - Setup: developer POSTs webhook `ops` (with an authorization secretRef); admin PUTs the tree `{contactPoint: ops, groupBy: [alertname], groupWait: 30s}` → 200; editor POSTs the disk rule; the rule is evaluated at 09:00 → firing.
+      - Flushes at +0/+10/+29s → 0 POSTs. At +30s, two module instances (workers) flushing at once → exactly 1 POST, with Bearer auth.
+      - The v4 payload has labels, annotations, startsAt 09:00:00, the zero endsAt, generatorURL with the rule uuid, and a 16-hex fingerprint.
+      - Flushes at +31/+45/+120/+299s and after a re-evaluation → still 1.
+      - One `sent` row in alert_notifications.
+      - Recovery → the group row is gone. Refire at 09:03 → nothing at +29s and a second POST at +30s with startsAt 09:03.
+- 2026-11-08T20:31:21Z supervisor: alert-notify-firing passed the gate in round 1

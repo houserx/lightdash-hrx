@@ -7,6 +7,8 @@ import { type Router } from 'express';
 import { type Knex } from 'knex';
 import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
 import { AlertInstanceModel } from './AlertInstanceModel';
+import { AlertNotificationModel } from './AlertNotificationModel';
+import { AlertNotifier } from './AlertNotifier';
 import { AlertRuleModel } from './AlertRuleModel';
 import { AlertRuleService } from './AlertRuleService';
 import { AlertScheduleModel } from './AlertScheduleModel';
@@ -55,6 +57,7 @@ export type AlertingModule = {
     notificationRoutes: NotificationRouteService;
     evaluator: AlertEvaluator;
     scheduler: AlertScheduler;
+    notifier: AlertNotifier;
     close(): Promise<void>;
 };
 
@@ -92,6 +95,13 @@ export const createAlertingModule = (
             alertScheduleModel,
             jobQueue: deps.jobQueue,
             clock: deps.clock,
+        }),
+        notifier: new AlertNotifier({
+            alertNotificationModel: new AlertNotificationModel(deps.database),
+            notificationRouteModel,
+            secrets: deps.secrets,
+            clock: deps.clock,
+            siteUrl: deps.siteUrl,
         }),
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},
