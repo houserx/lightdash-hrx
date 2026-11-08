@@ -59,7 +59,7 @@ use crate::cloudwatch_logs::CloudwatchLogs;
 use crate::labels::{label_udf, series_name_udf};
 use crate::identity::{Access, AuditedRead, Identity};
 use crate::logql::Logql;
-use crate::platform::{PlatformCatalog, PlatformQuery};
+use crate::platform::{PlatformCatalog, PlatformExplain, PlatformQuery};
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
 use crate::trace::Trace;
@@ -165,6 +165,8 @@ impl PgHandlers {
         sql.ctx.register_udtf("platform_tables", Arc::new(tables));
         let columns = PlatformCatalog::columns(config, SOURCE_CONNECT_TIMEOUT);
         sql.ctx.register_udtf("platform_columns", Arc::new(columns));
+        let explain = PlatformExplain::new(config, SOURCE_CONNECT_TIMEOUT);
+        sql.ctx.register_udtf("platform_explain", Arc::new(explain));
         let trace = Trace::new(config, http.clone());
         sql.ctx.register_udtf("trace", Arc::new(trace));
         let promql = Promql::new(config, http);

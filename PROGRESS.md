@@ -1631,3 +1631,27 @@ token verification for a *valid* token, which feature 39 then hardens.
   For platform_explain: `PlatformSource::for_call` checks only platform_read. Give it a claim
   parameter (or check platform_explain separately) and keep explain on the read pool.
 - 2026-11-08T21:17:21Z supervisor: eng-platform-tables-columns passed the gate in round 1
+- 2026-11-08 eng-platform-explain (round 1): added `PlatformExplain` in
+  `federation-engine/src/platform.rs` (registered as `platform_explain` in `src/pg.rs`) and
+  `Claim::PlatformExplain` plus `Identity::platform_explain` (`attrs.platform_explain`) in
+  `src/identity.rs`. The claim accepts platform_explain or platform_read. A refusal is 42501 "source
+  \"…\" is the Platform Database and needs platform_explain or platform_read". It still needs
+  `audit.description` and is an Audited Query (CONTRACTS §1.2, §6). platform_explain alone does not
+  allow platform_query/tables/columns. `PlatformSource::for_call` now takes the claim. The sql
+  passes the read guard (Mode::Read) like platform_query's. Then `EXPLAIN (FORMAT JSON) <guarded
+  sql>` runs once on the read pool through the shared `PlatformTable`, with fixed column `plan json`,
+  so planning has no Postgres round trip. The options come first and are fixed, so nothing in sql
+  can add ANALYZE. A sql that itself starts with EXPLAIN (the guard allows that keyword) becomes
+  `EXPLAIN (FORMAT JSON) EXPLAIN …`, and Postgres rejects it with 42601. Nothing runs.
+  Tested as a user: `../tmp/platform-explain/run.sh <out>` (throwaway cluster with synthetic
+  widgets and probe_seq, audit store mock, engine; pgclient's `platform` bin, which now decodes json
+  columns). Garbage token / no attrs -> 42501 naming both claims, 0 audit calls. Explain-only token
+  and reader token -> one column `plan` of type json and one row, `[0].Plan` with Node Type Index
+  Scan and Total Cost, no Actual Rows, in extended and simple protocol. Explaining nextval leaves
+  probe_seq.is_called false. DELETE, a DML CTE and a stacked statement -> 42501 guard messages.
+  Widgets is unchanged. The Postgres log shows only `EXPLAIN (FORMAT JSON) …`, one execute per call.
+  6 successful calls -> 12 audit writes.
+  Trap: `cargo fmt` (private toolchain) rewrites several src files that HEAD left unformatted
+  (audit, cloudwatch*, logql, promql, …). Revert the unrelated hunks rather than committing them,
+  or let a dedicated change do the reformat.
+- 2026-11-08T21:22:57Z supervisor: eng-platform-explain passed the gate in round 1

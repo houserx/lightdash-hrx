@@ -8,8 +8,9 @@
 //!
 //! Planning a statement puts an [`Access`] into the DataFusion session config. A table function
 //! that picks a restricted source asks it with [`Access::require_restricted`] (the Platform
-//! Database: [`Access::require`] with [`Claim::PlatformRead`]), which refuses with SQLSTATE 42501
-//! or remembers the source, so the statement becomes an Audited Query (§6).
+//! Database: [`Access::require`] with [`Claim::PlatformRead`] or [`Claim::PlatformExplain`]),
+//! which refuses with SQLSTATE 42501 or remembers the source, so the statement becomes an
+//! Audited Query (§6).
 
 use std::sync::{Arc, Mutex};
 
@@ -42,6 +43,8 @@ pub struct Identity {
     pub telemetry_restricted: bool,
     /// `attrs.platform_read`: may read the Platform Database (agents too, §1.2).
     pub platform_read: bool,
+    /// `attrs.platform_explain`: may explain (never run) Platform Database statements.
+    pub platform_explain: bool,
     /// `audit.description`, when it is a non-blank string.
     pub description: Option<String>,
     /// `audit.ticket`, when it is a non-blank string.
@@ -108,23 +111,36 @@ impl Identity {
         match claim {
             Claim::TelemetryRestricted => Identity::check_restricted(identity, source),
             Claim::PlatformRead => {
-                let Some(id) = identity.filter(|id| id.platform_read) else {
-                    return Err(sqlstate(
-                        "42501",
-                        format!(
-                            "source \"{source}\" is the Platform Database and needs platform_read"
-                        ),
-                    ));
-                };
-                if id.description.is_none() {
-                    return Err(sqlstate(
-                        "42501",
-                        "audited query requires a description".to_string(),
-                    ));
-                }
-                Ok(())
+                let id = identity.filter(|id| id.platform_read);
+                Identity::described(id, source, "platform_read")
+            }
+            Claim::PlatformExplain => {
+                let id = identity.filter(|id| id.platform_explain || id.platform_read);
+                Identity::described(id, source, "platform_explain or platform_read")
             }
         }
+    }
+
+    /// A Platform Database Audited Query by `identity`, which holds the claim (`None` when it
+    /// does not): 42501 naming `claim`, or for a missing description.
+    fn described(
+        identity: Option<&Identity>,
+        source: &str,
+        claim: &str,
+    ) -> Result<(), DataFusionError> {
+        let Some(id) = identity else {
+            return Err(sqlstate(
+                "42501",
+                format!("source \"{source}\" is the Platform Database and needs {claim}"),
+            ));
+        };
+        if id.description.is_none() {
+            return Err(sqlstate(
+                "42501",
+                "audited query requires a description".to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -135,6 +151,9 @@ pub enum Claim {
     TelemetryRestricted,
     /// The Platform Database: `attrs.platform_read`.
     PlatformRead,
+    /// Explaining a Platform Database statement: `attrs.platform_explain` or
+    /// `attrs.platform_read`.
+    PlatformExplain,
 }
 
 /// A source an Audited Query reads, and the claim reading it needs.
@@ -180,6 +199,7 @@ pub fn verify(token: &str, secret: &[u8], now: i64) -> Option<Identity> {
         sys: claims.get("sys") == Some(&Value::Bool(true)),
         telemetry_restricted: attr("telemetry_restricted"),
         platform_read: attr("platform_read"),
+        platform_explain: attr("platform_explain"),
         description: text(audit.and_then(|a| a.get("description"))),
         ticket: text(audit.and_then(|a| a.get("ticket"))),
     })
@@ -350,6 +370,33 @@ mod tests {
         assert!(code(check(stringly)).contains("platform_read"));
         assert!(code(Identity::check(None, "p", Claim::PlatformRead)).contains("platform_read"));
         let mut quiet = reader;
+        quiet["audit"] = json!({"description": ""});
+        assert!(code(check(quiet)).contains("description"));
+    }
+
+    #[test]
+    fn explaining_needs_platform_explain_or_platform_read() {
+        let id = |c: Value| verify(&mint(&c, SECRET), SECRET, NOW);
+        let check = |c: Value| Identity::check(id(c).as_ref(), "p", Claim::PlatformExplain);
+        let code = |r: Result<(), DataFusionError>| match r {
+            Err(DataFusionError::External(e)) => e.to_string(),
+            other => panic!("{other:?}"),
+        };
+        let explainer = with("attrs", json!({"platform_explain": true}));
+        assert!(check(explainer.clone()).is_ok());
+        assert!(check(with("attrs", json!({"platform_read": true}))).is_ok());
+        let refusal = code(check(claims()));
+        assert!(
+            refusal.contains("platform_explain or platform_read"),
+            "{refusal}"
+        );
+        assert!(
+            code(Identity::check(None, "p", Claim::PlatformExplain)).contains("platform_explain")
+        );
+        // platform_explain alone does not read.
+        let reading = Identity::check(id(explainer.clone()).as_ref(), "p", Claim::PlatformRead);
+        assert!(code(reading).contains("platform_read"));
+        let mut quiet = explainer;
         quiet["audit"] = json!({"description": ""});
         assert!(code(check(quiet)).contains("description"));
     }

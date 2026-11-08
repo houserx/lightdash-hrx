@@ -298,6 +298,7 @@ mod tests {
             sys: false,
             telemetry_restricted: true,
             platform_read: false,
+            platform_explain: false,
             description: Some("why".into()),
             ticket: ticket.map(str::to_string),
         }

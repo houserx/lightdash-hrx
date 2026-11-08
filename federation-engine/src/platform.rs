@@ -1,7 +1,8 @@
 //! `platform_query(sql)` (CONTRACTS §1.1): a read on the Platform Database (the
 //! `platform_postgres` source), as a table of whatever columns Postgres returns for `sql`.
 //! `platform_tables()` and `platform_columns(table_schema, table_name)` list its tables and
-//! columns ([`PlatformCatalog`]).
+//! columns ([`PlatformCatalog`]). `platform_explain(sql)` returns the estimate-only plan of `sql`
+//! ([`PlatformExplain`]).
 //!
 //! The columns are found at plan time by a describe-only round trip (Parse and Describe, never
 //! Execute), so extended-protocol clients see the real column types before running the query.
@@ -139,17 +140,19 @@ impl PlatformSource {
         }
     }
 
-    /// The source for a call of `signature`, once the session may read it (42501 otherwise,
-    /// before anything reaches the Platform Database). The statement becomes an Audited Query.
+    /// The source for a call of `signature`, once the session's identity has `claim` (42501
+    /// otherwise, before anything reaches the Platform Database). The statement becomes an
+    /// Audited Query.
     fn for_call(
         source: &Result<PlatformSource, String>,
         session: &dyn Session,
         signature: &str,
+        claim: Claim,
     ) -> Result<PlatformSource, DataFusionError> {
         let source = source
             .clone()
             .map_err(|why| sqlstate("42704", format!("{signature}: {why}")))?;
-        Access::require(session, &source.name, Claim::PlatformRead)?;
+        Access::require(session, &source.name, claim)?;
         Ok(source)
     }
 }
@@ -185,7 +188,8 @@ impl TableFunctionImpl for PlatformQuery {
         }
         let session = args.session();
         let sql = text_argument(constant(&exprs[0], session, SIGNATURE)?, "sql", SIGNATURE)?;
-        let source = PlatformSource::for_call(&self.source, session, SIGNATURE)?;
+        let source =
+            PlatformSource::for_call(&self.source, session, SIGNATURE, Claim::PlatformRead)?;
         let sql =
             engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
         let timeout = self.connect_timeout;
@@ -303,7 +307,8 @@ impl TableFunctionImpl for PlatformCatalog {
             .zip(names)
             .map(|(e, name)| text_argument(constant(e, session, signature)?, name, signature))
             .collect::<Result<Vec<_>, _>>()?;
-        let source = PlatformSource::for_call(&self.source, session, signature)?;
+        let source =
+            PlatformSource::for_call(&self.source, session, signature, Claim::PlatformRead)?;
         let columns: Vec<(String, Type)> = columns
             .iter()
             .map(|(name, ty)| (name.to_string(), ty.clone()))
@@ -319,6 +324,75 @@ impl TableFunctionImpl for PlatformCatalog {
             schema,
         }))
     }
+}
+
+/// `platform_explain(sql)` (CONTRACTS §1.1): one row, `plan json`, the Platform Database's
+/// estimate-only `EXPLAIN (FORMAT JSON)` of `sql`. It never uses `ANALYZE`, so `sql` is planned
+/// by Postgres but never run. It needs `attrs.platform_explain` or `attrs.platform_read` and is
+/// an Audited Query (§1.2, §6). `sql` must pass the read guard (§5) like `platform_query`'s, and
+/// the explain runs over the read URL (the read-only role). Its column is fixed, so planning
+/// needs no round trip.
+#[derive(Debug, Clone)]
+pub struct PlatformExplain {
+    source: Result<PlatformSource, String>,
+    connect_timeout: Duration,
+}
+
+const EXPLAIN_SIGNATURE: &str = "platform_explain(sql)";
+
+impl PlatformExplain {
+    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformExplain {
+        PlatformExplain {
+            source: PlatformSource::from_config(config),
+            connect_timeout,
+        }
+    }
+}
+
+impl TableFunctionImpl for PlatformExplain {
+    fn call_with_args(
+        &self,
+        args: TableFunctionArgs,
+    ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        let exprs = args.exprs();
+        if exprs.len() != 1 {
+            return Err(sqlstate(
+                "42883",
+                format!("{EXPLAIN_SIGNATURE} takes 1 argument, not {}", exprs.len()),
+            ));
+        }
+        let session = args.session();
+        let sql = text_argument(
+            constant(&exprs[0], session, EXPLAIN_SIGNATURE)?,
+            "sql",
+            EXPLAIN_SIGNATURE,
+        )?;
+        let source = PlatformSource::for_call(
+            &self.source,
+            session,
+            EXPLAIN_SIGNATURE,
+            Claim::PlatformExplain,
+        )?;
+        let sql =
+            engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
+        let columns = [("plan".to_string(), Type::JSON)];
+        let schema = schema_of(&columns)?;
+        Ok(Arc::new(PlatformTable {
+            source,
+            connect_timeout: self.connect_timeout,
+            signature: EXPLAIN_SIGNATURE,
+            sql: explain_sql(&sql),
+            params: vec![],
+            types: vec![Type::JSON],
+            schema,
+        }))
+    }
+}
+
+/// The estimate-only explain of a guarded statement. The options come first and are fixed, so
+/// nothing in `sql` can add `ANALYZE` to them.
+fn explain_sql(sql: &str) -> String {
+    format!("EXPLAIN (FORMAT JSON) {sql}")
 }
 
 /// Runs `future` to completion from synchronous planning code. Table functions are called
