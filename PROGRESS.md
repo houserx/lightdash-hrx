@@ -1094,3 +1094,36 @@ token verification for a *valid* token, which feature 39 then hardens.
   Checks sources::eng_cloudwatch_role_assumption, eng_cloudwatch_metric_stat and
   eng_cloudwatch_expression pass; 6 cloudwatch unit tests pass; no build warnings.
 - 2026-11-08T19:42:24Z supervisor: eng-cloudwatch-role-assumption passed the gate in round 1
+- eng-cloudwatch-logs-insights (worker, round 1): new `src/cloudwatch_logs.rs`, new `src/aws.rs`,
+  wiring in `main.rs`/`pg.rs`, `sources.rs`, and `aws-sdk-cloudwatchlogs = "1.163"` in Cargo.toml
+  (it was in the local cargo cache, so it builds `--offline`; Cargo.lock gains its entries).
+  `cloudwatch_logs(log_groups, query, start, end[, source])` returns `timestamp timestamptz NULL,
+  message text NULL, fields json`. log_groups is split on `,`, trimmed, empties dropped (none left →
+  22023). The query goes to StartQuery unchanged; times are epoch seconds (start rounded down, end
+  up). GetQueryResults is polled right away and then every `poll_interval_ms` while Scheduled or
+  Running. On Complete each result becomes a row: `@timestamp` read as UTC
+  (`%Y-%m-%d %H:%M:%S%.f`, RFC 3339 also accepted; unparseable or missing → NULL), `@message`
+  (missing → NULL), and `fields` = every field except `@ptr`, values as strings, @timestamp and
+  @message included (A20). Any other final status → an error "... ended with status <S>". More
+  than max_rows results → 54000.
+  - `aws::shared_config` and `aws::assume_role` moved out of cloudwatch.rs, as the role feature's
+    note asked. Both AWS sources build their SDK client the same way (default chain, region,
+    endpoint_url, role_arn through STS).
+  - Contract assumption (fail closed): a cloudwatch_logs source with non-empty
+    `restricted_log_groups` is treated as restricted (42501) for every query, like Loki's
+    `restricted_selectors`. eng-restricted-cloudwatch-log-groups narrows this to overlapping groups.
+  - Not done, belongs to eng-cloudwatch-logs-failure-and-cancel: StopQuery on timeout or cancel.
+    Today, dropping the scan future only stops polling. The Failed-status error is already in place.
+  - Trap: the engine has no `->>` operator yet (0A000). Use `label(fields, 'level')` to read a field.
+  Tested as a user: `../tmp/cloudwatch-logs/run.sh` starts a JSON-1.1 Logs Insights mock (Running,
+  Running, Complete) and the engine with fake env credentials (AWS_ENDPOINT_URL set to a dead port),
+  then runs queries through pg-wire. The feature's step query returned 2 rows: 00:00:01.25+00 "first
+  event" {"@message","@timestamp","level":"error"} with no @ptr, then 00:00:02+00 "second event". The
+  mock saw StartQuery with logGroupNames ["/aws/lambda/a","/aws/lambda/b"], the query byte-for-byte,
+  startTime 1762560000 and endTime 1762563600, then 3 GetQueryResults, all signed with the env key
+  scoped us-east-2/logs. `WHERE label(fields,'level')='error'` gave 1 row. Errors: ' , ' → 22023,
+  a cloudwatch source → 42809, end before start → 22023. Check sources::eng_cloudwatch_logs_insights
+  passes. Re-ran eng_cloudwatch_metric_stat, eng_cloudwatch_expression and
+  eng_cloudwatch_role_assumption: all pass. 9 cloudwatch unit tests pass. No build warnings. rustfmt
+  isn't installed, so the code is formatted by hand.
+- 2026-11-08T19:52:28Z supervisor: eng-cloudwatch-logs-insights passed the gate in round 1

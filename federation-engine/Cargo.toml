@@ -25,6 +25,7 @@ async-trait = "0.1.92"
 # AWS sources: the default credential chain and SigV4, over aws-smithy's rustls (aws-lc-rs) client.
 aws-config = { version = "1.13", default-features = false, features = ["behavior-version-latest", "credentials-process", "default-https-client", "rt-tokio"] }
 aws-sdk-cloudwatch = { version = "1.140", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-cloudwatchlogs = { version = "1.163", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 # Only to mark a source's sts_endpoint_url as programmatic config, so it wins over AWS_ENDPOINT_URL.
 aws-types = "1.7"
 axum = "0.8"

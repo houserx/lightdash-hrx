@@ -43,6 +43,7 @@ use engine_config::{AwsSettings, Config, SourceKind, SourceSettings};
 use serde_json::{Map, Value};
 use tokio::sync::OnceCell;
 
+use crate::aws;
 use crate::promql::{UTC, constant, parse_duration, sample_schema, text_argument, time_argument};
 use crate::session::sqlstate;
 use crate::sources::HttpSources;
@@ -395,27 +396,6 @@ fn aws_time(us: i64) -> DateTime {
     DateTime::from_secs_and_nanos(us.div_euclid(1_000_000), nanos)
 }
 
-/// Credentials for `role_arn`: STS `AssumeRole` in the source's region, signed by the base
-/// (default chain) credentials of `shared`, at `sts_endpoint_url` when one is set. The SDK client's
-/// identity cache keeps the temporary credentials and assumes the role again before they expire.
-async fn assume_role(
-    shared: &aws_config::SdkConfig,
-    role: &str,
-    aws: &AwsSettings,
-) -> aws_config::sts::AssumeRoleProvider {
-    let mut sts = shared.to_builder();
-    if let Some(url) = &aws.sts_endpoint_url {
-        // Programmatic origin, or the STS client prefers AWS_ENDPOINT_URL(_STS) from the env.
-        sts.set_endpoint_url(Some(url.clone()));
-        sts.insert_origin("endpoint_url", aws_types::origin::Origin::shared_config());
-    }
-    aws_config::sts::AssumeRoleProvider::builder(role)
-        .session_name("federation-engine")
-        .configure(&sts.build())
-        .build()
-        .await
-}
-
 /// An AWS timestamp as µs since the Unix epoch (truncated).
 fn micros(t: &DateTime) -> i64 {
     t.secs() * 1_000_000 + i64::from(t.subsec_nanos() / 1000)
@@ -438,20 +418,13 @@ impl CloudwatchQuery {
     async fn client(&self) -> &aws_sdk_cloudwatch::Client {
         self.client
             .get_or_init(|| async {
-                let timeouts = aws_config::timeout::TimeoutConfig::builder()
-                    .connect_timeout(self.connect_timeout)
-                    .build();
-                let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(Region::new(self.aws.region.clone()))
-                    .timeout_config(timeouts)
-                    .load()
-                    .await;
+                let shared = aws::shared_config(&self.aws, self.connect_timeout).await;
                 let mut config = aws_sdk_cloudwatch::config::Builder::from(&shared);
                 if let Some(url) = &self.aws.endpoint_url {
                     config = config.endpoint_url(url);
                 }
                 if let Some(role) = &self.aws.role_arn {
-                    let provider = assume_role(&shared, role, &self.aws).await;
+                    let provider = aws::assume_role(&shared, role, &self.aws).await;
                     config = config.credentials_provider(provider);
                 }
                 aws_sdk_cloudwatch::Client::from_conf(config.build())

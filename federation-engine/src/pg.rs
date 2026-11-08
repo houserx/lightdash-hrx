@@ -54,6 +54,7 @@ use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
 use crate::cloudwatch::Cloudwatch;
+use crate::cloudwatch_logs::CloudwatchLogs;
 use crate::labels::{label_udf, series_name_udf};
 use crate::logql::Logql;
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
@@ -140,6 +141,8 @@ impl PgHandlers {
         let sql = Sql::new();
         let cloudwatch = Cloudwatch::new(config, SOURCE_CONNECT_TIMEOUT);
         sql.ctx.register_udtf("cloudwatch", Arc::new(cloudwatch));
+        let logs = CloudwatchLogs::new(config, SOURCE_CONNECT_TIMEOUT);
+        sql.ctx.register_udtf("cloudwatch_logs", Arc::new(logs));
         let logql = Logql::new(config, http.clone());
         sql.ctx
             .register_udtf("logql_metric", Arc::new(logql.clone().metric()));

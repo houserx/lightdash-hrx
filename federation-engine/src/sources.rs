@@ -123,13 +123,20 @@ fn base_url(settings: &SourceSettings) -> Option<&String> {
     }
 }
 
-/// A `restricted = true` source, or a Loki source with `restricted_selectors`: until identity
-/// tokens are verified and selectors are checked for overlap, every query to it may touch
-/// Restricted Telemetry.
+/// A `restricted = true` source, a Loki source with `restricted_selectors` or a CloudWatch Logs
+/// source with `restricted_log_groups`: until identity tokens are verified and selectors and log
+/// groups are checked for overlap, every query to it may touch Restricted Telemetry.
 fn is_restricted(settings: &SourceSettings, restricted: bool) -> bool {
     restricted
-        || matches!(
-            settings,
-            SourceSettings::Loki { restricted_selectors, .. } if !restricted_selectors.is_empty()
-        )
+        || match settings {
+            SourceSettings::Loki {
+                restricted_selectors,
+                ..
+            } => !restricted_selectors.is_empty(),
+            SourceSettings::CloudwatchLogs {
+                restricted_log_groups,
+                ..
+            } => !restricted_log_groups.is_empty(),
+            _ => false,
+        }
 }
