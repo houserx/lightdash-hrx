@@ -1709,3 +1709,18 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     force gives 400 with no engine call. write-preview-route 3/3, engineWrite.test.ts 11/11.
     Backend tsc --noEmit, oxlint and oxfmt are clean.
 - 2026-11-08T21:59:30Z supervisor: ldq-write-commit-route passed the gate in round 1
+- ldq-write-agent-refused (round 1):
+  - `FederationService.write` now refuses mode "commit" with 403 "AI agents may preview writes
+    but cannot commit them" when `isAgentSession()` is true (a live agentExecutionContext, the
+    same signal the identity token's agent flag uses). The check runs right after
+    parseWriteRequest, so for an agent commit nothing is loaded from the project and the engine
+    is never called. Preview from an agent goes on as before, and its identity token carries
+    `agent: true` through mintForUser's default. A person outside an agent context can still commit.
+  - Decision: the refusal comes before the view/platform_write checks, so an agent always gets
+    the same 403 for commit whatever its permissions. That tells it nothing about the project.
+  - Tested: no Docker or backend server, so I drove the real TSOA route in-process against the
+    fake engine through the acceptance harness, both inside and outside an agent execution
+    context. Feature check 3/3: agent commit 403 with zero engine requests; agent preview 200
+    with token agent=true; person commit 200. write-commit-route 4/4 and write-preview-route
+    3/3. Backend tsc --noEmit, oxlint and oxfmt are clean.
+- 2026-11-08T22:02:32Z supervisor: ldq-write-agent-refused passed the gate in round 1

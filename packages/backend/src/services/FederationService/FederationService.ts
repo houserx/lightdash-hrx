@@ -18,7 +18,10 @@ import {
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
 import type { UserAttributesModel } from '../../models/UserAttributesModel';
 import { BaseService } from '../BaseService';
-import { FederationIdentityService } from '../FederationIdentity/FederationIdentityService';
+import {
+    FederationIdentityService,
+    isAgentSession,
+} from '../FederationIdentity/FederationIdentityService';
 import { identityAttrsFromUserAttributes } from '../FederationIdentity/identityToken';
 import { parseWriteRequest, postEngineWrite } from './engineWrite';
 import { mintWriteConfirmationToken } from './writeConfirmationToken';
@@ -150,6 +153,8 @@ export class FederationService extends BaseService {
      * a missing description is refused before anything else. Mode "preview" runs inside a
      * transaction the engine rolls back; mode "commit" is forwarded the same way, and the
      * engine's refusals (409 reused confirmation, 403 guard) come back with their status.
+     * Inside an AI agent execution context, commit is refused with 403 before anything is
+     * loaded or sent; preview still runs, with the identity token's agent flag set.
      */
     async write(
         account: RegisteredAccount,
@@ -157,6 +162,12 @@ export class FederationService extends BaseService {
         body: unknown,
     ): Promise<WriteResult> {
         const request = parseWriteRequest(body);
+        // ADR 0004: an AI agent may Preview (its identity token says agent) but never commit.
+        if (request.mode === 'commit' && isAgentSession()) {
+            throw new ForbiddenError(
+                'AI agents may preview writes but cannot commit them',
+            );
+        }
         const project = await this.getViewableProject(account, projectUuid);
         const credentials = project.warehouseConnection;
         if (!isFederationCredentials(credentials)) {
