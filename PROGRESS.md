@@ -1747,3 +1747,27 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     Prometheus; Write Mode replaces Run/Explain and turning it off brings them back. 12/12.
     platform-explain-only 3/3. Frontend typecheck, oxlint and oxfmt are clean.
 - 2026-11-08T22:06:23Z supervisor: ldq-write-mode-toggle passed the gate in round 1
+- ldq-write-mode-preview (round 1):
+  - `WriteModePanel` now has its own Description (required) and Linear ticket (optional)
+    fields and a working Preview. Preview is enabled only when the statement and the
+    description are non-blank. On click it calls `api.createConfirmation(statement)` to get a
+    fresh token, then `api.write({ statement, mode: 'preview', confirmationToken, description,
+    ticket? })`. Both values are trimmed, and a blank ticket is left out. The result
+    (data-testid write-mode-result) shows a "Rolled back" badge (or "Committed" when the
+    engine returns preview false), "Rows affected: N", and the `returning` rows as a table
+    (data-testid write-mode-returning). Refusals show in a red "Write refused" alert.
+  - Decision: errors come from an Error's message or from a Lightdash API error body
+    `{ error: { message } }`. That body is what `lightdashApi` throws in the real app, so the
+    engine's refusal text reaches the user.
+  - Decision: a result or refusal belongs to the statement it ran. Once the statement is
+    edited it is hidden, so a stale preview never describes different SQL.
+  - Next (ldq-write-mode-commit): add the "Type COMMIT to confirm" field and a Commit button in
+    the same panel. Reuse the WriteState/handlePreview flow with mode 'commit' and its own
+    confirmation token, show the audit_id in WriteResultView, and clear the COMMIT input after
+    a commit.
+  - Tested: no Docker or browser tool, so I rendered the real panel in jsdom. Feature check 2/2.
+    New WriteModePanel.test.tsx 2/2 covers an API error body, the blank ticket being left out,
+    a blank statement keeping Preview disabled, and a stale result being hidden.
+    InvestigateWorkspace 12/12, write-mode-toggle 2/2. Frontend typecheck, oxlint and oxfmt
+    are clean.
+- 2026-11-08T22:09:31Z supervisor: ldq-write-mode-preview passed the gate in round 1
