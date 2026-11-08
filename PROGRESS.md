@@ -1196,3 +1196,21 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     error text (true). Feature check 3/3, result-shape acceptance 4/4 (regression), new
     auditedSql.test.ts 4/4. common tsc clean; oxlint/oxfmt clean on changed files.
 - 2026-11-08T20:38:25Z supervisor: ldq-investigate-audited-sql-detection passed the gate in round 1
+- ldq-investigate-availability (round 1):
+  - New `packages/frontend/src/features/investigate/components/SqlRunnerModeSwitch.tsx`:
+    `SqlRunnerMode = 'sql' | 'investigate'` and `SqlRunnerModeSwitch({project, mode,
+    onModeChange})`, a Mantine SegmentedControl (radios "SQL" / "Investigate") rendered only when
+    common `isFederationProject(project)` is true; otherwise it renders nothing.
+  - `pages/SqlRunner.tsx`: on a new query (no saved-chart slug, not a virtual view) of a federation
+    project, the switch sits above the content panel; local `runnerMode` state (not the redux
+    slice's existing `mode`, which means default/virtualView). In Investigate mode the SQL
+    ContentPanel is replaced by an "Investigate" SuboptimalState placeholder.
+  - Next sessions: replace that placeholder in `pages/SqlRunner.tsx` with the Investigate UI
+    (InvestigateEditor / InvestigateResults are loaded by later acceptance tests from
+    `features/investigate/components/`). Saved SQL charts and virtual views never show the switch.
+  - Tested: new page test `src/pages/SqlRunner.investigate.test.tsx` (2/2) renders the real
+    SqlRunner page (heavy panels mocked): federation project shows SQL checked, clicking
+    Investigate hides the SQL panel, clicking SQL brings it back; plain Postgres shows no radios.
+    No browser/backend available (no Docker). Feature check 2/2, SqlRunner.navigation 3/3
+    (regression). frontend tsc clean; oxfmt/oxlint clean on changed files.
+- 2026-11-08T20:41:08Z supervisor: ldq-investigate-availability passed the gate in round 1

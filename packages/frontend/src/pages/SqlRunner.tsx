@@ -1,5 +1,5 @@
-import { getFieldQuoteChar } from '@lightdash/common';
-import { Stack } from '@mantine/core';
+import { getFieldQuoteChar, isFederationProject } from '@lightdash/common';
+import { Group, Stack } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
 import { useLocation, useNavigate, useParams } from 'react-router';
@@ -11,6 +11,10 @@ import {
     resetChartState,
     setChartConfig,
 } from '../components/DataViz/store/actions/commonChartActions';
+import {
+    SqlRunnerModeSwitch,
+    type SqlRunnerMode,
+} from '../features/investigate/components/SqlRunnerModeSwitch';
 import { SqlRunnerSidebar } from '../features/sqlRunner';
 import { ContentPanel } from '../features/sqlRunner/components/ContentPanel';
 import { Header } from '../features/sqlRunner/components/Header';
@@ -79,6 +83,7 @@ const SqlRunner = ({
     });
 
     const { data: project } = useProject(projectUuid);
+    const [runnerMode, setRunnerMode] = useState<SqlRunnerMode>('sql');
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
             projectUuid,
@@ -248,6 +253,12 @@ const SqlRunner = ({
         return <ErrorState error={chartError.error} />;
     }
 
+    const isVirtualView = mode === 'virtualView' && !!virtualViewState;
+    // Investigate is a mode of a new SQL Runner query on federation projects only.
+    const canInvestigate =
+        !params.slug && !isVirtualView && isFederationProject(project);
+    const isInvestigating = canInvestigate && runnerMode === 'investigate';
+
     return (
         <SqlRunnerConnectionScope
             isEditingSavedChart={!!params.slug}
@@ -263,21 +274,36 @@ const SqlRunner = ({
                 sidebarTitle="Tables"
             >
                 <Stack gap={0} flex={1} miw={0}>
-                    {mode === 'virtualView' && virtualViewState ? (
+                    {isVirtualView && virtualViewState ? (
                         <HeaderVirtualView
                             virtualViewState={virtualViewState}
                         />
                     ) : (
                         params.slug && <Header mode="edit" />
                     )}
-                    <ContentPanel
-                        toolbarActions={
-                            !params.slug &&
-                            !(mode === 'virtualView' && virtualViewState) ? (
-                                <HeaderCreate />
-                            ) : undefined
-                        }
-                    />
+                    {canInvestigate && (
+                        <Group px="md" py="xs">
+                            <SqlRunnerModeSwitch
+                                project={project}
+                                mode={runnerMode}
+                                onModeChange={setRunnerMode}
+                            />
+                        </Group>
+                    )}
+                    {isInvestigating ? (
+                        <SuboptimalState
+                            title="Investigate"
+                            description="Query metrics, logs, traces and the Platform Database of this Operations Project."
+                        />
+                    ) : (
+                        <ContentPanel
+                            toolbarActions={
+                                !params.slug && !isVirtualView ? (
+                                    <HeaderCreate />
+                                ) : undefined
+                            }
+                        />
+                    )}
                 </Stack>
             </Page>
         </SqlRunnerConnectionScope>
