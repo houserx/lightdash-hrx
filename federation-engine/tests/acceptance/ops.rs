@@ -11,7 +11,7 @@ use crate::harness::*;
 use crate::identity::{OPEN_SQL, RESTRICTED_SQL, restricted_reader, restricted_setup};
 
 const T0: f64 = 1_762_560_000.0;
-const RANGE: &str = "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z'";
+const RANGE: &str = "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z'";
 
 /// eng-healthz
 #[tokio::test]
@@ -310,7 +310,7 @@ async fn eng_lightdash_session_compat() {
         first[0]
             .as_deref()
             .unwrap()
-            .starts_with("2026-11-08 00:00:00"),
+            .starts_with("2025-11-08 00:00:00"),
         "{first:?}"
     );
     let labels: Value =

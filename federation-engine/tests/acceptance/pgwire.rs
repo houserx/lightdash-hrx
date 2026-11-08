@@ -31,7 +31,7 @@ async fn slow_prom_engine(delay: Duration) -> (Engine, MockServer) {
 }
 
 const SLOW_PROMQL: &str =
-    "SELECT * FROM promql('up', '2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', '1m')";
+    "SELECT * FROM promql('up', '2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z', '1m')";
 
 /// eng-pg-startup-auth
 #[tokio::test]

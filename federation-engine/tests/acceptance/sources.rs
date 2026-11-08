@@ -9,8 +9,8 @@ use crate::harness::telemetry::*;
 use crate::harness::*;
 use crate::promql::secs;
 
-const T0: f64 = 1_762_560_000.0; // 2026-11-08T00:00:00Z
-const RANGE: &str = "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z'";
+const T0: f64 = 1_762_560_000.0; // 2025-11-08T00:00:00Z
+const RANGE: &str = "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z'";
 
 fn oids(stmt: &tokio_postgres::Statement) -> Vec<u32> {
     stmt.columns().iter().map(|c| c.type_().oid()).collect()
@@ -413,13 +413,13 @@ async fn eng_cloudwatch_logs_insights() {
         "Complete",
         vec![
             vec![
-                ("@timestamp", "2026-11-08 00:00:01.250".into()),
+                ("@timestamp", "2025-11-08 00:00:01.250".into()),
                 ("@message", "first event".into()),
                 ("level", "error".into()),
                 ("@ptr", "ptr-1".into()),
             ],
             vec![
-                ("@timestamp", "2026-11-08 00:00:02.000".into()),
+                ("@timestamp", "2025-11-08 00:00:02.000".into()),
                 ("@message", "second event".into()),
                 ("level", "info".into()),
                 ("@ptr", "ptr-2".into()),

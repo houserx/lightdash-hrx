@@ -8,8 +8,8 @@ use tokio_postgres::types::Type;
 use crate::harness::telemetry::*;
 use crate::harness::*;
 
-const T0: f64 = 1_762_560_000.0; // 2026-11-08T00:00:00Z
-const RANGE: &str = "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z'";
+const T0: f64 = 1_762_560_000.0; // 2025-11-08T00:00:00Z
+const RANGE: &str = "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z'";
 
 pub fn secs(t: SystemTime) -> f64 {
     t.duration_since(UNIX_EPOCH).unwrap().as_secs_f64()
@@ -124,7 +124,7 @@ async fn eng_promql_range() {
 /// eng-promql-instant
 #[tokio::test]
 async fn eng_promql_instant() {
-    let at = "2026-11-08T00:10:00Z";
+    let at = "2025-11-08T00:10:00Z";
     let t = T0 + 600.0;
     let vector = prom_vector(&[
         (json!({"job": "api"}), t, "3"),
@@ -200,19 +200,19 @@ async fn eng_time_arguments() {
     let c = engine.connect().await;
     let cases: Vec<(String, f64, f64, f64)> = vec![
         (
-            "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', '1m'".into(),
+            "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z', '1m'".into(),
             T0,
             T0 + 3600.0,
             60.0,
         ),
         (
-            "'2026-11-08T02:00:00+02:00', '2026-11-08T00:30:00.500Z', '1h30m'".into(),
+            "'2025-11-08T02:00:00+02:00', '2025-11-08T00:30:00.500Z', '1h30m'".into(),
             T0,
             T0 + 1800.5,
             5400.0,
         ),
         (
-            "CAST('2026-11-08T00:00:00Z' AS TIMESTAMP WITH TIME ZONE), CAST('2026-11-08T06:00:00Z' AS TIMESTAMP WITH TIME ZONE), '15s'".into(),
+            "CAST('2025-11-08T00:00:00Z' AS TIMESTAMP WITH TIME ZONE), CAST('2025-11-08T06:00:00Z' AS TIMESTAMP WITH TIME ZONE), '15s'".into(),
             T0,
             T0 + 21600.0,
             15.0,
@@ -261,9 +261,9 @@ async fn eng_time_arguments() {
 
     let before = mock.requests().len();
     for bad in [
-        "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', 'abc'",
-        "'yesterday', '2026-11-08T01:00:00Z', '1m'",
-        "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', '0s'",
+        "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z', 'abc'",
+        "'yesterday', '2025-11-08T01:00:00Z', '1m'",
+        "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z', '0s'",
     ] {
         let r = c
             .query(&format!("SELECT * FROM promql('up', {bad})"), &[])
@@ -317,7 +317,7 @@ async fn eng_promql_source_selection() {
     assert_eq!(from(rows), "b", "named source");
     let rows = c
         .query(
-            "SELECT * FROM promql_instant('up', '2026-11-08T00:00:00Z', 'prom-b')",
+            "SELECT * FROM promql_instant('up', '2025-11-08T00:00:00Z', 'prom-b')",
             &[],
         )
         .await
@@ -540,7 +540,7 @@ async fn eng_promql_pushdown_and_sql() {
             &format!(
                 "SELECT a.series, v.team FROM promql('up', {RANGE}, '1m') a
                  JOIN (VALUES ('api-0', 'blue'), ('api-1', 'green')) AS v(pod, team) ON label(a.labels, 'pod') = v.pod
-                 WHERE a.\"timestamp\" = CAST('2026-11-08T00:00:00Z' AS TIMESTAMP WITH TIME ZONE)
+                 WHERE a.\"timestamp\" = CAST('2025-11-08T00:00:00Z' AS TIMESTAMP WITH TIME ZONE)
                  ORDER BY a.series"
             ),
             &[],

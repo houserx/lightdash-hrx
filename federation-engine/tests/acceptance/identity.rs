@@ -8,9 +8,9 @@ use crate::harness::tokens::*;
 use crate::harness::*;
 
 pub const T0: f64 = 1_762_560_000.0;
-pub const RESTRICTED_SQL: &str = "SELECT * FROM promql('up', '2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', '1m', 'prom-restricted')";
+pub const RESTRICTED_SQL: &str = "SELECT * FROM promql('up', '2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z', '1m', 'prom-restricted')";
 pub const OPEN_SQL: &str =
-    "SELECT * FROM promql('up', '2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', '1m')";
+    "SELECT * FROM promql('up', '2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z', '1m')";
 
 #[allow(dead_code)]
 pub struct Restricted {
@@ -337,7 +337,7 @@ async fn eng_restricted_loki_selectors() {
     )
     .await;
     let c = engine.connect().await;
-    let range = "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z'";
+    let range = "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z'";
     let logql = |q: &str| format!("SELECT * FROM logql({}, {range})", sql_lit(q));
     let metric_sql = |q: &str| format!("SELECT * FROM logql_metric({}, {range}, '1m')", sql_lit(q));
     // Provably outside every restricted selector (an equality matcher on the same label with
@@ -403,7 +403,7 @@ async fn eng_restricted_cloudwatch_log_groups() {
         0,
         "Complete",
         vec![vec![
-            ("@timestamp", "2026-11-08 00:00:01.000".into()),
+            ("@timestamp", "2025-11-08 00:00:01.000".into()),
             ("@message", "m".into()),
         ]],
     )
@@ -419,7 +419,7 @@ async fn eng_restricted_cloudwatch_log_groups() {
     )
     .await;
     let c = engine.connect().await;
-    let range = "'2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z'";
+    let range = "'2025-11-08T00:00:00Z', '2025-11-08T01:00:00Z'";
     let sql = |groups: &str| {
         format!(
             "SELECT * FROM cloudwatch_logs({}, 'fields @message', {range})",
