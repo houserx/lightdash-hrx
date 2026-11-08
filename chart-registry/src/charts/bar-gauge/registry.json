@@ -1,0 +1,107 @@
+{
+    "name": "Bar gauge",
+    "description": "Draws one bar per row, filled by its value between min and max (clamped at both ends), horizontal or vertical, each labelled with its name and its value formatted with a Grafana unit.",
+    "version": "1.0.0",
+    "publishedAt": "2026-11-08T00:00:00.000Z",
+    "changelog": "Initial HouseRx release.",
+    "tags": ["houserx", "gauge", "bar-gauge"],
+    "icon": "chart-bar",
+    "vizSchema": {
+        "fields": [
+            {
+                "name": "name",
+                "label": "Name",
+                "type": "dimension",
+                "required": true,
+                "description": "The label of each bar. One bar is drawn per row, in row order."
+            },
+            {
+                "name": "value",
+                "label": "Value",
+                "type": "metric",
+                "required": true,
+                "description": "The number each bar is filled to between min and max. An empty cell draws an empty bar."
+            }
+        ],
+        "configOptions": [
+            {
+                "name": "orientation",
+                "label": "Orientation",
+                "type": "select",
+                "choices": [
+                    {
+                        "value": "horizontal",
+                        "label": "Horizontal"
+                    },
+                    {
+                        "value": "vertical",
+                        "label": "Vertical"
+                    }
+                ],
+                "default": "horizontal"
+            },
+            {
+                "name": "displayMode",
+                "label": "Display mode",
+                "type": "select",
+                "choices": [
+                    {
+                        "value": "gradient",
+                        "label": "Gradient"
+                    },
+                    {
+                        "value": "basic",
+                        "label": "Basic"
+                    }
+                ],
+                "default": "gradient"
+            },
+            {
+                "name": "min",
+                "label": "Min",
+                "type": "number",
+                "default": 0
+            },
+            {
+                "name": "max",
+                "label": "Max",
+                "type": "number",
+                "default": 100
+            },
+            {
+                "name": "unit",
+                "label": "Unit",
+                "type": "text",
+                "default": ""
+            },
+            {
+                "name": "decimals",
+                "label": "Decimals (-1 for auto)",
+                "type": "number",
+                "default": -1,
+                "min": -1,
+                "max": 20
+            },
+            {
+                "name": "thresholds",
+                "label": "Thresholds (Grafana steps JSON)",
+                "type": "text",
+                "default": ""
+            }
+        ],
+        "colorPalette": null
+    },
+    "preview": {
+        "rows": [
+            { "name": "api", "value": 42 },
+            { "name": "worker", "value": 67 },
+            { "name": "scheduler", "value": 18 },
+            { "name": "db", "value": 88 }
+        ],
+        "optionValues": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+        }
+    }
+}

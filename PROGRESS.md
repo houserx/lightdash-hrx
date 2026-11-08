@@ -1123,3 +1123,33 @@ should add a dated line here per feature.
   -thresholds 7/7, -graph 3/3, build 31/31. Typecheck and oxfmt clean. Scratch driver in `../tmp/drive-stat-mappings/`
   (run it from that directory with `vitest run --globals --disableConsoleIntercept drive.test.ts`).
 - 2026-11-08T20:41:53Z supervisor: viz-registry-stat-value-mappings passed the gate in round 1
+
+## viz-registry-bar-gauge (round 1)
+- **What.** New entry `chart-registry/src/charts/bar-gauge/` (Grafana `bargauge`), version **1.0.0**: `barGauge.ts`
+  (model: `orientationOption`, `displayModeOption`, `fillOf`, `buildBars`) and `index.ts` (DOM view). Fields `name`
+  (dimension) and `value` (metric). Options: `orientation` select (horizontal default, vertical; unknown -> horizontal,
+  as Grafana's auto is for wide panels), `displayMode` select (gradient default as in Grafana, basic), `min` number
+  (default 0), `max` number (default 100), `unit` text (Grafana unit id via `shared/grafanaFormat`), `decimals` number
+  (-1 auto), `thresholds` text.
+- **Marks.** `bar-gauge` (`data-orientation`, `data-min`, `data-max`); per row a `bar-gauge-row` (`data-name`) holding
+  `bar-gauge-name`, a `bar-gauge-track` and `bar-gauge-value`; inside the track the filled `bar-gauge-bar` div
+  (`data-name`, `data-fill` 0..1 clamped, `data-mode` = the display mode, `data-color`, `data-value`). Horizontal:
+  rows stacked, name above, value right of the track, fill by width. Vertical: columns side by side, value on top,
+  name below, fill by height from the bottom. One bar per row in row order. Null value -> empty bar, text "-".
+  No rows -> `bar-gauge-empty` "No data". max <= min -> bars at or above max are full, others empty.
+- **Left for viz-registry-bar-gauge-modes.** The bar (and value text) colour is a constant, Grafana's base green
+  `#73BF69` (`BAR_COLOR` in index.ts); `thresholds` is declared and parsed by nobody yet, and `displayMode` only sets
+  `data-mode` (no gradient yet). That session should colour each bar with `thresholdColor(value, parseThresholds(...),
+  {min, max})` (percentage steps against min..max), fill gradient bars with a CSS `linear-gradient` on the
+  `bar-gauge-bar` element's `style`, and bump the version to 1.1.0 with a changelog.
+- **Decision.** min/max are number options with defaults 0/100 (the schema requires a numeric default, so Grafana's
+  "auto from data" cannot be expressed); the importer should copy the panel's min/max when set.
+- **Tested as a user.** Built the registry (5 charts), untarred bar-gauge@1.0.0 dist.tar and ran its bundle in jsdom as
+  the host does, with Lightdash-style field ids and string numerics. Rows api 25 / worker 50 / db 100, min 0 max 100:
+  horizontal fills 25%/50%/100% widths, vertical the same as heights, labelled "api=25" etc.; unit percent decimals 1
+  -> "50.0%"; 150 and -5 clamp to 1 and 0, null -> "-" empty; min 50 max 150 unit ms -> 0, 0, 0.5 with "100 ms"; no
+  rows -> "No data"; preview rows render 4 bars. `viz-rendered` ack each time. Check `bar-gauge.test.ts` 5/5 after
+  `bash ./init.sh`. Regressions: build 38/38, client-install 4/4, stat-sparkline-value 9/9. chart-registry typecheck
+  and oxfmt clean. Scratch driver in `../tmp/drive-bar-gauge/` (run from there with
+  `vitest run --globals --disableConsoleIntercept drive.test.ts`).
+- 2026-11-08T20:45:25Z supervisor: viz-registry-bar-gauge passed the gate in round 1
