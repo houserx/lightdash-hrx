@@ -36,6 +36,7 @@ export {
     resolveAttrs,
 } from './auth/userMapping.js';
 export type { MappedUser, UserResolver } from './auth/userMapping.js';
+export { createCachedUserResolver } from './auth/userCache.js';
 export { LIST_SOURCES_TOOL, OPS_MARTS_CATALOG, listOpsMarts, listSources } from './tools/listSources.js';
 export type { ListSourcesResult } from './tools/listSources.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';

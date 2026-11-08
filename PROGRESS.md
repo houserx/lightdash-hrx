@@ -684,3 +684,30 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 5/5. 14 acceptance files pass: the earlier 13 plus this one. The 39 failing files
   belong to unbuilt features.
 - 2026-11-08T16:31:32Z supervisor: mcp-unknown-user-no-tools passed the gate in round 1
+
+## mcp-user-mapping-cache (2026-11-08)
+
+- New `src/auth/userCache.ts`, `createCachedUserResolver(inner, ttlMs, now)`, wraps the Lightdash resolver in
+  `startServer` (`src/http/server.ts`) using `config.userCacheTtlMs` (`MCP_USER_CACHE_TTL_MS`, default 60000) and the
+  server clock `deps.now`. It is exported from `src/index.ts`. `createLightdashUserResolver` itself is unchanged; only
+  its header comment changed.
+- Behaviour:
+  - Successful mappings are cached by lower-cased email (`emailFromClaims`) until `now() >= storedAt + ttl`. After that
+    the next request looks the user up again (users + attributes), so attribute changes apply within one TTL.
+  - Concurrent lookups for one email share one in-flight request.
+  - Expired entries are pruned on every insert.
+  - Decision: failures (unknown, deactivated, Lightdash down) are not cached. A newly added user works on the next
+    request, and an outage is not remembered. The cost: an unknown user costs a Lightdash call per tools request.
+  - Claims without an email go straight to the inner resolver, which refuses them. TTL 0 turns the cache off.
+  - The per-request `onceResolver` in `src/mcp/server.ts` is still there, unchanged.
+- Unit tests: `src/auth/userCache.test.ts` covers TTL boundary, case-insensitive key, per-user separation, concurrent
+  sharing, failures not cached, no-email pass-through, and TTL 0. 64 unit tests pass and typecheck is clean.
+- Tested as a user: `../tmp/user-cache-ut/run.mts`. Run it from the repo root with
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs real `dist/main.js` with
+  `MCP_USER_CACHE_TTL_MS=1500` and a fresh SDK client and token per call.
+  - Three `list_sources` calls made 1 Lightdash user lookup, with platform_read true.
+  - After the attribute default changed to false, a call within the TTL still showed true, with 1 lookup.
+  - After 1.7 s, a call made 2 lookups, and the identity token had platform_read false. SIGTERM exits 0.
+- Results: the check passes 2/2. 15 acceptance files pass: the earlier 14 plus this one. The 38 failing files belong
+  to unbuilt features.
+- 2026-11-08T16:34:44Z supervisor: mcp-user-mapping-cache passed the gate in round 1

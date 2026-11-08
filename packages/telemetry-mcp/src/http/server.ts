@@ -1,6 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { AccessTokenError, createOktaVerifier, type AccessTokenVerifier } from '../auth/okta.js';
+import { createCachedUserResolver } from '../auth/userCache.js';
 import { createLightdashUserResolver } from '../auth/userMapping.js';
 import type { Config } from '../config.js';
 import { serveMcpRequest, type McpRequestContext } from '../mcp/server.js';
@@ -104,9 +105,10 @@ export async function startServer({
     deps?: Partial<ServerDeps>;
 }): Promise<RunningServer> {
     const verifier = createOktaVerifier(config.okta);
+    const now = deps.now ?? Date.now;
     const context: McpRequestContext = {
-        users: createLightdashUserResolver(config.lightdash),
-        now: deps.now ?? Date.now,
+        users: createCachedUserResolver(createLightdashUserResolver(config.lightdash), config.userCacheTtlMs, now),
+        now,
     };
     const server = http.createServer((req, res) => {
         handle(config, context, verifier, req, res).catch(() => {

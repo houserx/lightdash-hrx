@@ -7,8 +7,8 @@
  * `GET /api/v1/org/attributes`, resolved like Lightdash does (the user's direct and group values, else the attribute
  * defaults); an attr is true only when that resolves to exactly `"true"` (see `resolveAttrs`).
  *
- * A caller that does not map gets no tools at all (see `serveMcpRequest`). Not here yet: the per-user TTL cache
- * (`mcp-user-mapping-cache`).
+ * A caller that does not map gets no tools at all (see `serveMcpRequest`). The server puts the per-user TTL cache
+ * (`createCachedUserResolver`) in front of this resolver.
  */
 import type { JWTPayload } from 'jose';
 import type { Config } from '../config.js';
