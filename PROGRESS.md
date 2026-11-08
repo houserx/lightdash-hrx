@@ -1372,3 +1372,19 @@ token verification for a *valid* token, which feature 39 then hardens.
   so the rejected tokens reached neither. The check passed after init, as did the `identity::`
   unit tests.
 - 2026-11-08T20:27:41Z supervisor: eng-identity-token-verification passed the gate in round 1
+- 2026-11-08 eng-identity-per-session (round 1): already implemented, because `hrx.identity` is an
+  ordinary per-connection setting (`Settings` in `src/pg.rs`) and `Sql::identity` re-verifies it
+  at every plan and execute. Nothing is cached across connections or queries. This session verified
+  it and changed no engine code.
+  - A trap for later identity features: the identity is re-read from the session setting on each
+    statement, so token expiry applies mid-session too. Don't add a per-connection cache of the
+    verified `Identity` unless it also re-checks `exp`.
+  Tested as a user: `../tmp/identity-session/run.sh <out>` starts the open and restricted
+  Prometheus mocks, the DynamoDB+S3 store and the engine, then runs separate pg-wire sessions with
+  `pgclient`. Session A (SET with the claim, then 6 restricted queries) and session B (no SET,
+  6 queries) ran at the same time: A got 6/6 rows, B got 6/6 42501. Eight concurrent sessions
+  (even ones with the claim, odd ones with a valid token without it) ran 3 queries each: even ones
+  got 3/3 rows, odd ones 3/3 42501. One session SET the claim token (query ok) and then a no-claim
+  token (query 42501). A fresh session afterwards got 42501. The restricted mock saw 19 requests
+  and the store saw 38 calls, exactly the allowed queries. The check passed after init.
+- 2026-11-08T20:29:30Z supervisor: eng-identity-per-session passed the gate in round 1
