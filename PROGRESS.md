@@ -1354,3 +1354,37 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     check 3/3, regression investigate-results-logs 2/2. frontend tsc clean; oxfmt and oxlint
     clean on features/investigate.
 - 2026-11-08T20:58:24Z supervisor: ldq-investigate-results-traces passed the gate in round 1
+- ldq-investigate-time-range (round 1):
+  - New `features/investigate/components/InvestigateWorkspace.tsx`. This is the component the
+    later Investigate acceptance tests load. It has a top row with the shared `TimeRangePicker`
+    (default `now-6h`..`now`, or `initialTimeRange`) and a Run button. Below that are
+    `InvestigateEditor` and then the result. Run is disabled while the SQL box is empty or a
+    run is in flight. Each run calls `runQuery({ sql, timeRange: { from, to } })` with the SQL
+    box text and the range in the control. The result block (`data-testid="investigate-result"`)
+    is labelled "Results over <range label>" with the range that run used, so changing the
+    control afterwards does not mislabel it. A failure shows a red "Query failed" Alert with the
+    error message. A late answer from an earlier run is dropped.
+  - Props so far: `runQuery` and `initialTimeRange` only. The acceptance tests also pass
+    `access` and `onSaveAsChart`. They are not declared yet: the audited-query, write-mode and
+    save-as-chart features add them (and `audit` on the request) when they use them.
+  - The page is wired up. `pages/SqlRunner.tsx` renders `InvestigateWorkspace` in Investigate
+    mode, replacing the placeholder editor. The new hook
+    `features/investigate/hooks/useInvestigateRunQuery.ts` calls `executeSqlQuery`. It maps the
+    VizColumn references to column names and the RawResultRows to rows.
+    `ExecuteSqlQueryOptions` (executeQuery.ts) gained optional `timeRange` and `audit`. Each is
+    put in the POST body only when given; the backend accepts both since
+    ldq-query-routes-time-range-audit.
+  - Not done: `onOpenTrace` is not passed to InvestigateResults yet. Running trace('<id>')
+    directly would show a result that doesn't match the SQL box. A later session should put
+    the trace SQL in the SQL box and then run it.
+  - Lint trap: in this checkout every ancestor path contains `.factory`, so `oxfmt <files>` and
+    `oxlint <files>` silently match 0 files. Workarounds: run `oxlint -c <frontend>/.oxlintrc.json .`
+    from inside the folder, and use `oxfmt --stdin-filepath=<f> < <f>` and diff the output.
+    The react only-export-components rule rejects exported constants in component files.
+  - Tested: no browser or backend (no Docker), so the workspace was driven through its
+    rendered UI in vitest. Feature check 2/2. The new InvestigateWorkspace.test.tsx (3/3)
+    covers Run disabled without SQL, the result label keeping the range it ran with, and the
+    failure alert. executeQuery.test.ts 6/6 checks that timeRange/audit are in the body only
+    when given. Regressions: SqlRunner.investigate 5/5, sql-runner-mode-switch 2/2,
+    investigate-results-traces 3/3. frontend tsc, oxlint and oxfmt are clean.
+- 2026-11-08T21:04:43Z supervisor: ldq-investigate-time-range passed the gate in round 1

@@ -11,11 +11,12 @@ import {
     resetChartState,
     setChartConfig,
 } from '../components/DataViz/store/actions/commonChartActions';
-import { InvestigateEditor } from '../features/investigate/components/InvestigateEditor';
+import { InvestigateWorkspace } from '../features/investigate/components/InvestigateWorkspace';
 import {
     SqlRunnerModeSwitch,
     type SqlRunnerMode,
 } from '../features/investigate/components/SqlRunnerModeSwitch';
+import { useInvestigateRunQuery } from '../features/investigate/hooks/useInvestigateRunQuery';
 import { SqlRunnerSidebar } from '../features/sqlRunner';
 import { ContentPanel } from '../features/sqlRunner/components/ContentPanel';
 import { Header } from '../features/sqlRunner/components/Header';
@@ -85,6 +86,7 @@ const SqlRunner = ({
 
     const { data: project } = useProject(projectUuid);
     const [runnerMode, setRunnerMode] = useState<SqlRunnerMode>('sql');
+    const runInvestigateQuery = useInvestigateRunQuery(projectUuid);
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
             projectUuid,
@@ -293,8 +295,9 @@ const SqlRunner = ({
                     )}
                     {isInvestigating ? (
                         <Box px="md" py="sm">
-                            {/* Running the generated SQL comes with the Investigate results. */}
-                            <InvestigateEditor onChange={() => {}} />
+                            <InvestigateWorkspace
+                                runQuery={runInvestigateQuery}
+                            />
                         </Box>
                     ) : (
                         <ContentPanel
