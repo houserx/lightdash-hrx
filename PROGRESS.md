@@ -323,3 +323,19 @@ should add a dated line here per feature.
 - **Next.** `viz-log-stream-model` and `viz-log-stream-level-bar` should use `normalizeLogLevel` and `getLogLevelColor`
   with `config.levelColors`, not their own tables.
 - 2026-11-08T18:26:53Z supervisor: viz-log-levels passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-as-code (session)
+
+- **What.** No code change was needed. `viz-chart-type-members` had already added `LogStreamChart` (all 8 config fields,
+  with doc comments) and `LogStreamChartConfig` to `ChartConfig` and `ChartAsCodeConfig`, and regenerated swagger and
+  `chart-as-code-1.0.json`. The check passed on the untouched tree (schema up to date, 5/5).
+- **Verified the as-code path.** Backend `CoderService` and the CLI `download` (`sanitizeChartForDownload`, then
+  `yaml.dump`) pass `chartConfig` through unchanged for every type except `data_app_viz`/cartesian, so a log stream chart
+  downloads as `type: log_stream` with its `config`.
+- **Tested as a user.** `bash ./init.sh`, then the check. A real `lightdash download` needs a running backend with a full
+  DB, and `migrate:latest` needs pgvector, which isn't available locally. Instead I wrote a synthetic chart YAML in the
+  shape download writes into `../tmp/lsac/charts/` and ran the CLI `pnpm -F cli exec tsx src/index.ts lint --path …`.
+  The full config was reported valid. With `wrapLines: "sometimes"` it failed with "Expected type 'boolean' (line 22)".
+- **Note.** `levelColors` keys are the 7 `LogLevel` names. Unknown keys are not rejected, because the schema has no
+  `additionalProperties: false`, the same as other chart configs.
+- 2026-11-08T18:30:21Z supervisor: viz-log-stream-as-code passed the gate in round 1
