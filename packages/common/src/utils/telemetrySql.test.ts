@@ -213,4 +213,48 @@ describe('buildTelemetrySql', () => {
             ).toThrow(/comma/);
         });
     });
+
+    describe('traceql', () => {
+        it('writes out the default limit 20', () => {
+            expect(buildTelemetrySql({ kind: 'traceql', query: '{ }' })).toBe(
+                "SELECT * FROM traceql('{ }', ${ld.parameters.__from}, ${ld.parameters.__to}, 20)",
+            );
+        });
+
+        it('doubles single quotes in the query and the source', () => {
+            expect(
+                buildTelemetrySql({
+                    kind: 'traceql',
+                    query: "{ name = 'x' }",
+                    source: "o'tempo",
+                }),
+            ).toBe(
+                "SELECT * FROM traceql('{ name = ''x'' }', ${ld.parameters.__from}, ${ld.parameters.__to}, 20, 'o''tempo')",
+            );
+        });
+
+        it('refuses a limit that is not a positive integer', () => {
+            expect(() =>
+                buildTelemetrySql({ kind: 'traceql', query: '{ }', limit: -1 }),
+            ).toThrow(/TraceQL limit must be a positive integer/);
+        });
+    });
+
+    describe('trace', () => {
+        it('trims the id and passes a source without time arguments', () => {
+            expect(
+                buildTelemetrySql({
+                    kind: 'trace',
+                    traceId: ' abc123 ',
+                    source: 'tempo-production',
+                }),
+            ).toBe("SELECT * FROM trace('abc123', 'tempo-production')");
+        });
+
+        it('refuses a blank trace id', () => {
+            expect(() =>
+                buildTelemetrySql({ kind: 'trace', traceId: '  ' }),
+            ).toThrow(/trace id is required/);
+        });
+    });
 });

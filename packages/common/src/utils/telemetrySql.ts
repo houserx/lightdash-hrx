@@ -134,12 +134,36 @@ export type CloudWatchLogsTelemetryQuery = {
     source?: string;
 };
 
+/** Engine default trace limit for a TraceQL search (CONTRACTS §1.1). */
+export const TRACEQL_DEFAULT_LIMIT = 20;
+
+/**
+ * A TraceQL search: `traceql(query, start, end, limit[, source])`. The limit is always written
+ * out, so the default is visible and editable in the SQL.
+ */
+export type TraceqlTelemetryQuery = {
+    kind: 'traceql';
+    query: string;
+    /** Maximum traces returned; defaults to 20. */
+    limit?: number;
+    source?: string;
+};
+
+/** One trace by id, all its spans: `trace(trace_id[, source])`. No time range applies. */
+export type TraceTelemetryQuery = {
+    kind: 'trace';
+    traceId: string;
+    source?: string;
+};
+
 export type TelemetryQuery =
     | PromqlTelemetryQuery
     | LogqlTelemetryQuery
     | LogqlMetricTelemetryQuery
     | CloudWatchTelemetryQuery
-    | CloudWatchLogsTelemetryQuery;
+    | CloudWatchLogsTelemetryQuery
+    | TraceqlTelemetryQuery
+    | TraceTelemetryQuery;
 
 /** Reserved time parameter references, substituted before the query runs. */
 export const TELEMETRY_SQL_FROM = '${ld.parameters.__from}';
@@ -170,6 +194,16 @@ const joinLogGroups = (logGroups: string[]): string => {
     return names.join(',');
 };
 
+/** A row limit interpolated into the SQL; refused unless a positive integer. */
+const positiveLimit = (language: string, limit: number): string => {
+    if (!Number.isInteger(limit) || limit <= 0) {
+        throw new Error(
+            `${language} limit must be a positive integer, got ${limit}`,
+        );
+    }
+    return String(limit);
+};
+
 const tableFunctionSql = (
     name: string,
     args: string[],
@@ -196,12 +230,10 @@ export const buildTelemetrySql = (telemetryQuery: TelemetryQuery): string => {
                 telemetryQuery.source,
             );
         case 'logql': {
-            const limit = telemetryQuery.limit ?? LOGQL_DEFAULT_LIMIT;
-            if (!Number.isInteger(limit) || limit <= 0) {
-                throw new Error(
-                    `LogQL limit must be a positive integer, got ${limit}`,
-                );
-            }
+            const limit = positiveLimit(
+                'LogQL',
+                telemetryQuery.limit ?? LOGQL_DEFAULT_LIMIT,
+            );
             const direction =
                 telemetryQuery.direction ?? LOGQL_DEFAULT_DIRECTION;
             if (direction !== 'forward' && direction !== 'backward') {
@@ -215,7 +247,7 @@ export const buildTelemetrySql = (telemetryQuery: TelemetryQuery): string => {
                     toSqlStringLiteral(telemetryQuery.query),
                     TELEMETRY_SQL_FROM,
                     TELEMETRY_SQL_TO,
-                    String(limit),
+                    limit,
                     toSqlStringLiteral(direction),
                 ],
                 telemetryQuery.source,
@@ -256,6 +288,31 @@ export const buildTelemetrySql = (telemetryQuery: TelemetryQuery): string => {
                 ],
                 telemetryQuery.source,
             );
+        case 'traceql':
+            return tableFunctionSql(
+                'traceql',
+                [
+                    toSqlStringLiteral(telemetryQuery.query),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                    positiveLimit(
+                        'TraceQL',
+                        telemetryQuery.limit ?? TRACEQL_DEFAULT_LIMIT,
+                    ),
+                ],
+                telemetryQuery.source,
+            );
+        case 'trace': {
+            const traceId = telemetryQuery.traceId.trim();
+            if (traceId === '') {
+                throw new Error('A trace id is required');
+            }
+            return tableFunctionSql(
+                'trace',
+                [toSqlStringLiteral(traceId)],
+                telemetryQuery.source,
+            );
+        }
         default: {
             const unknownKind: never = telemetryQuery;
             throw new Error(

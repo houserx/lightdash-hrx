@@ -1155,3 +1155,16 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     cloudwatch acceptance 2/2 (regression), telemetrySql.test.ts 16/16 (2 new: trim/drop
     blanks, refuse empty and comma). common tsc clean; oxfmt/oxlint clean on changed files.
 - 2026-11-08T20:31:05Z supervisor: ldq-investigate-sql-logs-insights passed the gate in round 1
+- ldq-investigate-sql-traceql (round 1):
+  - `packages/common/src/utils/telemetrySql.ts`: `TelemetryQuery` gains `traceql`
+    (`{query, limit?, source?}`) -> `traceql('<q>', __from, __to, <limit>[, '<source>'])` with the
+    limit always written out (default `TRACEQL_DEFAULT_LIMIT` 20, exported), and `trace`
+    (`{traceId, source?}`) -> `trace('<id>'[, '<source>'])` with no time arguments (CONTRACTS
+    §1.1). The trace id is trimmed and a blank id throws; no hex format is enforced (narrowest
+    reading, the contract types it as text). The limit check is now a shared private
+    `positiveLimit(language, limit)` used by logql and traceql (same "positive integer" message).
+  - Tested: no Investigate UI yet; surface is the exported common function. Feature check 3/3,
+    logql acceptance 3/3 (regression), telemetrySql.test.ts 21/21 (5 new: default limit, quote
+    escaping + source, bad limit, trace id trim + source, blank id). common tsc clean;
+    oxfmt/oxlint clean on changed files (oxlint via `pnpm -F common exec oxlint`).
+- 2026-11-08T20:33:57Z supervisor: ldq-investigate-sql-traceql passed the gate in round 1
