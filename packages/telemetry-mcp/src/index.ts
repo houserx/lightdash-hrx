@@ -11,7 +11,7 @@ export type {
     MintIdentityTokenInput,
 } from './identity/token.js';
 export { startServer } from './http/server.js';
-export type { RunningServer } from './http/server.js';
+export type { RunningServer, ServerDeps } from './http/server.js';
 export { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './http/protectedResource.js';
 export type { ProtectedResourceMetadata } from './http/protectedResource.js';
 export {
@@ -23,9 +23,19 @@ export {
 } from './auth/okta.js';
 export type { AccessTokenVerifier, VerifiedAccessToken } from './auth/okta.js';
 export { MCP_SERVER_NAME, MCP_SERVER_VERSION, createMcpServer } from './mcp/server.js';
-export type { McpServerDeps } from './mcp/server.js';
-export { ENGINE_CONNECT_TIMEOUT_MS, EngineError, createEngineClient } from './engine/client.js';
-export type { EngineClient, EngineResult } from './engine/client.js';
+export type { McpRequestContext, McpServerDeps } from './mcp/server.js';
+export { ENGINE_CONNECT_TIMEOUT_MS, EngineError, createEngineClient, sessionStatements } from './engine/client.js';
+export type { EngineClient, EngineQueryOptions, EngineResult, EngineSession } from './engine/client.js';
+export { createIdentitySession } from './engine/session.js';
+export {
+    LIGHTDASH_GROUPS_PER_USER,
+    LIGHTDASH_TIMEOUT_MS,
+    UserMappingError,
+    createLightdashUserResolver,
+    emailFromClaims,
+    resolveAttrs,
+} from './auth/userMapping.js';
+export type { MappedUser, UserResolver } from './auth/userMapping.js';
 export { LIST_SOURCES_TOOL, OPS_MARTS_CATALOG, listOpsMarts, listSources } from './tools/listSources.js';
 export type { ListSourcesResult } from './tools/listSources.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';

@@ -1,10 +1,17 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { AccessTokenError, createOktaVerifier, type AccessTokenVerifier } from '../auth/okta.js';
+import { createLightdashUserResolver } from '../auth/userMapping.js';
 import type { Config } from '../config.js';
-import { serveMcpRequest } from '../mcp/server.js';
+import { serveMcpRequest, type McpRequestContext } from '../mcp/server.js';
 import { bearerChallenge, extractBearer, type BearerError } from './bearerChallenge.js';
 import { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './protectedResource.js';
+
+/** Injectable collaborators (all optional). */
+export interface ServerDeps {
+    /** Server clock, epoch ms. Default: `Date.now`. */
+    now: () => number;
+}
 
 export interface RunningServer {
     /** Base URL, e.g. `http://127.0.0.1:8080` (no path). */
@@ -40,6 +47,7 @@ function sendUnauthorized(config: Config, res: http.ServerResponse, err?: Bearer
  */
 async function handleMcp(
     config: Config,
+    context: McpRequestContext,
     verifier: AccessTokenVerifier,
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -62,11 +70,12 @@ async function handleMcp(
         sendUnauthorized(config, res, { error: 'invalid_token', description });
         return;
     }
-    await serveMcpRequest(config, verified, req, res);
+    await serveMcpRequest(config, context, verified, req, res);
 }
 
 async function handle(
     config: Config,
+    context: McpRequestContext,
     verifier: AccessTokenVerifier,
     req: http.IncomingMessage,
     res: http.ServerResponse,
@@ -81,16 +90,26 @@ async function handle(
         return;
     }
     if (pathname === MCP_PATH) {
-        await handleMcp(config, verifier, req, res);
+        await handleMcp(config, context, verifier, req, res);
         return;
     }
     sendJson(res, 404, { error: 'not_found' });
 }
 
-export async function startServer({ config }: { config: Config }): Promise<RunningServer> {
+export async function startServer({
+    config,
+    deps = {},
+}: {
+    config: Config;
+    deps?: Partial<ServerDeps>;
+}): Promise<RunningServer> {
     const verifier = createOktaVerifier(config.okta);
+    const context: McpRequestContext = {
+        users: createLightdashUserResolver(config.lightdash),
+        now: deps.now ?? Date.now,
+    };
     const server = http.createServer((req, res) => {
-        handle(config, verifier, req, res).catch(() => {
+        handle(config, context, verifier, req, res).catch(() => {
             if (!res.headersSent) sendJson(res, 500, { error: 'internal_error' });
             else res.end();
         });

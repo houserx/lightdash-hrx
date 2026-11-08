@@ -520,3 +520,67 @@ docs/eng-1799/telemetry-mcp.md
   - SIGTERM exits 0.
   - The 9 acceptance files so far (40 tests), unit tests (36) and typecheck all pass.
 - 2026-11-08T16:09:56Z supervisor: mcp-tool-list-sources passed the gate in round 1
+
+### mcp-engine-session (2026-11-08)
+
+- **Every engine query now runs as the caller.** `createEngineClient(config.engine, session)` takes an
+  `EngineSession` (`{ identityToken(audit), statementTimeoutMs }`). For each `query(sql, params, { audit? })` it:
+  1. mints the token,
+  2. opens a new `pg.Client`,
+  3. sends `SET hrx.identity = '<token>'` and `SET statement_timeout = <MCP_STATEMENT_TIMEOUT_MS>` (simple protocol,
+     same connection),
+  4. runs the query with bind parameters,
+  5. calls `end()` in `finally`.
+  - `sessionStatements()` builds the two SETs and refuses a token that isn't `base64url.base64url` (quote-safe).
+  - The token is minted **before** connecting, so a user who can't be identified never opens a connection. The
+    error is `EngineError(<fixed sentence>, code undefined)`.
+  - Audited tools (platform_query/explain/schema, ask_data) pass `{ audit: { description, ticket } }` as the third
+    argument of `query`.
+- New `src/engine/session.ts`: `createIdentitySession(config, users, claims, now)`.
+  - It maps the Okta claims to the Lightdash user **lazily, on the first query of the HTTP request**, memoised for
+    that request. So `initialize`, `ping` and `tools/list` make no Lightdash call (verified: 0 lookups after
+    connect).
+  - It then mints a fresh §3 token per query (60 s lifetime, `iat` from `deps.now`, new nonce).
+- **Ordering trap, decided:** this feature's check asserts `sub` = Lightdash userUuid, plus attrs that come from a
+  direct user value *and* a group value. The token can't be minted without user mapping and attributes, so
+  `src/auth/userMapping.ts` came along now, following PROGRESS "User mapping" exactly:
+  - `createLightdashUserResolver(config.lightdash)` looks the user up with `GET /api/v1/org/users?searchQuery=<email>&includeGroups=1000`
+    and `GET /api/v1/org/attributes`, authenticating with `ApiKey <LIGHTDASH_API_TOKEN>`.
+  - It matches the `email` claim, or an email-shaped `sub`, case-insensitively and exactly, against active users only.
+  - `resolveAttrs` takes the direct value, else a group `"true"`, else the default. Only `"true"` is true.
+  - As a side effect, `user-mapping.test.ts` and `user-attributes.test.ts` already pass. The sessions for
+    `mcp-user-mapping` and `mcp-user-attributes` should verify that and harden edge cases (pagination, error
+    texts) rather than rewrite it.
+  - **Still not built (left to their features):**
+    - The TTL cache (`mcp-user-mapping-cache`): every HTTP request with a tool call does 2 Lightdash calls today.
+    - The empty `tools/list` for unknown users (`mcp-unknown-user-no-tools`). For now an unmapped, inactive or
+      email-less user gets the tools listed, but every engine-backed call returns `isError` ("Your Okta user has no
+      active Lightdash user with the same email"), and no engine connection is opened.
+    - When that feature lands, resolve the user eagerly in `serveMcpRequest`. `createIdentitySession` could then take
+      the `MappedUser` instead of the resolver.
+- Plumbing:
+  - `startServer({ config, deps })` now honours `deps.now` (`ServerDeps`). `deps.log` is still ignored
+    (`mcp-structured-logs`).
+  - `serveMcpRequest(config, context, auth, req, res)` builds the session and the engine per request.
+  - `createMcpServer(config, { engine })` now **requires** `engine`. Unit tests inject a fake, as before.
+  - New exports: `sessionStatements`, `createIdentitySession`, `createLightdashUserResolver`, `UserMappingError`,
+    `emailFromClaims`, `resolveAttrs`, the constants `LIGHTDASH_GROUPS_PER_USER` and `LIGHTDASH_TIMEOUT_MS`, and the
+    types `EngineSession`, `EngineQueryOptions`, `MappedUser`, `UserResolver`, `McpRequestContext`, `ServerDeps`.
+- Unit tests: `src/engine/session.test.ts` covers the SET order and token/timeout guards, the per-query fresh nonce
+  with a single resolve, the audit pass-through, `emailFromClaims` and `resolveAttrs`.
+- Tested as a user: `../tmp/engine-session-ut/run.mts`. Run it from the repo root with
+  `node_modules/.bin/tsx <that file> packages/telemetry-mcp` (absolute paths). It starts `dist/main.js` against the
+  acceptance fake engine and fake Lightdash (imported read-only) and a local JWKS, then connects the SDK
+  streamable-HTTP client with an RS256 bearer and `MCP_STATEMENT_TIMEOUT_MS=12345`.
+  - After initialize: 0 engine connections, 0 Lightdash lookups.
+  - Two `list_sources` calls each succeeded on their own connection (ids 1, 2). Each connection ran
+    `SET hrx.identity`, then `SET statement_timeout = 12345`, then the catalog query.
+  - Login was `lightdash-operations`/`operations`.
+  - Each token verified under the secret with the mapped sub/email/org/project, attrs `platform_read` (direct) and
+    `platform_explain` (group), `agent true`, a 60 s lifetime, and different nonces.
+  - Afterwards: 0 open connections, 2 in total.
+  - An unmapped email got `isError` with no new engine connection.
+  - SIGTERM exits 0.
+  - Results: the check passes (3/3), the 9 previously passing acceptance files plus engine-session, user-mapping and
+    user-attributes pass (12 files, 49 tests), unit tests pass (41), and typecheck is clean.
+- 2026-11-08T16:14:31Z supervisor: mcp-engine-session passed the gate in round 1
