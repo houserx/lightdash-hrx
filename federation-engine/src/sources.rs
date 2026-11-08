@@ -31,11 +31,14 @@ pub struct HttpSources {
     kinds: HashMap<String, SourceKind>,
     /// Row cap by source name: the source's `max_rows`, else the top-level one.
     max_rows: HashMap<String, usize>,
-    /// Restricted Telemetry sources: reading one needs `telemetry_restricted` and is audited.
+    /// `restricted = true` sources: reading one needs `telemetry_restricted` and is audited.
     restricted: Vec<String>,
     /// A Loki source's `restricted_selectors`: a query that may touch one of them is a read of
     /// Restricted Telemetry.
     restricted_selectors: HashMap<String, Vec<String>>,
+    /// A CloudWatch Logs source's `restricted_log_groups`: a query naming one of them is a read
+    /// of Restricted Telemetry.
+    restricted_log_groups: HashMap<String, Vec<String>>,
     default: Option<String>,
 }
 
@@ -68,7 +71,7 @@ impl HttpSources {
             restricted: config
                 .sources
                 .iter()
-                .filter(|s| s.kind() == kind && is_restricted(&s.settings, s.restricted))
+                .filter(|s| s.kind() == kind && s.restricted)
                 .map(|s| s.name.clone())
                 .collect(),
             restricted_selectors: config
@@ -81,6 +84,20 @@ impl HttpSources {
                         ..
                     } if !restricted_selectors.is_empty() => {
                         Some((s.name.clone(), restricted_selectors.clone()))
+                    }
+                    _ => None,
+                })
+                .collect(),
+            restricted_log_groups: config
+                .sources
+                .iter()
+                .filter(|s| s.kind() == kind)
+                .filter_map(|s| match &s.settings {
+                    SourceSettings::CloudwatchLogs {
+                        restricted_log_groups,
+                        ..
+                    } if !restricted_log_groups.is_empty() => {
+                        Some((s.name.clone(), restricted_log_groups.clone()))
                     }
                     _ => None,
                 })
@@ -116,6 +133,26 @@ impl HttpSources {
             Access::require_restricted(session, &name)?;
         }
         Ok(self.http_source(name, max_rows))
+    }
+
+    /// [`HttpSources::pick`] for a `cloudwatch_logs` call over `log_groups` (already trimmed)
+    /// running `query`: on a source with `restricted_log_groups`, a call that may touch one of
+    /// them ([`touches_log_group`]) needs the session's identity to allow it (42501 otherwise)
+    /// and makes the statement an Audited Query.
+    pub fn pick_log_groups(
+        &self,
+        name: Option<String>,
+        log_groups: &[String],
+        query: &str,
+        session: &dyn Session,
+    ) -> Result<(String, usize), DataFusionError> {
+        let (name, max_rows) = self.pick(name, session)?;
+        if let Some(restricted) = self.restricted_log_groups.get(&name)
+            && touches_log_group(log_groups, query, restricted)
+        {
+            Access::require_restricted(session, &name)?;
+        }
+        Ok((name, max_rows))
     }
 
     fn http_source(&self, name: String, max_rows: usize) -> HttpSource {
@@ -173,16 +210,62 @@ fn base_url(settings: &SourceSettings) -> Option<&String> {
     }
 }
 
-/// A `restricted = true` source or a CloudWatch Logs source with `restricted_log_groups`: until
-/// log groups are checked for overlap, every query to it may touch Restricted Telemetry. (A Loki
-/// source's `restricted_selectors` are checked per query, in [`HttpSources::resolve_logql`].)
-fn is_restricted(settings: &SourceSettings, restricted: bool) -> bool {
-    restricted
-        || match settings {
-            SourceSettings::CloudwatchLogs {
-                restricted_log_groups,
-                ..
-            } => !restricted_log_groups.is_empty(),
-            _ => false,
-        }
+/// Whether a Logs Insights call over `log_groups` running `query` may touch one of the
+/// `restricted` log groups. Fails closed: a group touches when its name equals a restricted one
+/// (both trimmed; names are case-sensitive in CloudWatch), or when it is an ARN
+/// (`...:log-group:<name>` or `...:log-group:<name>:*`) of one; and every call whose query
+/// starts with a `SOURCE` command (which picks log groups itself) touches.
+pub fn touches_log_group(log_groups: &[String], query: &str, restricted: &[String]) -> bool {
+    let restricted: Vec<&str> = restricted.iter().map(|g| g.trim()).collect();
+    let starts_with_source = query
+        .split_whitespace()
+        .next()
+        .is_some_and(|word| word.eq_ignore_ascii_case("source"));
+    starts_with_source
+        || log_groups.iter().any(|group| {
+            let group = group.trim();
+            let arn_name = group
+                .rsplit_once(":log-group:")
+                .map(|(_, rest)| rest.strip_suffix(":*").unwrap_or(rest));
+            restricted.iter().any(|r| group == *r || arn_name == Some(*r))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::touches_log_group;
+
+    fn groups(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn only_restricted_log_groups_touch() {
+        let restricted = groups(&["/aws/rds/platform"]);
+        let touches =
+            |names: &[&str], query: &str| touches_log_group(&groups(names), query, &restricted);
+        assert!(!touches(&["/aws/lambda/web"], "fields @message"));
+        assert!(!touches(&["/aws/rds/platform-replica"], "fields @message"));
+        assert!(!touches(&["/aws/rds/Platform"], "fields @message"));
+        assert!(!touches(
+            &["/aws/lambda/web"],
+            "fields @message | filter @message like /SOURCE/"
+        ));
+        assert!(touches(&["/aws/rds/platform"], "fields @message"));
+        assert!(touches(&["/aws/lambda/web", "/aws/rds/platform"], "fields @message"));
+        assert!(touches(&[" /aws/rds/platform "], "fields @message"));
+        assert!(touches(
+            &["arn:aws:logs:us-east-2:123456789012:log-group:/aws/rds/platform:*"],
+            "fields @message"
+        ));
+        assert!(touches(
+            &["arn:aws:logs:us-east-2:123456789012:log-group:/aws/rds/platform"],
+            "fields @message"
+        ));
+        assert!(touches(
+            &["/aws/lambda/web"],
+            "SOURCE logGroups(namePrefix: ['/aws/rds']) | fields @message"
+        ));
+        assert!(touches(&["/aws/lambda/web"], "  source logGroups() | fields @message"));
+    }
 }

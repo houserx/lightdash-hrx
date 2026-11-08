@@ -1454,3 +1454,29 @@ token verification for a *valid* token, which feature 39 then hardens.
   The check passed after init, as did `selectors::` unit tests and sources::eng_logql_streams and
   sources::eng_logql_metric.
 - 2026-11-08T20:38:43Z supervisor: eng-restricted-loki-selectors passed the gate in round 1
+- 2026-11-08 eng-restricted-cloudwatch-log-groups (round 1): a CloudWatch Logs source's
+  `restricted_log_groups` are now checked per call instead of making the whole source restricted.
+  `HttpSources::pick_log_groups` (src/sources.rs) wraps `pick` and calls
+  `Access::require_restricted` (42501 naming telemetry_restricted, plan time, before StartQuery,
+  and the statement becomes an Audited Query) when `touches_log_group` says the call may touch a
+  restricted group. `cloudwatch_logs.rs` uses it. The old `is_restricted` helper is gone; only
+  `restricted = true` restricts a whole source now.
+  - Contract assumption (fails closed): a requested group touches a restricted one when its
+    trimmed name equals it exactly (case-sensitive, like CloudWatch), or when it is an ARN
+    `...:log-group:<name>` / `...:log-group:<name>:*` of it. Any query whose first word is
+    `SOURCE` (the Logs Insights command that picks log groups itself) also counts as touching.
+    No prefix/wildcard matching: `/aws/rds/platform-replica` is open.
+  - `engine-config`'s `is_audited` is unchanged: a source with restricted_log_groups still needs
+    `[audit]`.
+  Tested as a user: `../tmp/restricted-cwlogs/run.sh <out>` starts the Logs Insights mock, the
+  DynamoDB+S3 store and the engine (logs-a, restricted_log_groups = ["/aws/rds/platform"]) and
+  drives one pg-wire session with pgclient. With no identity, /aws/lambda/web and
+  /aws/rds/platform-replica returned rows. These got 42501 needs telemetry_restricted:
+  /aws/rds/platform, "/aws/lambda/web, /aws/rds/platform", " /aws/rds/platform ", the ARN form,
+  and a `SOURCE logGroups() | ...` query. After SET hrx.identity with a restricted reader token,
+  the web+platform list returned rows. The mock saw exactly 3 StartQuery calls (2 open, 1
+  authorized) and the store saw one dynamo put and one S3 put. The check passed after init, as
+  did sources::eng_cloudwatch_logs_insights, sources::eng_cloudwatch_logs_failure_and_cancel,
+  identity::eng_identity_restricted_denied, identity::eng_restricted_loki_selectors and the
+  `sources::` unit test. rustfmt and clippy are not installed on this toolchain; formatted by hand.
+- 2026-11-08T20:41:32Z supervisor: eng-restricted-cloudwatch-log-groups passed the gate in round 1
