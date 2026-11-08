@@ -36,7 +36,8 @@ type AlertEvaluatorArgs = {
  * WarehouseClient as `system:alert-evaluator`, over the window that ends at
  * the scheduled time, then gives every series of the result its own state
  * and value, stored per series in `alert_instances`. Every state change is
- * written to `alert_state_history`.
+ * written to `alert_state_history`. Paused rules are skipped without
+ * running their query.
  */
 export class AlertEvaluator {
     private readonly alertRuleModel: AlertRuleModel;
@@ -58,6 +59,9 @@ export class AlertEvaluator {
         const rule = await this.alertRuleModel.findByUuid(ruleUuid);
         // A job can outlive its rule; there is nothing left to evaluate.
         if (!rule) return { status: 'skipped', reason: 'not_found' };
+        // A paused rule runs no query and keeps its stored series as they
+        // are until it is unpaused.
+        if (rule.paused) return { status: 'skipped', reason: 'paused' };
 
         const sql = substituteAlertQueryParameters(
             rule.query,

@@ -345,3 +345,15 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Every entry has 16-hex fingerprints and labels `{team, instance, alertname}`. Outsider → 403, anonymous → 401, unknown rule → 404.
 - 2026-11-08T19:48:25Z supervisor: alert-eval-state-history passed the gate in round 1
 - 2026-11-08T19:49:38Z supervisor: alert-annotation-templates halted: the worker halted on alert-annotation-templates
+- alert-eval-paused (round 1) — 2026-11-08
+  - Changed: `AlertEvaluator.evaluateRule` returns `{status: 'skipped', reason: 'paused'}` for a paused rule right after the lookup. It opens no WarehouseClient, runs no query, and leaves `alert_instances` and `alert_state_history` alone. Pausing and unpausing already worked through `PATCH /rules/{uuid}` (`paused`), so nothing else changed.
+  - Decision (narrowest reading; the spec says nothing about it): a paused skip writes no history row. A paused rule keeps its stored series as they were (a firing series stays firing while the rule is paused). If alert-eval-overrun or a later feature wants `evaluation_skipped` history rows for paused too, add them there.
+  - Tested:
+    - The check passes (1 passed). query-identity, series-states, for-pending, keep-firing-for, state-history and paused pass together (6 passed).
+    - Backend tsc, oxlint (src/alerting) and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk; removed afterwards, along with `src/alerting/__walk__`).
+      - The editor POSTs a rule with `paused: true`, and a viewer GET shows `paused: true` with instances `[]`.
+      - Evaluations at 09:00 and 09:01 (db-1 at 95) → skipped/paused with 0 warehouse calls. Instances `[]`, history `[]`.
+      - The editor PATCHes `paused: false`. The evaluation at 09:02 → evaluated, 1 call, db-1 firing 95.
+      - The rule is paused again, and the evaluation at 09:03 (db-1 at 10) → skipped/paused, still 1 call, db-1 still firing 95.
+- 2026-11-08T19:52:49Z supervisor: alert-eval-paused passed the gate in round 1
