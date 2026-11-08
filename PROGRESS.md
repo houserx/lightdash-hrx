@@ -1452,3 +1452,21 @@ should add a dated line here per feature.
 - **Next.** viz-docs-panel-mapping should write `docs/eng-1799/grafana-panel-mapping.md` from these tables, with every
   fixture path in backticks, and link this module's path.
 - 2026-11-08T21:39:19Z supervisor: viz-grafana-panel-option-mapping passed the gate in round 1
+
+## viz-docs-panel-mapping (round 1)
+- **What changed.** New doc `docs/eng-1799/grafana-panel-mapping.md` (doc only, no code). It explains the six panel
+  targets and the six option targets and links the typed module
+  `packages/common/src/eng1799/grafanaPanelMapping.ts`. It has one table row per panel type (15) and one row per fixture
+  option path (275): a `*` section, then one section per panel type in fixture order. A last table lists the `*` options
+  that `text` and `row` override (`description`; `row` also `collapsed`).
+- **How it was made.** A throwaway node script, kept outside the repo and since deleted, required the built
+  `packages/common/dist/cjs` and printed the tables from `getGrafanaPanelMapping` and
+  `getGrafanaPanelOptionMapping`. Every target, Lightdash path, note and reason is verbatim from the module. It threw
+  if any fixture type or path had no mapping, and none were missing. `*` rows show the mapping for `timeseries`. Then
+  `pnpm exec oxfmt` aligned the tables.
+- **Trap.** The doc is hand-maintained. If the module's tables change, update the doc by hand; nothing checks that the
+  two match beyond the presence of the paths.
+- **Tested as a user.** I read the doc and found a row for each of the 15 types and the logs, alertlist and `*` option
+  tables, each with a target and either a Lightdash path or a drop reason. The module link is relative and resolves
+  from `docs/eng-1799/`. The check passed 4/4 after `bash ./init.sh`, and `oxfmt --check` is clean.
+- 2026-11-08T21:41:30Z supervisor: viz-docs-panel-mapping passed the gate in round 1
