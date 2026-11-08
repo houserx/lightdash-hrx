@@ -15,7 +15,8 @@ export const findColumn = (
 ): string | undefined =>
     columns.find((column) => column.toLowerCase() === name.toLowerCase());
 
-const toEpochMs = (value: unknown): number | undefined => {
+/** Reads a timestamp given as a Date, epoch ms or a parseable string. */
+export const toEpochMs = (value: unknown): number | undefined => {
     if (value instanceof Date) return value.getTime();
     if (typeof value === 'number') return value;
     if (typeof value === 'string' && value !== '') {

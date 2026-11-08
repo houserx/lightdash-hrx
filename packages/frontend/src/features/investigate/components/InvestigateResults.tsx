@@ -1,9 +1,10 @@
 import { getTelemetryResultShape } from '@lightdash/common';
-import { Box, ScrollArea, Table, Text } from '@mantine/core';
+import { Box, Group, ScrollArea, Stack, Table, Text } from '@mantine/core';
 import { useMemo, type FC } from 'react';
 import EChartsReact, {
     type EChartsOption,
 } from '../../../components/EChartsReactWrapper';
+import { toLogEntries, type LogEntry } from '../utils/logLines';
 import {
     groupTimeSeries,
     type InvestigateRow,
@@ -64,6 +65,57 @@ const TimeSeriesChart: FC<{ lines: TimeSeriesLine[] }> = ({ lines }) => {
     );
 };
 
+const LogList: FC<{ entries: LogEntry[] }> = ({ entries }) => (
+    <Box data-testid="investigate-log-list" data-log-count={entries.length}>
+        {entries.length === 0 ? (
+            <Text c="dimmed" size="sm">
+                No log lines
+            </Text>
+        ) : (
+            <ScrollArea.Autosize mah={600}>
+                <Stack gap={0}>
+                    {entries.map((entry, index) => (
+                        <Group
+                            // Log rows have no stable id.
+                            // eslint-disable-next-line react/no-array-index-key
+                            key={index}
+                            gap="sm"
+                            wrap="nowrap"
+                            align="flex-start"
+                            className={classes.logLine}
+                        >
+                            <Text
+                                component="time"
+                                dateTime={entry.timestamp}
+                                size="xs"
+                                c="dimmed"
+                                ff="monospace"
+                                className={classes.logTimestamp}
+                            >
+                                {entry.timestamp}
+                            </Text>
+                            <Stack gap={2} miw={0}>
+                                <Text
+                                    size="xs"
+                                    ff="monospace"
+                                    className={classes.logMessage}
+                                >
+                                    {entry.message}
+                                </Text>
+                                {entry.context && (
+                                    <Text size="xs" c="dimmed" ff="monospace">
+                                        {entry.context}
+                                    </Text>
+                                )}
+                            </Stack>
+                        </Group>
+                    ))}
+                </Stack>
+            </ScrollArea.Autosize>
+        )}
+    </Box>
+);
+
 const ResultTable: FC<{ columns: string[]; rows: InvestigateRow[] }> = ({
     columns,
     rows,
@@ -96,7 +148,8 @@ const ResultTable: FC<{ columns: string[]; rows: InvestigateRow[] }> = ({
 
 /**
  * Renders an Investigate query result by its shape: metric results as a
- * time-series chart with one line per series, anything else as a plain table.
+ * time-series chart with one line per series, log results as a list of lines
+ * with their timestamps, anything else as a plain table.
  */
 export const InvestigateResults: FC<InvestigateResultsProps> = ({
     columns,
@@ -107,8 +160,15 @@ export const InvestigateResults: FC<InvestigateResultsProps> = ({
         () => (shape === 'metric' ? groupTimeSeries(columns, rows) : []),
         [shape, columns, rows],
     );
+    const logEntries = useMemo(
+        () => (shape === 'log' ? toLogEntries(columns, rows) : []),
+        [shape, columns, rows],
+    );
     if (shape === 'metric') {
         return <TimeSeriesChart lines={lines} />;
+    }
+    if (shape === 'log') {
+        return <LogList entries={logEntries} />;
     }
     return <ResultTable columns={columns} rows={rows} />;
 };

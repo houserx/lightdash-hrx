@@ -1309,3 +1309,26 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     series/labels grouping including upper-cased columns. Feature check 1/1. frontend tsc
     clean; oxfmt and oxlint clean on changed files.
 - 2026-11-08T20:54:11Z supervisor: ldq-investigate-results-timeseries passed the gate in round 1
+- ldq-investigate-results-logs (round 1):
+  - `InvestigateResults` has a `log` branch now. A log-shaped result (common
+    `getTelemetryResultShape`: a timestamp plus line or message) renders
+    `data-testid="investigate-log-list"` with `data-log-count`. It shows one row per log line:
+    a `<time datetime>` with the ISO UTC timestamp, the line/message in monospace (pre-wrap),
+    and under it, dimmed, the context (logql `stream`, else `labels`, else cloudwatch_logs
+    `fields`). The list scrolls inside 600px max (`ScrollArea.Autosize`). Empty results say
+    "No log lines". The styles are in `InvestigateResults.module.css` (.logLine, .logTimestamp,
+    .logMessage).
+  - New `features/investigate/utils/logLines.ts`: `toLogEntries(columns, rows)`. Columns match
+    case-insensitively. Timestamps come out as ISO UTC strings; a value that is not a time is
+    shown raw. JSON objects become text. `toEpochMs` in `timeSeries.ts` is now exported for
+    reuse.
+  - Decision: rows keep the order the query returned them in (the engine/user picks the
+    sort). Nothing is re-sorted on the client.
+  - Tested: no browser or backend (no Docker), and no Run button in Investigate yet, so the
+    component was driven directly. `InvestigateResults.test.tsx` (8/8) adds toLogEntries for
+    logql/cloudwatch_logs columns (upper-case, epoch, Date, invalid time) and component tests
+    for the list with its `<time>` and the empty state. Feature check 2/2, regression
+    investigate-results-metric 1/1. frontend tsc clean; oxfmt and oxlint clean on
+    features/investigate.
+  - Next: ldq-investigate-results-traces adds the `trace` branch (`onOpenTrace` still unused).
+- 2026-11-08T20:56:23Z supervisor: ldq-investigate-results-logs passed the gate in round 1

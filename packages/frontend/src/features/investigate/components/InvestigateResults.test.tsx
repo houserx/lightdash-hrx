@@ -1,5 +1,6 @@
 import { MantineProvider } from '@mantine/core';
 import { render, screen } from '@testing-library/react';
+import { toLogEntries } from '../utils/logLines';
 import { groupTimeSeries } from '../utils/timeSeries';
 import { InvestigateResults } from './InvestigateResults';
 
@@ -64,6 +65,55 @@ describe('groupTimeSeries', () => {
     });
 });
 
+describe('toLogEntries', () => {
+    it('keeps the row order and reads logql and cloudwatch_logs columns', () => {
+        expect(
+            toLogEntries(
+                ['TIMESTAMP', 'LINE', 'LABELS', 'STREAM'],
+                [
+                    {
+                        TIMESTAMP: Date.parse('2026-11-08T10:00:01.000Z'),
+                        LINE: 'second',
+                        LABELS: { app: 'api' },
+                        STREAM: '{app="api"}',
+                    },
+                    {
+                        TIMESTAMP: 'not a time',
+                        LINE: 'first',
+                        LABELS: null,
+                        STREAM: null,
+                    },
+                ],
+            ),
+        ).toEqual([
+            {
+                timestamp: '2026-11-08T10:00:01.000Z',
+                message: 'second',
+                context: '{app="api"}',
+            },
+            { timestamp: 'not a time', message: 'first', context: '' },
+        ]);
+        expect(
+            toLogEntries(
+                ['timestamp', 'message', 'fields'],
+                [
+                    {
+                        timestamp: new Date('2026-11-08T10:00:00.000Z'),
+                        message: 'timed out',
+                        fields: { '@logStream': 'abc' },
+                    },
+                ],
+            ),
+        ).toEqual([
+            {
+                timestamp: '2026-11-08T10:00:00.000Z',
+                message: 'timed out',
+                context: '{"@logStream":"abc"}',
+            },
+        ]);
+    });
+});
+
 describe('InvestigateResults', () => {
     it('draws one chart line per series', () => {
         renderResults({ columns, rows });
@@ -88,5 +138,38 @@ describe('InvestigateResults', () => {
         expect(screen.getByTestId('investigate-table')).toBeInTheDocument();
         expect(screen.getByText('stuck')).toBeInTheDocument();
         expect(screen.queryByTestId('investigate-timeseries')).toBeNull();
+    });
+
+    it('lists log lines with their timestamps', () => {
+        renderResults({
+            columns: ['timestamp', 'line', 'labels', 'stream'],
+            rows: [
+                {
+                    timestamp: '2026-11-08T10:00:01.000Z',
+                    line: 'level=error msg="sync failed"',
+                    labels: '{"app":"api"}',
+                    stream: '{app="api"}',
+                },
+            ],
+        });
+        const list = screen.getByTestId('investigate-log-list');
+        expect(list).toHaveAttribute('data-log-count', '1');
+        expect(list.querySelector('time')).toHaveAttribute(
+            'datetime',
+            '2026-11-08T10:00:01.000Z',
+        );
+        expect(list.textContent).toContain('level=error msg="sync failed"');
+        expect(list.textContent).toContain('{app="api"}');
+        expect(screen.queryByTestId('investigate-table')).toBeNull();
+    });
+
+    it('says so when a log result has no lines', () => {
+        renderResults({
+            columns: ['timestamp', 'message', 'fields'],
+            rows: [],
+        });
+        expect(
+            screen.getByTestId('investigate-log-list').textContent,
+        ).toContain('No log lines');
     });
 });
