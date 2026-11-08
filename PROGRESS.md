@@ -344,3 +344,4 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
         - db-1 normal→firing 95 09:00
       - Every entry has 16-hex fingerprints and labels `{team, instance, alertname}`. Outsider → 403, anonymous → 401, unknown rule → 404.
 - 2026-11-08T19:48:25Z supervisor: alert-eval-state-history passed the gate in round 1
+- 2026-11-08T19:49:38Z supervisor: alert-annotation-templates halted: the worker halted on alert-annotation-templates
