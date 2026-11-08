@@ -1388,3 +1388,29 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     when given. Regressions: SqlRunner.investigate 5/5, sql-runner-mode-switch 2/2,
     investigate-results-traces 3/3. frontend tsc, oxlint and oxfmt are clean.
 - 2026-11-08T21:04:43Z supervisor: ldq-investigate-time-range passed the gate in round 1
+- ldq-investigate-audited-query (round 1):
+  - `InvestigateWorkspace` shows a required "Description" field and an optional "Linear ticket"
+    field below the editor. They appear whenever the current SQL box text is an Audited Query
+    per common's `isAuditedSql` (it calls platform_query/explain/tables/columns), so they follow
+    the SQL, not the source picker. If the user edits the SQL so it no longer calls a platform_*
+    function, the fields hide and no audit is sent. Run is disabled while the Description is
+    empty or blank.
+  - `InvestigateRunRequest` gained `audit?: QueryAudit`. It is present only for audited SQL:
+    `{ description }` trimmed, plus `ticket` only when a non-blank ticket is given. The ticket is
+    free text (no ENG-123 format check; the spec doesn't define one). `useInvestigateRunQuery`
+    passes `audit` to `executeSqlQuery`, which puts it in the POST body only when set.
+  - Next: ldq-investigate-restricted-description (investigate-audit-retry.test.tsx) should
+    reuse the same two fields. Show them also after an `isAuditDescriptionRequiredError`
+    failure, and send `audit` on the rerun. `access` and `onSaveAsChart` props are still
+    undeclared (the tests pass them as `any`).
+  - Trap: with this checkout's `.factory` path, never pipe `npx oxfmt` output back over a file.
+    npx fails here (EBADDEVENGINES, node 26 vs 24) and leaves the file empty. Use the repo-root
+    `node_modules/.bin/oxfmt --stdin-filepath`, check that its exit code is 0 and its output is
+    not empty, then move the output over the file. oxlint lives in
+    packages/frontend/node_modules/.bin.
+  - Tested: no browser or backend (no Docker), so I drove the workspace through its rendered UI
+    in vitest. Feature check 3/3. InvestigateWorkspace.test.tsx 4/4: a new test covers a blank
+    description keeping Run disabled, trimming, no ticket sent when it is blank, and editing
+    the SQL away from platform_query dropping both the fields and the audit. Regression
+    investigate-time-range 2/2. frontend tsc, oxlint and oxfmt are clean.
+- 2026-11-08T21:08:02Z supervisor: ldq-investigate-audited-query passed the gate in round 1

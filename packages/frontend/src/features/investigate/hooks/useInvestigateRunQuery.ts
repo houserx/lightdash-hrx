@@ -8,7 +8,7 @@ import {
 
 /**
  * Runs Investigate SQL through the project's async SQL query API, sending the time range that
- * resolves the reserved time parameters.
+ * resolves the reserved time parameters and, for an Audited Query, its description and ticket.
  */
 export const useInvestigateRunQuery = (projectUuid: string | undefined) => {
     const lightdashApi = useLightdashApi();
@@ -16,6 +16,7 @@ export const useInvestigateRunQuery = (projectUuid: string | undefined) => {
         async ({
             sql,
             timeRange,
+            audit,
         }: InvestigateRunRequest): Promise<InvestigateQueryResult> => {
             if (!projectUuid) throw new Error('No project selected');
             const { columns, results } = await executeSqlQuery(
@@ -26,7 +27,7 @@ export const useInvestigateRunQuery = (projectUuid: string | undefined) => {
                 undefined,
                 undefined,
                 undefined,
-                { timeRange },
+                { timeRange, audit },
             );
             return {
                 columns: columns.map((column) => column.reference),

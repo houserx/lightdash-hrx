@@ -66,4 +66,42 @@ describe('InvestigateWorkspace', () => {
             expect(screen.getByRole('button', { name: 'Run' })).toBeEnabled(),
         );
     });
+
+    it('asks for audit fields only while the SQL touches the Platform Database', async () => {
+        const runQuery = vi.fn(async () => tableResult);
+        renderWorkspace(runQuery);
+        fireEvent.click(
+            screen.getByRole('radio', { name: 'Platform Database' }),
+        );
+        fireEvent.change(screen.getByLabelText('Platform SQL'), {
+            target: { value: 'select 1' },
+        });
+        fireEvent.change(screen.getByLabelText(/Description/), {
+            target: { value: '   ' },
+        });
+        expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled();
+
+        fireEvent.change(screen.getByLabelText(/Description/), {
+            target: { value: '  Smoke test  ' },
+        });
+        fireEvent.change(screen.getByLabelText(/Linear ticket/), {
+            target: { value: '  ' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+        await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+        expect(runQuery.mock.calls[0]).toEqual([
+            expect.objectContaining({ audit: { description: 'Smoke test' } }),
+        ]);
+
+        // Editing the SQL so it no longer calls platform_query drops the fields and the audit.
+        fireEvent.change(screen.getByLabelText('SQL'), {
+            target: { value: 'select 1' },
+        });
+        expect(screen.queryByLabelText(/Description/)).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+        await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2));
+        expect(runQuery.mock.calls[1]).toEqual([
+            expect.not.objectContaining({ audit: expect.anything() }),
+        ]);
+    });
 });
