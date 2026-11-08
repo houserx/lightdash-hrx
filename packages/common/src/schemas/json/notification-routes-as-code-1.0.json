@@ -1,0 +1,90 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.lightdash.com/lightdash/notification-routes-as-code.json",
+    "title": "Lightdash Notification Routes as Code",
+    "description": "The project's Notification Route tree (ENG-1799), stored as notification-routes/notification-routes.yml. The document is the default (root) route; it has no matchers. Timers default to 30s/5m/4h and are inherited by child routes.",
+    "type": "object",
+    "required": ["version", "type", "contactPoint"],
+    "additionalProperties": false,
+    "properties": {
+        "version": {
+            "const": 1,
+            "description": "Document format version"
+        },
+        "type": {
+            "const": "notification_routes"
+        },
+        "contactPoint": {
+            "$ref": "#/$defs/ContactPointSlug",
+            "description": "Contact Point of the default route"
+        },
+        "groupBy": { "$ref": "#/$defs/GroupBy" },
+        "groupWait": { "$ref": "#/$defs/Duration", "default": "30s" },
+        "groupInterval": { "$ref": "#/$defs/Duration", "default": "5m" },
+        "repeatInterval": { "$ref": "#/$defs/Duration", "default": "4h" },
+        "routes": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/Route" }
+        }
+    },
+    "$defs": {
+        "ContactPointSlug": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "Duration": {
+            "type": "string",
+            "description": "Prometheus duration such as 30s, 5m or 1h30m",
+            "pattern": "^(?:0|(?=\\d)(?:\\d+y)?(?:\\d+w)?(?:\\d+d)?(?:\\d+h)?(?:\\d+m)?(?:\\d+s)?(?:\\d+ms)?)$"
+        },
+        "GroupBy": {
+            "type": "array",
+            "description": "Labels to group alerts by; '...' groups by every label and [] puts all alerts in one group",
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "pattern": "^(?:\\.\\.\\.|[A-Za-z_][A-Za-z0-9_]*)$"
+            }
+        },
+        "Matcher": {
+            "type": "object",
+            "required": ["label", "operator", "value"],
+            "additionalProperties": false,
+            "properties": {
+                "label": { "type": "string", "minLength": 1 },
+                "operator": { "enum": ["=", "!=", "=~", "!~"] },
+                "value": {
+                    "type": "string",
+                    "description": "Value, or an anchored regex for =~ and !~"
+                }
+            }
+        },
+        "Route": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "matchers": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/Matcher" }
+                },
+                "contactPoint": {
+                    "$ref": "#/$defs/ContactPointSlug",
+                    "description": "Inherited from the parent route when left out"
+                },
+                "continue": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Keep matching sibling routes after this one matches"
+                },
+                "groupBy": { "$ref": "#/$defs/GroupBy" },
+                "groupWait": { "$ref": "#/$defs/Duration" },
+                "groupInterval": { "$ref": "#/$defs/Duration" },
+                "repeatInterval": { "$ref": "#/$defs/Duration" },
+                "routes": {
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/Route" }
+                }
+            }
+        }
+    }
+}
