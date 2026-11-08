@@ -245,3 +245,4 @@ should add a dated line here per feature.
 - 2026-11-08T17:53:38Z supervisor: viz-chart-type-members halted: the worker halted on viz-chart-type-members
 - 2026-11-08T17:56:39Z supervisor: viz-chart-types-migration halted: the worker halted on viz-chart-types-migration
 - 2026-11-08T18:00:00Z supervisor: viz-log-levels halted: the worker halted on viz-log-levels
+- 2026-11-08T18:00:56Z supervisor: viz-log-stream-as-code halted: the worker halted on viz-log-stream-as-code
