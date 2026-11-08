@@ -1778,3 +1778,18 @@ token verification for a *valid* token, which feature 39 then hardens.
   Trap: clippy and rustfmt are not installed on this machine's stable toolchain (rustup
   component missing), so neither was run this round.
 - 2026-11-08T21:45:41Z supervisor: eng-audit-failed-query-recorded passed the gate in round 1
+- 2026-11-08 eng-audit-action-mapping (round 1): no code change was needed. `Identity::action()`
+  in identity.rs (added with eng-identity-agent-and-system) already maps agent -> "ai_ask", sys ->
+  "assertion", else "query", and audit.rs writes it into the item and the integrity hash. Agent
+  already means `agent` is not explicitly false, or iss = telemetry-mcp. Agent wins over sys:
+  a token with both agent and sys set is recorded as ai_ask. The identity.rs unit tests already
+  cover all three actions.
+  Tested as a user: `../tmp/audit-action/run.sh <out>` (throwaway cluster, store mock, engine,
+  pgclient `platform` bin, and verify.mjs with the portal's computeIntegrityHash). The same
+  platform_query was run with four tokens: a person, iss telemetry-mcp with agent:false, a
+  lightdash token with agent:true, and sys:true. Their items are action query / ai_ask / ai_ask
+  / assertion, each with its own executedBySub, database "platform", status success, rowCount
+  1, and a matching hash. Check passes.
+  Trap: the pgclient `platform` bin expects two SQL arguments. With one, it panics (index out of
+  bounds) after printing the first result. That is harmless, but pass two.
+- 2026-11-08T21:48:03Z supervisor: eng-audit-action-mapping passed the gate in round 1
