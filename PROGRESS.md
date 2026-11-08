@@ -778,3 +778,21 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     timestamps, '30s' and '6h'. A user `__from` overrode only __from. common tsc, oxlint and
     oxfmt are clean.
 - 2026-11-08T19:04:02Z supervisor: ldq-time-reserved-parameters passed the gate in round 1
+- 2026-11-08 ldq-time-cache-key-buckets (session):
+  - No code change needed. The feature check passed 4/4 on the unchanged tree. The
+    ldq-time-reserved-parameters work already does what it needs: `resolveReservedParameterValues`
+    reads the clock once and rounds relative ranges to the refresh bucket, the values are
+    substituted into the SQL, and `QueryHistoryModel.getCacheKey` hashes the substituted SQL. The
+    executeAsyncQuery path (AsyncQueryService, `sharedCacheKey` from `sql: query`) keys on the
+    compiled query, so the resolved timestamps are in the key, as CONTRACTS §2 requires.
+  - Not done here (belongs to ldq-query-routes-time-range-audit): no backend caller passes
+    `timeRange`/`refreshInterval` into `resolveReservedParameterValues` yet. QueryComposer passes
+    only `{ dateZoom }`. The SQL runner paths (`probeDuckdbQueryColumns`, column discovery,
+    ~line 15132) substitute user `parameters` only. When wiring those, merge the reserved values
+    with `mergeReservedValues` before both substitution and `getCacheKey`, and resolve once per
+    request so column discovery and the run use the same bucket.
+  - Tested: init, then the feature check (4/4). A scratch backend tsx script (deleted) on the
+    real clock compiled now-6h with refresh 1m at the start and end of the current minute and got
+    identical SQL and keys. The next minute gave timestamps one minute later and a new key.
+    Refresh off, back-to-back runs, gave identical SQL. No missing references.
+- 2026-11-08T19:06:19Z supervisor: ldq-time-cache-key-buckets passed the gate in round 1
