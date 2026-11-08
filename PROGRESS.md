@@ -1297,3 +1297,38 @@ docs/eng-1799/telemetry-mcp.md
 - Next sessions: log through `context.logger` / `createLogger` with scalar metadata only. Never pass args, rows, SQL
   or error text.
 - 2026-11-08T18:12:34Z supervisor: mcp-structured-logs passed the gate in round 1
+
+### mcp-tool-platform-explain (session 2026-11-08)
+
+- New `src/tools/platformExplain.ts`, registered in `src/mcp/server.ts` after `platform_query`.
+  - The input is `{sql, description?, advise?}` (zod), with **no `analyze` argument**. zod strips an unknown `analyze`,
+    and the engine never sees it.
+  - The engine runs `SELECT * FROM platform_explain($1)` with the SQL as its only bind parameter, `maxRows: 1`, and
+    audit `{description}`: the caller's description, or `GENERATED_EXPLAIN_DESCRIPTION` when it is missing or blank
+    (Contract assumption 6). The identity token's `audit.source` is `mcp`, as the session always sets it.
+  - The result is `{ plan, advice: null, adviceError? }`. The plan is the first cell of the first row; a JSON-text cell
+    is parsed. When the result's JSON is over `MCP_MAX_OUTPUT_BYTES`, the tool returns an error (a plan is not rows,
+    so nothing can be dropped).
+  - Engine errors go through `failureResult(err, 'The Platform Database explain')`, so a 42501 reads "Access denied:
+    ... platform_explain requires attrs.platform_read or attrs.platform_explain ...".
+- **Hook for the next features (mcp-plan-advisor-port, mcp-plan-advice, mcp-ai-not-configured):** `advise` defaults to
+  true. Until an advisor exists, `advise: true` returns `advice: null` and `adviceError: ADVICE_NOT_CONFIGURED`
+  ("Plan advice is not configured on this server"); `advise: false` returns `advice: null` and no adviceError. The
+  plan-advice feature should replace the `if (query.advise)` branch in the handler with the advisor call. Keep "a
+  failing model never fails the tool". Note that plan-advice.test.ts calls without `advise`, so the default must stay
+  true.
+- Unit tests: `src/tools/platformExplain.test.ts`. 275 unit tests pass, and typecheck/build are clean.
+- Tested as a user with `../tmp/platform-explain-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It uses the real `dist/main.js` on port 19004, the
+  SDK client, an RS256 Okta token, and the fake engine and Lightdash. Results:
+  - tools/list shows props `sql, description, advise` and readOnlyHint true;
+  - a platform_read user with advise false got the plan and advice null, and the engine saw
+    `SELECT * FROM platform_explain($1)` with the SQL as its param, source mcp, the generated description and agent true;
+  - with the default advise and a description, the caller's description was sent and adviceError was "not configured";
+  - passing `analyze: true` was ignored, and no engine statement contained ANALYZE;
+  - a blank sql was refused before the engine;
+  - a platform_explain-only user got the plan;
+  - a user with neither attribute got "Access denied ... (SQLSTATE 42501)".
+- Results: the check passes. Acceptance: 33 files pass and 20 fail. All 20 failures are unbuilt features (ask_data,
+  plan advice, ai-not-configured, write_preview, docs, dockerfile, readme, tool-catalog and others).
+- 2026-11-08T18:17:02Z supervisor: mcp-tool-platform-explain passed the gate in round 1
