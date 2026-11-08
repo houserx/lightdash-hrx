@@ -65,3 +65,39 @@ export { ToolInputError, capTableBytes, durationMs, parseDuration, parseInstant,
 export type { TableResult } from './tools/telemetryArgs.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';
+export { responseText } from './ask/llm.js';
+export type {
+    LlmClient,
+    LlmContentBlock,
+    LlmMessage,
+    LlmRequest,
+    LlmResponse,
+    LlmTextBlock,
+    LlmTool,
+    LlmToolChoice,
+    LlmToolResultBlock,
+    LlmToolUseBlock,
+    LlmUsage,
+} from './ask/llm.js';
+export {
+    AI_MODELS,
+    DEFAULT_ADVICE_MAX_TOKENS,
+    DEFAULT_ADVICE_MODEL,
+    NOT_CONFIGURED_MESSAGE,
+    PLAN_CHAR_LIMIT,
+    PlanAdviceError,
+    collectRelations,
+    createPlanAdvisor,
+    parseAdvice,
+    resolveModel,
+} from './ask/plan-advisor.service.js';
+export type {
+    AdvisePlanInput,
+    ExistingIndex,
+    ExistingIndexLookup,
+    IndexSuggestion,
+    PlanAdvice,
+    PlanAdvisor,
+    PlanAdvisorOptions,
+    PlanSuggestion,
+} from './ask/plan-advisor.service.js';

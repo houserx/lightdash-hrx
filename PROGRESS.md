@@ -1332,3 +1332,41 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes. Acceptance: 33 files pass and 20 fail. All 20 failures are unbuilt features (ask_data,
   plan advice, ai-not-configured, write_preview, docs, dockerfile, readme, tool-catalog and others).
 - 2026-11-08T18:17:02Z supervisor: mcp-tool-platform-explain passed the gate in round 1
+
+### mcp-plan-advisor-port (session 2026-11-08)
+
+- Source: `~/Remotes/HouseRx/db-query-portal` at `aea73de` (`git show aea73de:api/src/services/plan-advisor.service.ts`
+  and `.test.ts`, read-only). The other portal ports can read their sources the same way.
+- New `src/ask/llm.ts` holds the **`LlmClient` interface** (`createMessage(params) => Promise<LlmResponse>`, with the
+  Anthropic Messages shape: text/tool_use/tool_result blocks, tools, tool_choice and usage) and `responseText()`, the
+  portal's text-block join. It has no implementation yet. The next AI feature builds the `fetch` client from
+  `ANTHROPIC_API_KEY` and wires `deps.llm`.
+- New `src/ask/plan-advisor.service.ts` exports `createPlanAdvisor({ llm, defaultModel?, maxTokens?, existingIndexes? })`,
+  which returns `{ advisePlan({ sql, plan, analyze?, model? }) }`. The prompt, `PLAN_CHAR_LIMIT`, `parseAdvice`,
+  `AI_MODELS`/`resolveModel` and the defaults (haiku-4-5, 1200 tokens) are verbatim from the portal. What changed:
+  - the SDK and Secrets Manager are replaced by the injected `LlmClient`;
+  - `HttpError` becomes `PlanAdviceError` with `.status` (503 with "AI suggestions are not configured…" when `llm` is
+    null, 502 with "AI suggestion request failed: <msg>" when the model call throws);
+  - kpi and Sentry are dropped;
+  - `pg_indexes` is not reachable through the contract, so the existing-index list comes from an optional injected
+    lookup. Without one, the prompt says "(existing indexes could not be read)", as the portal did on failure;
+  - `collectRelations` also walks arrays and `Plan` roots, so a whole FORMAT JSON plan (the
+    `[{Plan:{...}}]` that `platform_explain` returns) gives its tables;
+  - `analyze` defaults to false, so the prompt says "(estimates only)", which plan-advice.test.ts checks for.
+  Everything is exported from `src/index.ts`.
+- `src/ask/plan-advisor.service.test.ts`: the portal's 4 cases come first, unchanged except that jest became vitest
+  and the module mocks became an injected `vi.fn` LLM and index lookup. 8 more cases cover the prompt and max_tokens,
+  index-lookup degradation, index parsing, plan truncation, model resolution, and the 503 and 502 errors.
+- **Hook for mcp-plan-advice:** in `platformExplain.ts`, replace the `if (query.advise)` branch with
+  `createPlanAdvisor({ llm: deps.llm }).advisePlan({ sql, plan })`. On a thrown error, return `advice: null` and
+  `adviceError: err.message`; the 502 text contains the model error, which satisfies /upstream overloaded|failed/.
+  Consider running `redactSecrets` over it. Keep `ADVICE_NOT_CONFIGURED` for `llm` absent, or use the 503 message.
+  mcp-ai-not-configured decides which.
+- Tested as a user: ran `pnpm exec vitest run src/ask/plan-advisor.service.test.ts` in the package, and 12 of 12 passed.
+  Ran the feature check from the repo root after `bash ./init.sh`, and it passed. The test file and the sources
+  typecheck under the package's strict tsconfig; `pnpm typecheck` excludes test files, so a temporary tsconfig in
+  `../tmp/plan-advisor-port` covered the test file. The full unit suite has 287 passing.
+- Results: acceptance has 34 files passing and 19 failing. All 19 failures are unbuilt features (ask_data, plan-advice,
+  ai-not-configured, ask-memory and the other ports, write_preview, docs, dockerfile, readme, tool-catalog,
+  no-commit-tool).
+- 2026-11-08T18:27:56Z supervisor: mcp-plan-advisor-port passed the gate in round 1
