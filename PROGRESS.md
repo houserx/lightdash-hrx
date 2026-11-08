@@ -1395,3 +1395,24 @@ should add a dated line here per feature.
   oxfmt are clean on the changed files.
 - **Next.** Pivot tables still don't apply mappings (see viz-table-value-mappings).
 - 2026-11-08T21:30:05Z supervisor: viz-value-mappings-config-panel passed the gate in round 1
+
+## viz-grafana-panel-type-mapping (round 1)
+- **What changed.** New `packages/common/src/eng1799/grafanaPanelMapping.ts`, exported from `@lightdash/common`.
+  It has `GRAFANA_PANEL_TYPES` (the 15 types in the fixture), `GRAFANA_PANEL_MAPPINGS` (a record keyed by type),
+  `getGrafanaPanelMapping(type)` (undefined for unknown types, and prototype keys like `constructor` are not matched),
+  and `isGrafanaPanelType`. `GrafanaPanelMapping` is a union keyed on `target`. Built-in and native entries carry
+  `chartType`. Registry entries carry `chartType: CUSTOM` and a `registrySlug` (typed to the six chart-registry
+  slugs). Dropped entries require `reason`. Each entry has `grafanaType`, and an optional `note` can feed the docs.
+- **Mapping.** timeseries, graph and barchart → CARTESIAN. gauge → GAUGE. table and table-old → TABLE. piechart → PIE.
+  logs → native LOG_STREAM. stat → registry `stat-sparkline`. bargauge → registry `bar-gauge`. text → markdown tile.
+  row → heading tile. Three types are dropped: alertlist (Alert Rules move to Lightdash per ADR 0001), dashlist
+  (Grafana dashboard links, which die at Cutover) and news (an RSS feed, not data).
+- **Decision.** The spec doesn't say which types to drop or why. These three were the only ones without a target in
+  the acceptance test, and they hold no query data. The reasons are my own wording.
+- **Tested as a user.** A throwaway node script (since deleted) required the built `@lightdash/common` from
+  packages/backend and looked up all 15 fixture types. It printed the target, chart type or slug for each, plus the
+  reasons for the three dropped types. `not-a-panel` and `constructor` came back undefined. The check passed 16/16
+  after `bash ./init.sh`. Common tsc, oxlint and oxfmt are clean on the changed files.
+- **Next.** viz-grafana-panel-option-mapping adds `getGrafanaPanelOptionMapping` to the same module. The
+  docs-panel-mapping test expects the doc to link to this file's path.
+- 2026-11-08T21:33:22Z supervisor: viz-grafana-panel-type-mapping passed the gate in round 1
