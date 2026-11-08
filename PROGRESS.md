@@ -1203,3 +1203,24 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - The managed tree had no Add or Remove route, no Select, and Save was disabled.
   - For the next session (pages): map `onSave` to `saveNotificationRoutes`, and `tree` to `getNotificationRoutes` (null before the first save). Key the editor on the loaded tree.
 - 2026-11-08T23:48:47Z supervisor: alert-ui-routes-editor passed the gate in round 1
+- alert-ui-pages (round 1) — 2026-11-08
+  - Changes:
+    - `Routes.tsx`: new `ALERTING_ROUTES` inside `PROJECT_LAYOUT_ROUTES` (so under `ProjectRoute` and `ProjectLayout`). The paths are `alerting/rules`, `alerting/rules/new`, `alerting/rules/:ruleUuid`, `alerting/rules/:ruleUuid/edit`, `alerting/contact-points`, `alerting/contact-points/new`, `alerting/contact-points/:contactPointUuid` and `alerting/notification-routes`. Each one lazy-loads a default-exported page from `features/alerting/pages/`.
+    - `features/alerting/hooks.ts`: React Query hooks over `api.ts`. Every key starts with `['alerting', projectUuid]`. `useAlertingMutation` invalidates that prefix on success. It also adds `apiErrorMessage` and `toAlertRuleDefinition`, which picks a rule's definition fields as the preview body.
+    - `features/alerting/utils.ts`: `alertingUrl(projectUuid, path)`. It lives here, not in a page file, because of oxlint's react/only-export-components rule.
+    - Pages: `AlertingPage` is the shared frame (Page, an "Alerting" title, tabs for Alert Rules / Contact Points / Notification Routes that navigate, a loader, and an error Alert). The others are `AlertRulesPage` (with a "New rule" button), `AlertRulePage` (detail; Test rule calls `previewAlertRule`; Edit goes to `.../edit`), `AlertRuleEditPage` (new or edit; opens the rule page after saving), `ContactPointsPage` ("New contact point"; test calls `testContactPoint`; open goes to the editor route), `ContactPointEditPage` (uses `getContactPoint`; returns to the list after saving) and `NotificationRoutesPage` (the editor is keyed on `dataUpdatedAt`, as the routes-editor session asked).
+    - `NotificationRoutesEditor`: it now catches a rejected `onSave`. Before, Mantine's `form.onSubmit` turned the rethrow into an unhandled rejection. The edits stay unsaved and the page shows the error toast. The prop doc says so.
+  - Decisions:
+    - Folders come from `useSpaceSummaries(projectUuid, true)`.
+    - A refused rule or contact-point save shows an error toast and keeps the editor's input.
+    - Errors from Test rule are rethrown as `Error(message)`, because `AlertRuleDetail` shows only an Error's message.
+    - No NavBar entry links to the alerting pages yet. Adding one is a product decision, so it was left out of scope.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). The full contact-routes-ui file passes (6) and `AppRoutes.test.ts` passes (5). Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) took each URL's leaf route from `matchRoutes(APP_ROUTES, url)`. All 8 URLs reached `alerting/...` leaves, not `*`. It then ran those routes' real `lazy()` in a memory router with the app providers and a nock API.
+      - Rules list, then a click on the rule, showed the detail page with the query. Test rule showed the API's SQL error. Edit showed "Edit Disk almost full".
+      - On rules/new, filling the editor and saving POSTed the definition and navigated to `rules/r-new`.
+      - On contact-points, Send test showed "Test notification sent". Opening the row showed the editor, and renaming and saving PATCHed and returned to the list.
+      - On notification-routes, adding `team = infra` and saving with the PUT refused kept the route fieldset and its value. A second save PUT again.
+      - The tabs navigated from rules to notification-routes, which showed "Default route" for a null tree.
+- 2026-11-08T23:56:17Z supervisor: alert-ui-pages passed the gate in round 1

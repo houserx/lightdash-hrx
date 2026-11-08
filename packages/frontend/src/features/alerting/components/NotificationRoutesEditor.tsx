@@ -44,7 +44,10 @@ type Props = {
     tree?: (NotificationRouteTree & { managed?: boolean }) | null;
     /** Contact Points of the project; routes refer to them by slug. */
     contactPoints: ContactPoint[];
-    /** Called on Save with the whole tree. */
+    /**
+     * Called on Save with the whole tree. When it rejects, the edits stay
+     * unsaved in the editor; the caller reports the error.
+     */
     onSave: (tree: NotificationRouteTree) => void | Promise<unknown>;
 };
 
@@ -258,6 +261,8 @@ export const NotificationRoutesEditor: FC<Props> = ({
             setRoutes(savedRoutes);
             setRoutesChanged(false);
             form.setFieldValue('newRoutes', []);
+        } catch {
+            // A refused save keeps the edits unsaved; onSave reports why.
         } finally {
             setIsSaving(false);
         }

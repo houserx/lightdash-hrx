@@ -505,6 +505,83 @@ const METRICS_ROUTES: RouteObject[] = [
     },
 ];
 
+// Alerting (ENG-1799): Alert Rules, Contact Points and Notification Routes
+const ALERTING_ROUTES: RouteObject[] = [
+    {
+        path: 'alerting/rules',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/AlertRulesPage',
+                () => import('./features/alerting/pages/AlertRulesPage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/rules/new',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/AlertRuleEditPage',
+                () => import('./features/alerting/pages/AlertRuleEditPage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/rules/:ruleUuid',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/AlertRulePage',
+                () => import('./features/alerting/pages/AlertRulePage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/rules/:ruleUuid/edit',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/AlertRuleEditPage',
+                () => import('./features/alerting/pages/AlertRuleEditPage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/contact-points',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/ContactPointsPage',
+                () => import('./features/alerting/pages/ContactPointsPage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/contact-points/new',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/ContactPointEditPage',
+                () => import('./features/alerting/pages/ContactPointEditPage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/contact-points/:contactPointUuid',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/ContactPointEditPage',
+                () => import('./features/alerting/pages/ContactPointEditPage'),
+            ),
+        }),
+    },
+    {
+        path: 'alerting/notification-routes',
+        lazy: async () => ({
+            Component: await loadLazyRouteDefault(
+                './features/alerting/pages/NotificationRoutesPage',
+                () =>
+                    import('./features/alerting/pages/NotificationRoutesPage'),
+            ),
+        }),
+    },
+];
+
 // Routes that use ProjectLayout (fixed NavBar)
 const PROJECT_LAYOUT_ROUTES: RouteObject[] = [
     ...TABLES_ROUTES,
@@ -540,6 +617,7 @@ const PROJECT_LAYOUT_ROUTES: RouteObject[] = [
     },
     ...SPACES_ROUTES,
     ...METRICS_ROUTES,
+    ...ALERTING_ROUTES,
     {
         path: 'learn',
         lazy: async () => {

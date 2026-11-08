@@ -147,3 +147,7 @@ export const formatAlertLabelMatcher = ({
     operator,
     value,
 }: AlertLabelMatcher): string => `${label} ${operator} ${value}`;
+
+/** The app URL of an alerting page, e.g. `rules/new`, of a project. */
+export const alertingUrl = (projectUuid: string, path: string): string =>
+    `/projects/${projectUuid}/alerting/${path}`;
