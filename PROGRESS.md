@@ -1887,3 +1887,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   note was still NULL and no widget had a note. The store held only the 2 read audits from
   those platform_query lookups, no write audit. Check passes.
 - 2026-11-08T22:06:59Z supervisor: eng-write-authorization passed the gate in round 1
+- eng-write-confirmation-single-use (security): no code change needed. eng-write-preview had
+  already built it: write::run spends the token (WriteMode::spend, an in-memory map keyed by the
+  token's signature text, entries dropped after `exp`) under a mutex after the guard and A6 checks
+  and before the statement runs, so a concurrent duplicate cannot run twice either. A spent token
+  gets 409 whatever the mode, and a refused request writes no audit item. The signature decoder
+  (URL_SAFE_NO_PAD, base64 0.22) rejects padding and non-canonical trailing bits, so a re-encoded
+  signature can't get past the spent check. It gets 403 as an invalid token.
+  Trap for the integration line: the spent set is per engine process. A restart, or a second engine
+  replica behind a load balancer, would accept a token again within its 120 s life. CONTRACTS
+  §4.2 doesn't say where "single use" is stored. If the deployment runs more than one replica, it
+  needs a shared store (e.g. a DynamoDB conditional put on the nonce). That's a contract decision.
+  Tested as a user: `../tmp/write-single-use/run.sh <out>` (write-commit rig on ports 59611-59615).
+  Widget 9's score through platform_query was 13.5. The commit of `UPDATE widgets SET score = score
+  + 1 WHERE id = 9` gave 200. The same request again gave 409 "this confirmation token has
+  already been used", the same token as preview 409, and the token with '=' added 403. The score
+  was 14.5. Preview of `UPDATE widgets SET note = 'once' WHERE id = 10` with a new token gave 200,
+  and commit with that token 409. Widget 10's note stayed NULL. The store held 2 write audits
+  (1 commit, 1 preview) plus the 3 read audits, and every hash matched. Check passes.
+- 2026-11-08T22:09:22Z supervisor: eng-write-confirmation-single-use passed the gate in round 1
