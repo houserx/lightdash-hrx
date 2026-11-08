@@ -426,3 +426,25 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     `{ getIdentityToken }` argument to `warehouseClientFromCredentials`, and it is currently
     ignored.
 - 2026-11-08T17:49:24Z supervisor: ldq-federation-catalog passed the gate in round 1
+- 2026-11-08 ldq-identity-token-mint (session):
+  - New `packages/backend/src/services/FederationIdentity/identityToken.ts` with
+    `mintIdentityToken(claims, { secret, now?, nonce?, ttlSeconds? })`. The payload is built
+    field by field in the CONTRACTS §3 key order (v, iss, sub, email, org, project, agent, sys,
+    attrs{telemetry_restricted, platform_read, platform_write, platform_explain},
+    audit{description, ticket, source, resource_uuid}, iat, exp, nonce). The token is
+    unpadded base64url JSON, then '.', then base64url HMAC-SHA256(secret, encoded payload).
+    `v` is always 1. iat is floor(now/1000). The lifetime is min(ttlSeconds, 300) (default 300,
+    floored at 0). The nonce defaults to 16 random bytes; a nonce of any other length throws, and
+    so does an empty secret.
+  - Contract assumptions: omitted `agent`/`sys`/attrs mean false. Omitted audit
+    description/ticket/resource_uuid mean null (the acceptance test needs this). Mapping attrs
+    from user attributes ("true" means true) is NOT done here; it belongs to
+    ldq-identity-token-attrs (`identityAttrsFromUserAttributes` in this module).
+  - Not built here: `verifyIdentityToken` (identity-token-verify.test.ts loads it from this same
+    module) and `FederationIdentityService` (the provider, agent and audit tests).
+  - Tested: init, then the feature check (4/4). Backend `tsc --noEmit` is clean. I ran a tsx
+    script that minted a token: it has no '=' padding, an independent HMAC matches the
+    signature, the decoded payload has the defaults and exp-iat=300 with ttlSeconds=1000, and a
+    fixed clock and nonce give identical tokens. Use `pnpm exec`, not `npx`: npx fails the
+    devEngines node-version check under node 26.
+- 2026-11-08T17:52:23Z supervisor: ldq-identity-token-mint passed the gate in round 1
