@@ -420,3 +420,28 @@ should add a dated line here per feature.
   and oxfmt for the visualization package pass.
 - **Next.** The view should draw `model.lines` in the given order and not sort again.
 - 2026-11-08T18:48:53Z supervisor: viz-log-stream-order passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-view (session)
+
+- **What.** New `packages/frontend/src/components/LogStream/LogStreamView.tsx` (+ `LogStreamView.module.css`), named
+  export `LogStreamView({model, height})`. It draws `model.lines` in the given order (no re-sort), one
+  `log-stream-row` per line (`data-level` set), each with a `log-stream-timestamp` (the data's `formattedTimestamp`,
+  else the ISO time, else empty) and a `log-stream-line`. A footer reads `N of N lines` with `toLocaleString()`
+  digits. A model with no lines shows "No log lines". The view is `height` px tall, footer included; rows sit in a
+  Mantine `ScrollArea`. Not mounted in the app yet (that is a wiring feature).
+- **Tested as a user.** No app mounts the view yet, so I rendered it with the fixtures' synthetic logs in a
+  throwaway vitest file (deleted): five rows came out newest first, each "timestamp + text", with the right levels,
+  and the footer read "5 of 5 lines". The check passes 3/3 after `bash ./init.sh`. The frontend typecheck, oxlint and
+  oxfmt pass.
+- **Traps for the next sessions.**
+  - The frontend lint rule `lightdash-ui(no-inline-style-prop)` forbids `style={{...}}` except `--css-variable`
+    bridges. The no-wrap rule lives in the CSS module's `.line` class for now. `log-stream-wrap-lines` checks
+    `line.style.whiteSpace` (inline), and `log-stream-level-bar` checks an inline `background-color`; jsdom does not
+    apply CSS modules. Use a CSS variable bridge (e.g. `style={{'--log-white-space': ...}}`) only if the test sees it,
+    else decide how to satisfy both the lint and the test (check the rule's source first).
+  - The footer says `${total} of ${total}`; the filter feature should make the first number the shown count.
+  - The row list is not virtualised yet (`viz-log-stream-virtualised`); replace the `.map` with
+    `@tanstack/react-virtual` sized from `height` minus the 28 px footer.
+  - Zero rows never reach the view through `renderChart` (it returns `empty`/`noRows`); "No log lines" is for a model
+    with no lines (e.g. everything filtered out).
+- 2026-11-08T18:51:47Z supervisor: viz-log-stream-view passed the gate in round 1
