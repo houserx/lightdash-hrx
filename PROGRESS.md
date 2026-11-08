@@ -1054,3 +1054,26 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 2/2. 27 acceptance files pass: the earlier 26 plus this one. `tool-catalog` still fails until
   every contract tool exists.
 - 2026-11-08T17:28:44Z supervisor: mcp-tool-get-trace passed the gate in round 1
+
+## mcp-sql-injection-safety (2026-11-08)
+
+- No code change was needed. The earlier tool features built this property, and this session checked it and recorded it.
+  - Audit: every telemetry tool builds `SELECT * FROM <fn>($1..$n)` from `placeholders()` or fixed `$n` text, with
+    every user value in `params`. This covers promql, promql_instant, logql, logql_metric, `cloudwatch($1::json, ...)`,
+    cloudwatch_logs, traceql and trace. No user text is ever placed in the SQL.
+  - Every tool takes `source` through `sourceParams(config, kind, source)` in `src/tools/telemetryArgs.ts`. Unknown
+    names and wrong-kind names throw `ToolInputError` before any engine connection.
+  - The only interpolated literal is `SET hrx.identity = '<token>'` in `src/engine/client.ts`, because SET takes no
+    bind parameters. Before interpolation the token must match `IDENTITY_TOKEN_SHAPE` (base64url `.` base64url). The
+    server mints the token, so a user value never reaches it. Keep that guard if the token format changes.
+- Tested as a user with `../tmp/sql-inj-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 18995 with an
+  RS256 token, the fake Lightdash and the fake engine.
+  - All 8 hostile calls (`x'); DROP TABLE users; SELECT ('`) succeeded: promql range and instant, logql log and metric,
+    cloudwatch Expression, cloudwatch_logs (in both the query and a log group), and search_traces. Each sent one
+    extended-protocol query with SQL that held only `$n`, and the hostile text was in params.
+  - These gave `isError` with 0 engine queries: query_promql with a hostile, unknown or loki source, and every other
+    tool given a source of the wrong kind. get_trace refused a hostile trace_id through its hex rule. SIGTERM exits 0.
+- Results: the check passes 8/8, and 198 unit tests pass. Acceptance: 27 files pass and 26 fail. The 26 are unbuilt
+  features (ask_data, platform_*, alerts, docs, dockerfile, tool-catalog and others).
+- 2026-11-08T17:32:24Z supervisor: mcp-sql-injection-safety passed the gate in round 1
