@@ -941,3 +941,27 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     applies and closes; Refresh lists Off..1h, 1m then Off give "1m" then null. Feature check 5/5,
     utils.test 5/5, frontend typecheck clean, oxlint/oxfmt clean.
 - 2026-11-08T19:40:42Z supervisor: ldq-time-range-picker passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-url (session):
+  - Frontend `features/dashboardTimeRange/utils/urlState.ts`: `readTimeRangeFromSearchParams(params,
+    saved)` and `writeTimeRangeToSearchParams(params, range)` (+ param name constants). Valid
+    `from`/`to` (now-<n><unit>, ISO-8601 with offset, or epoch ms -> ISO UTC) and `refresh`
+    (an allowed interval, or `off` -> null) override the saved range one by one; invalid values are
+    ignored; URL bounds that would put from after to are dropped together (refresh still applies).
+    No saved range: both bounds needed, else null. Other saved fields (tileTimeDimensions) are kept.
+    Write always sets all three params (`refresh=off` when null) and keeps other params.
+  - `hooks/useDashboardTimeRangeUrlState(saved)` gives `{ timeRange, setTimeRange }` from the router
+    location (navigate with replace, like the parameters sync). `components/DashboardTimeRangeControl`
+    mounts the TimeRangePicker (with refresh select) on it. `DashboardHeader` shows it in view mode
+    only, when `dashboard.timeRange` is set (next to the refresh button).
+  - Decision: params are written only when the viewer changes the range, so unchanged dashboards
+    keep clean URLs. Edit mode shows no control (settings UI is the next feature).
+  - NOT done (later features): the effective range is not yet sent with tile queries
+    (ldq-query-routes-time-range-audit) nor drives auto-refresh (ldq-dashboard-auto-refresh); use
+    `useDashboardTimeRangeUrlState(dashboard.timeRange).timeRange` as the source of truth there.
+    The existing DashboardRefreshButton is unrelated and untouched.
+  - Tested: no full stack (no Docker); drove the real DashboardHeader in jsdom with a MemoryRouter
+    (DashboardHeader.test.tsx, 3 new cases): pick Last 15 minutes from Last 6 hours -> URL gains
+    from=now-15m&to=now&refresh=1m keeping tab=overview, button relabels; Refresh Off -> refresh=off;
+    opening ?from=now-24h&to=now&refresh=5m shows Last 24 hours and 5m over the saved 6h/1m; edit
+    mode shows no control. Feature check 5/5, header test 7/7, frontend typecheck, oxlint, oxfmt clean.
+- 2026-11-08T19:44:59Z supervisor: ldq-dashboard-time-range-url passed the gate in round 1

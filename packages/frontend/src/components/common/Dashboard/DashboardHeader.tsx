@@ -71,6 +71,7 @@ import {
 import DashboardAsCodeModal from '../../../features/contentAsCode/components/DashboardAsCodeModal';
 import ProjectContentAsCodeUploadModal from '../../../features/contentAsCode/components/ProjectContentAsCodeUploadModal';
 import { useCanUploadContentAsCode } from '../../../features/contentAsCode/hooks/useCanUploadContentAsCode';
+import { DashboardTimeRangeControl } from '../../../features/dashboardTimeRange/components/DashboardTimeRangeControl';
 import {
     DirectAccessModal,
     useCanManageDirectAccess,
@@ -839,6 +840,11 @@ const DashboardHeader = memo(
                                     </Tooltip>
                                 )}
                             </>
+                        )}
+                        {!isEditMode && dashboard.timeRange && (
+                            <DashboardTimeRangeControl
+                                savedTimeRange={dashboard.timeRange}
+                            />
                         )}
                         {userCanExportData && (
                             <DashboardRefreshButton
