@@ -113,6 +113,39 @@ it('generates SQL from the picked source in Investigate', async () => {
     );
 });
 
+it('keeps a manual edit of the generated SQL in Investigate', async () => {
+    projectQuery.data = {
+        projectUuid: 'project-uuid',
+        warehouseConnection: {
+            type: WarehouseTypes.POSTGRES,
+            flavor: 'federation',
+        },
+    };
+    renderSqlRunner();
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Investigate' }));
+    fireEvent.change(screen.getByLabelText('PromQL'), {
+        target: { value: 'up' },
+    });
+    const sqlBox = screen.getByLabelText<HTMLTextAreaElement>('SQL', {
+        selector: 'textarea',
+    });
+    expect(sqlBox.value).toContain("promql('up'");
+    expect(sqlBox).not.toHaveAttribute('readonly');
+
+    const edited =
+        "SELECT timestamp, value FROM promql('up', ${ld.parameters.__from}, ${ld.parameters.__to}, ${ld.parameters.__interval}) LIMIT 10";
+    fireEvent.change(sqlBox, { target: { value: edited } });
+    fireEvent.click(screen.getByRole('radio', { name: 'Loki' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Prometheus' }));
+    expect(sqlBox.value).toBe(edited);
+
+    fireEvent.change(screen.getByLabelText('PromQL'), {
+        target: { value: 'rate(x[1m])' },
+    });
+    expect(sqlBox.value).toContain("promql('rate(x[1m])'");
+});
+
 it('has no Investigate mode on a plain Postgres project', async () => {
     projectQuery.data = {
         projectUuid: 'project-uuid',

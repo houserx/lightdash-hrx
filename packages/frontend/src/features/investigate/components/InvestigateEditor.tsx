@@ -38,14 +38,41 @@ export type InvestigateEditorChange =
 
 type Props = {
     onChange: (change: InvestigateEditorChange) => void;
+    /** SQL to show in the SQL box before anything is generated, e.g. a query being reopened. */
+    initialSql?: string;
+};
+
+const kindOfSource = (
+    source: InvestigateSource,
+    isLogqlMetric: boolean,
+): InvestigateEditorChange['kind'] => {
+    switch (source) {
+        case 'prometheus':
+            return 'promql';
+        case 'loki':
+            return isLogqlMetric ? 'logql_metric' : 'logql';
+        case 'tempo':
+            return 'traceql';
+        case 'cloudwatch':
+        case 'cloudwatch_logs':
+        case 'platform':
+            return source;
+        default: {
+            const unknownSource: never = source;
+            throw new Error(`Unknown Investigate source: ${unknownSource}`);
+        }
+    }
 };
 
 /**
  * Investigate's query editor: a source picker, the editor for the picked source's language,
  * and the SQL box with the table-function SQL generated from it (CONTRACTS §1.1). Telemetry
  * SQL uses the reserved time parameters, so it follows the chosen time range.
+ *
+ * The SQL box is editable and its text is what runs: a manual edit is reported through
+ * onChange and kept until the user changes the source query, which regenerates the SQL.
  */
-export const InvestigateEditor: FC<Props> = ({ onChange }) => {
+export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
     const [source, setSource] = useState<InvestigateSource>('prometheus');
     const [promql, setPromql] = useState('');
     const [logql, setLogql] = useState('');
@@ -53,6 +80,7 @@ export const InvestigateEditor: FC<Props> = ({ onChange }) => {
     const [traceql, setTraceql] = useState('');
     const [platformSql, setPlatformSql] = useState('');
     const [sourceName, setSourceName] = useState('');
+    const [sql, setSql] = useState(initialSql ?? '');
 
     const change = useMemo((): InvestigateEditorChange | undefined => {
         const engineSource = sourceName.trim() || undefined;
@@ -111,12 +139,27 @@ export const InvestigateEditor: FC<Props> = ({ onChange }) => {
         sourceName,
     ]);
 
-    // Report each new SQL once; the parent's callback identity does not matter.
+    // Show and report each newly generated SQL once; the parent's callback identity does
+    // not matter. A manual edit stays until the generated SQL changes again.
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    const lastGeneratedSql = useRef<string | undefined>(undefined);
     useEffect(() => {
-        if (change) onChangeRef.current(change);
+        if (!change || change.sql === lastGeneratedSql.current) return;
+        lastGeneratedSql.current = change.sql;
+        setSql(change.sql);
+        onChangeRef.current(change);
     }, [change]);
+
+    const handleSqlEdit = (editedSql: string) => {
+        setSql(editedSql);
+        const kind = kindOfSource(source, isLogqlMetric);
+        onChangeRef.current(
+            kind === 'platform'
+                ? { kind, sql: editedSql, statement: platformSql }
+                : { kind, sql: editedSql },
+        );
+    };
 
     return (
         <Stack gap="sm">
@@ -194,8 +237,8 @@ export const InvestigateEditor: FC<Props> = ({ onChange }) => {
                 label="SQL"
                 autosize
                 minRows={3}
-                readOnly
-                value={change?.sql ?? ''}
+                value={sql}
+                onChange={(event) => handleSqlEdit(event.currentTarget.value)}
             />
         </Stack>
     );

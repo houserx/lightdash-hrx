@@ -1237,3 +1237,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     the traceql(...) SQL (3/3). Feature check 6/6; common auditedSql.test.ts 5/5. frontend tsc
     clean; oxfmt/oxlint clean on changed files.
 - 2026-11-08T20:44:32Z supervisor: ldq-investigate-source-editors passed the gate in round 1
+- ldq-investigate-sql-editable (round 1):
+  - `features/investigate/components/InvestigateEditor.tsx`: the "SQL" textarea is no longer
+    readOnly. It shows local `sql` state, seeded from the new optional `initialSql` prop. A newly
+    generated SQL (a string that differs from the last generated one) replaces the box and goes
+    to onChange as before. A manual edit goes to onChange as `{kind, sql: edited}`. The kind
+    comes from the picked source (`kindOfSource`). For platform the payload also carries the
+    current Platform SQL `statement`.
+  - Decision: a manual edit stays through re-renders and through switching sources and back.
+    It is replaced only when the source query changes and so produces a different SQL. initialSql
+    is not reported through onChange on mount, because the parent already has it.
+  - Next sessions: the parent should run whatever onChange last reported. That is the edited
+    SQL when the user edited it. SqlRunner's onChange is still a no-op until the run/results
+    features land. The CloudWatch editors should also feed `change` so they get the same
+    overwrite rule.
+  - Tested: no browser or backend (no Docker). New page test in `SqlRunner.investigate.test.tsx`
+    (4/4) renders the real SqlRunner page. It switches to Investigate and types `up` as PromQL,
+    and the promql SQL appears. It edits the SQL, switches to Loki and back to Prometheus, and
+    the edit is still there. It changes the PromQL, and the SQL is regenerated. Feature check
+    2/2, investigate-editor-sources 6/6 (regression). frontend tsc clean; oxfmt and oxlint clean
+    on changed files.
+- 2026-11-08T20:46:42Z supervisor: ldq-investigate-sql-editable passed the gate in round 1
