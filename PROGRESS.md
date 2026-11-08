@@ -555,3 +555,33 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     false, agent false, ttl 300, audit kept. `{ agent: true }` gave agent true and sys false.
     A wrong secret was rejected.
 - 2026-11-08T18:13:07Z supervisor: ldq-identity-token-provider passed the gate in round 1
+- 2026-11-08 ldq-federation-identity-set (session):
+  - `PostgresClient` (PostgresWarehouseClient.ts) has a new protected hook, `beforeQuery(client)`.
+    It is a no-op by default. `streamQueryAttempt` runs it on the query's own pooled connection
+    after statement_timeout, prepareSession, the agent SET and the timezone SET, and just before
+    the query. runQuery and executeAsyncQuery both go through streamQuery, so they run it too.
+  - `FederationWarehouseClient` now takes `FederationWarehouseClientOptions`
+    ({ agentSession?, getIdentityToken? }). It stores the provider and overrides `beforeQuery`
+    to call `getIdentityToken({ agent: this.agentSession })` once per query attempt, then send
+    `SET hrx.identity = '<token>'`, with single quotes doubled so the SQL literal is safe. Plain
+    `PostgresWarehouseClient` ignores `getIdentityToken`.
+  - Contract assumption: a federation client created without `getIdentityToken` sends no
+    identity and still runs the query. The engine then applies its own rules for a missing
+    identity. I did not fail closed, because the backend does not pass a provider yet (see
+    ldq-identity-token-provider's note). Catalog refreshes and other system queries would break
+    until an integration feature wires `FederationIdentityService.createTokenProvider` into the
+    client options. Whoever does that wiring should decide whether a missing provider becomes
+    an error.
+  - Trap for ldq-federation-identity-not-logged: if the SET fails, the pg error passes through
+    `parseError(error, sql)` with the user's SQL, not the SET text. Check that error messages
+    and console output never include the token.
+  - Tested: init, then the feature check (3/3). The warehouses ldq acceptance tests plus the
+    Postgres and Redshift unit tests passed (56/56). Warehouses `tsc --noEmit`, oxlint and
+    oxfmt --check are clean. As a user: a scratch vitest (deleted afterwards) started a
+    throwaway Postgres and used the real backend `mintIdentityToken` as the provider on an
+    agent federation client. Two queries each read `current_setting('hrx.identity')` in the
+    query itself, so the token was set on the same connection. The two tokens differed, and
+    both verified with agent true and `lightdash.agent` = 'true'. A token containing a quote
+    round-tripped intact. On a plain Postgres client the setting was empty and the provider
+    was never called.
+- 2026-11-08T18:17:39Z supervisor: ldq-federation-identity-set passed the gate in round 1

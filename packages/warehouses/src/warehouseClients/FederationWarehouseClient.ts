@@ -1,8 +1,21 @@
 import {
     WAREHOUSE_LISTED_DATABASES_LIMIT,
+    type CreatePostgresCredentials,
     type WarehouseDatabaseListing,
 } from '@lightdash/common';
+import type { PoolClient } from 'pg';
+import type { IdentityTokenProvider } from '../warehouseClientFromCredentials';
 import { PostgresWarehouseClient } from './PostgresWarehouseClient';
+
+export type FederationWarehouseClientOptions = {
+    agentSession?: boolean;
+    /** Mints the CONTRACTS §3 identity token sent before each query. */
+    getIdentityToken?: IdentityTokenProvider;
+};
+
+/** `SET hrx.identity = '<token>'`, with the token quoted as a SQL string literal. */
+const getIdentityStatement = (token: string): string =>
+    `SET hrx.identity = '${token.replaceAll("'", "''")}'`;
 
 /**
  * Client for the Federation Engine: the Postgres warehouse type with
@@ -14,6 +27,33 @@ import { PostgresWarehouseClient } from './PostgresWarehouseClient';
  * `pg_matviews` gating) is layered on here.
  */
 export class FederationWarehouseClient extends PostgresWarehouseClient {
+    private readonly getIdentityToken: IdentityTokenProvider | undefined;
+
+    constructor(
+        credentials: CreatePostgresCredentials,
+        options?: FederationWarehouseClientOptions,
+    ) {
+        super(credentials, options);
+        this.getIdentityToken = options?.getIdentityToken;
+    }
+
+    /**
+     * CONTRACTS §3: immediately before each query, on the connection that
+     * runs it, send a freshly minted identity token. The provider is called
+     * once per query (and per retry attempt), so no token is ever reused.
+     * Without a provider nothing is sent and the engine applies its own
+     * no-identity rules.
+     */
+    protected async beforeQuery(client: PoolClient): Promise<void> {
+        if (!this.getIdentityToken) {
+            return;
+        }
+        const token = await this.getIdentityToken({
+            agent: this.agentSession,
+        });
+        await client.query(getIdentityStatement(token));
+    }
+
     /**
      * The engine exposes only `information_schema.tables` and
      * `information_schema.columns`; nothing from `pg_catalog` is guaranteed
