@@ -1534,3 +1534,16 @@ token verification for a *valid* token, which feature 39 then hardens.
   call log did not grow during any of them. Reader with description and an MCP agent with
   platform_read -> 1 row each, one dynamo + one S3 put per query. The check passed after init.
 - 2026-11-08T20:53:03Z supervisor: eng-platform-query-enforcement passed the gate in round 1
+- 2026-11-08 eng-platform-query-describe-only (round 1): no code change needed. eng-platform-query-basic
+  already plans with a describe-only round trip: `PlatformQuery::call_with_args` calls
+  `client.prepare` (Parse + Describe, never Execute) to learn the columns, and `PlatformTable::fetch`
+  prepares again and executes once, refusing (0A000) if the column types changed in between. So a
+  zero-row result keeps its columns, and a statement Postgres can't describe fails at plan time
+  (42703 for a missing column). Extended protocol plans the statement twice (Parse, then Bind) and
+  so describes twice, but executes once.
+  Tested as a user: `../tmp/platform-describe/run.sh <out>` (throwaway cluster with widgets +
+  probe_seq, audit store mock, engine; pgclient's `platform` bin, reader token). nextval through
+  extended, extended, simple returned 1, 2, 3, and Postgres's log showed exactly three `execute`
+  lines for it. Preparing `SELECT id, name FROM widgets WHERE false` showed id int8, name text,
+  and 0 rows. `SELECT no_such_column FROM widgets` -> 42703. The check passed after init.
+- 2026-11-08T20:54:53Z supervisor: eng-platform-query-describe-only passed the gate in round 1
