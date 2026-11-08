@@ -920,3 +920,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     range: false. Unit tests dashboardTimeRangeFilters.test 10/10, feature check 4/4, common tsc,
     oxlint, oxfmt clean.
 - 2026-11-08T19:36:45Z supervisor: ldq-dashboard-time-range-tile-status passed the gate in round 1
+- 2026-11-08 ldq-time-range-picker (session):
+  - Frontend: new `features/timeRange/` with `components/TimeRangePicker.tsx` and `utils.ts`
+    (+ `utils.test.ts`). Props: `value: {from,to}`, `onChange`, optional `refreshInterval`
+    (DashboardRefreshInterval | null) and `onRefreshIntervalChange`, `disabled`.
+  - Trigger is a Mantine Button labelled by `getTimeRangeLabel` ("Last 6 hours" for now-6h..now,
+    singular "Last 1 hour"; anything else shows "<from> to <to>"). It opens a Popover with From/To
+    TextInputs (prefilled with the current value; accept ISO-8601 with offset or now-<n><unit>,
+    validated with common's isRelative/isAbsoluteTimeExpression + resolveTimeRange order check),
+    an Apply submit button (Enter works too), and the quick ranges `QUICK_TIME_RANGES`
+    (5m,15m,30m,1h,3h,6h,12h,24h,2d,7d,30d). Picking or applying closes the popover.
+  - TRAP: the popover must close on pick (and only renders when open): the quick list contains the
+    current label, so an open popover makes `getByText('Last 6 hours')` ambiguous in tests.
+  - Refresh is a NativeSelect with aria-label "Refresh" (Off + DASHBOARD_REFRESH_INTERVALS),
+    rendered only when `onRefreshIntervalChange` is passed; Off reports `null`.
+  - Not wired into any page yet: dashboards (url/settings/auto-refresh) and Investigate
+    (investigate-time-range expects a button named /Last 6 hours/) mount it in later features.
+  - Tested: a scripted user-event session on a stateful harness: Last 6 hours -> Last 15 minutes
+    relabels the button; typed garbage From shows the error; typed absolute From/To + Enter
+    applies and closes; Refresh lists Off..1h, 1m then Off give "1m" then null. Feature check 5/5,
+    utils.test 5/5, frontend typecheck clean, oxlint/oxfmt clean.
+- 2026-11-08T19:40:42Z supervisor: ldq-time-range-picker passed the gate in round 1
