@@ -21,6 +21,18 @@ describe('buildPreviewRequest', () => {
         expect(buildPreviewRequest({ statement: STATEMENT, description: 'Why', ticket: null }).ticket).toBeNull();
     });
 
+    it('drops smuggled mode, commit and confirmation arguments', () => {
+        const smuggled = {
+            statement: STATEMENT,
+            description: 'Why',
+            mode: 'commit',
+            commit: true,
+            confirm: true,
+            confirmation_token: 'forged',
+        };
+        expect(buildPreviewRequest(smuggled)).toEqual({ statement: STATEMENT, description: 'Why', ticket: null });
+    });
+
     it.each([
         ['a missing statement', { description: 'Why' }],
         ['a blank statement', { statement: ' ', description: 'Why' }],

@@ -1857,3 +1857,25 @@ docs/eng-1799/telemetry-mcp.md
   - After the fake Lightdash granted the analyst platform_write, the same call returned a Preview, with 1 engine call.
 - Feature check: 1/1. `tool-write-preview.test.ts` still 6/6, `src/mcp/server.test.ts` 5/5.
 - 2026-11-08T19:16:13Z supervisor: mcp-write-preview-requires-platform-write passed the gate in round 1
+
+## mcp-no-commit-tool (2026-11-08)
+
+- No source change was needed: the guarantee was already structural. `createEngineWriter` sends the literal
+  `mode: 'preview'` (`src/engine/write.ts`), `buildPreviewRequest` copies only `statement`, `description` and
+  `ticket`, and the SDK's input schema drops unknown keys, so no client argument can reach the request body. The
+  feature check passed on arrival (3/3).
+- Added one unit case to `src/tools/writePreview.test.ts` (13 total): `buildPreviewRequest` drops smuggled
+  `mode`, `commit`, `confirm` and `confirmation_token`. `src/engine/write.test.ts` already pins the body to mode preview.
+- Tested as a user: after `bash ./init.sh`, ran `../tmp/no-commit-tool/drive.test.ts` (from the package:
+  `pnpm exec vitest run --root ../../../tmp/no-commit-tool --disableConsoleIntercept drive.test.ts`). It spawns
+  `node dist/main.js` against the fake Okta, Lightdash and engine, with the analyst granted platform_write.
+  - tools/list showed 14 tools. write_preview is the only write-shaped one, and its properties are statement,
+    description and ticket.
+  - Every tool was called with `{mode: 'commit', commit: true, confirm: true, confirmation_token: 'x', ...}`.
+    The engine got exactly 1 `/v1/write` call, from write_preview. Its mode was `preview` and its body keys were
+    statement, mode, confirmation_token (server-minted), description and ticket.
+  - Calls to the tools `commit`, `write_commit` and `execute_write` failed with MCP -32602 "Tool ... not found".
+- Feature check: 3/3. `tool-write-preview.test.ts` still 6/6.
+- Trap for later features: never add a pass-through of tool args (`...args`) into the write body, and never add a
+  `mode` input; the acceptance test asserts no write_preview property matches /commit|confirm/i.
+- 2026-11-08T19:18:18Z supervisor: mcp-no-commit-tool passed the gate in round 1
