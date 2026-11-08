@@ -106,7 +106,7 @@ const settleMissingSeries = ({
  * counts as not meeting the condition (so a firing one resolves); once it is
  * back to normal it is removed. An empty result changes nothing here: the
  * evaluator passes it to `evaluateAlertNoData`, which follows the rule's
- * noDataState.
+ * noDataState (and a failed query to `evaluateAlertError`).
  */
 export const evaluateAlertSeries = ({
     rule,
@@ -175,6 +175,63 @@ export const getAlertNoDataLabels = (
 });
 
 /**
+ * The synthetic series an empty result or a failed query raises: settles
+ * every stored series as not meeting the condition (so a firing one
+ * resolves) and, unless `state` is `normal`, adds the synthetic series
+ * - in `state` itself (`nodata` / `error`, which notify as firing), keeping
+ *   its `stateSince` while it stays there, or
+ * - for `alerting`, as meeting the condition, so it goes pending / firing
+ *   as the rule's `for` says.
+ * The synthetic series is a stored series like any other, so once the
+ * query returns rows again it is missing from them and clears.
+ */
+const evaluateSyntheticSeries = ({
+    rule,
+    previous,
+    at,
+    state,
+    labels,
+    annotations,
+}: {
+    rule: Pick<AlertRule, 'for' | 'keepFiringFor'>;
+    previous: readonly AlertInstanceRecord[];
+    at: Date;
+    state: 'normal' | 'alerting' | 'nodata' | 'error';
+    labels: AlertSeriesLabels;
+    annotations: Record<string, string>;
+}): AlertSeriesEvaluation => {
+    const timing = getAlertInstanceTiming(rule);
+    const evaluated = new Map<string, AlertInstanceRecord>();
+    if (state !== 'normal') {
+        const fingerprint = alertLabelsFingerprint(labels);
+        const before = previous.find((i) => i.fingerprint === fingerprint);
+        const snapshot =
+            state === 'alerting'
+                ? transitionAlertInstance(
+                      before,
+                      { conditionMet: true, at },
+                      timing,
+                  )
+                : {
+                      state,
+                      stateSince:
+                          before?.state === state ? before.stateSince : at,
+                      activeAt: null,
+                      lastConditionMetAt: before?.lastConditionMetAt ?? null,
+                      lastEvaluatedAt: at,
+                  };
+        evaluated.set(fingerprint, {
+            ...snapshot,
+            fingerprint,
+            labels,
+            annotations,
+            value: null,
+        });
+    }
+    return settleMissingSeries({ previous, evaluated, at, timing });
+};
+
+/**
  * One evaluation of a rule whose query returned no rows, following its
  * noDataState:
  * - `keep_last`: nothing changes.
@@ -184,8 +241,6 @@ export const getAlertNoDataLabels = (
  *   `nodata` (which notifies as firing).
  * - `alerting`: the same, but the DatasourceNoData series meets the
  *   condition and goes pending / firing as the rule's `for` says.
- * The DatasourceNoData series is a stored series like any other, so once
- * the query returns rows again it is missing from them and clears.
  */
 export const evaluateAlertNoData = ({
     rule,
@@ -200,36 +255,64 @@ export const evaluateAlertNoData = ({
     if (rule.noDataState === 'keep_last') {
         return { instances: [...previous], removedFingerprints: [] };
     }
-    const timing = getAlertInstanceTiming(rule);
-    const evaluated = new Map<string, AlertInstanceRecord>();
-    if (rule.noDataState !== 'normal') {
-        const labels = getAlertNoDataLabels(rule);
-        const fingerprint = alertLabelsFingerprint(labels);
-        const before = previous.find((i) => i.fingerprint === fingerprint);
-        const snapshot =
-            rule.noDataState === 'nodata'
-                ? {
-                      state: 'nodata' as const,
-                      stateSince:
-                          before?.state === 'nodata' ? before.stateSince : at,
-                      activeAt: null,
-                      lastConditionMetAt: before?.lastConditionMetAt ?? null,
-                      lastEvaluatedAt: at,
-                  }
-                : transitionAlertInstance(
-                      before,
-                      { conditionMet: true, at },
-                      timing,
-                  );
-        evaluated.set(fingerprint, {
-            ...snapshot,
-            fingerprint,
-            labels,
-            annotations: rule.annotations,
-            value: null,
-        });
+    return evaluateSyntheticSeries({
+        rule,
+        previous,
+        at,
+        state: rule.noDataState,
+        labels: getAlertNoDataLabels(rule),
+        annotations: rule.annotations,
+    });
+};
+
+/** `alertname` of the synthetic series a failed query raises. */
+export const DATASOURCE_ERROR_ALERTNAME = 'DatasourceError';
+
+/**
+ * The synthetic error series' labels: the rule's labels, `alertname` =
+ * DatasourceError and `rulename` = the rule name.
+ */
+export const getAlertErrorLabels = (
+    rule: Pick<AlertRule, 'name' | 'labels'>,
+): AlertSeriesLabels => ({
+    ...rule.labels,
+    alertname: DATASOURCE_ERROR_ALERTNAME,
+    rulename: rule.name,
+});
+
+/**
+ * One evaluation of a rule whose query failed with `error`, following its
+ * errorState:
+ * - `keep_last`: nothing changes.
+ * - `error`: every stored series is settled as not meeting the condition,
+ *   plus a synthetic DatasourceError series in state `error` (which
+ *   notifies as firing) whose `error` annotation is the query's message.
+ * - `alerting`: the same, but the DatasourceError series meets the
+ *   condition and goes pending / firing as the rule's `for` says.
+ */
+export const evaluateAlertError = ({
+    rule,
+    previous,
+    at,
+    error,
+}: {
+    rule: Pick<EvaluatedRule, 'name' | 'labels' | 'annotations'> &
+        Pick<AlertRule, 'for' | 'keepFiringFor' | 'errorState'>;
+    previous: readonly AlertInstanceRecord[];
+    at: Date;
+    error: string;
+}): AlertSeriesEvaluation => {
+    if (rule.errorState === 'keep_last') {
+        return { instances: [...previous], removedFingerprints: [] };
     }
-    return settleMissingSeries({ previous, evaluated, at, timing });
+    return evaluateSyntheticSeries({
+        rule,
+        previous,
+        at,
+        state: rule.errorState,
+        labels: getAlertErrorLabels(rule),
+        annotations: { ...rule.annotations, error },
+    });
 };
 
 /** One series changing state in an evaluation. */

@@ -273,6 +273,13 @@ export const createAlertingApiRouter = (
     );
 
     router.get(
+        `${base}/state`,
+        route((user, req) =>
+            services.alertRules.listState(user, req.params.projectUuid),
+        ),
+    );
+
+    router.get(
         `${base}/notifications`,
         route((user, req) =>
             services.alertNotifications.list(

@@ -711,3 +711,24 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - The history showed normal→nodata, nodata→normal, normal→firing, firing→resolved and resolved→normal for DatasourceNoData.
   - Next: alert-eval-error should mirror this. Add `evaluateAlertError`, or generalise it with alertname DatasourceError and annotation `error` = the message. Catch the query error in `evaluateClaimedRule`; today the error is rethrown and the slot is released. Note that `/state` returns 404 (not built yet), and alert-eval-error's test reads it.
 - 2026-11-08T21:35:04Z supervisor: alert-eval-nodata passed the gate in round 1
+- alert-eval-error (round 1) — 2026-11-08
+  - Changed:
+    - `evaluateAlertSeries.ts`: the nodata synthetic-series logic is now the shared `evaluateSyntheticSeries`. Added `evaluateAlertError({rule, previous, at, error})`, `getAlertErrorLabels` and `DATASOURCE_ERROR_ALERTNAME`. `evaluateAlertNoData` behaves as before.
+    - `AlertEvaluator.evaluateClaimedRule`: a throw from `runRuleQuery` (getWarehouseClient or runQuery) is caught and passed to `evaluateAlertError` with `getErrorMessage(error)`. The evaluation finishes as `evaluated`; it no longer rethrows and releases the slot. Errors after the query (e.g. a DB save) still rethrow as before.
+    - `GET /state` (router + `AlertRuleService.listState`, type `AlertStateInstance` in common `alertRules.ts`): `{instances: [{ruleUuid, ruleName, state, labels, annotations, value, since}]}`, firing and pending only, needs view AlertRule. alert-eval-error's test reads it. This is the documented shape from the API table, so alert-ai-state-api should only need to verify it (its check is in shadow-ascode-ai.accept.ts and was not run here).
+    - `evaluateAlertSeries.test.ts`: 4 new unit tests (19 in total).
+  - Behaviour:
+    - `error`: existing series resolve. A synthetic series `{...rule.labels, alertname: DatasourceError, rulename}` in state `error` is added, with annotations `{...rule.annotations, error: <message>}`. It is notified as firing, and the rule state is `error`. While the source stays down, `stateSince` is kept and the `error` annotation follows the latest message.
+    - `alerting`: the same, but DatasourceError goes through the state machine with conditionMet true (honours `for`) and fires.
+    - `keep_last`: nothing changes.
+    - On recovery the synthetic series is missing from the rows and is settled: error→normal (removed), or firing→resolved→normal. A resolved notification goes out.
+  - Contract assumptions: the same narrowest readings as alert-eval-nodata (rule labels kept on the synthetic series; existing series resolve under `error` and `alerting`). Preview is unchanged: a failed query still returns `{error, series: []}`.
+  - Tested:
+    - After init, the check passes (1 passed, 10 skipped). evaluation.accept.ts: 10/11 pass, and the only failure is alert-annotation-templates (not built). notifications.accept.ts: 8/8. scheduling.accept.ts fails only in the unbuilt worker-wiring, heartbeat and health tests. Unit file: 19/19. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP via a copied run.sh/config in tmp/walk (removed afterwards). Fired db-1, then PATCHed errorState to error, alerting and keep_last in turn. For each, the source refused connections (ECONNREFUSED), then recovered. Results:
+      - error: rule `error`, DatasourceError `error` with the message, db-1 resolved, and a webhook DatasourceError firing with the error annotation.
+      - alerting: DatasourceError firing, and it appeared in /state.
+      - keep_last: db-1 stayed firing.
+      - Recovery: DatasourceError left /rules/:uuid and /state, and resolved notifications were sent.
+      - /state without a session gave 401.
+- 2026-11-08T21:41:04Z supervisor: alert-eval-error passed the gate in round 1

@@ -1,8 +1,10 @@
 import { alertLabelsFingerprint } from '@lightdash/common';
 import { describe, expect, it } from 'vitest';
 import {
+    evaluateAlertError,
     evaluateAlertNoData,
     evaluateAlertSeries,
+    getAlertErrorLabels,
     getAlertInstanceLabels,
     getAlertNoDataLabels,
     getAlertSeriesTransitions,
@@ -327,6 +329,109 @@ describe('evaluateAlertNoData', () => {
                 .filter((t) => t.labels.alertname === 'DatasourceNoData')
                 .map((t) => [t.previousState, t.state]),
         ).toEqual([['nodata', 'normal']]);
+    });
+});
+
+describe('evaluateAlertError', () => {
+    const message = 'connect ECONNREFUSED 127.0.0.1:5433';
+    const fire = (errorState: 'error' | 'alerting' | 'keep_last') => {
+        const withState = { ...rule, errorState };
+        const fired = evaluateAlertSeries({
+            rule: withState,
+            rows: disk({ 'db-1': 95 }),
+            previous: [],
+            at: T0,
+        });
+        return { withState, fired };
+    };
+    const datasourceError = (instances: AlertInstanceRecord[]) =>
+        instances.find((i) => i.labels.alertname === 'DatasourceError');
+
+    it('with error adds a DatasourceError series carrying the message and resolves the rest', () => {
+        const { withState, fired } = fire('error');
+        const failed = evaluateAlertError({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+            error: message,
+        });
+        expect(byInstance(failed.instances, 'db-1')).toMatchObject({
+            state: 'resolved',
+            value: null,
+        });
+        expect(datasourceError(failed.instances)).toMatchObject({
+            state: 'error',
+            stateSince: at(1),
+            value: null,
+            labels: {
+                team: 'infra',
+                alertname: 'DatasourceError',
+                rulename: 'Disk almost full',
+            },
+            annotations: { summary: 'Disk almost full', error: message },
+        });
+        expect(datasourceError(failed.instances)?.fingerprint).toBe(
+            alertLabelsFingerprint(getAlertErrorLabels(withState)),
+        );
+
+        const still = evaluateAlertError({
+            rule: withState,
+            previous: failed.instances,
+            at: at(2),
+            error: 'timeout',
+        });
+        expect(datasourceError(still.instances)).toMatchObject({
+            state: 'error',
+            stateSince: at(1),
+            lastEvaluatedAt: at(2),
+            annotations: { error: 'timeout' },
+        });
+    });
+
+    it('with alerting fires DatasourceError', () => {
+        const { withState, fired } = fire('alerting');
+        const failed = evaluateAlertError({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+            error: message,
+        });
+        expect(datasourceError(failed.instances)?.state).toBe('firing');
+        expect(byInstance(failed.instances, 'db-1')?.state).toBe('resolved');
+    });
+
+    it('with keep_last changes nothing', () => {
+        const { withState, fired } = fire('keep_last');
+        expect(
+            evaluateAlertError({
+                rule: withState,
+                previous: fired.instances,
+                at: at(1),
+                error: message,
+            }),
+        ).toEqual({ instances: fired.instances, removedFingerprints: [] });
+    });
+
+    it('clears DatasourceError once the query succeeds again', () => {
+        const { withState, fired } = fire('error');
+        const failed = evaluateAlertError({
+            rule: withState,
+            previous: fired.instances,
+            at: at(1),
+            error: message,
+        });
+        const back = evaluateAlertSeries({
+            rule: withState,
+            rows: disk({ 'db-1': 95 }),
+            previous: failed.instances,
+            at: at(2),
+        });
+        expect(datasourceError(back.instances)).toBeUndefined();
+        expect(
+            getAlertSeriesTransitions(failed.instances, back)
+                .filter((t) => t.labels.alertname === 'DatasourceError')
+                .map((t) => [t.previousState, t.state]),
+        ).toEqual([['error', 'normal']]);
     });
 });
 

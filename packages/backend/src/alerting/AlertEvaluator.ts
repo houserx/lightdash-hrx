@@ -17,6 +17,7 @@ import { type AlertInstanceModel } from './AlertInstanceModel';
 import { type AlertRuleModel } from './AlertRuleModel';
 import { type AlertScheduleModel } from './AlertScheduleModel';
 import {
+    evaluateAlertError,
     evaluateAlertNoData,
     evaluateAlertSeries,
     getAlertSeriesTransitions,
@@ -61,7 +62,9 @@ type AlertEvaluatorArgs = {
  * and value, stored per series in `alert_instances`. Every state change is
  * written to `alert_state_history`. Paused rules are skipped without
  * running their query. A query that returns no rows follows the rule's
- * noDataState (see `evaluateAlertNoData`). With several workers each scheduled slot is
+ * noDataState (see `evaluateAlertNoData`), and a query that fails (the
+ * source refuses connections, the SQL errors) follows its errorState (see
+ * `evaluateAlertError`) instead of failing the evaluation. With several workers each scheduled slot is
  * evaluated once: a worker claims the slot on the rule's row before it runs
  * the query, and a worker that finds the slot (or a later one) already
  * claimed skips with reason `duplicate`. A newer slot that comes due while
@@ -135,23 +138,44 @@ export class AlertEvaluator {
         rule: AlertRule,
         scheduledAt: Date,
     ): Promise<void> {
-        const rows = await this.runRuleQuery({
-            ruleUuid: rule.uuid,
-            projectUuid: rule.projectUuid,
-            rule,
-            at: scheduledAt,
-        });
+        let result: { rows: AlertQueryRow[] } | { error: string };
+        try {
+            result = {
+                rows: await this.runRuleQuery({
+                    ruleUuid: rule.uuid,
+                    projectUuid: rule.projectUuid,
+                    rule,
+                    at: scheduledAt,
+                }),
+            };
+        } catch (error) {
+            result = { error: getErrorMessage(error) };
+        }
         const previous = await this.alertInstanceModel.listForRule(rule.uuid);
-        // An empty result follows the rule's noDataState.
-        const evaluation =
-            rows.length === 0
-                ? evaluateAlertNoData({ rule, previous, at: scheduledAt })
-                : evaluateAlertSeries({
-                      rule,
-                      rows,
-                      previous,
-                      at: scheduledAt,
-                  });
+        // A failed query follows the rule's errorState, an empty result its
+        // noDataState.
+        let evaluation: AlertSeriesEvaluation;
+        if ('error' in result) {
+            evaluation = evaluateAlertError({
+                rule,
+                previous,
+                at: scheduledAt,
+                error: result.error,
+            });
+        } else if (result.rows.length === 0) {
+            evaluation = evaluateAlertNoData({
+                rule,
+                previous,
+                at: scheduledAt,
+            });
+        } else {
+            evaluation = evaluateAlertSeries({
+                rule,
+                rows: result.rows,
+                previous,
+                at: scheduledAt,
+            });
+        }
         await this.alertInstanceModel.save(
             {
                 projectUuid: rule.projectUuid,

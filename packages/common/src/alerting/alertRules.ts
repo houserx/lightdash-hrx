@@ -93,6 +93,21 @@ export type AlertRuleInstance = {
     lastEvaluatedAt: string | null;
 };
 
+/**
+ * A firing or pending series of the project, as listed by
+ * `GET /alerting/state` (the telemetry MCP server's `alert_state`).
+ */
+export type AlertStateInstance = {
+    ruleUuid: string;
+    ruleName: string;
+    state: AlertInstanceState;
+    labels: Record<string, string>;
+    annotations: Record<string, string>;
+    value: number | null;
+    /** When the series entered its current state (ISO). */
+    since: string;
+};
+
 export type AlertRuleSummary = AlertRule & { state: AlertRuleState };
 
 /**

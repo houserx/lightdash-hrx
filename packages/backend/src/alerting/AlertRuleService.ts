@@ -24,6 +24,7 @@ import {
     type AlertRuleVersion,
     type AlertRuleWithInstances,
     type AlertStateHistoryEntry,
+    type AlertStateInstance,
     type CreateAlertRule,
     type SessionUser,
     type UpdateAlertRule,
@@ -411,6 +412,36 @@ export class AlertRuleService {
         const rule = await this.getRuleOrThrow(projectUuid, ruleUuid);
         const [withInstances] = await this.withInstances([rule]);
         return withInstances;
+    }
+
+    /**
+     * The project's firing and pending series, across all its rules (the
+     * AI / MCP state API).
+     */
+    async listState(
+        user: SessionUser,
+        projectUuid: string,
+    ): Promise<{ instances: AlertStateInstance[] }> {
+        await this.assertAbility(user, 'view', projectUuid);
+        const rules = await this.deps.alertRuleModel.list(projectUuid);
+        const withInstances = await this.withInstances(rules);
+        return {
+            instances: withInstances.flatMap((rule) =>
+                rule.instances
+                    .filter(
+                        (i) => i.state === 'firing' || i.state === 'pending',
+                    )
+                    .map((i) => ({
+                        ruleUuid: rule.uuid,
+                        ruleName: rule.name,
+                        state: i.state,
+                        labels: i.labels,
+                        annotations: i.annotations,
+                        value: i.value,
+                        since: i.since,
+                    })),
+            ),
+        };
     }
 
     async listVersions(
