@@ -102,7 +102,7 @@ impl TableFunctionImpl for Trace {
         };
         Ok(Arc::new(TraceQuery {
             http: self.http.clone(),
-            source: self.sources.resolve(source)?,
+            source: self.sources.resolve(source, session)?,
             trace_id: id,
         }))
     }

@@ -131,7 +131,7 @@ impl TableFunctionImpl for CloudwatchLogs {
             Some(_) => Some(text_argument(arg(4)?, "source", SIGNATURE)?),
             None => None,
         };
-        let (name, max_rows) = self.sources.pick(source)?;
+        let (name, max_rows) = self.sources.pick(source, session)?;
         Ok(Arc::new(LogsQuery {
             source: self.settings[&name].clone(),
             connect_timeout: self.connect_timeout,

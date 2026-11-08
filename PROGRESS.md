@@ -1230,3 +1230,61 @@ token verification for a *valid* token, which feature 39 then hardens.
   received zero requests. The open mock saw only the first query, because the JOIN is refused at
   plan time.
 - 2026-11-08T20:06:37Z supervisor: eng-identity-restricted-denied passed the gate in round 1
+- eng-audit-dynamodb-item (worker, round 1): Restricted Telemetry is now readable with a valid
+  identity, and every such read is an Audited Query that writes one DynamoDB `executions` item.
+  - New `src/identity.rs`: verifies the §3 token from `hrx.identity` (HMAC-SHA256 over the
+    base64url payload, v = 1, exp not passed, iat ≤ now+60, exp−iat ≤ 300, sub/email strings).
+    A token that fails any check counts as no identity. `Access` is put into the DataFusion
+    `SessionConfig` as an extension for each statement (`Sql::state_for`). `HttpSources::pick`
+    and `resolve` now take the `&dyn Session` (all 6 table functions pass `args.session()`), and
+    for a restricted source they call `Access::require_restricted`. That refuses with 42501
+    (same text naming telemetry_restricted) unless `attrs.telemetry_restricted = true` and the
+    token is not an agent, and records the source as audited.
+  - New `src/audit.rs`: `AuditWriter` (aws-sdk-dynamodb, default credential chain,
+    `[audit] region` and `dynamodb_endpoint_url`) does PutItem with
+    `ConditionExpression attribute_not_exists(id)`. The record has exactly the portal fields:
+    uuid v4 id, the SQL, mode read, description, database = source name, linearTicketId (left
+    out without a ticket), executedByEmail/Sub, status success, rowCount, integer durationMs,
+    errorMessage null, preview false, action, integrityHash, createdAt (`%.3fZ`) and
+    createdAtMonth. `record()` keeps the portal key order (EXECUTION_KEY_ORDER), ready for the
+    S3 body. `integrity_hash` implements computeIntegrityHash with V8-style escaping.
+    `eng_audit_integrity_hash` already passes.
+  - `pg.rs`: `Action::Query(plan, audited_sources)`. `Prepared` keeps the SQL from Parse.
+    `Sql::run` checks the *current* identity again at execute time (the extended protocol may
+    execute later than Parse), runs the plan, writes the record, and only then returns rows. A
+    failed write is 58000 "audit write failed"; the cause goes to stderr only. The SQL recorded
+    is the query string as received when it holds one statement. In a multi-statement simple
+    query it is that statement re-rendered by sqlparser, so a preceding `SET hrx.identity` token
+    never lands in the audit record.
+  - Deps added: aws-sdk-dynamodb 1.137, hmac 0.12, sha2 0.10, hex 0.4, uuid 1 (v4). All of them
+    resolved offline; only aws-sdk-dynamodb added new lock entries.
+  - Contract assumptions: action = `ai_ask` for agent=true or iss telemetry-mcp, `assertion`
+    for sys=true, else `query`. An agent never passes the restricted check. Anything but
+    `"agent": false` counts as an agent. A query touching several restricted sources writes ONE
+    item with `database` = names joined by "," in plan order. createdAt is taken after the query
+    ran. description/ticket that are blank after trim count as absent.
+  - Built ahead, because it was needed to allow access safely (the next sessions should verify
+    and not rebuild it): token verification (eng-identity-token-verification already passes),
+    the 42501 "audited query requires a description" refusal (eng-audited-query-description-
+    required), and fail-closed 58000 on a DynamoDB failure. NOT done: the S3 Object Lock object
+    (eng-audit-s3-object: add it in `AuditWriter::write`, using `record()`'s order and
+    `[audit] s3_endpoint_url`/`s3_retention_days`), records for failed queries
+    (eng-audit-failed-query-recorded: `Sql::run` writes nothing when execute fails), and
+    selector/log-group precision. A Loki source with restricted_selectors or a cloudwatch_logs
+    source with restricted_log_groups is still restricted as a whole: every query to it needs
+    the claim and is audited.
+  Tested as a user: `../tmp/audit-item/run.sh` starts open and restricted Prometheus mocks, a
+  Python DynamoDB logger and the engine. It runs the steps on one pg-wire session; `X:` in
+  `../tmp/pgclient` means the extended protocol. With a telemetry_restricted token carrying a
+  description and ticket ENG-1799, the extended-protocol restricted query returned 2 rows. The
+  logger saw one `DynamoDB_20120810.PutItem` on db-query-portal-executions with
+  ConditionExpression attribute_not_exists(id) and exactly the 17 fields: uuid id, the SQL
+  verbatim, read, database prom-restricted, ENG-1799, sub, email, success, rowCount N 2,
+  durationMs N 1, errorMessage NULL, preview false, query, createdAt
+  2026-11-08T20:15:46.492Z, 2026-11, hmac-sha256:…. With a ticketless token the second item
+  had no linearTicketId. Open queries (extended and simple) wrote nothing: still 2 puts. Checks
+  passed after init: audit::eng_audit_dynamodb_item, identity::eng_identity_restricted_denied,
+  promql::eng_promql_source_selection, ops::eng_lightdash_session_compat, and new unit tests in
+  identity/audit. No build warnings. rustfmt is not installed here, so lines were wrapped by
+  hand.
+- 2026-11-08T20:17:35Z supervisor: eng-audit-dynamodb-item passed the gate in round 1

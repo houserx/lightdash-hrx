@@ -4,9 +4,11 @@
 
 use std::collections::HashMap;
 
+use datafusion::catalog::Session;
 use datafusion::error::DataFusionError;
 use engine_config::{Config, SourceKind, SourceSettings};
 
+use crate::identity::Access;
 use crate::session::sqlstate;
 
 /// A resolved source: its name, base URL (no trailing `/`) and row cap.
@@ -28,7 +30,7 @@ pub struct HttpSources {
     kinds: HashMap<String, SourceKind>,
     /// Row cap by source name: the source's `max_rows`, else the top-level one.
     max_rows: HashMap<String, usize>,
-    /// Sources that need an identity, which this engine doesn't check yet.
+    /// Restricted Telemetry sources: reading one needs `telemetry_restricted` and is audited.
     restricted: Vec<String>,
     default: Option<String>,
 }
@@ -70,8 +72,12 @@ impl HttpSources {
     }
 
     /// The source a call names, or the kind's default source, with its base URL.
-    pub fn resolve(&self, name: Option<String>) -> Result<HttpSource, DataFusionError> {
-        let (name, max_rows) = self.pick(name)?;
+    pub fn resolve(
+        &self,
+        name: Option<String>,
+        session: &dyn Session,
+    ) -> Result<HttpSource, DataFusionError> {
+        let (name, max_rows) = self.pick(name, session)?;
         let url = self.urls.get(&name).cloned().unwrap_or_default();
         Ok(HttpSource {
             name,
@@ -81,8 +87,13 @@ impl HttpSources {
     }
 
     /// The name and row cap of the source a call names, or of the kind's default source. Any
-    /// kind, including ones without a base URL (`cloudwatch`).
-    pub fn pick(&self, name: Option<String>) -> Result<(String, usize), DataFusionError> {
+    /// kind, including ones without a base URL (`cloudwatch`). A restricted source needs the
+    /// session's identity to allow it (42501 otherwise) and makes the statement an Audited Query.
+    pub fn pick(
+        &self,
+        name: Option<String>,
+        session: &dyn Session,
+    ) -> Result<(String, usize), DataFusionError> {
         let kind = self.kind.as_str();
         let name = match name {
             Some(name) => name,
@@ -104,11 +115,7 @@ impl HttpSources {
             None => return Err(sqlstate("42704", format!("source \"{name}\" does not exist"))),
         }
         if self.restricted.contains(&name) {
-            // Fail closed until identity tokens are verified (CONTRACTS §1.2).
-            return Err(sqlstate(
-                "42501",
-                format!("source \"{name}\" is Restricted Telemetry and needs telemetry_restricted"),
-            ));
+            Access::require_restricted(session, &name)?;
         }
         let max_rows = self.max_rows.get(&name).copied().unwrap_or(usize::MAX);
         Ok((name, max_rows))
@@ -126,8 +133,8 @@ fn base_url(settings: &SourceSettings) -> Option<&String> {
 }
 
 /// A `restricted = true` source, a Loki source with `restricted_selectors` or a CloudWatch Logs
-/// source with `restricted_log_groups`: until identity tokens are verified and selectors and log
-/// groups are checked for overlap, every query to it may touch Restricted Telemetry.
+/// source with `restricted_log_groups`: until selectors and log groups are checked for overlap,
+/// every query to it may touch Restricted Telemetry.
 fn is_restricted(settings: &SourceSettings, restricted: bool) -> bool {
     restricted
         || match settings {

@@ -4,9 +4,11 @@
 //! config (CONTRACTS §1.4), resolving secrets from env vars, without binding ports or contacting
 //! sources.
 
+mod audit;
 mod aws;
 mod cloudwatch;
 mod cloudwatch_logs;
+mod identity;
 mod labels;
 mod logql;
 mod pg;

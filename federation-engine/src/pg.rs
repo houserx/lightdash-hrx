@@ -4,7 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Offset, TimeZone, Timelike};
@@ -53,9 +53,11 @@ use pgwire::messages::data::DataRow;
 use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
+use crate::audit::{AuditWriter, Execution};
 use crate::cloudwatch::Cloudwatch;
 use crate::cloudwatch_logs::CloudwatchLogs;
 use crate::labels::{label_udf, series_name_udf};
+use crate::identity::{Access, Identity};
 use crate::logql::Logql;
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
@@ -140,7 +142,12 @@ impl PgHandlers {
             .connect_timeout(SOURCE_CONNECT_TIMEOUT)
             .build()
             .map_err(|e| format!("cannot build the HTTP client for sources: {e}"))?;
-        let sql = Sql::new();
+        let mut sql = Sql::new();
+        sql.identity_secret = Some(config.identity_secret.expose().as_bytes().to_vec());
+        sql.audit = config
+            .audit
+            .clone()
+            .map(|a| AuditWriter::new(a, SOURCE_CONNECT_TIMEOUT));
         let cloudwatch = Cloudwatch::new(config, SOURCE_CONNECT_TIMEOUT);
         sql.ctx.register_udtf("cloudwatch", Arc::new(cloudwatch));
         let logs = CloudwatchLogs::new(config, SOURCE_CONNECT_TIMEOUT);
@@ -210,12 +217,17 @@ impl PgWireServerHandlers for PgHandlers {
 /// and DataFusion's own statements are refused.
 pub struct Sql {
     ctx: SessionContext,
+    /// The HMAC key of identity tokens; without one no token is valid.
+    identity_secret: Option<Vec<u8>>,
+    /// Where Audited Queries are recorded; without it they fail with 58000.
+    audit: Option<AuditWriter>,
 }
 
 /// What a planned statement does when executed.
 #[derive(Debug)]
 enum Action {
-    Query(LogicalPlan),
+    /// A query, with the Restricted Telemetry sources it reads (non-empty: an Audited Query).
+    Query(LogicalPlan, Vec<String>),
     Change(Change),
     Transaction(Transaction),
 }
@@ -247,13 +259,27 @@ impl Sql {
         ctx.register_udf(version_udf());
         ctx.register_udf(label_udf());
         ctx.register_udf(series_name_udf());
-        Sql { ctx }
+        Sql {
+            ctx,
+            identity_secret: None,
+            audit: None,
+        }
+    }
+
+    /// The verified identity in a connection's `hrx.identity`, if any.
+    fn identity(&self, settings: &Settings) -> Option<Identity> {
+        Identity::of(settings, self.identity_secret.as_deref()?)
     }
 
     /// The shared state as one connection sees it: planned in its time zone, with
-    /// `current_setting` reading its settings.
-    fn state_for(&self, settings: &Settings) -> Result<SessionState, DataFusionError> {
+    /// `current_setting` reading its settings, and table functions checking `access`.
+    fn state_for(
+        &self,
+        settings: &Settings,
+        access: Arc<Access>,
+    ) -> Result<SessionState, DataFusionError> {
         let mut state = self.ctx.state();
+        state.config_mut().set_extension(access);
         if let Some(zone) = settings.time_zone() {
             state.config_mut().options_mut().execution.time_zone = Some(zone.to_string());
             // Rebuilt so zone-aware functions such as `now()` pick up the new zone.
@@ -311,14 +337,50 @@ impl Sql {
         if let Some(txn) = Transaction::of(&statement) {
             return Ok(Action::Transaction(txn?));
         }
-        let state = self.state_for(settings)?;
+        let access = Arc::new(Access::new(self.identity(settings)));
+        let state = self.state_for(settings, access.clone())?;
         let plan = state.statement_to_plan(statement).await?;
         SQLOptions::new()
             .with_allow_ddl(false)
             .with_allow_dml(false)
             .with_allow_statements(false)
             .verify_plan(&plan)?;
-        Ok(Action::Query(plan))
+        Ok(Action::Query(plan, access.audited()))
+    }
+
+    /// Runs a planned query. An Audited Query (one that reads the Restricted Telemetry sources
+    /// in `audited`) is checked again against the identity the connection has now, and its
+    /// audit record is written after it ran and before any row is returned: if the write fails,
+    /// the query fails with 58000 and returns nothing (CONTRACTS §6). `sql` is the statement as
+    /// the client sent it.
+    async fn run(
+        &self,
+        plan: LogicalPlan,
+        audited: &[String],
+        sql: &str,
+        settings: &Settings,
+    ) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
+        if audited.is_empty() {
+            return self.execute(plan, settings).await;
+        }
+        let identity = self.identity(settings);
+        for source in audited {
+            Identity::check_restricted(identity.as_ref(), source)?;
+        }
+        let (Some(identity), Some(writer)) = (identity, &self.audit) else {
+            return Err(audit_write_failed("no identity or no [audit] store".to_string()));
+        };
+        let started = Instant::now();
+        let (schema, batches) = self.execute(plan, settings).await?;
+        let execution = Execution {
+            identity: &identity,
+            sql,
+            sources: audited,
+            row_count: batches.iter().map(RecordBatch::num_rows).sum(),
+            duration: started.elapsed(),
+        };
+        writer.write(&execution).await.map_err(audit_write_failed)?;
+        Ok((schema, batches))
     }
 
     /// Runs a plan to completion in a connection's settings. With a `statement_timeout` set,
@@ -328,7 +390,8 @@ impl Sql {
         plan: LogicalPlan,
         settings: &Settings,
     ) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
-        let df = DataFrame::new(self.state_for(settings)?, plan);
+        let access = Arc::new(Access::new(self.identity(settings)));
+        let df = DataFrame::new(self.state_for(settings, access)?, plan);
         let schema = df.schema().as_arrow().clone();
         let batches = match settings.statement_timeout() {
             None => df.collect().await?,
@@ -378,11 +441,18 @@ impl SimpleQueryHandler for QueryHandler {
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
         let statements = self.sql.statements(query).map_err(query_error)?;
+        let single = statements.len() == 1;
         // Each statement sees the settings and transaction status the ones before it left.
         let mut status = client.transaction_status();
         let mut responses = Vec::with_capacity(statements.len());
         for statement in statements {
-            let response = match self.run_simple(client, statement, status).await {
+            // The statement as received: the whole string when it is the only one.
+            let text = if single {
+                query.to_string()
+            } else {
+                statement.to_string()
+            };
+            let response = match self.run_simple(client, statement, &text, status).await {
                 Ok(response) => response,
                 // Postgres stops at the first failing statement; earlier results stand.
                 Err(PgWireError::UserError(info)) => {
@@ -408,6 +478,7 @@ impl QueryHandler {
         &self,
         client: &mut C,
         statement: DFStatement,
+        text: &str,
         status: TransactionStatus,
     ) -> PgWireResult<Response>
     where
@@ -419,8 +490,8 @@ impl QueryHandler {
             .plan_statement(statement, &settings, status)
             .await
             .map_err(query_error)?;
-        let plan = match action {
-            Action::Query(plan) => plan,
+        let (plan, audited) = match action {
+            Action::Query(plan, audited) => (plan, audited),
             Action::Change(change) => {
                 change.apply(client.metadata_mut());
                 return Ok(Response::Execution(Tag::new(change.tag())));
@@ -429,7 +500,7 @@ impl QueryHandler {
         };
         let (schema, batches) = self
             .sql
-            .execute(plan, &settings)
+            .run(plan, &audited, text, &settings)
             .await
             .map_err(query_error)?;
         let columns = columns_of(&schema);
@@ -447,6 +518,8 @@ impl QueryHandler {
 pub struct Prepared {
     /// The plan with `$n` placeholders still in it, or the `SET` it makes.
     action: Action,
+    /// The statement as the client sent it in Parse.
+    sql: String,
     /// The Arrow type each `$n` binds as (index 0 is `$1`).
     params: Vec<DataType>,
     /// The Postgres type each `$n` is described as.
@@ -474,9 +547,10 @@ impl QueryParser for Sql {
             .await
             .map_err(query_error)?;
         let prepared = match action {
-            Action::Query(plan) => prepare(plan, types)?,
+            Action::Query(plan, audited) => prepare(plan, audited, sql, types)?,
             action @ (Action::Change(_) | Action::Transaction(_)) => Prepared {
                 action,
+                sql: sql.to_string(),
                 params: vec![],
                 param_types: vec![],
                 columns: vec![],
@@ -560,8 +634,8 @@ impl ExtendedQueryHandler for QueryHandler {
         let status = client.transaction_status();
         stmt.action.check_not_aborted(status)?;
         let values = bind_params(stmt, portal)?;
-        let plan = match &stmt.action {
-            Action::Query(plan) => plan.clone(),
+        let (plan, audited) = match &stmt.action {
+            Action::Query(plan, audited) => (plan.clone(), audited),
             Action::Change(change) => {
                 change.apply(client.metadata_mut());
                 return Ok(Response::Execution(Tag::new(change.tag())));
@@ -572,7 +646,7 @@ impl ExtendedQueryHandler for QueryHandler {
         let settings = Settings::of(client.metadata());
         let (_, batches) = self
             .sql
-            .execute(plan, &settings)
+            .run(plan, audited, &stmt.sql, &settings)
             .await
             .map_err(query_error)?;
         // Encoded as described, so binary values match the types in RowDescription.
@@ -589,7 +663,12 @@ impl ExtendedQueryHandler for QueryHandler {
 ///
 /// A parameter's type is, in order: the one the client declared in Parse, the one DataFusion
 /// inferred from context (`col = $1`), the target of a direct cast (`$1::bigint`), else text.
-fn prepare(plan: LogicalPlan, declared: &[Option<Type>]) -> PgWireResult<Prepared> {
+fn prepare(
+    plan: LogicalPlan,
+    audited: Vec<String>,
+    sql: &str,
+    declared: &[Option<Type>],
+) -> PgWireResult<Prepared> {
     let inferred = placeholder_types(&plan).map_err(query_error)?;
     let count = inferred
         .keys()
@@ -615,7 +694,8 @@ fn prepare(plan: LogicalPlan, declared: &[Option<Type>]) -> PgWireResult<Prepare
     }
     let columns = columns_of(plan.schema().as_arrow());
     Ok(Prepared {
-        action: Action::Query(plan),
+        action: Action::Query(plan, audited),
+        sql: sql.to_string(),
         params,
         param_types,
         columns,
@@ -1041,6 +1121,13 @@ fn query_error(e: DataFusionError) -> PgWireError {
     user_error(code, e.to_string())
 }
 
+/// The error an Audited Query fails with when its record cannot be written (CONTRACTS §6). The
+/// cause goes to the engine's log only.
+fn audit_write_failed(cause: String) -> DataFusionError {
+    eprintln!("engine: audit write failed: {cause}");
+    sqlstate("58000", "audit write failed".to_string())
+}
+
 /// An ErrorResponse with severity ERROR.
 fn user_error(code: &str, message: String) -> PgWireError {
     PgWireError::UserError(Box::new(ErrorInfo::new(
@@ -1078,7 +1165,7 @@ mod tests {
             let sql_ = Sql::new();
             let settings = Settings::default();
             match sql_.plan(sql, &settings, TransactionStatus::Idle).await? {
-                Action::Query(plan) => sql_.execute(plan, &settings).await,
+                Action::Query(plan, _) => sql_.execute(plan, &settings).await,
                 other => panic!("not a query: {other:?}"),
             }
         })
@@ -1150,10 +1237,10 @@ mod tests {
             TransactionStatus::Idle,
         ))
         .unwrap();
-        let Action::Query(plan) = action else {
+        let Action::Query(plan, audited) = action else {
             panic!("not a query: {sql}")
         };
-        prepare(plan, declared).unwrap()
+        prepare(plan, audited, sql, declared).unwrap()
     }
 
     #[test]

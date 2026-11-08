@@ -109,7 +109,7 @@ impl TableFunctionImpl for Cloudwatch {
             Some(_) => Some(text_argument(arg(3)?, "source", SIGNATURE)?),
             None => None,
         };
-        let (name, max_rows) = self.sources.pick(source)?;
+        let (name, max_rows) = self.sources.pick(source, session)?;
         let aws = self.settings[&name].clone();
         let now = chrono::Utc::now().timestamp_micros();
         let target = Target::parse(&target, start, end, now)?;

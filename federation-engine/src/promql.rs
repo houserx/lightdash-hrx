@@ -141,7 +141,7 @@ impl TableFunctionImpl for Promql {
             name: source,
             url,
             max_rows,
-        } = self.sources.resolve(source)?;
+        } = self.sources.resolve(source, session)?;
         Ok(Arc::new(PromqlQuery {
             http: self.http.clone(),
             source,

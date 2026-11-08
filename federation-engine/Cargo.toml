@@ -26,6 +26,7 @@ async-trait = "0.1.92"
 aws-config = { version = "1.13", default-features = false, features = ["behavior-version-latest", "credentials-process", "default-https-client", "rt-tokio"] }
 aws-sdk-cloudwatch = { version = "1.140", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 aws-sdk-cloudwatchlogs = { version = "1.163", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1.137", default-features = false, features = ["behavior-version-latest", "default-https-client", "rt-tokio"] }
 # Only to mark a source's sts_endpoint_url as programmatic config, so it wins over AWS_ENDPOINT_URL.
 aws-types = "1.7"
 axum = "0.8"
@@ -37,6 +38,8 @@ datafusion = { version = "55", default-features = false, features = ["sql", "nes
 engine-config = { path = "crates/engine-config" }
 futures = "0.3.34"
 getrandom = "0.3"
+hex = "0.4"
+hmac = "0.12"
 pgwire = "0.42"
 postgres-types = "0.2.14"
 # Telemetry Source HTTP clients: rustls with the webpki root store (no OS keychain). main()
@@ -45,7 +48,9 @@ postgres-types = "0.2.14"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 rustls = "0.23"
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
 
 # Used only by tests/acceptance. They drive the real `engine` binary through pg-wire and HTTP,
 # so they compile without any engine code. Keep these: the protected harness needs them.

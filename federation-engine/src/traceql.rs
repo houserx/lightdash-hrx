@@ -100,7 +100,7 @@ impl TableFunctionImpl for Traceql {
         };
         Ok(Arc::new(TraceqlQuery {
             http: self.http.clone(),
-            source: self.sources.resolve(source)?,
+            source: self.sources.resolve(source, session)?,
             params: vec![
                 ("q", query),
                 ("start", start.div_euclid(1_000_000).to_string()),
