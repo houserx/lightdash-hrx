@@ -404,3 +404,19 @@ should add a dated line here per feature.
   `timestamp` (null last) in `buildLogStreamModel`. The view should read `model.lines[].formattedTimestamp` or format
   `timestamp` itself.
 - 2026-11-08T18:46:43Z supervisor: viz-log-stream-model passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-order (session)
+
+- **What.** `packages/visualization/src/logStream/model.ts`: `buildLogStreamModel` now returns `lines` sorted by
+  `timestamp` through the new exported `sortLogStreamLines(lines, newestFirst)`. Newest first is the default
+  (`newestFirst` resolves to true), oldest first when the config sets `newestFirst: false`. The sort is stable, so
+  lines with the same time keep the query's order (in both directions). Lines with no valid time go last, in the
+  query's order. `id` is still the row index in the data, so ids stay stable but are no longer in display order.
+  A unit test in `logStream.test.ts` covers both directions and untimed lines.
+- **Tested as a user.** There is still no frontend log renderer (`viz-log-stream-view` is next), so I called the built
+  `dist/cjs` `renderChart` from plain Node with five synthetic logs-shaped rows in shuffled order (03, 01, 05, 02, 04).
+  With no config the lines came back 05→01. With `newestFirst: false` they came back 01→05. The check passes 3/3 after
+  `bash ./init.sh`, and the log-stream-model acceptance test still passes 9/9. Unit tests (7/7), typecheck, oxlint
+  and oxfmt for the visualization package pass.
+- **Next.** The view should draw `model.lines` in the given order and not sort again.
+- 2026-11-08T18:48:53Z supervisor: viz-log-stream-order passed the gate in round 1

@@ -122,4 +122,17 @@ describe('log stream', () => {
             ok: 'true',
         });
     });
+
+    test('sorts by time, newest first by default, untimed lines last', () => {
+        const rows = [
+            { timestamp: cell('2026-11-08T10:00:02.000Z'), line: cell('b') },
+            { timestamp: cell(null), line: cell('none') },
+            { timestamp: cell('2026-11-08T10:00:01.000Z'), line: cell('a') },
+            { timestamp: cell('2026-11-08T10:00:03.000Z'), line: cell('c') },
+        ];
+        const order = (config: Record<string, unknown> = {}) =>
+            modelOf(logqlData(rows), config).lines.map((l) => l.line);
+        expect(order()).toEqual(['c', 'b', 'a', 'none']);
+        expect(order({ newestFirst: false })).toEqual(['a', 'b', 'c', 'none']);
+    });
 });
