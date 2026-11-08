@@ -1,6 +1,8 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { AccessTokenError, createOktaVerifier, type AccessTokenVerifier } from '../auth/okta.js';
 import type { Config } from '../config.js';
+import { serveMcpRequest } from '../mcp/server.js';
 import { bearerChallenge, extractBearer, type BearerError } from './bearerChallenge.js';
 import { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './protectedResource.js';
 
@@ -36,7 +38,12 @@ function sendUnauthorized(config: Config, res: http.ServerResponse, err?: Bearer
  * Every request to `/mcp` must carry a valid Okta bearer token; anything else gets a 401 challenge pointing at the
  * protected-resource metadata, before any other work (no Lightdash or engine call).
  */
-function handleMcp(config: Config, req: http.IncomingMessage, res: http.ServerResponse): void {
+async function handleMcp(
+    config: Config,
+    verifier: AccessTokenVerifier,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+): Promise<void> {
     const bearer = extractBearer(req.headers);
     if (bearer.kind === 'missing') {
         sendUnauthorized(config, res);
@@ -46,11 +53,24 @@ function handleMcp(config: Config, req: http.IncomingMessage, res: http.ServerRe
         sendUnauthorized(config, res, { error: 'invalid_token', description: 'The access token is malformed' });
         return;
     }
-    // Okta signature and claims verification is not wired in yet: fail closed until it is.
-    sendUnauthorized(config, res, { error: 'invalid_token', description: 'The access token could not be verified' });
+    let verified;
+    try {
+        verified = await verifier.verify(bearer.token);
+    } catch (err) {
+        // Fail closed: anything that stops verification (bad token, unreachable JWKS) is a 401.
+        const description = err instanceof AccessTokenError ? err.description : 'The access token could not be verified';
+        sendUnauthorized(config, res, { error: 'invalid_token', description });
+        return;
+    }
+    await serveMcpRequest(verified, req, res);
 }
 
-async function handle(config: Config, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+async function handle(
+    config: Config,
+    verifier: AccessTokenVerifier,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+): Promise<void> {
     const { pathname } = new URL(req.url ?? '/', 'http://localhost');
     if (pathname === '/healthz') {
         if (allowGetOnly(req, res)) sendJson(res, 200, { status: 'ok' });
@@ -61,15 +81,16 @@ async function handle(config: Config, req: http.IncomingMessage, res: http.Serve
         return;
     }
     if (pathname === MCP_PATH) {
-        handleMcp(config, req, res);
+        await handleMcp(config, verifier, req, res);
         return;
     }
     sendJson(res, 404, { error: 'not_found' });
 }
 
 export async function startServer({ config }: { config: Config }): Promise<RunningServer> {
+    const verifier = createOktaVerifier(config.okta);
     const server = http.createServer((req, res) => {
-        handle(config, req, res).catch(() => {
+        handle(config, verifier, req, res).catch(() => {
             if (!res.headersSent) sendJson(res, 500, { error: 'internal_error' });
             else res.end();
         });

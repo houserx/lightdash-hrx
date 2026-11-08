@@ -396,3 +396,33 @@ docs/eng-1799/telemetry-mcp.md
   200; SIGTERM exit 0; Lightdash and engine contacted 0 times. Acceptance unauthorized-challenge passes, and the four
   earlier acceptance checks, unit tests and typecheck pass too.
 - 2026-11-08T15:54:14Z supervisor: mcp-unauthorized-challenge passed the gate in round 1
+
+### mcp-okta-claims-validation (2026-11-08)
+
+- Added runtime dep `jose@6.1.3` (already in the lockfile; `pnpm-lock.yaml` updated, 4 runtime deps now).
+- `src/auth/okta.ts`: `createOktaVerifier(config.okta)` → `{ verify(token) }` using jose `createRemoteJWKSet(jwksUri,
+  { cooldownDuration: JWKS_COOLDOWN_MS = 1000 })` + `jwtVerify` with `algorithms: ['RS256']`, exact `issuer`,
+  `audience` (string or array), `requiredClaims: ['exp']`, `clockTolerance: 30 s` (`CLOCK_TOLERANCE_SECONDS`; the spec
+  names no skew, 30 s is my choice). Failures throw `AccessTokenError` whose `description` is a fixed sentence (expired /
+  not valid yet / no expiry / wrong issuer / wrong audience / bad algorithm / "could not be verified"), never token
+  content. Uses the real clock, not `deps.now` (a fake clock must not relax token expiry). JWKS is fetched lazily on the
+  first token, never at startup.
+- `src/http/server.ts`: `startServer` builds one verifier per server (so the JWKS cache is shared); `handleMcp` is now
+  async and sends 401 `invalid_token` + challenge for every verification failure, including an unreachable JWKS (fail
+  closed). On success it hands off to `serveMcpRequest`.
+- `src/mcp/server.ts`: **minimal** handoff so initialize succeeds: stateless `StreamableHTTPServerTransport`
+  (`sessionIdGenerator: undefined`) + a fresh `McpServer({ name: 'telemetry-mcp' })` per request, no tools, closed on
+  `res` close. `serveMcpRequest(verified, req, res)` receives the verified claims but doesn't use them yet.
+  `mcp-streamable-http-transport` owns the rest (tools capability, ping, tools/list — remember the note above that an
+  `McpServer` with no tools answers tools/list with -32601; user mapping should hang off `verified.claims`).
+- Rotation (`mcp-okta-jwks-rotation`): jose's remote set already caches and refetches on an unknown kid with a 1 s
+  cooldown; I did not run that acceptance test — the next session should verify fetch counts there.
+- Unit tests: `src/auth/okta.test.ts` (local JWKS server; every rejection case, caching, unreachable JWKS); renamed the
+  old "fails closed until Okta verification exists" case in `src/http/server.test.ts` (an undecodable `aaa.bbb.ccc` is
+  rejected before any JWKS fetch).
+- Tested as a user: started `dist/main.js` against a local JWKS server; 0 JWKS fetches at startup; POST initialize with a
+  valid RS256 token → 200 with serverInfo `telemetry-mcp`; wrong iss, wrong aud, expired, future nbf, no exp, foreign
+  key, alg none, HS256, tampered payload → 401 each with `error="invalid_token"` and `resource_metadata`; 1 JWKS fetch
+  in total; SIGTERM exit 0. Acceptance okta-claims-validation (10/10) plus the five earlier acceptance checks, unit tests
+  (31) and typecheck pass.
+- 2026-11-08T16:00:15Z supervisor: mcp-okta-claims-validation passed the gate in round 1

@@ -14,5 +14,14 @@ export { startServer } from './http/server.js';
 export type { RunningServer } from './http/server.js';
 export { MCP_PATH, PROTECTED_RESOURCE_METADATA_PATHS, protectedResourceMetadata } from './http/protectedResource.js';
 export type { ProtectedResourceMetadata } from './http/protectedResource.js';
+export {
+    ACCEPTED_ALGORITHMS,
+    AccessTokenError,
+    CLOCK_TOLERANCE_SECONDS,
+    JWKS_COOLDOWN_MS,
+    createOktaVerifier,
+} from './auth/okta.js';
+export type { AccessTokenVerifier, VerifiedAccessToken } from './auth/okta.js';
+export { MCP_SERVER_NAME } from './mcp/server.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';

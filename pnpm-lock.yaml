@@ -1925,6 +1925,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.31.0
         version: 1.31.0(patch_hash=935d4f6b76220a0884ea03024e3d6d74da767c32abb5657c52905c25d440f4ac)(@cfworker/json-schema@4.1.1)(supports-color@9.1.0)(zod@4.6.6)
+      jose:
+        specifier: 6.1.3
+        version: 6.1.3
       pg:
         specifier: 8.13.1
         version: 8.13.1

@@ -91,7 +91,7 @@ describe('http server', () => {
         expect(await res.json()).toEqual({ error: 'invalid_token', error_description: 'The access token is malformed' });
     });
 
-    it('fails closed for a JWT-shaped token until Okta verification exists', async () => {
+    it('rejects a JWT-shaped token that does not decode, without contacting Okta', async () => {
         server = await startServer({ config: loadConfig(ENV) });
         const res = await fetch(`${server.url}/mcp`, { method: 'POST', headers: { authorization: 'Bearer aaa.bbb.ccc' } });
         expect(res.status).toBe(401);
