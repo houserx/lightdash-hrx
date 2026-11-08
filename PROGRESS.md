@@ -224,3 +224,23 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - A plain Ajv2020 accepted a minimal rule, contact point and route tree against the three files.
       - `validateAlertingAsCode` returned `description: is required` for a rule with no description, the secretRef message for an inline Slack webhook URL, and `{valid: true, errors: []}` for the three good docs.
 - 2026-11-08T18:41:33Z supervisor: alert-as-code-schemas passed the gate in round 1
+- alert-db-migrations — 2026-11-08 — I added one core knex migration, `packages/backend/src/database/migrations/20261108120000_create_alerting_tables.ts`, that creates the eight alerting tables. It has a real `down()` (drops them in reverse order), `classification` safe and `lock_timeout = '60s'` (per migrations/AGENTS.md, not the old 5s). Every table has a `<table>_uuid` uuid PK and every FK is indexed.
+  - The spec gives no column list, so I took the narrowest set the later features and acceptance tests need. Column names (snake_case) that later sessions should build their models on:
+    - `alert_rules`: project_uuid (FK projects ON DELETE CASCADE), space_uuid (folder; FK spaces **ON DELETE SET NULL**, nullable, so deleting a space keeps its rules; rule CRUD must still require a folder), slug (unique per project), name, description (**NOT NULL plus CHECK `btrim(description) <> ''`**), query, value_column ('value'), reducer ('last'), condition jsonb, for_duration ('0s'; `for` is a reserved word), keep_firing_for ('0s'), interval ('1m'), time_range ('10m'), no_data_state ('nodata'), error_state ('error'), labels/annotations jsonb ('{}'), paused/shadow/managed boolean NOT NULL default false, created_by_user_uuid/updated_by_user_uuid (FK users SET NULL), created_at/updated_at. Durations are stored as the written Prometheus text so as-code documents round-trip unchanged. Parse them in the app, e.g. for scheduling.
+    - `alert_rule_versions`: alert_rule_uuid (CASCADE), version int (unique per rule), definition jsonb snapshot, created_by_user_uuid, created_at.
+    - `alert_instances`: one row per (alert_rule_uuid, fingerprint) (unique), with labels, annotations, state (CHECK in normal/pending/firing/resolved/nodata/error), value double, state_since, active_at, last_condition_met_at, last_evaluated_at. These match `AlertInstanceSnapshot` in common stateMachine.ts.
+    - `alert_state_history`: project_uuid and alert_rule_uuid (both CASCADE), fingerprint (nullable, for rule-level entries such as skipped evaluations), labels, previous_state, state (no CHECK, so `skipped` etc. are allowed), value, reason, at. Indexed on (rule, at) and (project, at).
+    - `contact_points`: project_uuid (CASCADE), slug (unique per project), name, integrations jsonb ('[]'), managed, created_by/updated_by, timestamps.
+    - `notification_routes`: one row per project (project_uuid UNIQUE, CASCADE), tree jsonb, managed, updated_by_user_uuid, timestamps.
+    - `alert_notifications`: project_uuid (CASCADE), alert_rule_uuid and contact_point_uuid (both nullable, **SET NULL**, so the log outlives deleted rules and contact points and test sends have no rule), integration_type, group_key, status (free text: sent/failed/shadow), attempts, alerts jsonb, payload jsonb, error, created_at, sent_at.
+    - `alert_evaluator_heartbeats`: append-only, one row per completed cycle: cycle_started_at, completed_at (indexed), rules_evaluated, heartbeat_status, error. It has no FK.
+  - Later features may add columns in new migrations (for example an evaluation lock or lease for overrun/concurrency, or notifier group state). Don't edit this migration once it has shipped.
+  - Tested:
+    - The check passes (1 passed).
+    - backend `pnpm run typecheck` is clean, and oxfmt/oxlint are clean on the file.
+    - As a user: I created a fresh throwaway cluster in repo tmp/ and ran `pnpm migrate` (with `LIGHTDASH_LICENSE_KEY=` and placeholder S3 env, because parseConfig requires S3). All migrations applied, including the new one.
+    - Through knex: the eight tables exist; description, paused, shadow and managed are NOT NULL (the flags boolean, default false); a null or blank description is refused; a bogus instance state is refused.
+    - I inserted one row in every table, then deleted the project. Every project-owned row was removed, and only the heartbeat row remained.
+    - `pnpm rollback-last` dropped all eight tables, and `pnpm migrate` re-created them. I stopped the cluster and removed it.
+  - Trap: `pnpm rollback-last` (knex CLI) only worked for me with the PG, LIGHTDASH_SECRET, SITE_URL, S3_* and `NODE_ENV=development` variables exported in the shell.
+- 2026-11-08T18:47:59Z supervisor: alert-db-migrations passed the gate in round 1
