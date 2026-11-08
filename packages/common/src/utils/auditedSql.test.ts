@@ -1,5 +1,6 @@
 import {
     buildPlatformColumnsSql,
+    buildPlatformExplainSql,
     buildPlatformQuerySql,
     isAuditDescriptionRequiredError,
     isAuditedSql,
@@ -56,6 +57,16 @@ describe('Platform Database schema SQL', () => {
         const sql = buildPlatformColumnsSql("o'ps", "it's");
         expect(sql).toBe(
             "SELECT column_name, data_type, is_nullable FROM platform_columns('o''ps', 'it''s')",
+        );
+        expect(isAuditedSql(sql)).toBe(true);
+    });
+});
+
+describe('buildPlatformExplainSql', () => {
+    it('selects the plan from platform_explain, doubling quotes', () => {
+        const sql = buildPlatformExplainSql("select * from t where s = 'a'");
+        expect(sql).toBe(
+            "SELECT plan FROM platform_explain('select * from t where s = ''a''')",
         );
         expect(isAuditedSql(sql)).toBe(true);
     });

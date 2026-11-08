@@ -32,6 +32,14 @@ export const buildPlatformQuerySql = (statement: string): string =>
     `SELECT * FROM platform_query(${sqlStringLiteral(statement)})`;
 
 /**
+ * Asks the engine for an estimate-only plan of a Platform Database statement
+ * (CONTRACTS §1.1, `platform_explain(sql) -> plan json`, never `ANALYZE`). The
+ * statement is passed as one SQL string literal with single quotes doubled.
+ */
+export const buildPlatformExplainSql = (statement: string): string =>
+    `SELECT plan FROM platform_explain(${sqlStringLiteral(statement)})`;
+
+/**
  * Lists the Platform Database tables the schema browser shows (CONTRACTS §1.1,
  * `platform_tables()`). The engine audits it like any platform_* call.
  */

@@ -1510,3 +1510,26 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     investigate-editor-sources 6/6 and investigate-editor-sql-editable 2/2. frontend tsc, oxlint
     and oxfmt are clean. The page hook has no unit test.
 - 2026-11-08T21:22:01Z supervisor: ldq-platform-schema-browser passed the gate in round 1
+- ldq-platform-explain-sql (round 1):
+  - common `utils/auditedSql.ts` now exports `buildPlatformExplainSql(statement)`, which builds
+    `SELECT plan FROM platform_explain('<statement>')` with single quotes doubled (the shared
+    `sqlStringLiteral`). It wraps the raw Platform SQL statement, not the generated
+    platform_query SQL. The next feature's acceptance test expects exactly that.
+  - New common `utils/explainPlan.ts` exports `formatExplainPlanAsText(plan)`. It follows the
+    explain.c text layout: the root line, then child lines as `->  ` (child arrows at 2, 8, 14...
+    spaces), and `(cost=a.aa..b.bb rows=n width=w)`. It accepts the Postgres plan array, one
+    `{ Plan }` element, a bare plan node, or any of those as a JSON string, and throws
+    "Not a Postgres JSON explain plan" otherwise. It also renders Aggregate strategies
+    (HashAggregate, ...), non-inner join types ("Hash Left Join"), Parallel, Backward,
+    `using <index>`, `on <relation> <alias>` (CTE and function scans too), Subplan Name lines,
+    and these detail lines: Group/Sort Key, Hash/Merge Cond, Join Filter, Index/Recheck Cond,
+    One-Time Filter and Filter. Other keys (actual times, Output, Workers...) are not printed.
+    That is enough for estimate-only plans.
+  - Not done (next feature, ldq-platform-explain-only): there is no Explain button or download
+    UI yet. Its frontend test wants `runQuery` called with buildPlatformExplainSql(<Platform SQL>)
+    plus the audit description, the plan text shown, and "Download JSON" / "Download text" data:
+    links (explain-plan.json / explain-plan.txt). The `plan` cell may arrive as a JSON string.
+  - Tested: this is a pure common helper with no running UI to drive. Feature check 3/3, and the
+    new explainPlan.test.ts 3/3 (joins, aggregates, index scans, subplans, bad input).
+    auditedSql.test.ts 8/8. common tsc, oxlint and oxfmt are clean.
+- 2026-11-08T21:27:32Z supervisor: ldq-platform-explain-sql passed the gate in round 1
