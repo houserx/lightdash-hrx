@@ -927,3 +927,34 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 1/1. 22 acceptance files pass: the earlier 21 plus this one. The 31 failing files belong
   to unbuilt features.
 - 2026-11-08T17:11:11Z supervisor: mcp-output-size-cap passed the gate in round 1
+
+## mcp-tool-query-cloudwatch (2026-11-08)
+
+- New `src/tools/queryCloudwatch.ts`. It is registered in `src/mcp/server.ts` after `query_logql`, and
+  `src/index.ts` exports `QUERY_CLOUDWATCH_TOOL`, `buildCloudwatchQuery`, `checkMetricDataQuery` and `QueryCloudwatchArgs`.
+  - Inputs: `metric_data_query` (zod `record(string, unknown)`), `start`, `end`, and an optional `source` that must name
+    a `cloudwatch` kind source.
+  - SQL: `SELECT * FROM cloudwatch($1::json, $2, $3[, $4])`. `$1` is `JSON.stringify(metric_data_query)`, which equals
+    the input object. Start and end go through `parseRange`. The result goes through
+    `successResult(table, config.maxOutputBytes)`, so the row cap and byte cap apply.
+  - Validation happens before any engine connection. It gives `ToolInputError`, which surfaces as `isError`.
+    - Non-objects (array, string, null) are refused by the SDK's zod check. That is a -32602 "Input validation error"
+      result with `isError`, the same path as logql's bad limit.
+    - An object needs a non-empty string `Id` and exactly one of `MetricStat` (an object) or `Expression` (a non-empty
+      string). That is the CloudWatch API rule. Every other key passes through untouched.
+  - Contract assumption: no check on the CloudWatch Id pattern (`^[a-z][a-zA-Z0-9_]*$`), and none on
+    Period, Stat or Label. The engine and CloudWatch judge those.
+- Unit tests: `src/tools/queryCloudwatch.test.ts`. 165 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/cloudwatch-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` with an RS256 token,
+  the fake Lightdash and the fake engine.
+  - tools/list shows query_cloudwatch as readOnly.
+  - A MetricStat query with a hostile dimension value sent one extended-protocol `cloudwatch($1::json, $2, $3)`. The
+    JSON parameter equalled the input, and the SQL had none of the input text. It returned the Time series rows with
+    series "queue depth".
+  - An expression query with `now-1h`/`now` and a source sent `$4`.
+  - These gave `isError` with no engine query: [1,2], a string, null, {Stat}, {Id} alone, an empty Id, a loki source,
+    and end before start. SIGTERM exits 0.
+- Results: the check passes 3/3. 23 acceptance files pass: the earlier 22 plus this one. `sql-injection-safety` now
+  fails only on its cloudwatch_logs and search_traces cases, which are unbuilt features.
+- 2026-11-08T17:17:09Z supervisor: mcp-tool-query-cloudwatch passed the gate in round 1
