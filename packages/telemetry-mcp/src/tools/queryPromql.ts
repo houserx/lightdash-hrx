@@ -69,7 +69,8 @@ export function registerQueryPromql(
                 'Runs a PromQL query against a Prometheus Telemetry Source. For a range query give start, end and ' +
                 'step; for an instant query give at instead. Returns the Time series long shape: one row per ' +
                 'sample with timestamp, value, labels (a JSON label map) and series (the canonical series name), ' +
-                'plus rowCount and truncated.',
+                'plus rowCount and truncated (true when the result was cut at the server row cap; narrow the range or ' +
+                'coarsen the step to see the rest).',
             inputSchema: {
                 query: z.string().describe('The PromQL expression, for example sum by (job) (rate(http_requests_total[5m])).'),
                 start: z
@@ -102,7 +103,7 @@ export function registerQueryPromql(
         async (args) => {
             try {
                 const { sql, params } = buildPromqlQuery(config, args, now());
-                return successResult(tableResult(await engine.query(sql, params)));
+                return successResult(tableResult(await engine.query(sql, params, { maxRows: config.maxRows })));
             } catch (err) {
                 return failureResult(err, 'The PromQL query');
             }

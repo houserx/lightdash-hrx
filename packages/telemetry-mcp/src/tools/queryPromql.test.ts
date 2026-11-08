@@ -114,6 +114,7 @@ describe('tableResult', () => {
         const t = tableResult({
             columns: ['timestamp', 'value', 'labels', 'series'],
             rows: [{ timestamp: new Date(START), value: 1.5, labels: { job: 'api' }, series: '{job="api"}' }],
+            truncated: false,
         });
         expect(t).toEqual({
             columns: ['timestamp', 'value', 'labels', 'series'],
@@ -121,5 +122,14 @@ describe('tableResult', () => {
             rowCount: 1,
             truncated: false,
         });
+    });
+
+    it('passes on the engine truncated flag; rowCount counts the rows returned', () => {
+        const t = tableResult({
+            columns: ['value'],
+            rows: [{ value: 1 }, { value: 2 }],
+            truncated: true,
+        });
+        expect(t).toEqual({ columns: ['value'], rows: [{ value: 1 }, { value: 2 }], rowCount: 2, truncated: true });
     });
 });

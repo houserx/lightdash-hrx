@@ -41,6 +41,7 @@ describe('mcp server', () => {
                     { table_catalog: 'operations', table_schema: 'public', table_name: 'not_a_mart' },
                     { table_catalog: 'ops_marts', table_schema: 'information_schema', table_name: 'tables' },
                 ],
+                truncated: false,
             };
         },
     };

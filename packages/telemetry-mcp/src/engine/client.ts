@@ -11,6 +11,7 @@
  * functions and `information_schema` may be queried, never `pg_*`.
  */
 import pg from 'pg';
+import Cursor from 'pg-cursor';
 import type { Config } from '../config.js';
 import type { IdentityAuditInput } from '../identity/token.js';
 import { redactSecrets } from './errors.js';
@@ -24,11 +25,18 @@ const IDENTITY_TOKEN_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 export interface EngineResult {
     columns: string[];
     rows: Record<string, unknown>[];
+    /** True when `maxRows` was given and the engine had more rows than that; `rows` then holds exactly `maxRows`. */
+    truncated: boolean;
 }
 
 export interface EngineQueryOptions {
     /** The audit block of the identity token (Audited Queries need a description). Default: no audit. */
     audit?: IdentityAuditInput | null;
+    /**
+     * Return at most this many rows (`MCP_MAX_ROWS`). The statement runs as a portal and only `maxRows + 1` rows are
+     * fetched (Execute with `max_rows`), so a large result is never pulled in full. Default: every row.
+     */
+    maxRows?: number;
 }
 
 export interface EngineClient {
@@ -64,6 +72,28 @@ export function sessionStatements(identityToken: string, statementTimeoutMs: num
         throw new Error('statement timeout must be a positive integer');
     }
     return [`SET hrx.identity = '${identityToken}'`, `SET statement_timeout = ${statementTimeoutMs}`];
+}
+
+/** One portal fetch of `maxRows + 1` rows: the extra row only tells whether the result was cut. */
+async function readCapped(
+    client: pg.Client,
+    sql: string,
+    params: readonly unknown[],
+    maxRows: number,
+): Promise<EngineResult> {
+    if (!Number.isSafeInteger(maxRows) || maxRows < 1) throw new Error('maxRows must be a positive integer');
+    const cursor = client.query(new Cursor<Record<string, unknown>>(sql, [...params]));
+    const { rows, fields } = await new Promise<{ rows: Record<string, unknown>[]; fields: pg.FieldDef[] }>(
+        (resolve, reject) => {
+            cursor.read(maxRows + 1, (err, rows, result) => {
+                if (err) reject(err);
+                else resolve({ rows, fields: result.fields });
+            });
+        },
+    );
+    // Closing the portal tells the engine to stop; the connection is ended right after anyway.
+    await cursor.close().catch(() => undefined);
+    return { columns: fields.map((f) => f.name), rows: rows.slice(0, maxRows), truncated: rows.length > maxRows };
 }
 
 /**
@@ -103,8 +133,11 @@ export function createEngineClient(
                 await client.connect();
                 // Simple-protocol SETs on the same connection, before the query.
                 for (const statement of setStatements) await client.query(statement);
-                const result = await client.query({ text: sql, values: [...params] });
-                return { columns: result.fields.map((f) => f.name), rows: result.rows };
+                if (options.maxRows === undefined) {
+                    const result = await client.query({ text: sql, values: [...params] });
+                    return { columns: result.fields.map((f) => f.name), rows: result.rows, truncated: false };
+                }
+                return await readCapped(client, sql, params, options.maxRows);
             } catch (err) {
                 const code = sqlState(err);
                 // The driver's message can name the host or user; keep only the engine's own message, and never let it

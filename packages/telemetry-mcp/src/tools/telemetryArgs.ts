@@ -131,7 +131,10 @@ export function placeholders(count: number): string {
     return Array.from({ length: count }, (_, i) => `$${i + 1}`).join(', ');
 }
 
-/** The `structuredContent` of every query tool. */
+/**
+ * The `structuredContent` of every query tool. `rows` holds at most `MCP_MAX_ROWS` rows; `truncated` says the engine
+ * had more, and `rowCount` is the number of rows returned.
+ */
 export interface TableResult {
     [key: string]: unknown;
     columns: string[];
@@ -153,7 +156,7 @@ export function tableResult(result: EngineResult): TableResult {
         for (const column of result.columns) out[column] = jsonCell(row[column]);
         return out;
     });
-    return { columns: [...result.columns], rows, rowCount: rows.length, truncated: false };
+    return { columns: [...result.columns], rows, rowCount: rows.length, truncated: result.truncated };
 }
 
 export function successResult(table: TableResult): CallToolResult {

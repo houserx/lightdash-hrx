@@ -825,3 +825,37 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 5/5. 18 acceptance files pass: the earlier 17 plus this one. The 35 failing files belong
   to unbuilt features.
 - 2026-11-08T16:48:49Z supervisor: mcp-engine-error-mapping passed the gate in round 1
+
+## mcp-row-cap (2026-11-08)
+
+- New dependency `pg-cursor@2.10.0` with `@types/pg-cursor@2.7.0`, the same versions as `packages/warehouses`. I
+  edited `pnpm-lock.yaml` by hand: offline `pnpm add` wrote `version: 2.10.0` without the `(pg@8.13.1)` peer suffix and
+  couldn't add the types package. `pnpm install --frozen-lockfile` passes on the result.
+- `EngineQueryOptions.maxRows` (in `src/engine/client.ts`):
+  - When it is set, the statement runs as a pg-cursor portal and a single Execute fetches `maxRows + 1` rows (§1
+    `max_rows` portal fetch). The extra row only decides `truncated`, so the server never pulls a large result in full.
+  - The portal is closed and then the connection is ended, as before.
+  - Without `maxRows`, the old plain query runs. `list_sources` still uses it, because the Ops Marts list is small.
+- `EngineResult` now carries `truncated: boolean`. `tableResult` passes it through, so `rowCount` is the number of rows
+  returned and is never more than the cap.
+- `query_promql` passes `{ maxRows: config.maxRows }`, and its description tells the agent what `truncated` means.
+  **Later query tools must also pass `{ maxRows: config.maxRows }` to `engine.query`.** Without it, their results are
+  not capped.
+- Contract reading: §1.1's engine `max_rows`, which is 100000 and raises a 54000 error, is a different limit. That is
+  the engine's hard cap, and it still maps to "Result too large" (mcp-engine-error-mapping). `MCP_MAX_ROWS` is the
+  MCP's own soft cap: it truncates silently and sets the flag. A cap of exactly as many rows as the result has gives
+  `truncated: false`.
+- Unit tests: `tableResult` passes the flag through. A test mock gained `truncated`. 126 unit tests pass and
+  typecheck is clean. Note that tsconfig does not typecheck `*.test.ts`.
+- Tested as a user: `../tmp/row-cap-ut/run.mts`. Run it from the repo root with `node_modules/.bin/tsx <abs path>
+  $PWD/packages/telemetry-mcp <MCP_MAX_ROWS>`. It runs real `dist/main.js` with an RS256 token, the fake Lightdash and
+  the fake engine.
+  - With a cap of 50:
+    - The 120-row range query gave 50 rows, rowCount 50, truncated true, values 0..49.
+    - The 3-row instant query gave 3 rows and truncated false.
+  - A cap of 120 gave 120 rows and false.
+  - A cap of 1 gave 1 row and true.
+  - SIGTERM exits 0.
+- Results: the check passes 2/2. 19 acceptance files pass: the earlier 18 plus this one. The 34 failing files belong
+  to unbuilt features. `output-size-cap` fails because `query_logql` doesn't exist yet.
+- 2026-11-08T16:55:18Z supervisor: mcp-row-cap passed the gate in round 1
