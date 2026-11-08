@@ -878,3 +878,27 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - A frame without `schema` threw ParameterError 400.
   - Next (alert-shadow-report): set the shadow event `at` to when the series started firing, as CONTRACTS 2 says. Use `ruleName` for the rule's name, because it is matched against Grafana's `ruleTitle`.
 - 2026-11-08T22:24:07Z supervisor: alert-shadow-compare passed the gate in round 1
+- alert-shadow-report (round 1) — 2026-11-08
+  - Changed:
+    - `POST /api/v2/projects/{uuid}/alerting/shadow-report` in `router.ts` calls `AlertNotificationService.shadowReport`. The body is `{since, grafanaHistory, expectedDifferences?, toleranceMs?}` and the response is common's `ShadowRunReport` from `compareShadowRun`.
+    - `parseShadowReportRequest` returns 400 for: a body that isn't an object, a missing or bad `since`, a missing `grafanaHistory`, `expectedDifferences` that aren't `{ruleName, kind, reason}` with kind `missing_in_lightdash|extra_in_lightdash`, or a non-number `toleranceMs`. A malformed frame and a negative tolerance get their 400 from `compareShadowRun` itself.
+    - The body is parsed after the view check, so an outsider always gets 403 and an anonymous caller gets 401. Access is the `view AlertRule` ability (viewer and up), as for the notification log.
+    - New `AlertNotificationModel.listShadowFirings(projectUuid, since)`. It reads `alert_notifications` with `status = 'shadow'` and `created_at >= since`, unnests `alerts[]`, and keeps the `firing` alerts. For each one it takes the series' latest `alert_state_history` row at or before the entry's time, and keeps it only if that row's state is `firing`. Results are deduplicated per history row, which means one event per firing episode.
+    - The event's `at` is when the series started firing (CONTRACTS 2, as alert-shadow-compare asked). Its labels come from that history row, and `ruleName` is the rule's current name.
+    - Parser unit tests were added to `AlertNotificationService.test.ts`.
+  - Decisions (gaps, read narrowly):
+    - One event per firing episode. One episode logs one shadow entry per integration plus one per repeat, and without deduplication each would show up as an extra.
+    - Entries logged while a series was in `nodata`/`error` are left out. Grafana's parser only counts `Alerting*` lines, so the two sides stay symmetric.
+    - `expectedDifferences` defaults to `[]`.
+    - The report is computed on demand from the log. Nothing is stored, and there is no GET or saved report.
+    - `ruleName` is the rule's current name, not the name it had when it fired.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped). alert-shadow-no-notify still passes. notifications.accept.ts passes 8/8. AlertNotificationService.test.ts passes 20/20. Backend typecheck, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest walk in repo tmp/walk (removed afterwards) went through the harness HTTP API. Two webhook contact points, a 5m repeat, shadow rules pg_cron and ALB, and one real rule.
+      - pg_cron fired at 09:00 and repeated, resolved at 09:12, and fired again at 10:00. ALB fired at 09:01.
+      - That made 10 shadow log entries. They became 3 events: pg 09:00, pg 10:00 and ALB 09:01. The real rule was not included.
+      - With a Grafana history of pg Alerting at 09:02 and 10:03, pg Normal at 09:12, and "Security group changed" (listed as expected missing) at 09:30, the report showed 2 pg matches (-2m and -3m), the expected miss with its reason, ALB as an unexpected extra, and unexpectedCount 1.
+      - `since` 09:30 with a 1m tolerance dropped the early events. Each malformed body gave a 400 with a clear message. An outsider got 403 even with a bad body, and an anonymous caller got 401.
+    - Trap: in a walk, fire rules in time order. Moving the harness clock backwards after a later send leaves the group not due, so the earlier alert never gets logged.
+  - Next: as-code features. Nothing here changes the as-code paths.
+- 2026-11-08T22:30:04Z supervisor: alert-shadow-report passed the gate in round 1

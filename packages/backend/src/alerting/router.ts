@@ -306,6 +306,17 @@ export const createAlertingApiRouter = (
         ),
     );
 
+    router.post(
+        `${base}/shadow-report`,
+        route((user, req) =>
+            services.alertNotifications.shadowReport(
+                user,
+                req.params.projectUuid,
+                req.body,
+            ),
+        ),
+    );
+
     // Evaluator lag for uptime checks: no session, and nothing project-specific.
     router.get(
         ALERTING_HEALTH_API_PATH,

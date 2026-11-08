@@ -76,6 +76,14 @@ export type NotificationLogEntry = {
     at: Date;
 };
 
+/** One firing episode of a series that a shadow rule would have notified. */
+export type ShadowFiring = {
+    ruleName: string;
+    labels: Record<string, string>;
+    /** When the series started firing. */
+    startedAt: Date;
+};
+
 type DbGroup = {
     alert_notification_group_uuid: string;
     project_uuid: string;
@@ -412,6 +420,65 @@ export class AlertNotificationModel {
                 'sent_at',
             );
         return rows.map(toNotification);
+    }
+
+    /**
+     * The firings that shadow rules would have notified since `since`: one
+     * per firing episode of a series, however many shadow entries it logged
+     * (one per integration, plus repeats). `at` and `labels` come from the
+     * series' transition into `firing` that the entries belong to; entries
+     * logged while a series was in `nodata` or `error` are left out.
+     */
+    async listShadowFirings(
+        projectUuid: string,
+        since: Date,
+    ): Promise<ShadowFiring[]> {
+        const { rows } = await this.database.raw<{
+            rows: {
+                rule_name: string;
+                labels: Record<string, string>;
+                started_at: Date;
+            }[];
+        }>(
+            `
+            WITH logged AS (
+                SELECT DISTINCT a."ruleUuid" AS alert_rule_uuid,
+                    a.fingerprint, n.created_at
+                FROM ${AlertNotificationsTableName} n
+                CROSS JOIN LATERAL jsonb_to_recordset(n.alerts)
+                    AS a ("ruleUuid" uuid, fingerprint text, status text)
+                WHERE n.project_uuid = ?
+                    AND n.status = 'shadow'
+                    AND a.status = 'firing'
+                    AND n.created_at >= ?
+            )
+            SELECT DISTINCT ON (t.alert_state_history_uuid)
+                r.name AS rule_name, t.labels, t.at AS started_at
+            FROM logged l
+            JOIN ${AlertRulesTableName} r
+                ON r.alert_rule_uuid = l.alert_rule_uuid
+                AND r.project_uuid = ?
+            CROSS JOIN LATERAL (
+                SELECT h.alert_state_history_uuid, h.state, h.labels, h.at
+                FROM ${AlertStateHistoryTableName} h
+                WHERE h.alert_rule_uuid = l.alert_rule_uuid
+                    AND h.fingerprint = l.fingerprint
+                    AND h.at <= l.created_at
+                ORDER BY h.at DESC
+                LIMIT 1
+            ) t
+            WHERE t.state = 'firing'
+            ORDER BY t.alert_state_history_uuid
+            `,
+            [projectUuid, since, projectUuid],
+        );
+        return rows
+            .map((row) => ({
+                ruleName: row.rule_name,
+                labels: row.labels,
+                startedAt: row.started_at,
+            }))
+            .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
     }
 
     async insertNotification(entry: NotificationLogEntry): Promise<void> {
