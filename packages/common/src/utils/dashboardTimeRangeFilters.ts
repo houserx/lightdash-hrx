@@ -1,12 +1,17 @@
 // Dashboard Time Range tile filters (CONTEXT.md): the time range applies to
 // every Tile that has a designated time dimension, and only to that Tile.
+import { getParameterReferences } from '../compiler/parameters';
+import { type DashboardTile } from '../types/dashboard';
 import { type DashboardTimeRange } from '../types/dashboardTimeRange';
 import {
     FilterOperator,
     type DashboardFilterRule,
     type DashboardTileTargets,
 } from '../types/filter';
-import { resolveTimeRange } from './timeRange';
+import {
+    resolveTimeRange,
+    type ReservedTimeParameterValues,
+} from './timeRange';
 
 /** Prefix of the ids of filter rules built from the Dashboard Time Range. */
 export const DASHBOARD_TIME_RANGE_FILTER_ID_PREFIX = 'dashboard-time-range';
@@ -72,4 +77,36 @@ export const getDashboardTimeRangeFilterRules = ({
             tileTargets,
         };
     });
+};
+
+/** Reserved parameters whose values come from the Dashboard Time Range. */
+export const RESERVED_TIME_PARAMETER_NAMES: readonly (keyof ReservedTimeParameterValues)[] =
+    ['__from', '__to', '__interval', '__range'];
+
+/** Whether SQL reads a reserved time parameter (`${ld.parameters.__from}` etc.). */
+export const usesReservedTimeParameters = (sql: string | undefined): boolean =>
+    getParameterReferences(sql).some((name) =>
+        (RESERVED_TIME_PARAMETER_NAMES as readonly string[]).includes(name),
+    );
+
+export type IsTileAffectedByTimeRangeArgs = {
+    timeRange: DashboardTimeRange | null | undefined;
+    tile: Pick<DashboardTile, 'uuid' | 'type'>;
+    /** The tile's SQL, for SQL tiles (e.g. telemetry SQL); omit for other tiles. */
+    sql?: string;
+};
+
+/**
+ * Whether the Dashboard Time Range affects a tile: the tile is mapped to a time
+ * dimension, or its SQL uses a reserved time parameter (`__from`, `__to`,
+ * `__interval`, `__range`). Every tile is unaffected when there is no range.
+ */
+export const isTileAffectedByTimeRange = ({
+    timeRange,
+    tile,
+    sql,
+}: IsTileAffectedByTimeRangeArgs): boolean => {
+    if (!timeRange) return false;
+    if (timeRange.tileTimeDimensions?.[tile.uuid] !== undefined) return true;
+    return usesReservedTimeParameters(sql);
 };

@@ -902,3 +902,21 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     rule to a bounded Postgres timestamp filter. init, feature check 2/2, common tsc clean,
     oxlint/oxfmt clean.
 - 2026-11-08T19:32:51Z supervisor: ldq-dashboard-time-range-tile-filters passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-tile-status (session):
+  - Common `utils/dashboardTimeRangeFilters.ts` (already exported from index):
+    `isTileAffectedByTimeRange({ timeRange, tile: { uuid, type }, sql? })` is true when the tile
+    has a `tileTimeDimensions` mapping, or when `sql` uses a reserved time parameter. No range
+    gives false for every tile. Also `RESERVED_TIME_PARAMETER_NAMES` (__from, __to, __interval,
+    __range; date_zoom is not a time-range parameter) and `usesReservedTimeParameters(sql)`, which
+    reuses `getParameterReferences`, so `${ld.parameters.X}`, `${lightdash.parameters.X}` and bare
+    refs inside Liquid `{% %}` tags all count; `__fromage` or a quoted '__from' does not.
+  - Decision: the check uses the SQL whatever the tile type. Callers pass `sql` only for SQL
+    tiles (sql_chart / telemetry SQL); markdown, loom and heading tiles have none, so they are never
+    affected. A user parameter that shadows `__from` still counts as affected (narrow reading).
+  - For the next features (settings UI, tile-not-affected badge): the frontend must fetch or
+    hold each SQL tile's SQL to pass in; mapped saved charts need no SQL.
+  - Tested: built common dist (cjs) driven with node on a dashboard with a mapped saved chart, a
+    promql SQL tile using ${ld.parameters.__from} and a markdown tile: true, true, false; no
+    range: false. Unit tests dashboardTimeRangeFilters.test 10/10, feature check 4/4, common tsc,
+    oxlint, oxfmt clean.
+- 2026-11-08T19:36:45Z supervisor: ldq-dashboard-time-range-tile-status passed the gate in round 1
