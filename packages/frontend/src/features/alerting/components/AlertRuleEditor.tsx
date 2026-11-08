@@ -2,6 +2,8 @@
 // New rules start from the documented defaults (ALERT_RULE_DEFAULTS); a
 // description is required. Presentational: the rule and the project's
 // folders come in as props, and Save hands the full definition to onSubmit.
+// A managed rule (uploaded as code) opens read-only: every field and Save are
+// disabled, since only an as-code upload may change it.
 import {
     ALERT_CONDITION_OPERATORS,
     ALERT_ERROR_STATES,
@@ -21,6 +23,7 @@ import {
     type AlertThresholdOperator,
 } from '@lightdash/common';
 import {
+    Alert,
     Button,
     Group,
     Select,
@@ -34,6 +37,7 @@ import {
 import { useForm } from '@mantine/form';
 import { useState, type FC } from 'react';
 import { labelsToText, parseLabelsText } from '../utils';
+import { ManagedInGitBadge } from './AlertBadges';
 import classes from './AlertRuleEditor.module.css';
 
 export type AlertRuleEditorSpace = { uuid: string; name: string };
@@ -242,7 +246,10 @@ export const AlertRuleEditor: FC<Props> = ({
         },
     });
 
+    const readOnly = rule?.managed === true;
+
     const handleSubmit = form.onSubmit(async (values) => {
+        if (readOnly) return;
         setIsSaving(true);
         try {
             await onSubmit(toDefinition(values));
@@ -256,11 +263,25 @@ export const AlertRuleEditor: FC<Props> = ({
     return (
         <form onSubmit={handleSubmit} noValidate>
             <Stack gap="md">
-                <Title order={2}>
-                    {rule ? `Edit ${rule.name}` : 'New Alert Rule'}
-                </Title>
-                <TextInput label="Name" {...form.getInputProps('name')} />
+                <Group gap="sm">
+                    <Title order={2}>
+                        {rule ? `Edit ${rule.name}` : 'New Alert Rule'}
+                    </Title>
+                    {readOnly && <ManagedInGitBadge />}
+                </Group>
+                {readOnly && (
+                    <Alert color="violet" title="This rule is managed in git">
+                        It was uploaded as code and can only be changed by
+                        editing its file and uploading it again.
+                    </Alert>
+                )}
+                <TextInput
+                    disabled={readOnly}
+                    label="Name"
+                    {...form.getInputProps('name')}
+                />
                 <Textarea
+                    disabled={readOnly}
                     label="Description"
                     description="What this rule watches and why it matters."
                     autosize
@@ -268,6 +289,7 @@ export const AlertRuleEditor: FC<Props> = ({
                     {...form.getInputProps('description')}
                 />
                 <Select
+                    disabled={readOnly}
                     label="Folder"
                     placeholder="No folder"
                     clearable
@@ -279,6 +301,7 @@ export const AlertRuleEditor: FC<Props> = ({
                     {...form.getInputProps('spaceUuid')}
                 />
                 <Textarea
+                    disabled={readOnly}
                     label="Query"
                     description="SQL returning one row per series: label columns and a value column."
                     autosize
@@ -288,10 +311,12 @@ export const AlertRuleEditor: FC<Props> = ({
                 />
                 <SimpleGrid cols={{ base: 1, sm: 3 }}>
                     <TextInput
+                        disabled={readOnly}
                         label="Value column"
                         {...form.getInputProps('valueColumn')}
                     />
                     <Select
+                        disabled={readOnly}
                         label="Reducer"
                         allowDeselect={false}
                         data={ALERT_REDUCERS.map((reducer) => ({
@@ -301,6 +326,7 @@ export const AlertRuleEditor: FC<Props> = ({
                         {...form.getInputProps('reducer')}
                     />
                     <Select
+                        disabled={readOnly}
                         label="Condition"
                         allowDeselect={false}
                         data={ALERT_CONDITION_OPERATORS.map((operator) => ({
@@ -313,11 +339,13 @@ export const AlertRuleEditor: FC<Props> = ({
                 {isRange ? (
                     <SimpleGrid cols={2}>
                         <TextInput
+                            disabled={readOnly}
                             label="Min"
                             inputMode="decimal"
                             {...form.getInputProps('min')}
                         />
                         <TextInput
+                            disabled={readOnly}
                             label="Max"
                             inputMode="decimal"
                             {...form.getInputProps('max')}
@@ -325,6 +353,7 @@ export const AlertRuleEditor: FC<Props> = ({
                     </SimpleGrid>
                 ) : (
                     <TextInput
+                        disabled={readOnly}
                         label="Threshold"
                         inputMode="decimal"
                         {...form.getInputProps('threshold')}
@@ -332,21 +361,29 @@ export const AlertRuleEditor: FC<Props> = ({
                 )}
                 <SimpleGrid cols={{ base: 1, sm: 4 }}>
                     <TextInput
+                        disabled={readOnly}
                         label="Evaluate every"
                         {...form.getInputProps('interval')}
                     />
                     <TextInput
+                        disabled={readOnly}
                         label="Time range"
                         {...form.getInputProps('timeRange')}
                     />
-                    <TextInput label="For" {...form.getInputProps('for')} />
                     <TextInput
+                        disabled={readOnly}
+                        label="For"
+                        {...form.getInputProps('for')}
+                    />
+                    <TextInput
+                        disabled={readOnly}
                         label="Keep firing for"
                         {...form.getInputProps('keepFiringFor')}
                     />
                 </SimpleGrid>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                     <Select
+                        disabled={readOnly}
                         label="When the query returns no data"
                         allowDeselect={false}
                         data={ALERT_NO_DATA_STATES.map((state) => ({
@@ -356,6 +393,7 @@ export const AlertRuleEditor: FC<Props> = ({
                         {...form.getInputProps('noDataState')}
                     />
                     <Select
+                        disabled={readOnly}
                         label="When the query fails"
                         allowDeselect={false}
                         data={ALERT_ERROR_STATES.map((state) => ({
@@ -366,6 +404,7 @@ export const AlertRuleEditor: FC<Props> = ({
                     />
                 </SimpleGrid>
                 <Textarea
+                    disabled={readOnly}
                     label="Labels"
                     description="One key=value per line."
                     autosize
@@ -373,6 +412,7 @@ export const AlertRuleEditor: FC<Props> = ({
                     {...form.getInputProps('labels')}
                 />
                 <Textarea
+                    disabled={readOnly}
                     label="Annotations"
                     description="One key=value per line, e.g. summary=…"
                     autosize
@@ -381,10 +421,12 @@ export const AlertRuleEditor: FC<Props> = ({
                 />
                 <Group>
                     <Switch
+                        disabled={readOnly}
                         label="Paused"
                         {...form.getInputProps('paused', { type: 'checkbox' })}
                     />
                     <Switch
+                        disabled={readOnly}
                         label="Shadow (evaluate without notifying)"
                         {...form.getInputProps('shadow', { type: 'checkbox' })}
                     />
@@ -395,7 +437,11 @@ export const AlertRuleEditor: FC<Props> = ({
                             Cancel
                         </Button>
                     )}
-                    <Button type="submit" loading={isSaving}>
+                    <Button
+                        type="submit"
+                        loading={isSaving}
+                        disabled={readOnly}
+                    >
                         Save
                     </Button>
                 </Group>

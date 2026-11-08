@@ -53,6 +53,11 @@ type Props = {
      * wires it to `previewAlertRule`). The button shows only when given.
      */
     onTestRule?: () => Promise<AlertRulePreview>;
+    /**
+     * Opens the editor. The Edit button shows only when given and the rule
+     * is not managed: managed rules change only through an as-code upload.
+     */
+    onEdit?: () => void;
 };
 
 type TestRuleResult =
@@ -165,6 +170,7 @@ export const AlertRuleDetail: FC<Props> = ({
     notifications,
     contactPoints,
     onTestRule,
+    onEdit,
 }) => {
     const [testResult, setTestResult] = useState<TestRuleResult>({
         status: 'idle',
@@ -199,19 +205,26 @@ export const AlertRuleDetail: FC<Props> = ({
     return (
         <Stack gap="md">
             <Stack gap="xs">
-                <Group gap="sm">
-                    <Title order={2}>{rule.name}</Title>
-                    <AlertStateBadge state={rule.state} />
-                    {rule.managed && <ManagedInGitBadge />}
-                    {rule.paused && (
-                        <Badge color="gray" variant="light" radius="sm">
-                            Paused
-                        </Badge>
-                    )}
-                    {rule.shadow && (
-                        <Badge color="indigo" variant="light" radius="sm">
-                            Shadow
-                        </Badge>
+                <Group justify="space-between" wrap="nowrap" align="flex-start">
+                    <Group gap="sm">
+                        <Title order={2}>{rule.name}</Title>
+                        <AlertStateBadge state={rule.state} />
+                        {rule.managed && <ManagedInGitBadge />}
+                        {rule.paused && (
+                            <Badge color="gray" variant="light" radius="sm">
+                                Paused
+                            </Badge>
+                        )}
+                        {rule.shadow && (
+                            <Badge color="indigo" variant="light" radius="sm">
+                                Shadow
+                            </Badge>
+                        )}
+                    </Group>
+                    {onEdit && !rule.managed && (
+                        <Button variant="default" onClick={onEdit}>
+                            Edit
+                        </Button>
                     )}
                 </Group>
                 {rule.description && <Text c="dimmed">{rule.description}</Text>}

@@ -1143,3 +1143,16 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - It should also add the `onEdit` prop and Edit button to AlertRuleDetail, hidden for managed rules.
     - The pages feature should map `onSubmit` to `createAlertRule` or `updateAlertRule` in `api.ts`.
 - 2026-11-08T23:36:29Z supervisor: alert-ui-rule-editor passed the gate in round 1
+- alert-ui-managed-readonly (round 1) — 2026-11-08
+  - Changes:
+    - `AlertRuleEditor`: `readOnly = rule?.managed === true`. When it is set, the title shows `ManagedInGitBadge`, a violet Alert explains that the rule changes only through an as-code upload, every input/select/switch gets `disabled={readOnly}`, and Save is disabled. `handleSubmit` also returns early, so nothing can submit.
+    - `AlertRuleDetail`: new optional prop `onEdit?: () => void`. The header row now uses `justify="space-between"`, with an "Edit" button on the right. The button shows only when `onEdit` is given and the rule is not managed. The managed badge was already there.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped), and the full rules-ui file has 6 of 6 passing. Frontend tsc and oxlint are clean, and oxfmt was applied.
+    - As a user: a scratch vitest file (deleted) used a synthetic managed rule with a range condition.
+      - The editor showed the badge, all 24 inputs were disabled, Save was disabled, and typing into Name left it unchanged. A forced form submit called onSubmit 0 times.
+      - The managed detail page had no Edit button.
+      - The unmanaged detail page showed Edit, and clicking it called onEdit once. The unmanaged editor had enabled fields, no badge, and Save submitted.
+  - For the next session (pages): wire `onEdit` on the rule page to navigate to the editor route. A managed rule opened by URL is still read-only in the editor.
+  - Trap: the acceptance file's `rule()` defaults `managed: false`. Keep the `managed` check on `rule.managed`, not the `version` or `slug`.
+- 2026-11-08T23:39:19Z supervisor: alert-ui-managed-readonly passed the gate in round 1
