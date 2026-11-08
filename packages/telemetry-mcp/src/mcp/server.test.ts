@@ -46,7 +46,7 @@ describe('mcp server', () => {
     };
 
     async function connect(engine: EngineClient = catalogEngine): Promise<Client> {
-        const server = createMcpServer(loadConfig(ENV), { engine });
+        const server = createMcpServer(loadConfig(ENV), { engine, now: () => Date.now() });
         const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
         await server.connect(serverSide);
         const client = new Client({ name: 'unit-test', version: '0.0.0' });

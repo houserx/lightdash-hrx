@@ -32,6 +32,8 @@ export const MCP_SERVER_VERSION = '0.0.1';
 /** What the tools talk to: the Federation Engine, as the caller. Unit tests inject fakes. */
 export interface McpServerDeps {
     engine: EngineClient;
+    /** The server clock (epoch ms); relative time arguments such as `now-1h` resolve against it. */
+    now: () => number;
 }
 
 /** What a request needs besides the config: the shared user resolver and the server clock (epoch ms). */
@@ -42,11 +44,11 @@ export interface McpRequestContext {
 
 /** Builds the MCP server for one request, with every tool registered. */
 export function createMcpServer(config: Config, deps: McpServerDeps): McpServer {
-    const { engine } = deps;
+    const { engine, now } = deps;
     // Registering a tool declares the tools capability and installs the tools/list and tools/call handlers.
     const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
     registerListSources(server, config, engine);
-    registerQueryPromql(server, config, engine);
+    registerQueryPromql(server, config, engine, now);
     return server;
 }
 
@@ -113,7 +115,7 @@ export async function serveMcpRequest(
     } else {
         // Every tool call opens its own engine connection as the caller (SET hrx.identity, SET statement_timeout).
         const session = createIdentitySession(config, users, auth.claims, context.now);
-        server = createMcpServer(config, { engine: createEngineClient(config.engine, session) });
+        server = createMcpServer(config, { engine: createEngineClient(config.engine, session), now: context.now });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {

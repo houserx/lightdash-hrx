@@ -754,3 +754,36 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 5/5. 16 acceptance files pass: the earlier 15 plus this one. The 37 failing files belong
   to unbuilt features.
 - 2026-11-08T16:39:43Z supervisor: mcp-tool-query-promql passed the gate in round 1
+
+## mcp-time-inputs (2026-11-08)
+
+- `src/tools/telemetryArgs.ts`:
+  - `parseInstant(argument, value, now)` now accepts `now` and `now-<duration>` (case-insensitive, trimmed) as well as
+    the strict ISO-8601 from before. The duration uses the same Prometheus grammar as `step`, and zero is refused.
+  - New `durationMs`: y = 365 d, w = 7 d, d, h, m, s, ms.
+  - `parseRange(start, end, now)` resolves both ends against the same `now`, so `now-1h`..`now` is exactly one hour
+    and end before start is still refused.
+  - Anything else (`now+1h`, `now - 1h`, `now-1.5h`, `yesterday-ish`, impossible dates) is a `ToolInputError`. The
+    tool returns an `isError` result before any engine connection.
+- Wiring: `McpServerDeps` now has a required `now: () => number`. `serveMcpRequest` passes `context.now`, the clock
+  the harness injects as `deps.now`. `registerQueryPromql(server, config, engine, now)` reads `now()` once per call.
+  `buildPromqlQuery(config, args, now)` takes the epoch ms.
+- Later query tools (logql, cloudwatch, traces) should take `now` the same way and call `parseRange`/`parseInstant`
+  with it.
+- Contract reading: CONTRACTS §2 rounds relative ranges down to the refresh interval, but that rule is for the
+  Dashboard Time Range. MCP time arguments get no rounding: the acceptance test expects exactly now - 1h. `now+…` is
+  not accepted, which is the narrowest reading.
+- Tool input descriptions for start/end/at now mention `now` and `now-<duration>`.
+- Unit tests: added to `src/tools/queryPromql.test.ts`. 116 unit tests pass and typecheck is clean.
+- Tested as a user: `../tmp/time-inputs-ut/run.mts`. Run it from the repo root with `node_modules/.bin/tsx <abs path>
+  $PWD/packages/telemetry-mcp`. It runs real `dist/main.js` on the real wall clock, with an RS256 token, the fake
+  Lightdash and the fake engine.
+  - `now-1h`/`now` sent ISO params exactly 3600 s apart, inside the call's wall-clock window.
+  - `now-2d`/`now-30m` resolved to -172800 s and -1800 s.
+  - `at: now-15m` went to `promql_instant`.
+  - ISO with an offset still works.
+  - `yesterday-ish`, `now`..`now-1h`, `2026-13-45T99:00:00Z` and `now+1h` each gave an error, and the engine got no
+    query. SIGTERM exits 0.
+- Results: the check passes 3/3. 17 acceptance files pass: the earlier 16 plus this one. The 36 failing files belong
+  to unbuilt features.
+- 2026-11-08T16:42:50Z supervisor: mcp-time-inputs passed the gate in round 1

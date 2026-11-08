@@ -41,7 +41,7 @@ export { LIST_SOURCES_TOOL, OPS_MARTS_CATALOG, listOpsMarts, listSources } from 
 export type { ListSourcesResult } from './tools/listSources.js';
 export { QUERY_PROMQL_TOOL, buildPromqlQuery } from './tools/queryPromql.js';
 export type { QueryPromqlArgs } from './tools/queryPromql.js';
-export { ToolInputError, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
+export { ToolInputError, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
 export type { TableResult } from './tools/telemetryArgs.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';

@@ -35,6 +35,7 @@ export interface QueryPromqlArgs {
 export function buildPromqlQuery(
     config: Pick<Config, 'sources'>,
     args: QueryPromqlArgs,
+    now: number,
 ): { sql: string; params: string[] } {
     if (args.query.trim() === '') throw new ToolInputError('query must be a non-empty PromQL expression');
     const source = sourceParams(config, 'prometheus', args.source);
@@ -43,18 +44,23 @@ export function buildPromqlQuery(
         if (range.some((v) => v !== undefined)) {
             throw new ToolInputError('give either at (an instant query) or start, end and step (a range query), not both');
         }
-        const params = [args.query, isoParam(parseInstant('at', args.at)), ...source];
+        const params = [args.query, isoParam(parseInstant('at', args.at, now)), ...source];
         return { sql: `SELECT * FROM promql_instant(${placeholders(params.length)})`, params };
     }
     if (args.start === undefined || args.end === undefined || args.step === undefined) {
         throw new ToolInputError('a range query needs start, end and step; an instant query needs at');
     }
-    const { start, end } = parseRange(args.start, args.end);
+    const { start, end } = parseRange(args.start, args.end, now);
     const params = [args.query, start, end, parseDuration('step', args.step), ...source];
     return { sql: `SELECT * FROM promql(${placeholders(params.length)})`, params };
 }
 
-export function registerQueryPromql(server: McpServer, config: Config, engine: EngineClient): void {
+export function registerQueryPromql(
+    server: McpServer,
+    config: Config,
+    engine: EngineClient,
+    now: () => number,
+): void {
     server.registerTool(
         QUERY_PROMQL_TOOL,
         {
@@ -69,11 +75,13 @@ export function registerQueryPromql(server: McpServer, config: Config, engine: E
                 start: z
                     .string()
                     .optional()
-                    .describe('Range query start, an ISO-8601 time such as 2026-11-08T10:00:00Z. Needs end and step.'),
+                    .describe('Range query start: an ISO-8601 time such as 2026-11-08T10:00:00Z, or now or now-<duration> such as ' +
+                            'now-1h, resolved against the server clock. Needs end and step.',),
                 end: z
                     .string()
                     .optional()
-                    .describe('Range query end, an ISO-8601 time not before start. Needs start and step.'),
+                    .describe('Range query end, not before start: an ISO-8601 time, now, or now-<duration> such as now-30m. ' +
+                            'Needs start and step.',),
                 step: z
                     .string()
                     .optional()
@@ -81,7 +89,7 @@ export function registerQueryPromql(server: McpServer, config: Config, engine: E
                 at: z
                     .string()
                     .optional()
-                    .describe('Instant query time, an ISO-8601 time. Use instead of start, end and step.'),
+                    .describe('Instant query time: an ISO-8601 time, now, or now-<duration>. Use instead of start, end and step.'),
                 source: z
                     .string()
                     .optional()
@@ -93,7 +101,7 @@ export function registerQueryPromql(server: McpServer, config: Config, engine: E
         },
         async (args) => {
             try {
-                const { sql, params } = buildPromqlQuery(config, args);
+                const { sql, params } = buildPromqlQuery(config, args, now());
                 return successResult(tableResult(await engine.query(sql, params)));
             } catch (err) {
                 return failureResult(err, 'The PromQL query');

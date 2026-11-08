@@ -35,12 +35,49 @@ export function parseDuration(argument: string, value: string): string {
 const ISO_INSTANT =
     /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(Z|[+-]\d{2}(?::?\d{2})?))?$/i;
 
-/** Parses an ISO-8601 time argument into epoch ms, refusing impossible dates such as month 13 or 30 February. */
-export function parseInstant(argument: string, value: string): number {
-    const match = ISO_INSTANT.exec(value.trim());
-    const ms = match ? Date.parse(value.trim()) : NaN;
+/** `now`, or `now-<Prometheus duration>` such as `now-1h`, `now-2d` or `now-1h30m`. */
+const RELATIVE_INSTANT = /^now(?:-(.+))?$/i;
+
+const DURATION_UNIT_MS: Record<string, number> = {
+    y: 365 * 86_400_000,
+    w: 7 * 86_400_000,
+    d: 86_400_000,
+    h: 3_600_000,
+    m: 60_000,
+    s: 1_000,
+    ms: 1,
+};
+
+/** Milliseconds in a duration already accepted by `parseDuration` (a year is 365 days, as in Prometheus). */
+export function durationMs(duration: string): number {
+    let total = 0;
+    for (const [, amount, unit] of duration.matchAll(/(\d+)(ms|y|w|d|h|m|s)/g)) {
+        total += Number(amount) * DURATION_UNIT_MS[unit];
+    }
+    return total;
+}
+
+const TIME_FORMAT_HINT = 'an ISO-8601 time such as 2026-11-08T10:00:00Z, or now or now-<duration> such as now-1h';
+
+/**
+ * Parses a time argument into epoch ms: `now` and `now-<duration>` are resolved against the server clock `now`;
+ * anything else must be ISO-8601. Impossible dates such as month 13 or 30 February are refused.
+ */
+export function parseInstant(argument: string, value: string, now: number): number {
+    const trimmed = value.trim();
+    const relative = RELATIVE_INSTANT.exec(trimmed);
+    if (relative) {
+        if (relative[1] === undefined) return now;
+        const duration = relative[1];
+        if (duration === '' || !PROMETHEUS_DURATION.test(duration) || !/[1-9]/.test(duration)) {
+            throw new ToolInputError(`${argument} must be ${TIME_FORMAT_HINT}`);
+        }
+        return now - durationMs(duration);
+    }
+    const match = ISO_INSTANT.exec(trimmed);
+    const ms = match ? Date.parse(trimmed) : NaN;
     if (!match || Number.isNaN(ms)) {
-        throw new ToolInputError(`${argument} must be an ISO-8601 time such as 2026-11-08T10:00:00Z`);
+        throw new ToolInputError(`${argument} must be ${TIME_FORMAT_HINT}`);
     }
     const [, y, mo, d, h = '0', mi = '0', s = '0'] = match;
     const date = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
@@ -62,10 +99,10 @@ export function isoParam(ms: number): string {
     return new Date(ms).toISOString();
 }
 
-/** `start` and `end` as engine parameters; `end` must not be before `start`. */
-export function parseRange(start: string, end: string): { start: string; end: string } {
-    const from = parseInstant('start', start);
-    const to = parseInstant('end', end);
+/** `start` and `end` as engine parameters, resolved against the server clock `now`; `end` must not be before `start`. */
+export function parseRange(start: string, end: string, now: number): { start: string; end: string } {
+    const from = parseInstant('start', start, now);
+    const to = parseInstant('end', end, now);
     if (to < from) throw new ToolInputError('end must not be before start');
     return { start: isoParam(from), end: isoParam(to) };
 }
