@@ -625,3 +625,17 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Recovery → green attachments; custom `resolved: 2 alert(s)`, and the default templates render blank, as noted above.
   - Next session (alert-contact-slack-app): reuse `buildAlertTemplateData` and `renderSlackMessage` from `slackMessage.ts`, and add a `slack_app` branch in `sendIntegration` that calls `deps.slackApp.postMessage({organizationUuid, channel, text, blocks?})` inside `sendWithRetry`. "App not installed" should be `NotificationSendError(msg, false)`.
 - 2026-11-08T21:05:15Z supervisor: alert-contact-slack-webhook passed the gate in round 1
+- alert-contact-slack-app (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotifier.ts`: `sendIntegration` now handles `slack_app`. It renders title and text with `renderSlackMessage`, using the same template data and defaults as `slack_webhook`. It sends `{channel, text}` through the new `postSlackApp` inside `sendWithRetry`. `postSlackApp` looks up the project's organization with `alertNotificationModel.findProjectOrganizationUuid`, then calls `deps.slackApp.postMessage({organizationUuid, channel, text})`. The log row's `payload` is `{channel, text}`. New exported `SlackAppClient` type in the notifier deps. `index.ts` passes `deps.slackApp` to the notifier.
+    - `slackMessage.ts`: `buildSlackAppText({title, text})` puts the title in bold (`*…*`) on the first line, with whitespace collapsed because mrkdwn bold can't span lines, then the text. Empty parts are left out. 2 unit tests in `slackMessage.test.ts`.
+  - Contract assumptions:
+    - Message shape: CONTRACTS gives `postMessage({organizationUuid, channel, text, blocks?})` but no layout. We send mrkdwn `text` only, with no `blocks` and no attachment colour.
+    - Retry classification: the harness (and the dep's doc comment) throws a plain `Error` when the app isn't installed. Errors whose message matches `/not installed/i` become `NotificationSendError(msg, false)`: failed, attempts 1. Any other plain error is retried. A `NotificationSendError` thrown by the client passes through as it is. A project with no organization is a non-retryable failure.
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). The slack-webhook check passes 2/2, notifications.accept.ts 8/8, AlertNotifier.test.ts 13/13 and slackMessage.test.ts 8/8. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness over real HTTP. run.sh and the config were copied to `src/__walk__/alerting` and removed afterwards.
+      - Created contact point `infra-app` (slack_app, `#infra-alerts`), routed the root to it, and fired "Disk almost full" on db-1 and db-2. One post went to `#infra-alerts` with the harness org's uuid and text `*2 Disk almost full*` plus both descriptions and runbook links. The log row is `sent`, `slack_app`, attempts 1.
+      - Set `installed = false` and fired "CPU high". No post was made, and the log row is `failed`, attempts 1, error `Slack app is not installed for this organization`.
+  - Next session: the module still isn't wired into the app. Whoever wires `createAlertingModule` must adapt Lightdash's `SlackClient` (`clients/Slack/SlackClient.ts`) to `slackApp.postMessage`. When the org has no installation, the adapter should throw `NotificationSendError(msg, false)`, or an error whose message says "not installed".
+- 2026-11-08T21:10:07Z supervisor: alert-contact-slack-app passed the gate in round 1

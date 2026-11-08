@@ -34,6 +34,7 @@ import {
 } from './AlertNotificationModel';
 import {
     buildAlertTemplateData,
+    buildSlackAppText,
     buildSlackWebhookPayload,
     renderSlackMessage,
 } from './slackMessage';
@@ -48,9 +49,23 @@ type AlertNotifierDeps = {
     alertNotificationModel: AlertNotificationModel;
     notificationRouteModel: NotificationRouteTreeSource;
     secrets: { resolve(name: string): Promise<string | undefined> };
+    slackApp: SlackAppClient;
     clock: { now(): Date };
     retry: NotificationRetryPolicy;
     siteUrl: string;
+};
+
+/**
+ * The organization's installed Lightdash Slack app. `postMessage` throws when
+ * the app isn't installed for the organization.
+ */
+export type SlackAppClient = {
+    postMessage(args: {
+        organizationUuid: string;
+        channel: string;
+        text: string;
+        blocks?: unknown[];
+    }): Promise<void>;
 };
 
 /** Exponential backoff for one send: `initialDelayMs`, then doubling. */
@@ -411,11 +426,12 @@ export class AlertNotifier {
         integration: ContactPointIntegration,
         now: Date,
     ): Promise<void> {
-        // Generic webhooks and Slack webhooks so far; the other integration
-        // types are added by their own features (alert-contact-*).
+        // Generic webhooks, Slack webhooks and the Slack app so far; the other
+        // integration types are added by their own features (alert-contact-*).
         if (
             integration.type !== 'webhook' &&
-            integration.type !== 'slack_webhook'
+            integration.type !== 'slack_webhook' &&
+            integration.type !== 'slack_app'
         )
             return;
         const alerts = integration.disableResolveMessage
@@ -467,15 +483,26 @@ export class AlertNotifier {
                     generatorURL: generatorURL(alert),
                 })),
             });
-            let slackPayload: ReturnType<typeof buildSlackWebhookPayload>;
             try {
-                slackPayload = buildSlackWebhookPayload({
-                    ...renderSlackMessage(integration, data),
-                    status: data.Status,
-                    at: now,
-                });
-                payload = slackPayload;
-                post = () => this.postSlackWebhook(integration, slackPayload);
+                const message = renderSlackMessage(integration, data);
+                if (integration.type === 'slack_webhook') {
+                    const slackPayload = buildSlackWebhookPayload({
+                        ...message,
+                        status: data.Status,
+                        at: now,
+                    });
+                    payload = slackPayload;
+                    post = () =>
+                        this.postSlackWebhook(integration, slackPayload);
+                } else {
+                    const slackMessage = {
+                        channel: integration.channel,
+                        text: buildSlackAppText(message),
+                    };
+                    payload = slackMessage;
+                    post = () =>
+                        this.postSlackApp(group.projectUuid, slackMessage);
+                }
             } catch (e) {
                 // A template that doesn't render is a configuration error:
                 // nothing is sent and trying again won't help.
@@ -541,6 +568,38 @@ export class AlertNotifier {
             { 'content-type': 'application/json' },
             payload,
         );
+    }
+
+    private async postSlackApp(
+        projectUuid: string,
+        message: { channel: string; text: string },
+    ): Promise<void> {
+        const organizationUuid =
+            await this.deps.alertNotificationModel.findProjectOrganizationUuid(
+                projectUuid,
+            );
+        if (organizationUuid === undefined) {
+            throw new NotificationSendError(
+                `Project ${projectUuid} has no organization`,
+                false,
+            );
+        }
+        try {
+            await this.deps.slackApp.postMessage({
+                organizationUuid,
+                ...message,
+            });
+        } catch (e) {
+            if (e instanceof NotificationSendError) throw e;
+            // The app not being installed is a configuration error: trying
+            // again won't help. Anything else (Slack down, rate limited) is
+            // retried.
+            const reason = getErrorMessage(e);
+            throw new NotificationSendError(
+                reason,
+                !/not installed/i.test(reason),
+            );
+        }
     }
 
     /** A missing secret is a configuration error, so it is not retried. */

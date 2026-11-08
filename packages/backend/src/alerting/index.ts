@@ -106,6 +106,7 @@ export const createAlertingModule = (
             alertNotificationModel,
             notificationRouteModel,
             secrets: deps.secrets,
+            slackApp: deps.slackApp,
             clock: deps.clock,
             retry: deps.retry,
             siteUrl: deps.siteUrl,

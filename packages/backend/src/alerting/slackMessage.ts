@@ -101,6 +101,18 @@ export const renderSlackMessage = (
     };
 };
 
+/**
+ * The Slack app (`chat.postMessage`) message text: the title in bold on the
+ * first line (whitespace collapsed, since mrkdwn bold can't span lines),
+ * then the text, in Slack mrkdwn. An empty part is left out.
+ */
+export const buildSlackAppText = (args: { title: string; text: string }) => {
+    const title = args.title.replace(/\s+/g, ' ').trim();
+    return [title === '' ? '' : `*${title}*`, args.text]
+        .filter((part) => part.trim() !== '')
+        .join('\n');
+};
+
 /** The incoming-webhook body: one attachment, as Grafana's Slack notifier. */
 export const buildSlackWebhookPayload = (args: {
     title: string;

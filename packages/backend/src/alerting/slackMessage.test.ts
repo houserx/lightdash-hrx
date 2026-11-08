@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     buildAlertTemplateData,
+    buildSlackAppText,
     buildSlackWebhookPayload,
     renderSlackMessage,
     type SlackTemplateAlert,
@@ -124,5 +125,19 @@ describe('buildSlackWebhookPayload', () => {
                 },
             ],
         });
+    });
+});
+
+describe('buildSlackAppText', () => {
+    it('puts the title in bold on one line above the text', () => {
+        expect(
+            buildSlackAppText({ title: ' [FIRING:1]\n Disk ', text: 'body' }),
+        ).toBe('*[FIRING:1] Disk*\nbody');
+    });
+
+    it('leaves out an empty title or text', () => {
+        expect(buildSlackAppText({ title: '  ', text: 'body' })).toBe('body');
+        expect(buildSlackAppText({ title: 'T', text: '\n' })).toBe('*T*');
+        expect(buildSlackAppText({ title: '', text: '' })).toBe('');
     });
 });
