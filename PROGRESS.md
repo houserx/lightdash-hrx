@@ -249,3 +249,4 @@ should add a dated line here per feature.
 - 2026-11-08T18:04:32Z supervisor: viz-trace-waterfall-as-code halted: the worker halted on viz-trace-waterfall-as-code
 - 2026-11-08T18:05:20Z supervisor: viz-chart-type-wiring halted: the worker halted on viz-chart-type-wiring
 - 2026-11-08T18:06:28Z supervisor: viz-log-stream-model halted: the worker halted on viz-log-stream-model
+- 2026-11-08T18:07:19Z supervisor: viz-log-stream-order halted: the worker halted on viz-log-stream-order
