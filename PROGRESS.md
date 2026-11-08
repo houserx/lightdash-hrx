@@ -1258,3 +1258,30 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     2/2, investigate-editor-sources 6/6 (regression). frontend tsc clean; oxfmt and oxlint clean
     on changed files.
 - 2026-11-08T20:46:42Z supervisor: ldq-investigate-sql-editable passed the gate in round 1
+- ldq-investigate-cloudwatch-editors (round 1):
+  - New `features/investigate/components/CloudWatchEditors.tsx`, which holds two presentational
+    components. `CloudWatchMetricsEditor` has the fields "Namespace", "Metric name",
+    "Dimensions" (`Name=Value` pairs separated by commas or new lines), "Statistic" (default
+    Average) and "Period" (seconds, default 300), plus the "MetricDataQuery JSON" textarea.
+    `CloudWatchLogsEditor` has "Log groups" (comma-separated) and "Logs Insights query".
+  - New `features/investigate/utils/cloudWatchForm.ts` with the helpers. They live outside the
+    components file because oxlint's only-export-components rule flags them there.
+    `metricDataQueryJsonFromForm` returns undefined while the form is incomplete, and otherwise
+    uses common `buildCloudWatchMetricDataQuery`, Id m1. `parseMetricDataQuery` takes JSON typed
+    by hand. It needs an object with an Id and a MetricStat or an Expression, and gives an
+    error message otherwise. `splitLogGroups` splits the log groups field.
+  - `InvestigateEditor.tsx`: the CloudWatch placeholder is gone. The `cloudwatch` and
+    `cloudwatch_logs` kinds now come from the same `change` memo, so they follow the
+    manual-SQL-edit rule. "Source name" applies to both.
+  - Decision: when the form describes a complete metric stat, a form edit rewrites the JSON.
+    A hand edit of the JSON stays until the form is edited again. While the form is incomplete,
+    the JSON is left as it is. Invalid hand JSON shows an error under the box ("Not valid
+    JSON", etc.) and generates no SQL.
+  - Tested: no browser or backend (no Docker). The new page test in
+    `SqlRunner.investigate.test.tsx` (5/5) renders the real SqlRunner page. It fills in the
+    CloudWatch metrics form, and the JSON and the cloudwatch(...) SQL appear. Broken JSON shows
+    the error. A metric math expression typed by hand gives its SQL. Then it switches to
+    CloudWatch Logs, enters log groups, a query and a source name, and the cloudwatch_logs(...)
+    SQL appears. Feature check 3/3, investigate-editor-sources 6/6 (regression). frontend tsc
+    clean; oxfmt and oxlint clean on changed files.
+- 2026-11-08T20:50:23Z supervisor: ldq-investigate-cloudwatch-editors passed the gate in round 1

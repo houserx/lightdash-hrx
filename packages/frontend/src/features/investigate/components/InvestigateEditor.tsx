@@ -7,11 +7,21 @@ import {
     Checkbox,
     SegmentedControl,
     Stack,
-    Text,
     Textarea,
     TextInput,
 } from '@mantine/core';
 import { useEffect, useMemo, useRef, useState, type FC } from 'react';
+import {
+    DEFAULT_CLOUDWATCH_FORM,
+    metricDataQueryJsonFromForm,
+    parseMetricDataQuery,
+    splitLogGroups,
+    type CloudWatchFormValues,
+} from '../utils/cloudWatchForm';
+import {
+    CloudWatchLogsEditor,
+    CloudWatchMetricsEditor,
+} from './CloudWatchEditors';
 
 /** The source languages Investigate offers (CONTRACTS §1.1). */
 export type InvestigateSource =
@@ -79,8 +89,30 @@ export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
     const [isLogqlMetric, setIsLogqlMetric] = useState(false);
     const [traceql, setTraceql] = useState('');
     const [platformSql, setPlatformSql] = useState('');
+    const [cloudWatchForm, setCloudWatchForm] = useState<CloudWatchFormValues>(
+        DEFAULT_CLOUDWATCH_FORM,
+    );
+    const [metricDataQueryJson, setMetricDataQueryJson] = useState('');
+    const [logGroups, setLogGroups] = useState('');
+    const [logsInsightsQuery, setLogsInsightsQuery] = useState('');
     const [sourceName, setSourceName] = useState('');
     const [sql, setSql] = useState(initialSql ?? '');
+
+    // The form writes the JSON whenever it describes a complete metric stat; a hand edit of
+    // the JSON stays until the form is changed again.
+    const handleCloudWatchFormChange = (form: CloudWatchFormValues) => {
+        setCloudWatchForm(form);
+        const json = metricDataQueryJsonFromForm(form);
+        if (json !== undefined) setMetricDataQueryJson(json);
+    };
+
+    const parsedMetricDataQuery = useMemo(
+        () =>
+            metricDataQueryJson.trim() === ''
+                ? undefined
+                : parseMetricDataQuery(metricDataQueryJson),
+        [metricDataQueryJson],
+    );
 
     const change = useMemo((): InvestigateEditorChange | undefined => {
         const engineSource = sourceName.trim() || undefined;
@@ -122,8 +154,26 @@ export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
                           sql: buildPlatformQuerySql(platformSql),
                       };
             case 'cloudwatch':
-            case 'cloudwatch_logs':
-                return undefined;
+                return parsedMetricDataQuery && 'query' in parsedMetricDataQuery
+                    ? telemetry({
+                          kind: 'cloudwatch',
+                          metricDataQuery: parsedMetricDataQuery.query,
+                          source: engineSource,
+                      })
+                    : undefined;
+            case 'cloudwatch_logs': {
+                const groups = splitLogGroups(logGroups);
+                return groups.length === 0 ||
+                    groups.some((name) => name.includes(',')) ||
+                    logsInsightsQuery.trim() === ''
+                    ? undefined
+                    : telemetry({
+                          kind: 'cloudwatch_logs',
+                          logGroups: groups,
+                          query: logsInsightsQuery,
+                          source: engineSource,
+                      });
+            }
             default: {
                 const unknownSource: never = source;
                 throw new Error(`Unknown Investigate source: ${unknownSource}`);
@@ -136,6 +186,9 @@ export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
         isLogqlMetric,
         traceql,
         platformSql,
+        parsedMetricDataQuery,
+        logGroups,
+        logsInsightsQuery,
         sourceName,
     ]);
 
@@ -218,10 +271,27 @@ export const InvestigateEditor: FC<Props> = ({ onChange, initialSql }) => {
                     }
                 />
             )}
-            {(source === 'cloudwatch' || source === 'cloudwatch_logs') && (
-                <Text size="sm" c="dimmed">
-                    The CloudWatch editor is not available yet.
-                </Text>
+            {source === 'cloudwatch' && (
+                <CloudWatchMetricsEditor
+                    form={cloudWatchForm}
+                    onFormChange={handleCloudWatchFormChange}
+                    json={metricDataQueryJson}
+                    jsonError={
+                        parsedMetricDataQuery &&
+                        'error' in parsedMetricDataQuery
+                            ? parsedMetricDataQuery.error
+                            : undefined
+                    }
+                    onJsonChange={setMetricDataQueryJson}
+                />
+            )}
+            {source === 'cloudwatch_logs' && (
+                <CloudWatchLogsEditor
+                    logGroups={logGroups}
+                    onLogGroupsChange={setLogGroups}
+                    query={logsInsightsQuery}
+                    onQueryChange={setLogsInsightsQuery}
+                />
             )}
             {source !== 'platform' && (
                 <TextInput

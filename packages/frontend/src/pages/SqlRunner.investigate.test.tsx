@@ -146,6 +146,57 @@ it('keeps a manual edit of the generated SQL in Investigate', async () => {
     expect(sqlBox.value).toContain("promql('rate(x[1m])'");
 });
 
+it('builds CloudWatch metric and Logs Insights SQL in Investigate', async () => {
+    projectQuery.data = {
+        projectUuid: 'project-uuid',
+        warehouseConnection: {
+            type: WarehouseTypes.POSTGRES,
+            flavor: 'federation',
+        },
+    };
+    renderSqlRunner();
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Investigate' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'CloudWatch metrics' }));
+    const setField = (label: string, value: string) =>
+        fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    setField('Namespace', 'AWS/Lambda');
+    setField('Metric name', 'Errors');
+    setField('Dimensions', 'FunctionName=rx-sync');
+    setField('Statistic', 'Sum');
+    const json = screen.getByLabelText<HTMLTextAreaElement>(
+        'MetricDataQuery JSON',
+    );
+    const sqlBox = screen.getByLabelText<HTMLTextAreaElement>('SQL', {
+        selector: 'textarea',
+    });
+    expect(JSON.parse(json.value)).toMatchObject({
+        Id: 'm1',
+        MetricStat: { Period: 300, Stat: 'Sum' },
+    });
+    expect(sqlBox.value).toContain(
+        `cloudwatch('${JSON.stringify(JSON.parse(json.value))}'`,
+    );
+
+    setField('MetricDataQuery JSON', '{ "Id": "e1"');
+    expect(screen.getByText('Not valid JSON')).toBeInTheDocument();
+    setField(
+        'MetricDataQuery JSON',
+        '{ "Id": "e1", "Expression": "m1 * 2", "ReturnData": true }',
+    );
+    expect(sqlBox.value).toBe(
+        `SELECT * FROM cloudwatch('{"Id":"e1","Expression":"m1 * 2","ReturnData":true}', \${ld.parameters.__from}, \${ld.parameters.__to})`,
+    );
+
+    fireEvent.click(screen.getByRole('radio', { name: 'CloudWatch Logs' }));
+    setField('Log groups', '/ecs/api, /ecs/worker');
+    setField('Logs Insights query', 'fields @message');
+    setField('Source name', 'cloudwatch-production');
+    expect(sqlBox.value).toBe(
+        "SELECT * FROM cloudwatch_logs('/ecs/api,/ecs/worker', 'fields @message', ${ld.parameters.__from}, ${ld.parameters.__to}, 'cloudwatch-production')",
+    );
+});
+
 it('has no Investigate mode on a plain Postgres project', async () => {
     projectQuery.data = {
         projectUuid: 'project-uuid',
