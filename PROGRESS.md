@@ -1952,3 +1952,16 @@ token verification for a *valid* token, which feature 39 then hardens.
   The store held 4 write audits (the allowed previews) plus 2 read audits, and every hash matched.
   Check passes.
 - 2026-11-08T22:15:03Z supervisor: eng-guard-write-mode passed the gate in round 1
+- eng-write-statement-failure (functional): no code change needed. eng-write-preview had already
+  built it: write::run runs the statement, writes the audit item first (status error, errorMessage
+  = the Postgres message, rowCount null) and then answers with Failure::from_postgres: 422
+  {"error": "platform source \"platform\": <postgres message>", "sqlstate": "<code>"} (503 for
+  08xxx/53xxx connection classes). The same holds for preview.
+  Tested as a user: `../tmp/write-failure/run.sh <out>` (write-commit rig on ports 59651-59655).
+  With curl, commit of `UPDATE widgets SET id = 1 WHERE id = 2` gave 422 sqlstate 23505 "duplicate
+  key value violates unique constraint \"widgets_pkey\""; a preview of it gave the same; a commit
+  of `UPDATE widgets SET nope = 1 WHERE id = 2` gave 422 sqlstate 42703. platform_query showed
+  widgets at 20 rows, ids 1-20, 0 notes, before and after. The store held 3 write audits, each
+  status error with the message and rowCount NULL, plus 2 read audits, and every hash matched.
+  Check passes.
+- 2026-11-08T22:16:39Z supervisor: eng-write-statement-failure passed the gate in round 1
