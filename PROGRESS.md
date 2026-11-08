@@ -1921,3 +1921,20 @@ token verification for a *valid* token, which feature 39 then hardens.
   right token then gave 200 rows_affected 1 and the note was 'bound'. The store held 1 write audit
   (the commit) plus 3 read audits, every hash matched. Check passes.
 - 2026-11-08T22:11:09Z supervisor: eng-write-confirmation-binding passed the gate in round 1
+- eng-write-agent-commit-refused (security): no code change needed. eng-write-preview had already
+  built it: write::run's check 6 refuses `mode: "commit"` from an agent identity (identity.agent,
+  which is set when `agent` is anything but an explicit false, or when iss is telemetry-mcp) with
+  403 "an AI agent identity (agent = true) may only Preview, never commit". The check runs after
+  the platform_write, description and mode checks and before the guard and the confirmation token,
+  so a refused commit doesn't spend the token and writes no audit item. The system identity
+  (sys = true, agent = false) is not an agent and commits like a person; its audit action is
+  `assertion`. Small wording nit, left as it is: an MCP token whose agent claim is false gets the
+  same message, which says "(agent = true)".
+  Tested as a user: `../tmp/write-agent-commit/run.sh <out>` (write-commit rig on ports
+  59631-59635; `itok.py` mints platform_write identity tokens: lightdash-agent, mcp-agent,
+  mcp-agent-noflag (iss telemetry-mcp, agent false) and system). With curl, preview of
+  `UPDATE widgets SET note = 'agent' WHERE id = 12` gave 200 rows_affected 1 for each agent, and
+  commit gave 403 with the agent message for each. Widget 12's note through platform_query stayed
+  NULL. A commit by the system identity then gave 200 and the note was 'agent'. The store held 3
+  ai_ask preview audits, 1 assertion commit audit and 3 read audits, every hash matched. Check passes.
+- 2026-11-08T22:13:04Z supervisor: eng-write-agent-commit-refused passed the gate in round 1
