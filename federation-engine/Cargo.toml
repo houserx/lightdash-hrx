@@ -1,0 +1,52 @@
+[workspace]
+resolver = "3"
+# Library crates go under crates/ and are added here, e.g. members = ["crates/engine-core"].
+members = ["."]
+
+[package]
+name = "federation-engine"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "engine"
+description = "HouseRx Federation Engine: SQL over the Postgres wire protocol, built on Apache DataFusion (ENG-1799)"
+
+[[bin]]
+name = "engine"
+path = "src/main.rs"
+
+# The acceptance suite (protected folder). One binary; each feature's check runs one test by exact name.
+[[test]]
+name = "acceptance"
+path = "tests/acceptance/main.rs"
+
+[dependencies]
+
+# Used only by tests/acceptance. They drive the real `engine` binary through pg-wire and HTTP,
+# so they compile without any engine code. Keep these: the protected harness needs them.
+# Do not add `preserve_order` to serde_json here: dev-dependency features unify with the engine's
+# own serde_json in test builds and would hide key-order bugs in the audit S3 body.
+[dev-dependencies]
+base64 = "0.22"
+chrono = "0.4"
+ciborium = "0.2"
+hex = "0.4"
+hmac = "0.12"
+md-5 = "0.10"
+rcgen = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+rustls = "0.23"
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1"] }
+tokio-postgres-rustls = "0.14"
+uuid = { version = "1", features = ["v4"] }
+
+# Dependencies (DataFusion, arrow, pgwire, aws-sdk) are compiled optimised even in the debug
+# profile, so the debug build that init.sh produces meets the eng-perf-promql-large-range budget.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+debug = "line-tables-only"
