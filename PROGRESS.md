@@ -1732,3 +1732,20 @@ docs/eng-1799/telemetry-mcp.md
   - "42 orders, so 84": answered at high confidence, with no caveats.
 - Feature check: 3/3.
 - 2026-11-08T19:05:52Z supervisor: mcp-ask-data-unverified-figures passed the gate in round 1
+
+## mcp-ask-data-memory (2026-11-08)
+
+- No code changes. The ask-memory wiring from mcp-tool-ask-data already covers this feature: the ported
+  ask-memory service runs inside the data-assistant loop, and `deps.askMemoryStore` falls back to
+  `InMemoryAskMemoryStore`. This session verified it and recorded the result.
+- Tested as a user: after `bash ./init.sh`, `../tmp/ask-data-memory/drive.test.ts` (run with `pnpm exec vitest run
+  --root ../tmp/ask-data-memory --disableConsoleIntercept drive.test.ts` from the package) started the built
+  `dist/index.js`. It ran against the fake Okta, Lightdash and engine, with a `ScriptedLlm` and a shared
+  `InMemoryAskMemoryStore`. A real MCP client connected over streamable HTTP with an Okta bearer token.
+  - Grounded answer with two proposed lessons, one containing a synthetic email: `memory.learned` held only the
+    definition "active order status". The store held 1 note, the email was not in it, and its uses were 0.
+  - Related question ("How many active orders are open?"): `memory.recalled` listed the note. The first model request
+    contained "Team memory" and the note's insight. After the grounded answer, the note had 1 use.
+  - Abstention (schema_gap) that proposed a lesson: `memory.learned` was empty, and the store still held 1 note.
+- Feature check: 4/4.
+- 2026-11-08T19:07:08Z supervisor: mcp-ask-data-memory passed the gate in round 1
