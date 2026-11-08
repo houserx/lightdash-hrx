@@ -702,3 +702,16 @@ token verification for a *valid* token, which feature 39 then hardens.
   Minor, for later: the step error message doesn't prefix the function signature the way the
   start/end time errors do.
 - 2026-11-08T18:02:57Z supervisor: eng-time-arguments passed the gate in round 1
+- 2026-11-08 eng-promql-source-selection (worker, round 1): no code change needed. The shared source
+  selection built in eng-promql-range/eng-promql-instant (src/promql.rs) already satisfies the
+  feature, as both entries predicted. Only this entry was added to the tree.
+  Tested as a user: `../tmp/pgclient/src/bin/sourcesel.rs` (mocks prom-a on 127.0.0.1:59091 with
+  `default = true`, prom-b on :59092 listed first, Loki `only-loki` on :59093; config
+  `../tmp/promql/sources.toml`) spawns `target/debug/engine` and runs SQL over tokio-postgres.
+  `promql(.., '1m')` and `promql_instant(..)` without a source were answered by prom-a; with
+  `'prom-b'` both were answered by prom-b. `'nope'` gets 42704 `source "nope" does not exist`
+  (range and instant); `'only-loki'` gets 42809 `source "only-loki" is a loki source, not
+  prometheus`. The Loki mock got no requests. The check `promql::eng_promql_source_selection`
+  passes. In the promql module, range/instant/time_arguments/upstream_errors pass too;
+  label/series_name/pushdown_and_sql/max_rows still fail (not built yet).
+- 2026-11-08T18:04:59Z supervisor: eng-promql-source-selection passed the gate in round 1
