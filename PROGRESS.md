@@ -311,3 +311,30 @@ docs/eng-1799/telemetry-mcp.md
   stderr message, exit 1. Unit tests (`pnpm -F @lightdash/telemetry-mcp test`) and the skeleton check pass.
 - Trap: macOS has no `timeout`; drive the server from a small node script (spawn, fetch, kill) in `../tmp`.
 - 2026-11-08T15:46:17Z supervisor: mcp-package-skeleton passed the gate in round 1
+
+### mcp-config-validation (2026-11-08)
+
+- `src/config.ts`: full `loadConfig(env)`. It collects **every** problem, then throws `ConfigError` (`.problems:
+  string[]`; message `Invalid configuration (N problems):` plus one `  - <VAR> …` line each). Messages name the
+  variable and the rule, **never a value** (not even non-secret ones). Blank or whitespace-only counts as missing.
+- `Config` shape (later features read this): `host, port, publicUrl` (trailing `/` stripped), `okta{issuer (verbatim,
+  must equal iss), audience, jwksUri}` (default `${issuer}/v1/keys`), `lightdash{url, apiToken, projectUuid}`,
+  `engine{pgHost, pgPort, pgUser, pgPassword, pgDatabase, httpUrl}`, `identitySecret`, `sources: SourceConfig[]`
+  (`{name, kind, default, restricted}`, flags default `false`), `platformSource, statementTimeoutMs, maxRows,
+  maxOutputBytes, userCacheTtlMs, askMaxSteps, anthropicApiKey (undefined when unset), logLevel`.
+- Rules: URLs must be absolute http(s) with no userinfo (http allowed: the fakes use `http://127.0.0.1`);
+  `LIGHTDASH_PROJECT_UUID` must be a UUID; `MCP_PORT` 0–65535, `ENGINE_PG_PORT` 1–65535; `MCP_MAX_ROWS`,
+  `MCP_STATEMENT_TIMEOUT_MS`, `MCP_MAX_OUTPUT_BYTES`, `MCP_ASK_MAX_STEPS` ≥ 1, `MCP_USER_CACHE_TTL_MS` ≥ 0;
+  `LOG_LEVEL` in debug|info|warn|error; `MCP_SOURCES` a JSON list, kinds from `SOURCE_KINDS` (§1.4), unique names,
+  boolean flags; extra keys in an entry are ignored. `MCP_PLATFORM_SOURCE` is **not** cross-checked against
+  `MCP_SOURCES` (default list is empty).
+- Decision: hand-written validation, **no zod dependency yet** (keeps messages fully under our control so no value is
+  echoed). Add `zod@4.6.6` when tool input schemas need it.
+- `src/index.ts` also exports `ConfigError`, `SOURCE_KINDS`, `LOG_LEVELS` and the config types. Unit tests:
+  `src/config.test.ts`; `src/http/server.test.ts` now builds a full env inline (don't import between test files:
+  vitest would re-register the other file's suites).
+- Tested as a user: from a node script against `dist/index.js`, empty env → all 11 required names; bad port /
+  `not a url` issuer / `{not json` sources / `-5` rows → 4 lines naming each, no secret value in the message;
+  `env -i node dist/main.js` → the 11-line message on stderr, exit 1; full env → `/healthz` 200, SIGTERM exit 0.
+  `config-validation` and `package-skeleton` acceptance checks pass, plus unit tests and typecheck.
+- 2026-11-08T15:48:54Z supervisor: mcp-config-validation passed the gate in round 1
