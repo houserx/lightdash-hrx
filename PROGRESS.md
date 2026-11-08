@@ -1017,3 +1017,33 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     stashed. Feature check 3/3, merge test 16/16, SQL tile test 3/3, TileBase test 11/11, frontend
     typecheck, oxlint, oxfmt clean.
 - 2026-11-08T19:56:20Z supervisor: ldq-dashboard-tile-not-affected passed the gate in round 1
+- 2026-11-08 ldq-dashboard-auto-refresh (session):
+  - Frontend `features/dashboardTimeRange/hooks/useDashboardAutoRefresh(refreshInterval, onRefresh)`
+    (the acceptance target): setInterval at `parseTimeRangeDuration(interval)` from common; null,
+    undefined or an unknown interval is off; a changed interval restarts the timer; unmount stops it.
+    onRefresh goes through useStableCallback, so a new callback each render does not restart it.
+  - `components/DashboardTimeRangeAutoRefresh.tsx` (renders null), mounted inside
+    `DashboardTimeRangeControl` with the effective range's refreshInterval (saved range overridden
+    by the URL `refresh`). It shows only in view mode on dashboards with a time range, so edit mode
+    and leaving the dashboard stop refreshing. While on it sets tile-status `isAutoRefresh` true
+    (tile queries run in the AUTOREFRESHED_DASHBOARD context, as with the legacy button) and false
+    on off/unmount.
+  - Decision: each tick calls `useDashboardRefresh().invalidateDashboardResultsQueries()` only
+    (dashboard_chart_ready_query + savedSqlChartResults). It does NOT call clearCacheAndFetch /
+    removeQueries like the manual refresh button: that sets the sticky invalidateCache (warehouse
+    cache bypass forever after) and blanks tiles; CONTRACTS §2 relies on bucketed relative ranges so
+    cache keys change exactly when data should. Chart definitions (saved_query etc.) are not
+    re-fetched. Data-app tiles (iframe, refreshCounter) are not reloaded by it.
+  - Known overlap: the legacy DashboardRefreshButton auto-refresh (5m-2h, local state) still
+    exists and also writes isAutoRefresh; turning time-range refresh off while the legacy one is on
+    flips isAutoRefresh to false (only affects the query context label). Untouched by design.
+  - Until ldq-query-routes-time-range-audit sends the range with tile queries, a refresh re-runs
+    the same tile query (backend results cache may answer it).
+  - Tested: no full stack (no Docker). DashboardHeader.test.tsx (mocks tile-status context and
+    useDashboardRefresh; 3 new cases): set Refresh to 10s in the real picker -> results invalidated
+    at 10s, 20s, 30s, not at 9.999s; Off -> none for an hour; ?refresh=10s then unmount -> stops;
+    edit mode -> none. Both refresh cases fail with the wiring removed. New
+    DashboardTimeRangeAutoRefresh.test.tsx with a real QueryClient: tile results query re-runs every
+    10s, saved_query does not, tile keeps its data; off -> no re-run. Feature check 3/3, header
+    13/13, url acceptance 5/5, frontend typecheck, oxlint, oxfmt clean.
+- 2026-11-08T20:02:48Z supervisor: ldq-dashboard-auto-refresh passed the gate in round 1

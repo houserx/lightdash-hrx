@@ -5,10 +5,10 @@ import {
     type DashboardFilterableField,
     type DashboardTileTimeDimension,
 } from '@lightdash/common';
-import { fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { useState, type ComponentProps } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../../testing/testUtils';
 import DashboardHeader from './DashboardHeader';
 
@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
     filterableFieldsByTileUuid: undefined as
         | Record<string, DashboardFilterableField[]>
         | undefined,
+    invalidateDashboardResultsQueries: vi.fn(),
+    setIsAutoRefresh: vi.fn(),
 }));
 
 vi.mock('../../../providers/Dashboard/useDashboardContext', () => ({
@@ -25,6 +27,17 @@ vi.mock('../../../providers/Dashboard/useDashboardContext', () => ({
         selector({
             filterableFieldsByTileUuid: mocks.filterableFieldsByTileUuid,
         }),
+}));
+
+vi.mock('../../../providers/Dashboard/useDashboardTileStatusContext', () => ({
+    default: (selector: (context: unknown) => unknown) =>
+        selector({ setIsAutoRefresh: mocks.setIsAutoRefresh }),
+}));
+vi.mock('../../../hooks/dashboard/useDashboardRefresh', () => ({
+    useDashboardRefresh: () => ({
+        invalidateDashboardResultsQueries:
+            mocks.invalidateDashboardResultsQueries,
+    }),
 }));
 
 vi.mock('../../../hooks/useServerOrClientFeatureFlag', () => ({
@@ -211,6 +224,88 @@ describe('DashboardHeader time range in the URL', () => {
         expect(
             screen.queryByRole('button', { name: /Last 6 hours/ }),
         ).not.toBeInTheDocument();
+    });
+});
+
+describe('DashboardHeader auto-refresh', () => {
+    beforeEach(() => {
+        mocks.flagEnabled = true;
+        mocks.userCanManageDashboard = true;
+        mocks.invalidateDashboardResultsQueries.mockClear();
+        mocks.setIsAutoRefresh.mockClear();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    it('refreshes the tiles every 10 seconds until refresh is set to Off', () => {
+        renderHeaderWithTimeRange({ url: '/dashboards/d' });
+        fireEvent.change(screen.getByLabelText('Refresh'), {
+            target: { value: '10s' },
+        });
+        expect(mocks.setIsAutoRefresh).toHaveBeenLastCalledWith(true);
+
+        act(() => {
+            vi.advanceTimersByTime(9_999);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).not.toHaveBeenCalled();
+        act(() => {
+            vi.advanceTimersByTime(1);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).toHaveBeenCalledTimes(
+            1,
+        );
+        act(() => {
+            vi.advanceTimersByTime(20_000);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).toHaveBeenCalledTimes(
+            3,
+        );
+
+        fireEvent.change(screen.getByLabelText('Refresh'), {
+            target: { value: 'off' },
+        });
+        expect(mocks.setIsAutoRefresh).toHaveBeenLastCalledWith(false);
+        act(() => {
+            vi.advanceTimersByTime(3_600_000);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).toHaveBeenCalledTimes(
+            3,
+        );
+    });
+
+    it('stops refreshing when the viewer leaves the dashboard', () => {
+        const { unmount } = renderHeaderWithTimeRange({
+            url: '/dashboards/d?refresh=10s',
+        });
+        act(() => {
+            vi.advanceTimersByTime(10_000);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).toHaveBeenCalledTimes(
+            1,
+        );
+
+        unmount();
+        expect(mocks.setIsAutoRefresh).toHaveBeenLastCalledWith(false);
+        act(() => {
+            vi.advanceTimersByTime(600_000);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).toHaveBeenCalledTimes(
+            1,
+        );
+    });
+
+    it('does not refresh in edit mode', () => {
+        renderHeaderWithTimeRange({
+            url: '/dashboards/d?refresh=10s',
+            isEditMode: true,
+        });
+        act(() => {
+            vi.advanceTimersByTime(600_000);
+        });
+        expect(mocks.invalidateDashboardResultsQueries).not.toHaveBeenCalled();
     });
 });
 
