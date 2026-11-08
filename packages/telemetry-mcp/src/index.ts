@@ -37,6 +37,8 @@ export {
     redactSecrets,
 } from './engine/errors.js';
 export { createIdentitySession } from './engine/session.js';
+export { AUDIT_BROWSER_TIMEOUT_MS, AuditBrowserError, auditPath, createEngineAuditBrowser } from './engine/audit.js';
+export type { AuditBrowser, AuditPage, AuditQuery, Execution } from './engine/audit.js';
 export {
     LIGHTDASH_GROUPS_PER_USER,
     LIGHTDASH_TIMEOUT_MS,
@@ -131,6 +133,8 @@ export type {
     LearningContext,
     MemoryNoteView,
 } from './ask/ask-memory.service.js';
+export { createExampleQueries } from './ask/example-queries.service.js';
+export type { ExampleQueries, ExampleQueriesOptions } from './ask/example-queries.service.js';
 export type {
     AdvisePlanInput,
     ExistingIndex,

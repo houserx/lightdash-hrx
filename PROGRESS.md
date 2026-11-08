@@ -1503,3 +1503,48 @@ docs/eng-1799/telemetry-mcp.md
   still passes (5/5), `pnpm typecheck` is clean, and strict tsc over both test files passes via
   `../tmp/ask-memory-port/tsconfig.json`.
 - 2026-11-08T18:43:59Z supervisor: mcp-ask-memory-port passed the gate in round 1
+
+### mcp-example-queries-port (session 2026-11-08, round 1)
+
+- Source: portal `api/src/services/example-queries.service.ts` and its `.test.ts` at `aea73de` (read-only), plus the
+  `Execution` type from `api/src/dynamo/executions.ts`.
+- New `src/engine/audit.ts`, the §1.3 audit browser client:
+  - `createEngineAuditBrowser(httpUrl, session, secrets?)` returns `{ list({ticket?, user?, month?, cursor?}) }`.
+  - It calls `GET ${ENGINE_HTTP_URL}/v1/audit` with `Authorization: Bearer <fresh identity token>`. The token is
+    minted with `session.identityToken(null)`, so it is not audited.
+  - It returns `{ items: Execution[], nextCursor: string | null }`; an empty or missing cursor counts as null.
+  - Failures throw `AuditBrowserError`: unreachable engine, a non-2xx reply (the message names the status and the
+    engine's message, redacted) or a body that is not a page. An unmappable caller fails before any request.
+  - The portal `Execution` type is exported from here.
+- New `src/ask/example-queries.service.ts`. Filters, scrubbing (`scrubSql`/`looksSensitive` from ask-memory), ranking,
+  limits and text are verbatim. `createExampleQueries({ audit, now?, onError? })` returns `findExampleQueries(database,
+  keywords, limit?)` and `resetExamplesCache()`. The portal's module cache is now per service. Sentry is now
+  `onError(err, 'askData.examples')`.
+- **Contract assumption 9 (example-query paging).** §1.3 has no `from`/`to`/`pageSize`/`excludeScheduler`, so none of
+  them is sent. The service sends no filters and follows `nextCursor` from the engine's default listing, at most 5
+  pages as in the portal. It skips records whose `createdAt` is older than the 90-day lookback and keeps records
+  without a readable `createdAt`. Scheduler runs are `action: 'assertion'` and `usable` drops them anyway.
+  Walking `month=` was rejected because the portal's paging test pins exactly 2 calls for a 2-page history.
+- **For data-assistant-port / ask-data-example-queries:** the audit browser acts as one caller, so build one
+  `createExampleQueries({ audit: createEngineAuditBrowser(config.engine.httpUrl, session, configSecrets(config)) ,
+  now: deps.now, onError })` per caller/request. Do not share its cache across users: a user without `platform_read`
+  must not see examples another user loaded. With stateless `/mcp`, the 6 h cache then lasts one request; a
+  per-user cache keyed by `sub` is a possible follow-up. The portal's `findExampleQueries` import in data-assistant
+  maps to the service method.
+- Tests:
+  - `src/ask/example-queries.service.test.ts` (10 cases): the portal's 5 come first, unchanged except that the
+    `listExecutions` mock is now a stub `AuditBrowser` with `{items, nextCursor}` pages and the Sentry mock is
+    `onError`. Then 5 port cases: cursor paging capped at 5, the lookback, the 6 h per-database cache on the injected
+    clock, onError (failures are not cached), and the limit and labels.
+  - `src/engine/audit.test.ts` (7 cases): runs against a local http server.
+- Tested as a user: after `bash ./init.sh`, `../tmp/example-queries-port/drive.mjs` imported the built
+  `dist/index.js`. It wired `createIdentitySession` (stub resolver), `createEngineAuditBrowser` and
+  `createExampleQueries` against a throwaway 2-page `/v1/audit` server holding literals, a write, a failure and
+  another database.
+  - Output: one example `run 2× by 2 people; tables: orders` with `status = '?'`, and no literals, write, failure or
+    other database.
+  - The server saw 2 requests (no cursor, then `cursor=p2`), each with a `Bearer` two-part token. A second call was
+    cached (no new request). An unreachable engine gave "unavailable right now" with one onError call.
+  - Results: the feature check passes (1/1), the unit files pass 10/10 and 7/7, `pnpm typecheck` is clean, and strict
+    tsc over both test files passes via `../tmp/example-queries-port/tsconfig.json`.
+- 2026-11-08T18:47:42Z supervisor: mcp-example-queries-port passed the gate in round 1
