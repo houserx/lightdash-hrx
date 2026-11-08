@@ -851,3 +851,24 @@ should add a dated line here per feature.
 - **Trap.** In zsh, `F="a b"; oxlint $F` passes one argument (no word splitting) and oxlint reports "0 files"; use an
   array. Vitest hides `console.log` from passing tests here; write harness output to a file in `../tmp` instead.
 - 2026-11-08T19:59:51Z supervisor: viz-native-types-mounted passed the gate in round 1
+
+## viz-grafana-thresholds (round 1)
+- **What.** New `packages/common/src/eng1799/grafanaThresholds.ts`, exported from `@lightdash/common` index:
+  - `GrafanaThresholds` / `GrafanaThresholdStep` / `GrafanaThresholdRange` types (shape of a panel's
+    `fieldConfig.defaults.thresholds`; base step has `value: null`).
+  - `GRAFANA_NAMED_COLORS` + `resolveGrafanaColor(color)`: Grafana palette names (red, orange, yellow, green, blue,
+    purple, each with `super-light-`, `light-`, `semi-dark-`, `dark-` shades) to hex; anything else (hex, rgb(), CSS
+    names) passes through unchanged. Lookup is case-insensitive.
+  - `getThresholdColor(value, thresholds, range = {min:0,max:100})`: colour of the highest step at or below the value;
+    in `percentage` mode step values are read as % of min..max (Grafana's default 0..100 when no range is given).
+  - `grafanaThresholdsToGaugeSections(thresholds, range = {min:0,max:100})`: one `GaugeSection` per step, step start to
+    next step start, clamped to min..max; empty sections (steps outside the range) are dropped. Percentage steps are
+    converted to absolute values in the range.
+- **Tested as a user.** No UI consumer yet (the Grafana importer line consumes this). Ran a throwaway node script
+  (deleted) against the built `dist/cjs` with a gauge panel's fieldConfig (min 0, max 100, green / 80 orange / 90 red):
+  12 and 79.99 -> #73BF69, 80/85 -> #FF9830, 90/120 -> #F2495C; sections [0-80 green, 80-90 orange, 90-100 red];
+  percentage mode over 0..500 gives 420 -> orange and sections 0-400/400-450/450-500; max 50 gives a single green
+  section. Check passes 4/4 after `bash ./init.sh`; common linter, oxfmt and `tsc --noEmit` clean.
+- **For later sessions.** Grafana unit / panel-type / option mapping features can live next to this in `eng1799/`.
+  Run oxlint via `pnpm -F common run linter <files>` (`pnpm exec oxlint` at the root is not found).
+- 2026-11-08T20:03:24Z supervisor: viz-grafana-thresholds passed the gate in round 1
