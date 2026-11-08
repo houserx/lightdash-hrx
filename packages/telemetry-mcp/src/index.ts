@@ -52,6 +52,8 @@ export { QUERY_LOGQL_TOOL, buildLogqlQuery } from './tools/queryLogql.js';
 export type { QueryLogqlArgs } from './tools/queryLogql.js';
 export { QUERY_CLOUDWATCH_TOOL, buildCloudwatchQuery, checkMetricDataQuery } from './tools/queryCloudwatch.js';
 export type { QueryCloudwatchArgs } from './tools/queryCloudwatch.js';
+export { QUERY_CLOUDWATCH_LOGS_TOOL, buildCloudwatchLogsQuery, joinLogGroups } from './tools/queryCloudwatchLogs.js';
+export type { QueryCloudwatchLogsArgs } from './tools/queryCloudwatchLogs.js';
 export type { QueryPromqlArgs } from './tools/queryPromql.js';
 export { ToolInputError, capTableBytes, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
 export type { TableResult } from './tools/telemetryArgs.js';

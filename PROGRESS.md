@@ -958,3 +958,39 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 3/3. 23 acceptance files pass: the earlier 22 plus this one. `sql-injection-safety` now
   fails only on its cloudwatch_logs and search_traces cases, which are unbuilt features.
 - 2026-11-08T17:17:09Z supervisor: mcp-tool-query-cloudwatch passed the gate in round 1
+
+## mcp-tool-query-cloudwatch-logs (2026-11-08)
+
+- New `src/tools/queryCloudwatchLogs.ts`. It is registered in `src/mcp/server.ts` after `query_cloudwatch`, and
+  `src/index.ts` exports `QUERY_CLOUDWATCH_LOGS_TOOL`, `buildCloudwatchLogsQuery`, `joinLogGroups` and
+  `QueryCloudwatchLogsArgs`.
+  - Inputs: `log_groups` (zod `array(string).min(1)`), `query`, `start`, `end`, and an optional `source` that must name a
+    `cloudwatch_logs` kind source.
+  - SQL: `SELECT * FROM cloudwatch_logs($1, $2, $3, $4[, $5])`, following CONTRACTS §1.1. `$1` is the log groups
+    comma-joined, exactly as given (no trimming). `$2` is the Insights query. Start and end go through `parseRange`. The
+    result goes through `successResult(table, config.maxOutputBytes)`.
+  - Refused before any engine connection:
+    - An empty list. The SDK zod `min(1)` gives -32602 with `isError`.
+    - A non-array.
+    - An empty or whitespace-only group, or a group containing a comma. The comma rule exists because the engine
+      splits on commas. These are `ToolInputError`.
+    - An empty query, a wrong-kind or unknown source, and bad ranges.
+  - Contract assumptions:
+    - No cap on the number of log groups. CloudWatch allows 50 per query, and the engine and CloudWatch judge that.
+    - No log-group name pattern check.
+    - Restricted log groups (`restricted_log_groups`) are not handled here. That belongs to the restricted-telemetry
+      feature, which must also cover this tool.
+- Unit tests: `src/tools/queryCloudwatchLogs.test.ts`. 175 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/cloudwatch-logs-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` with an RS256 token,
+  the fake Lightdash and the fake engine.
+  - tools/list shows query_cloudwatch_logs as readOnly, with log_groups, query, start and end required.
+  - Two groups and a hostile query sent one extended-protocol `cloudwatch_logs($1, $2, $3, $4)`. `$1` was
+    `/aws/lambda/orders-worker,/aws/lambda/fills-worker`, and `$2` was the query. The SQL had no input text. It returned
+    columns timestamp, message and fields, with fields as a JSON object.
+  - `now-1h`/`now` with a source sent `$5`.
+  - These gave `isError` with 0 engine queries: [], a comma group, "", a string, a missing log_groups, a blank query, a
+    cloudwatch (metrics) source, and end before start. SIGTERM exits 0.
+- Results: the check passes 2/2. 24 acceptance files pass: the earlier 23 plus this one. `sql-injection-safety` now
+  fails only on its search_traces case. `tool-catalog` still fails until every contract tool exists.
+- 2026-11-08T17:21:04Z supervisor: mcp-tool-query-cloudwatch-logs passed the gate in round 1

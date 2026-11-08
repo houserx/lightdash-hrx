@@ -23,6 +23,7 @@ import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
 import { registerListSources } from '../tools/listSources.js';
 import { registerQueryCloudwatch } from '../tools/queryCloudwatch.js';
+import { registerQueryCloudwatchLogs } from '../tools/queryCloudwatchLogs.js';
 import { registerQueryLogql } from '../tools/queryLogql.js';
 import { registerQueryPromql } from '../tools/queryPromql.js';
 import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js';
@@ -53,6 +54,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerQueryPromql(server, config, engine, now);
     registerQueryLogql(server, config, engine, now);
     registerQueryCloudwatch(server, config, engine, now);
+    registerQueryCloudwatchLogs(server, config, engine, now);
     return server;
 }
 
