@@ -23,7 +23,10 @@ export {
 } from './auth/okta.js';
 export type { AccessTokenVerifier, VerifiedAccessToken } from './auth/okta.js';
 export { MCP_SERVER_NAME, MCP_SERVER_VERSION, createMcpServer } from './mcp/server.js';
-export { LIST_SOURCES_TOOL, listSources } from './tools/listSources.js';
+export type { McpServerDeps } from './mcp/server.js';
+export { ENGINE_CONNECT_TIMEOUT_MS, EngineError, createEngineClient } from './engine/client.js';
+export type { EngineClient, EngineResult } from './engine/client.js';
+export { LIST_SOURCES_TOOL, OPS_MARTS_CATALOG, listOpsMarts, listSources } from './tools/listSources.js';
 export type { ListSourcesResult } from './tools/listSources.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';

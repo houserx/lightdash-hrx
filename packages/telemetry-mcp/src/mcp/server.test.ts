@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
+import { EngineError, type EngineClient } from '../engine/client.js';
 import { MCP_SERVER_NAME, createMcpServer } from './server.js';
 
 const ENV: Record<string, string> = {
@@ -28,8 +29,24 @@ describe('mcp server', () => {
         for (const c of clients.splice(0)) await c.close();
     });
 
-    async function connect(): Promise<Client> {
-        const server = createMcpServer(loadConfig(ENV));
+    const queries: { sql: string; params: readonly unknown[] }[] = [];
+    const catalogEngine: EngineClient = {
+        async query(sql, params = []) {
+            queries.push({ sql, params });
+            return {
+                columns: ['table_catalog', 'table_schema', 'table_name'],
+                rows: [
+                    { table_catalog: 'ops_marts', table_schema: 'ops', table_name: 'queue_depth' },
+                    { table_catalog: 'ops_marts', table_schema: 'ops', table_name: 'fills_hourly' },
+                    { table_catalog: 'operations', table_schema: 'public', table_name: 'not_a_mart' },
+                    { table_catalog: 'ops_marts', table_schema: 'information_schema', table_name: 'tables' },
+                ],
+            };
+        },
+    };
+
+    async function connect(engine: EngineClient = catalogEngine): Promise<Client> {
+        const server = createMcpServer(loadConfig(ENV), { engine });
         const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
         await server.connect(serverSide);
         const client = new Client({ name: 'unit-test', version: '0.0.0' });
@@ -53,7 +70,8 @@ describe('mcp server', () => {
         expect(tool?.annotations?.readOnlyHint).toBe(true);
     });
 
-    it('list_sources returns the configured Telemetry Sources with their flags', async () => {
+    it('list_sources returns the configured Telemetry Sources and the Ops Marts from information_schema', async () => {
+        queries.length = 0;
         const r = await (await connect()).callTool({ name: 'list_sources', arguments: {} });
         expect(r.isError).toBeFalsy();
         expect(r.structuredContent).toEqual({
@@ -61,6 +79,23 @@ describe('mcp server', () => {
                 { name: 'prometheus-production', kind: 'prometheus', default: true, restricted: false },
                 { name: 'loki-platform', kind: 'loki', default: false, restricted: true },
             ],
+            opsMarts: ['ops_marts.ops.fills_hourly', 'ops_marts.ops.queue_depth'],
         });
+        expect(queries).toHaveLength(1);
+        expect(queries[0]?.sql).toMatch(/information_schema\.tables/);
+        expect(queries[0]?.sql).not.toMatch(/\bpg_/i);
+        expect(queries[0]?.params).toEqual(['ops_marts']);
+    });
+
+    it('list_sources is an error result, not a partial list, when the engine fails', async () => {
+        const failing: EngineClient = {
+            query: async () => {
+                throw new EngineError('could not reach the Federation Engine', undefined);
+            },
+        };
+        const r = await (await connect(failing)).callTool({ name: 'list_sources', arguments: {} });
+        expect(r.isError).toBe(true);
+        expect(r.structuredContent).toBeUndefined();
+        expect(JSON.stringify(r.content)).toContain('could not reach the Federation Engine');
     });
 });

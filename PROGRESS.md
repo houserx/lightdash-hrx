@@ -474,3 +474,49 @@ docs/eng-1799/telemetry-mcp.md
   without a token got 401 + challenge. 1 JWKS fetch in total; SIGTERM exit 0. The 8 acceptance files so far
   (37 tests), unit tests (35) and typecheck all pass.
 - 2026-11-08T16:05:51Z supervisor: mcp-streamable-http-transport passed the gate in round 1
+
+### mcp-tool-list-sources (2026-11-08)
+
+- `list_sources` now returns `{ sources: [{name, kind, default, restricted}], opsMarts: ["ops_marts.<schema>.<table>"] }`,
+  in both the structured and the text (JSON) content. `opsMarts` is sorted and de-duplicated. If the engine call
+  fails, the tool returns an `isError` result (`Could not list the Ops Marts: …`), never a partial list without
+  `opsMarts`.
+- New `src/engine/client.ts`: `createEngineClient(config.engine)` returns an `EngineClient`
+  (`query(sql, params) → {columns, rows}`). Every call opens a **new `pg.Client`**, runs one statement with bind
+  parameters (extended protocol), then calls `end()` in `finally`. It has a 10 s connect timeout and swallows idle
+  `error` events. Failures throw `EngineError` (`.code` = SQLSTATE when the engine sent one). Driver-level failures
+  with no SQLSTATE get the fixed message "could not reach the Federation Engine", so host, user and password never
+  reach the client.
+  - **`mcp-engine-session` adds the two SETs here** (`SET hrx.identity = '<token>'`, `SET statement_timeout = …`) on
+    the same client, before the query. The token needs the mapped user, so for now it can't be minted.
+  - `mcp-engine-error-mapping` maps `EngineError.code`.
+  - CONTRACTS §2 says Ops Marts need only "a valid login", so running the catalog query without an identity is not a
+    hole in the meantime.
+- SQL: `SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = $1 AND
+  table_schema <> 'information_schema' ORDER BY …`, with `$1 = 'ops_marts'`.
+  - Decision: DataFusion lists its own `information_schema` views under every catalog, and those are not Ops Marts,
+    so they are excluded in the SQL and again client-side (rows from other catalogs are dropped too).
+  - **Never write `pg_` anywhere in this SQL**, not even in a `NOT IN ('pg_catalog')`: the acceptance test rejects
+    `/\bpg_/i`.
+- `createMcpServer(config, deps?)` takes `Partial<McpServerDeps>` (`{ engine }`). The default is the real engine
+  client. Unit tests inject a fake `EngineClient`. Later tools should take the engine from here too. `index.ts`
+  exports `createEngineClient`, `EngineError`, `EngineClient`, `EngineResult`, `McpServerDeps`, `OPS_MARTS_CATALOG`
+  and `listOpsMarts`.
+  - `listSources(config, engine)` is now async.
+- Unit tests in `src/mcp/server.test.ts`:
+  - `list_sources` with a fake engine: the result shape, the SQL (`information_schema`, no `pg_`), the parameter
+    `['ops_marts']`, and filtering out other catalogs and `information_schema`.
+  - The engine-failure path returns `isError` with no structured content.
+- Tested as a user: `../tmp/list-sources-ut/run.mts` (run it with `node_modules/.bin/tsx run.mts <pkg dir> [down]`; it
+  must be `.mts` for top-level await). It starts `dist/main.js` against the acceptance fake engine (imported
+  read-only) and a local JWKS server, then connects the SDK streamable-HTTP client with an RS256 bearer.
+  - 0 engine connections at startup.
+  - `tools/list` shows `list_sources` with `{type:"object"}` and `readOnlyHint`.
+  - The call returned all 3 configured sources with their flags, and `opsMarts` `[ops_marts.ops.fills_hourly,
+    ops_marts.ops.queue_depth]` (the `information_schema` row was dropped).
+  - The engine saw one extended-protocol query with param `ops_marts` and no `pg_`. The connection was closed
+    afterwards: 0 open, 1 in total.
+  - With the engine port unreachable, the call returned `isError` "could not reach the Federation Engine".
+  - SIGTERM exits 0.
+  - The 9 acceptance files so far (40 tests), unit tests (36) and typecheck all pass.
+- 2026-11-08T16:09:56Z supervisor: mcp-tool-list-sources passed the gate in round 1
