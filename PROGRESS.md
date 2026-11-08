@@ -2062,3 +2062,17 @@ token verification for a *valid* token, which feature 39 then hardens.
   audit::eng_audit_browser_authorization. Clippy -D warnings (tmp/rustup 1.99.1) is clean, and
   audit_browser.rs is rustfmt-clean.
 - 2026-11-08T22:30:51Z supervisor: eng-audit-browser-by-ticket-and-user passed the gate in round 1
+- eng-audit-browser-authorization (security): no code change was needed. The check was already
+  built in `audit_browser::browse` during eng-audit-browser-by-month. The bearer is verified with
+  `identity::verify` (signature, expiry) and fails with 401. A missing `attrs.platform_read` fails
+  with 403 "the audit browser needs attrs.platform_read". Both checks run before any parameter
+  parsing or store Query.
+  Tested as a user: `../tmp/audit-auth/run.sh <out>` (ports 59701-59705). It runs the engine
+  against the Query-only DynamoDB stand-in. With curl on GET /v1/audit?month=2026-10:
+  - No bearer gave 401, and so did `garbage`, a token that expired 10 min ago, and a token
+    signed with the wrong secret.
+  - A valid token without platform_read gave 403 naming platform_read. Up to this point the
+    store had received 0 Queries.
+  - A token with platform_read gave 200 with 25 items, from 1 Query.
+  The check `audit::eng_audit_browser_authorization` passes.
+- 2026-11-08T22:32:18Z supervisor: eng-audit-browser-authorization passed the gate in round 1
