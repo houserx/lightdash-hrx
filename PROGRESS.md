@@ -858,3 +858,23 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Turning shadow off mid-firing sent the alert to all three at the next group_interval. Its resolve also went out for real.
   - Next (alert-shadow-report): shadow entries are in `alert_notifications` with `status = 'shadow'`, and `alerts[]` holds the rule uuid, fingerprint and status.
 - 2026-11-08T22:20:27Z supervisor: alert-shadow-no-notify passed the gate in round 1
+- alert-shadow-compare (round 1) — 2026-11-08
+  - Changed:
+    - New `packages/common/src/alerting/shadowRun.ts`, exported from the alerting index. It holds `compareShadowRun` (CONTRACTS 1, as specified) and `parseGrafanaStateHistory`.
+    - The Grafana frame is read by field name: `time` and `line` are required, and the `labels` column is ignored. A firing is a line whose `current` starts with `Alerting`. Finding labels come from `line.labels`. `line` may be an object or a JSON string, and `time` may be epoch ms or an ISO string.
+    - Matching is greedy in time order. Each Grafana firing takes the earliest unmatched shadow `firing` of the same rule name within `toleranceMs`. This gives a one-to-one match and the maximum number of matches. Events before `since` are dropped on both sides.
+    - `expected` and `reason` come from `expectedDifferences`, matched on `(ruleName, kind)`. `unexpectedCount` counts the missing and extra findings that aren't expected.
+    - New unit tests in `shadowRun.test.ts` (9).
+  - Decisions (gaps in CONTRACTS, read narrowly):
+    - Matched entries are findings with `expected: true`, plus `lightdashAt` and `deltaMs`. Their `at` is Grafana's time. Missing findings carry Grafana's time and labels. Extra findings carry the shadow event's time and labels.
+    - A malformed frame, an unparseable time, a bad `since` or a negative tolerance throws `ParameterError` (statusCode 400). alert-shadow-report can let it propagate to get its 400.
+  - Tested:
+    - After init, the check passes (2 passed, 5 skipped), and the whole ascode-shadow.accept.ts passes 7/7. shadowRun.test.ts passes 9/9. common tsc, oxlint and oxfmt are clean.
+    - As a user: from packages/backend, `require('@lightdash/common')` on the built package, I ran a Grafana frame through `compareShadowRun`.
+      - The pg_cron firing matched with a 4.5 min delta.
+      - ALB was missing with expected false.
+      - Security group changed was missing with expected true and its reason. Support queue stuck was extra with expected true.
+      - unexpectedCount was 1.
+      - A frame without `schema` threw ParameterError 400.
+  - Next (alert-shadow-report): set the shadow event `at` to when the series started firing, as CONTRACTS 2 says. Use `ruleName` for the rule's name, because it is matched against Grafana's `ruleTitle`.
+- 2026-11-08T22:24:07Z supervisor: alert-shadow-compare passed the gate in round 1

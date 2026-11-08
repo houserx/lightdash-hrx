@@ -16,3 +16,4 @@ export * from './alertRules';
 export * from './contactPoints';
 export * from './notificationRoutes';
 export * from './notifications';
+export * from './shadowRun';
