@@ -82,11 +82,18 @@ const LogStreamDetails: FC<{ line: LogStreamLine }> = ({ line }) => {
     );
 };
 
+/** A line's labels as `key=value` pairs, in model order. */
+const labelsText = (line: LogStreamLine): string =>
+    Object.entries(line.labels)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(' ');
+
 type RowProps = {
     line: LogStreamLine;
     index: number;
     start: number;
     expanded: boolean;
+    showLabels: boolean;
     onToggle: (id: string) => void;
     measureRef: (node: Element | null) => void;
 };
@@ -96,10 +103,12 @@ const LogStreamRow: FC<RowProps> = ({
     index,
     start,
     expanded,
+    showLabels,
     onToggle,
     measureRef,
 }) => {
     const toggle = () => onToggle(line.id);
+    const inlineLabels = showLabels ? labelsText(line) : null;
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
         event.preventDefault();
@@ -140,6 +149,18 @@ const LogStreamRow: FC<RowProps> = ({
                 >
                     {timestampText(line)}
                 </Text>
+                {inlineLabels !== null && (
+                    <Text
+                        data-testid="log-stream-labels"
+                        className={classes.inlineLabels}
+                        ff="monospace"
+                        fz="xs"
+                        c="dimmed"
+                        title={inlineLabels}
+                    >
+                        {inlineLabels}
+                    </Text>
+                )}
                 <Text
                     data-testid="log-stream-line"
                     className={classes.line}
@@ -157,7 +178,8 @@ const LogStreamRow: FC<RowProps> = ({
 /**
  * A log stream: one row per line, newest or oldest first as the model says.
  * Only the rows in view (plus overscan) are in the page. Clicking a row
- * toggles its details: every label as key and value.
+ * toggles its details: every label as key and value. With the chart's
+ * "show labels" on, each row also shows its labels inline as `key=value`.
  */
 export const LogStreamView: FC<Props> = ({ model, height }) => {
     const total = model.lines.length;
@@ -233,6 +255,7 @@ export const LogStreamView: FC<Props> = ({ model, height }) => {
                                     index={item.index}
                                     start={item.start}
                                     expanded={expandedIds.has(line.id)}
+                                    showLabels={model.showLabels}
                                     onToggle={toggleRow}
                                     measureRef={virtualizer.measureElement}
                                 />

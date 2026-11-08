@@ -75,6 +75,16 @@
     white-space: nowrap;
 }
 
+/* "Show labels": the line's key=value labels between the timestamp and the line, cut short to keep one row. */
+.inlineLabels {
+    flex: 0 1 auto;
+    max-width: 40%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .line {
     flex: 1 1 auto;
     overflow: hidden;

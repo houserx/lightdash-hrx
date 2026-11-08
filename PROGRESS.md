@@ -508,3 +508,23 @@ should add a dated line here per feature.
   `log-stream-filter`: keep the expanded set keyed by `line.id`. Do not reset it on filter changes unless the spec says
   to.
 - 2026-11-08T19:00:22Z supervisor: viz-log-stream-expand-row passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-show-labels (session)
+
+- **What.** In `packages/frontend/src/components/LogStream/LogStreamView.tsx`, when `model.showLabels` is true each row's
+  header gets a `log-stream-labels` `Text` between the timestamp and the line, holding the labels as space-separated
+  `key=value` pairs in model order (`labelsText`), dimmed monospace, with the full text as `title`. It stays on the one
+  header line: `.inlineLabels` in the CSS module is `nowrap` + ellipsis, `max-width: 40%`, so `ROW_HEIGHT` and
+  `estimatedRowHeight` are unchanged. With `showLabels` off (the default) nothing is rendered. Clicking the labels
+  still toggles the row's details (they sit inside the clickable header).
+- **Steps 1–2 (config panel toggle).** No log stream config UI exists yet; `viz-log-stream-config-panel` adds the
+  "Show labels" toggle. The view reads only the model field (`showLabels`, from `@lightdash/visualization` config,
+  default false), so the panel only has to set `showLabels` on the chart config.
+- **Tested as a user.** No app mounts the view yet, so I rendered `FIVE_LOGS` with `showLabels: true` in a throwaway
+  vitest file (deleted): each of the 5 headers read level-bar, timestamp, labels, line, with labels like
+  `app=cache namespace=synthetic pod=cache-1`; clicking a labels cell opened that row's details. After `bash ./init.sh`
+  the check passes 2/2; log-stream-view (3/3), virtualised (1/1), level-bar (2/2), expand-row (1/1) still pass.
+  Frontend tsc, oxlint, oxfmt clean.
+- **For the next sessions.** `log-stream-wrap-lines`: when wrapping, consider letting `.inlineLabels` wrap too or keep
+  it capped; it is a flex child of `.header`, which currently has a fixed height.
+- 2026-11-08T19:02:52Z supervisor: viz-log-stream-show-labels passed the gate in round 1
