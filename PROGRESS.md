@@ -653,3 +653,34 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 3/3, unit tests pass (51), typecheck is clean, and the same 13 acceptance files pass as
   before the change. The 40 failing files belong to unbuilt features.
 - 2026-11-08T16:24:23Z supervisor: mcp-user-attributes passed the gate in round 1
+
+## mcp-unknown-user-no-tools (2026-11-08)
+
+- `src/mcp/server.ts`, `serveMcpRequest`: the POST body is now read before the transport sees it (new
+  `src/mcp/requestBody.ts`, 4 MiB like the SDK, 413 over that) and handed over as `parsedBody`, which the SDK
+  supports. If the body has a `tools/list` or `tools/call` request, the Okta claims are mapped to the Lightdash
+  user first, once per request: the gate and the engine session share one memoised resolver. If the mapping fails,
+  the request goes to `createNoToolsServer(reason)`. That server has the same name and the tools capability, its
+  `tools/list` returns `[]`, and every `tools/call` returns `isError` with "No tools are available: <fixed
+  UserMappingError sentence>". This happens before any engine connection. The cases covered are no email, no
+  active user with that email (unknown or deactivated), and Lightdash unreachable or non-2xx. Lightdash being
+  down fails closed too. Errors that are not a `UserMappingError` get a generic sentence.
+- `initialize`, `ping` and notifications still cost no Lightdash call. A body that is not JSON is passed to the
+  transport as raw text, and the transport answers 400 -32700. The 406 and 415 checks still run in the transport
+  as before.
+- Decision: I chose to read the body in advance rather than wrap McpServer's tools handlers. Wrapping them would
+  need SDK private fields (`_requestHandlers`, `_registeredTools`). The cost is that each tools/list now does a
+  Lightdash lookup (2 requests), until `mcp-user-mapping-cache` adds the TTL cache. That feature should cache
+  inside `createLightdashUserResolver`, or wrap `context.users`; the gate picks it up either way.
+- Unit tests: `src/mcp/requestBody.test.ts` (new) and a no-tools-server case in `src/mcp/server.test.ts`. 58 unit
+  tests pass and typecheck is clean.
+- Tested as a user: `../tmp/unknown-user-ut/run.mts`. Run it from the repo root with
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It starts real `dist/main.js` with the SDK
+  streamable-HTTP client, the fake Lightdash and the fake engine.
+  - The unknown email, the deactivated user and the opaque sub with no email each got: ping ok, `tools: []`, and
+    `list_sources` `isError` with the reason. The engine connection count stayed at 0.
+  - initialize plus ping made 0 Lightdash requests.
+  - The known user then got `["list_sources"]`, a successful call, and 1 engine connection. SIGTERM exits 0.
+- Results: the check passes 5/5. 14 acceptance files pass: the earlier 13 plus this one. The 39 failing files
+  belong to unbuilt features.
+- 2026-11-08T16:31:32Z supervisor: mcp-unknown-user-no-tools passed the gate in round 1

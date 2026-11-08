@@ -3,7 +3,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../config.js';
 import { EngineError, type EngineClient } from '../engine/client.js';
-import { MCP_SERVER_NAME, createMcpServer } from './server.js';
+import { MCP_SERVER_NAME, createMcpServer, createNoToolsServer } from './server.js';
 
 const ENV: Record<string, string> = {
     MCP_PUBLIC_URL: 'https://telemetry-mcp.example.test',
@@ -97,5 +97,21 @@ describe('mcp server', () => {
         expect(r.isError).toBe(true);
         expect(r.structuredContent).toBeUndefined();
         expect(JSON.stringify(r.content)).toContain('could not reach the Federation Engine');
+    });
+
+    it('the no-tools server lists no tools and refuses every call with the reason', async () => {
+        const server = createNoToolsServer('Your access token has no email to match a Lightdash user');
+        const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+        await server.connect(serverSide);
+        const client = new Client({ name: 'unit-test', version: '0.0.0' });
+        await client.connect(clientSide);
+        clients.push(client);
+        expect(client.getServerVersion()?.name).toBe(MCP_SERVER_NAME);
+        expect((await client.listTools()).tools).toEqual([]);
+        for (const name of ['list_sources', 'no_such_tool']) {
+            const r = await client.callTool({ name, arguments: {} });
+            expect(r.isError).toBe(true);
+            expect(JSON.stringify(r.content)).toContain('no email');
+        }
     });
 });
