@@ -89,6 +89,30 @@ it('switches between SQL and Investigate on a federation project', async () => {
     expect(screen.getByTestId('sql-content-panel')).toBeInTheDocument();
 });
 
+it('generates SQL from the picked source in Investigate', async () => {
+    projectQuery.data = {
+        projectUuid: 'project-uuid',
+        warehouseConnection: {
+            type: WarehouseTypes.POSTGRES,
+            flavor: 'federation',
+        },
+    };
+    renderSqlRunner();
+
+    fireEvent.click(await screen.findByRole('radio', { name: 'Investigate' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Tempo' }));
+    fireEvent.change(screen.getByLabelText('TraceQL'), {
+        target: { value: '{ status = error }' },
+    });
+    expect(
+        screen.getByLabelText<HTMLTextAreaElement>('SQL', {
+            selector: 'textarea',
+        }).value,
+    ).toBe(
+        "SELECT * FROM traceql('{ status = error }', ${ld.parameters.__from}, ${ld.parameters.__to}, 20)",
+    );
+});
+
 it('has no Investigate mode on a plain Postgres project', async () => {
     projectQuery.data = {
         projectUuid: 'project-uuid',

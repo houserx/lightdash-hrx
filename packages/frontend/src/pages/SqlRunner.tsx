@@ -1,5 +1,5 @@
 import { getFieldQuoteChar, isFederationProject } from '@lightdash/common';
-import { Group, Stack } from '@mantine/core';
+import { Box, Group, Stack } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { Provider } from 'react-redux';
 import { useLocation, useNavigate, useParams } from 'react-router';
@@ -11,6 +11,7 @@ import {
     resetChartState,
     setChartConfig,
 } from '../components/DataViz/store/actions/commonChartActions';
+import { InvestigateEditor } from '../features/investigate/components/InvestigateEditor';
 import {
     SqlRunnerModeSwitch,
     type SqlRunnerMode,
@@ -291,10 +292,10 @@ const SqlRunner = ({
                         </Group>
                     )}
                     {isInvestigating ? (
-                        <SuboptimalState
-                            title="Investigate"
-                            description="Query metrics, logs, traces and the Platform Database of this Operations Project."
-                        />
+                        <Box px="md" py="sm">
+                            {/* Running the generated SQL comes with the Investigate results. */}
+                            <InvestigateEditor onChange={() => {}} />
+                        </Box>
                     ) : (
                         <ContentPanel
                             toolbarActions={

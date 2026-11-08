@@ -20,6 +20,13 @@ const stripLiteralsAndComments = (sql: string): string =>
 export const isAuditedSql = (sql: string): boolean =>
     PLATFORM_FUNCTION.test(stripLiteralsAndComments(sql));
 
+/**
+ * Wraps a Platform Database statement in `platform_query(sql)` (CONTRACTS §1.1). The statement
+ * is passed as one SQL string literal with single quotes doubled; it takes no source argument.
+ */
+export const buildPlatformQuerySql = (statement: string): string =>
+    `SELECT * FROM platform_query('${statement.replace(/'/g, "''")}')`;
+
 const AUDIT_DESCRIPTION_REQUIRED = /audited query requires a description/i;
 
 /**

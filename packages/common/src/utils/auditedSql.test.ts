@@ -1,4 +1,8 @@
-import { isAuditDescriptionRequiredError, isAuditedSql } from './auditedSql';
+import {
+    buildPlatformQuerySql,
+    isAuditDescriptionRequiredError,
+    isAuditedSql,
+} from './auditedSql';
 
 describe('isAuditedSql', () => {
     it('ignores platform_* text inside string literals and comments', () => {
@@ -27,5 +31,13 @@ describe('isAuditDescriptionRequiredError', () => {
                 'permission denied for table orders (SQLSTATE 42501)',
             ),
         ).toBe(false);
+    });
+});
+
+describe('buildPlatformQuerySql', () => {
+    it('doubles single quotes and is itself an Audited Query', () => {
+        const sql = buildPlatformQuerySql("select 'it''s'");
+        expect(sql).toBe("SELECT * FROM platform_query('select ''it''''s''')");
+        expect(isAuditedSql(sql)).toBe(true);
     });
 });

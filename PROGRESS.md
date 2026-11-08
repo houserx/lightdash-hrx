@@ -1214,3 +1214,26 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     No browser/backend available (no Docker). Feature check 2/2, SqlRunner.navigation 3/3
     (regression). frontend tsc clean; oxfmt/oxlint clean on changed files.
 - 2026-11-08T20:41:08Z supervisor: ldq-investigate-availability passed the gate in round 1
+- ldq-investigate-source-editors (round 1):
+  - New `packages/frontend/src/features/investigate/components/InvestigateEditor.tsx`:
+    `InvestigateEditor({onChange})`. Source picker is a SegmentedControl (aria-label "Source",
+    radios Prometheus / Loki / CloudWatch metrics / CloudWatch Logs / Tempo / Platform Database,
+    default Prometheus). Editors: "PromQL", "LogQL" + "Metric query" checkbox (logql vs
+    logql_metric), "TraceQL", "Platform SQL"; optional "Source name" for every source but
+    Platform (platform_query takes no source, CONTRACTS §1.1). SQL comes from common
+    `buildTelemetrySql`; onChange gets `{kind, sql}` (platform: `{kind:'platform', statement,
+    sql}`), only when the generated SQL changes and is non-empty.
+  - New common `buildPlatformQuerySql(statement)` in `utils/auditedSql.ts` (quotes doubled).
+  - `pages/SqlRunner.tsx`: the Investigate placeholder is replaced by `<InvestigateEditor>`;
+    onChange is a no-op until the results/run features land.
+  - Next sessions: CloudWatch metrics / CloudWatch Logs radios exist but show "The CloudWatch
+    editor is not available yet." (ldq-investigate-cloudwatch-editors fills them in; emit
+    `cloudwatch` / `cloudwatch_logs` kinds from the same `change` memo). The "SQL" textarea is
+    readOnly and has no `initialSql` yet; ldq-investigate-sql-editable must make it editable,
+    keep manual edits, and accept `initialSql`. Trap: on the SqlRunner page the mode radio is
+    also labelled "SQL", so page tests must use `getByLabelText('SQL', {selector: 'textarea'})`.
+  - Tested: no browser/backend (no Docker). The page test `SqlRunner.investigate.test.tsx` now
+    renders the real SqlRunner page, switches to Investigate, picks Tempo, types TraceQL and sees
+    the traceql(...) SQL (3/3). Feature check 6/6; common auditedSql.test.ts 5/5. frontend tsc
+    clean; oxfmt/oxlint clean on changed files.
+- 2026-11-08T20:44:32Z supervisor: ldq-investigate-source-editors passed the gate in round 1
