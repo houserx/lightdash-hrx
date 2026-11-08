@@ -1177,3 +1177,40 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 3/3. Acceptance: 29 files pass and 24 fail. All 24 failures are unbuilt features (ask_data,
   platform_*, docs, dockerfile, readme, structured-logs, tool-catalog, write_preview and others).
 - 2026-11-08T17:56:18Z supervisor: mcp-tool-alert-history passed the gate in round 1
+
+## mcp-tool-platform-schema (2026-11-08)
+
+- New `src/tools/platformSchema.ts`: `platform_schema` takes optional `table_schema`, `table_name` and `description`.
+  `buildPlatformSchemaQuery(args)` returns `{kind, sql, params, description}`:
+  - With no `table_name`, it builds `SELECT * FROM platform_tables()` and returns `{tables:[...], rowCount, truncated}`.
+  - With `table_name`, it builds `SELECT * FROM platform_columns($1, $2)` with params `[table_schema ?? 'public',
+    table_name]` and returns `{columns:[...], rowCount, truncated}`.
+  - It runs as an Audited Query: `engine.query(..., { maxRows, audit: { description } })`. A non-blank caller
+    `description` is sent unchanged. A missing or blank one gets a generated one (Contract assumption 6):
+    "MCP platform_schema: list Platform Database tables" or "...: describe the columns of one Platform Database table".
+    The generated text never contains the table name, so a table name can never end up in an audit description.
+  - Refused before the engine: `table_schema` without `table_name`, a blank `table_name`, a blank `table_schema`, and
+    non-string values.
+    - Decision: listing tables of one schema would need client-side filtering after the row cap, so a call with
+      only `table_schema` is refused with a message that says to give both arguments or neither.
+  - `platformSchemaResult(kind, result, maxBytes)` reuses `capTableBytes` on the table with `columns: []`. Then it
+    swaps `"columns":[],"rows":` for `"<kind>":`, which is never longer, so the output cap holds. It is a few bytes more
+    conservative than exact.
+  - The tool does not check `platform_read` itself. The engine enforces it (§1.2), and a 42501 comes back through
+    `failureResult` as "Access denied: ... Platform Database catalog read ...".
+- `src/mcp/server.ts`: `platform_schema` is registered after `alert_history`.
+- Unit tests: `src/tools/platformSchema.test.ts`. 238 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/platform-schema-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 19001 with
+  an RS256 Okta token and a fake engine that enforces `platform_read` and a non-blank description.
+  - tools/list showed the 3 properties and readOnlyHint true.
+  - A call with no arguments returned 3 tables from `platform_tables()` with params `[]`.
+  - `ops`/`jobs` returned columns, with the engine receiving `platform_columns($1, $2)` and params `["ops","jobs"]`.
+  - A call with only `table_name` sent params `["public","widgets"]`.
+  - Every identity token had `audit.source` mcp and a generated description. A caller's description arrived verbatim.
+  - The two refusals made 0 engine calls.
+  - A user without `platform_read` got an isError 42501 "Access denied" result, and no secret leaked. SIGTERM exited 0.
+- Results: the check passes 5/5. Acceptance: 30 files pass and 23 fail. All 23 failures are unbuilt features
+  (ask_data, platform_query, platform_explain, write_preview, docs, dockerfile, readme, structured-logs, tool-catalog
+  and others).
+- 2026-11-08T18:01:07Z supervisor: mcp-tool-platform-schema passed the gate in round 1
