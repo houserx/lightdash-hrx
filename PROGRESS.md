@@ -1115,3 +1115,18 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     New telemetrySql.test.ts 5/5. Backend "reserved time parameters" cases 3/3 using the
     builder. common tsc clean; oxfmt/oxlint clean on changed files.
 - 2026-11-08T20:24:34Z supervisor: ldq-investigate-sql-promql passed the gate in round 1
+- ldq-investigate-sql-logql (round 1):
+  - `packages/common/src/utils/telemetrySql.ts`: `TelemetryQuery` gains `logql`
+    (`{query, limit?, direction?, source?}`) and `logql_metric` (`{query, source?}`).
+    LogQL log -> `logql('<q>', __from, __to, <limit>, '<direction>'[, '<source>'])`; limit and
+    direction are ALWAYS written out (defaults `LOGQL_DEFAULT_LIMIT` 1000 and
+    `LOGQL_DEFAULT_DIRECTION` 'backward', exported) so they stay visible/editable in the SQL, as
+    the acceptance test requires. A non-positive/non-integer limit or a direction other than
+    forward/backward throws (they are interpolated into SQL). Metric -> `logql_metric('<q>',
+    __from, __to, __interval[, '<source>'])` (CONTRACTS §1.1). The `never` default now narrows
+    the whole query object.
+  - Tested: no Investigate UI yet; surface is the exported common function. Feature check 3/3,
+    promql acceptance 3/3 (regression), telemetrySql.test.ts 10/10 (5 new: defaults, quote
+    escaping + source, bad limit, bad direction, metric with source). common tsc clean;
+    oxfmt/oxlint clean (use `pnpm exec`, plain `npx` fails on the devEngines node pin).
+- 2026-11-08T20:26:44Z supervisor: ldq-investigate-sql-logql passed the gate in round 1
