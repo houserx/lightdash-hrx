@@ -33,6 +33,8 @@ export type ActiveAlert = {
     annotations: Record<string, string>;
     /** When the series entered its current (notifying) state. */
     startsAt: Date;
+    /** Of a shadow rule: recorded in the send log, never sent. */
+    shadow: boolean;
 };
 
 /** A series that was sent as firing and has since stopped notifying. */
@@ -46,6 +48,8 @@ export type NotificationGroupState = {
     projectUuid: string;
     contactPointSlug: string;
     groupKey: string;
+    /** A group of shadow rules' alerts, kept apart from real groups. */
+    shadow: boolean;
     lastSentAt: Date;
     /** `<ruleUuid>:<fingerprint>` → the status it was last sent with. */
     sentAlerts: Record<string, 'firing' | 'resolved'>;
@@ -64,7 +68,7 @@ export type NotificationLogEntry = {
     contactPointUuid: string;
     integrationType: string;
     groupKey: string;
-    status: 'sent' | 'failed';
+    status: AlertNotificationStatus;
     attempts: number;
     alerts: { ruleUuid: string; fingerprint: string; status: string }[];
     payload: unknown;
@@ -77,6 +81,7 @@ type DbGroup = {
     project_uuid: string;
     contact_point_slug: string;
     group_key: string;
+    shadow: boolean;
     last_sent_at: Date;
     sent_alerts: Record<string, 'firing' | 'resolved'>;
 };
@@ -86,6 +91,7 @@ const toGroupState = (row: DbGroup): NotificationGroupState => ({
     projectUuid: row.project_uuid,
     contactPointSlug: row.contact_point_slug,
     groupKey: row.group_key,
+    shadow: row.shadow,
     lastSentAt: row.last_sent_at,
     sentAlerts: row.sent_alerts,
 });
@@ -135,7 +141,7 @@ const toNotification = (row: DbNotification): AlertNotification => {
 export class AlertNotificationModel {
     constructor(private readonly database: Knex) {}
 
-    /** Every notifying series of non-shadow rules, across projects. */
+    /** Every notifying series, across projects. */
     async listActiveAlerts(): Promise<ActiveAlert[]> {
         const rows = await this.database(`${AlertInstancesTableName} as i`)
             .join(
@@ -144,8 +150,6 @@ export class AlertNotificationModel {
                 'i.alert_rule_uuid',
             )
             .whereIn('i.state', NOTIFYING_ALERT_STATES)
-            // Shadow rules never notify (alert-shadow-no-notify logs them).
-            .where('r.shadow', false)
             .orderBy([
                 { column: 'r.project_uuid' },
                 { column: 'i.alert_rule_uuid' },
@@ -159,6 +163,7 @@ export class AlertNotificationModel {
                     labels: Record<string, string>;
                     annotations: Record<string, string>;
                     state_since: Date;
+                    shadow: boolean;
                 }[]
             >(
                 'r.project_uuid',
@@ -167,6 +172,7 @@ export class AlertNotificationModel {
                 'i.labels',
                 'i.annotations',
                 'i.state_since',
+                'r.shadow',
             );
         return rows.map((row) => ({
             projectUuid: row.project_uuid,
@@ -175,6 +181,7 @@ export class AlertNotificationModel {
             labels: row.labels,
             annotations: row.annotations,
             startsAt: row.state_since,
+            shadow: row.shadow,
         }));
     }
 
@@ -182,7 +189,8 @@ export class AlertNotificationModel {
      * The given series as resolved alerts, read from the state history: the
      * labels and time of their last transition out of a notifying state
      * (`endsAt`) and of the last transition into one before it (`startsAt`).
-     * Series with no such transition, or of shadow rules, are left out.
+     * Series with no such transition are left out. `shadow` is the rule's
+     * current flag.
      */
     async listResolvedAlerts(
         keys: { ruleUuid: string; fingerprint: string }[],
@@ -198,6 +206,7 @@ export class AlertNotificationModel {
                 annotations: Record<string, string>;
                 starts_at: Date | null;
                 ends_at: Date;
+                shadow: boolean;
             }[];
         }>(
             `
@@ -219,7 +228,7 @@ export class AlertNotificationModel {
             )
             SELECT
                 e.project_uuid, e.alert_rule_uuid, e.fingerprint, e.labels,
-                e.ends_at,
+                e.ends_at, r.shadow,
                 COALESCE(i.annotations, r.annotations) AS annotations,
                 (
                     SELECT max(s.at)
@@ -235,7 +244,6 @@ export class AlertNotificationModel {
             LEFT JOIN ${AlertInstancesTableName} i
                 ON i.alert_rule_uuid = e.alert_rule_uuid
                 AND i.fingerprint = e.fingerprint
-            WHERE r.shadow = false
             ORDER BY e.project_uuid, e.alert_rule_uuid, e.fingerprint
             `,
             [
@@ -258,6 +266,7 @@ export class AlertNotificationModel {
             annotations: row.annotations,
             startsAt: row.starts_at ?? row.ends_at,
             endsAt: row.ends_at,
+            shadow: row.shadow,
         }));
     }
 
@@ -299,6 +308,7 @@ export class AlertNotificationModel {
         projectUuid: string;
         contactPointSlug: string;
         groupKey: string;
+        shadow: boolean;
         previous: NotificationGroupState | undefined;
         sentAlerts: Record<string, 'firing' | 'resolved'>;
         at: Date;
@@ -320,11 +330,17 @@ export class AlertNotificationModel {
                 project_uuid: args.projectUuid,
                 contact_point_slug: args.contactPointSlug,
                 group_key: args.groupKey,
+                shadow: args.shadow,
                 last_sent_at: args.at,
                 sent_alerts: sentAlerts,
                 created_at: args.at,
             })
-            .onConflict(['project_uuid', 'contact_point_slug', 'group_key'])
+            .onConflict([
+                'project_uuid',
+                'contact_point_slug',
+                'group_key',
+                'shadow',
+            ])
             .ignore()
             .returning('alert_notification_group_uuid');
         return inserted.length === 1;

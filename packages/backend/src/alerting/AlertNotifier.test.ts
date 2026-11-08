@@ -24,6 +24,7 @@ const alert = (
     labels: { alertname: 'Disk almost full', instance, ...labels },
     annotations: {},
     startsAt,
+    shadow: false,
 });
 
 const resolved = (instance: string, endsAt: Date): ResolvedAlert => ({
@@ -183,6 +184,53 @@ describe('groupAlerts', () => {
             ['ops', ['resolved', 'firing']],
             ['pager', ['firing']],
         ]);
+    });
+
+    it("keeps shadow rules' alerts in groups of their own", () => {
+        const groups = groupAlerts(
+            'project',
+            { contactPoint: 'ops', groupBy: ['alertname'] },
+            [alert('db-1'), { ...alert('db-2'), shadow: true }, alert('db-3')],
+        );
+        expect(
+            groups.map((group) => [
+                group.groupKey,
+                group.shadow,
+                group.alerts.map((a) => a.labels.instance),
+            ]),
+        ).toEqual([
+            ['root:{alertname="Disk almost full"}', false, ['db-1', 'db-3']],
+            ['root:{alertname="Disk almost full"}', true, ['db-2']],
+        ]);
+    });
+
+    it('resolves a shadow alert only in the shadow group that sent it', () => {
+        const groups = groupAlerts(
+            'project',
+            { contactPoint: 'ops', groupBy: ['alertname'] },
+            [{ ...resolved('db-1', at(60)), shadow: true }],
+            (id) =>
+                id.endsWith('true]')
+                    ? { [alertKey(alert('db-1'))]: 'firing' }
+                    : undefined,
+        );
+        expect(
+            groups.map((group) => [
+                group.shadow,
+                group.alerts.map(alertStatus),
+            ]),
+        ).toEqual([[true, ['resolved']]]);
+        expect(
+            groupAlerts(
+                'project',
+                { contactPoint: 'ops', groupBy: ['alertname'] },
+                [{ ...resolved('db-1', at(60)), shadow: true }],
+                (id) =>
+                    id.endsWith('false]')
+                        ? { [alertKey(alert('db-1'))]: 'firing' }
+                        : undefined,
+            ),
+        ).toEqual([]);
     });
 });
 

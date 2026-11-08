@@ -841,3 +841,20 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - `limit=1` returned only the newest entry.
       - Bad since, bad rule or limit=0 gave 400. An unknown rule gave 404. Outsider got 403, no session got 401, and an unknown project got 404.
 - 2026-11-08T22:14:39Z supervisor: alert-ai-history-api passed the gate in round 1
+- alert-shadow-no-notify (round 1) — 2026-11-08
+  - Changed:
+    - Notifier (`alerting/AlertNotifier.ts`): shadow rules' series are routed, grouped and timed like any other (group_wait, group_interval, repeat_interval, resolved). Each due send is written to the send log with `status: 'shadow'`, `attempts: 0`, `sentAt: null` and the payload that would have gone out, and nothing is sent. `deliver` is split into `buildDelivery` (payload + `post`), and the send path or `sendTest` calls `sendWithRetry` itself. A template that doesn't render is still logged as `shadow`, with `error` set.
+    - Model (`AlertNotificationModel.ts`): `listActiveAlerts` and `listResolvedAlerts` no longer filter out shadow rules. They return `shadow` (the rule's current flag) on every alert. Group state carries `shadow`.
+    - Migration `20261108170000_add_alert_notification_groups_shadow`: adds `alert_notification_groups.shadow` (bool, default false) and makes the unique key `(project_uuid, contact_point_slug, group_key, shadow)`. Shadow alerts never share a group with real ones, so a shadow rule can't delay, repeat or resolve a real send. Group ids in `groupAlerts` include the flag.
+  - Decisions (CONTRACTS has nothing on shadow sends):
+    - Turning shadow off while firing: the alert moves to the real group, so it is sent for real once that group is due (group_wait if new, group_interval if the group already sent). The stale shadow group is dropped without a shadow resolved entry.
+    - Turning shadow on while firing: the real group drops the alert with no resolved message (same as the alert leaving its group).
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - Regressions: notifications.accept.ts (8/8), integrations.accept.ts (6/6), contact-points.accept.ts (3/3) and db-migrations.accept.ts (1/1) pass. AlertNotifier.test.ts passes 15/15, including 2 new shadow grouping tests. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk (repo tmp/walk, removed afterwards) went through the harness HTTP API. A shadow rule and a real rule fired in the same group, routed to incident.io, email and the Slack app.
+      - Only the real rule was sent: 1 request, 1 email and 1 Slack post.
+      - The shadow rule logged 3 `shadow` firing entries (attempts 0, sentAt null).
+      - Turning shadow off mid-firing sent the alert to all three at the next group_interval. Its resolve also went out for real.
+  - Next (alert-shadow-report): shadow entries are in `alert_notifications` with `status = 'shadow'`, and `alerts[]` holds the rule uuid, fingerprint and status.
+- 2026-11-08T22:20:27Z supervisor: alert-shadow-no-notify passed the gate in round 1

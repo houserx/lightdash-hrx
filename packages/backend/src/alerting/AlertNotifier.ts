@@ -13,6 +13,9 @@
 // resolved alerts out, and send nothing when only resolved alerts are left.
 // The send is claimed in `alert_notification_groups` before anything leaves
 // the process, so concurrent or repeated flushes never send a group twice.
+// Shadow rules' alerts are grouped and timed the same way, in groups of their
+// own, but each due send is only recorded in the send log as `shadow` (with
+// the payload that would have gone out); nothing is sent.
 import {
     alertGroupKey,
     alertGroupLabels,
@@ -31,6 +34,7 @@ import {
     type AlertNotificationModel,
     type NotificationContactPoint,
     type NotificationGroupState,
+    type NotificationLogEntry,
     type ResolvedAlert,
 } from './AlertNotificationModel';
 import { buildEmailMessage, type EmailMessage } from './emailMessage';
@@ -164,6 +168,8 @@ export type NotificationGroup = {
     route: ResolvedNotificationRoute;
     contactPointSlug: string;
     groupKey: string;
+    /** Every alert is of a shadow rule: record the send, never make it. */
+    shadow: boolean;
     alerts: NotificationAlert[];
 };
 
@@ -207,14 +213,20 @@ export const isNotificationGroupDue = (
 const groupId = (
     group: Pick<
         NotificationGroupState,
-        'projectUuid' | 'contactPointSlug' | 'groupKey'
+        'projectUuid' | 'contactPointSlug' | 'groupKey' | 'shadow'
     >,
 ) =>
-    JSON.stringify([group.projectUuid, group.contactPointSlug, group.groupKey]);
+    JSON.stringify([
+        group.projectUuid,
+        group.contactPointSlug,
+        group.groupKey,
+        group.shadow,
+    ]);
 
 /**
  * Routes and groups one project's alerts through its tree. A resolved alert
  * only joins a group that last sent it as firing (`sentAlerts`, by group id).
+ * Shadow rules' alerts never share a group with other alerts.
  */
 export const groupAlerts = (
     projectUuid: string,
@@ -236,17 +248,23 @@ export const groupAlerts = (
                         projectUuid,
                         contactPointSlug: route.contactPoint,
                         groupKey,
+                        shadow: alert.shadow,
                     }),
                 )?.[alertKey(alert)] !== 'firing'
             ) {
                 return;
             }
-            const id = JSON.stringify([route.contactPoint, groupKey]);
+            const id = JSON.stringify([
+                route.contactPoint,
+                groupKey,
+                alert.shadow,
+            ]);
             const group = groups.get(id) ?? {
                 projectUuid,
                 route,
                 contactPointSlug: route.contactPoint,
                 groupKey,
+                shadow: alert.shadow,
                 alerts: [],
             };
             group.alerts.push(alert);
@@ -279,6 +297,14 @@ const postJson = async (
             response.status < 400 || response.status >= 500,
         );
     }
+};
+
+const notificationStatus = (
+    shadow: boolean,
+    error: string | null,
+): NotificationLogEntry['status'] => {
+    if (shadow) return 'shadow';
+    return error === null ? 'sent' : 'failed';
 };
 
 export class AlertNotifier {
@@ -421,6 +447,7 @@ export class AlertNotifier {
             projectUuid: group.projectUuid,
             contactPointSlug: group.contactPointSlug,
             groupKey: group.groupKey,
+            shadow: group.shadow,
             previous,
             // A resolved alert leaves the group once it is sent.
             sentAlerts: Object.fromEntries(
@@ -466,17 +493,22 @@ export class AlertNotifier {
               )
             : groupAlertsSorted;
         if (alerts.length === 0) return;
-        const { payload, attempts, error } = await this.deliver({
+        const message = this.buildDelivery({
             group,
             alerts,
             contactPoint,
             integration,
             now,
-            retry: this.deps.retry,
             generatorURL: (alert) =>
                 `${this.siteUrl()}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`,
         });
-        if (error !== null) {
+        const { payload } = message;
+        // A shadow send is only recorded; a message that can't be built is
+        // still recorded, with the reason.
+        const { attempts, error } = group.shadow
+            ? { attempts: 0, error: message.error ?? null }
+            : await sendWithRetry(message.post, this.deps.retry);
+        if (error !== null && !group.shadow) {
             Logger.warn(
                 `Alerting notification to contact point ${contactPoint.uuid} failed after ${attempts} attempt(s): ${error}`,
             );
@@ -487,7 +519,7 @@ export class AlertNotifier {
             contactPointUuid: contactPoint.uuid,
             integrationType: integration.type,
             groupKey: group.groupKey,
-            status: error === null ? 'sent' : 'failed',
+            status: notificationStatus(group.shadow, error),
             attempts,
             alerts: alerts.map((alert) => ({
                 ruleUuid: alert.ruleUuid,
@@ -518,6 +550,7 @@ export class AlertNotifier {
             labels,
             annotations: { ...TEST_ALERT_ANNOTATIONS },
             startsAt: now,
+            shadow: false,
         };
         const group: NotificationGroup = {
             projectUuid,
@@ -532,22 +565,26 @@ export class AlertNotifier {
             },
             contactPointSlug: contactPoint.slug,
             groupKey: `test:${contactPoint.slug}`,
+            shadow: false,
             alerts: [alert],
         };
         const results: ContactPointTestResult['results'] = [];
         for (const integration of contactPoint.integrations) {
             // Integrations are tried one at a time, in order.
-            // eslint-disable-next-line no-await-in-loop
-            const { error } = await this.deliver({
+            const { post } = this.buildDelivery({
                 group,
                 alerts: [alert],
                 contactPoint,
                 integration,
                 now,
-                // A test reports at once; it is not retried.
-                retry: { maxAttempts: 1, initialDelayMs: 0 },
                 generatorURL: () =>
                     `${this.siteUrl()}/projects/${projectUuid}/alerting/contact-points/${contactPoint.uuid}`,
+            });
+            // A test reports at once; it is not retried.
+            // eslint-disable-next-line no-await-in-loop
+            const { error } = await sendWithRetry(post, {
+                maxAttempts: 1,
+                initialDelayMs: 0,
             });
             results.push(
                 error === null
@@ -562,14 +599,17 @@ export class AlertNotifier {
         return this.deps.siteUrl.replace(/\/+$/, '');
     }
 
-    /** Builds one integration's message for `alerts` and sends it. */
-    private async deliver({
+    /**
+     * Builds one integration's message for `alerts`: the payload to record
+     * and `post`, which sends it. A message that can't be built has `error`
+     * and a `post` that fails with it, without retries.
+     */
+    private buildDelivery({
         group,
         alerts,
         contactPoint,
         integration,
         now,
-        retry,
         generatorURL,
     }: {
         group: NotificationGroup;
@@ -577,9 +617,8 @@ export class AlertNotifier {
         contactPoint: NotificationContactPoint;
         integration: ContactPointIntegration;
         now: Date;
-        retry: NotificationRetryPolicy;
         generatorURL: (alert: NotificationAlert) => string;
-    }): Promise<{ payload: unknown; attempts: number; error: string | null }> {
+    }): { payload: unknown; post: () => Promise<void>; error?: string } {
         const siteUrl = this.siteUrl();
         const groupLabels = alertGroupLabels(group.route, alerts[0].labels);
         let payload: unknown = null;
@@ -670,12 +709,15 @@ export class AlertNotifier {
                         getErrorMessage(e),
                         false,
                     );
-                    post = () => Promise.reject(renderError);
+                    return {
+                        payload,
+                        post: () => Promise.reject(renderError),
+                        error: renderError.message,
+                    };
                 }
             }
         }
-        const { attempts, error } = await sendWithRetry(post, retry);
-        return { payload, attempts, error };
+        return { payload, post };
     }
 
     private async postWebhook(
