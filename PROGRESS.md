@@ -954,3 +954,35 @@ token verification for a *valid* token, which feature 39 then hardens.
     version() column is named `version()`, where Postgres says `version`. (3) float8 text output
     is `0.0`, where Postgres says `0`.
 - 2026-11-08T18:58:36Z supervisor: eng-lightdash-session-compat passed the gate in round 1
+- 2026-11-08 eng-logql-streams (worker, round 1): new `src/logql.rs` registers the
+  `logql(query, start, end[, limit, direction, source])` table function (pg.rs). It returns
+  `timestamp timestamptz, line text, labels json, stream text`. Arguments are constants checked
+  at plan time: limit must be a positive integer (default 1000; 0, a negative number or NULL →
+  22023/22004) and direction is forward|backward in any case, sent in lower case (default
+  backward). Bad arguments never reach Loki. At scan time it POSTs a form to
+  `<url>/loki/api/v1/query_range` with the query unchanged, start/end as Unix-nanosecond integers,
+  and limit and direction. Each `streams` entry becomes one row. ns timestamps are truncated to µs.
+  `stream` is `series_name(labels)`, and a third entry element (structured metadata) is ignored.
+  max_rows → 54000 as for promql. A `matrix`/`vector` answer fails with 42809 and points to
+  logql_metric. Loki error bodies are plain text, so a non-JSON non-2xx body is quoted (first 500
+  chars) in the SQL error. The JSON `error`/`message` field is used when there is one.
+  - Refactor: source resolution moved out of `Promql` into `src/sources.rs` (`HttpSources::new(config,
+    kind)` / `resolve(name)` → `HttpSource {name, url, max_rows}`). promql's messages are unchanged
+    ("there is no default prometheus source…", 42809 kind mismatch, 42704 unknown). The helpers
+    `constant`, `text_argument`, `time_argument` and `UTC` in promql.rs are now `pub(crate)` for reuse.
+    logql_metric (next feature) can reuse `HttpSources(Loki)` plus promql's `result_batch`.
+  - Contract assumption (fail closed): a Loki source with non-empty `restricted_selectors` (or
+    `restricted = true`) refuses every logql call with 42501 for now, as restricted prometheus
+    sources do. eng-restricted-loki-selectors must replace this with the disjoint-selector check
+    and identity verification (see `is_restricted` in sources.rs).
+  Tested as a user: `../tmp/logql/run.sh` starts a Python Loki mock (`mock.py`, logs each form) and
+  the real engine (`engine.toml`, source loki-a), then runs queries through tokio-postgres
+  (`../tmp/pgclient` bin `sql`; psql is not permitted in the sandbox). The step-2 query gave 3
+  rows: `2025-11-08 00:00:00.123456+00 | boom 1 | {"app":"api","level":"error"} |
+  {app="api",level="error"}`, …, `careful` with level warn. Loki got the query byte-for-byte with
+  limit=1000 and direction=backward. `50, 'forward'` was sent as limit=50 and direction=forward.
+  count(*) WHERE label(labels,'level')='error' = 2. limit 0, direction 'sideways', source 'nope'
+  and a one-argument call each failed (22023/22023/42704/42883) with no request to Loki. Checks
+  sources::eng_logql_streams, promql::eng_promql_source_selection and promql::eng_max_rows_overflow
+  pass, and so do the logql/promql unit tests.
+- 2026-11-08T19:03:51Z supervisor: eng-logql-streams passed the gate in round 1

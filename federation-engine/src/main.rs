@@ -5,10 +5,12 @@
 //! sources.
 
 mod labels;
+mod logql;
 mod pg;
 mod promql;
 mod server;
 mod session;
+mod sources;
 mod transaction;
 
 use std::path::PathBuf;

@@ -54,6 +54,7 @@ use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
 use crate::labels::{label_udf, series_name_udf};
+use crate::logql::Logql;
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
 use crate::transaction::{Transaction, aborted_block, check_not_aborted};
@@ -136,6 +137,8 @@ impl PgHandlers {
             .build()
             .map_err(|e| format!("cannot build the HTTP client for sources: {e}"))?;
         let sql = Sql::new();
+        sql.ctx
+            .register_udtf("logql", Arc::new(Logql::new(config, http.clone())));
         let promql = Promql::new(config, http);
         sql.ctx
             .register_udtf("promql_instant", Arc::new(promql.clone().instant()));

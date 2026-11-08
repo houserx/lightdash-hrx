@@ -23,10 +23,11 @@ use datafusion::logical_expr::simplify::SimplifyContext;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::optimizer::simplify_expressions::ExprSimplifier;
 use datafusion::physical_plan::ExecutionPlan;
-use engine_config::{Config, SourceKind, SourceSettings};
+use engine_config::{Config, SourceKind};
 use serde_json::Value;
 
 use crate::session::sqlstate;
+use crate::sources::{HttpSource, HttpSources};
 
 /// Arrow field metadata that marks a Utf8 column as Postgres `json` (OID 114).
 pub const EXTENSION_NAME_KEY: &str = "ARROW:extension:name";
@@ -34,7 +35,7 @@ pub const EXTENSION_NAME_KEY: &str = "ARROW:extension:name";
 pub const JSON_EXTENSION: &str = "arrow.json";
 
 /// The zone result timestamps carry (sent as timestamptz).
-const UTC: &str = "+00:00";
+pub(crate) const UTC: &str = "+00:00";
 
 const RANGE_SIGNATURE: &str = "promql(query, start, end, step[, source])";
 const INSTANT_SIGNATURE: &str = "promql_instant(query, at[, source])";
@@ -58,55 +59,15 @@ pub fn sample_schema() -> SchemaRef {
 /// range query) or, after [`Promql::instant`], as `promql_instant`.
 #[derive(Debug, Clone)]
 pub struct Promql {
-    /// Base URL by source name, for every `prometheus` source.
-    urls: HashMap<String, String>,
-    /// Kind by source name, for every source (to name a kind mismatch).
-    kinds: HashMap<String, SourceKind>,
-    /// Row cap by source name: the source's `max_rows`, else the top-level one.
-    max_rows: HashMap<String, usize>,
-    /// Restricted sources need an identity, which this engine doesn't check yet.
-    restricted: Vec<String>,
-    default: Option<String>,
+    sources: HttpSources,
     http: reqwest::Client,
     instant: bool,
 }
 
 impl Promql {
     pub fn new(config: &Config, http: reqwest::Client) -> Promql {
-        let urls = config
-            .sources
-            .iter()
-            .filter_map(|s| match &s.settings {
-                SourceSettings::Prometheus { url } => {
-                    Some((s.name.clone(), url.trim_end_matches('/').to_string()))
-                }
-                _ => None,
-            })
-            .collect();
         Promql {
-            urls,
-            kinds: config
-                .sources
-                .iter()
-                .map(|s| (s.name.clone(), s.kind()))
-                .collect(),
-            max_rows: config
-                .sources
-                .iter()
-                .map(|s| {
-                    let cap = s.max_rows.unwrap_or(config.max_rows);
-                    (s.name.clone(), usize::try_from(cap).unwrap_or(usize::MAX))
-                })
-                .collect(),
-            restricted: config
-                .sources
-                .iter()
-                .filter(|s| s.restricted)
-                .map(|s| s.name.clone())
-                .collect(),
-            default: config
-                .default_source(SourceKind::Prometheus)
-                .map(|s| s.name.clone()),
+            sources: HttpSources::new(config, SourceKind::Prometheus),
             http,
             instant: false,
         }
@@ -126,41 +87,6 @@ impl Promql {
         } else {
             RANGE_SIGNATURE
         }
-    }
-
-    /// The source a call names, or the default Prometheus source: its name, URL and row cap.
-    fn source(&self, name: Option<String>) -> Result<(String, String, usize), DataFusionError> {
-        let name = match name {
-            Some(name) => name,
-            None => self.default.clone().ok_or_else(|| {
-                sqlstate(
-                    "42704",
-                    "there is no default prometheus source; name one as the source argument"
-                        .to_string(),
-                )
-            })?,
-        };
-        let Some(url) = self.urls.get(&name) else {
-            return Err(match self.kinds.get(&name) {
-                Some(kind) => sqlstate(
-                    "42809",
-                    format!(
-                        "source \"{name}\" is a {} source, not prometheus",
-                        kind.as_str()
-                    ),
-                ),
-                None => sqlstate("42704", format!("source \"{name}\" does not exist")),
-            });
-        };
-        if self.restricted.contains(&name) {
-            // Fail closed until identity tokens are verified (CONTRACTS §1.2).
-            return Err(sqlstate(
-                "42501",
-                format!("source \"{name}\" is Restricted Telemetry and needs telemetry_restricted"),
-            ));
-        }
-        let max_rows = self.max_rows.get(&name).copied().unwrap_or(usize::MAX);
-        Ok((name, url.clone(), max_rows))
     }
 }
 
@@ -211,7 +137,11 @@ impl TableFunctionImpl for Promql {
             Some(_) => Some(text_argument(arg(required)?, "source", sig)?),
             None => None,
         };
-        let (source, url, max_rows) = self.source(source)?;
+        let HttpSource {
+            name: source,
+            url,
+            max_rows,
+        } = self.sources.resolve(source)?;
         Ok(Arc::new(PromqlQuery {
             http: self.http.clone(),
             source,
@@ -224,7 +154,11 @@ impl TableFunctionImpl for Promql {
 }
 
 /// Evaluates a table-function argument, which must be a constant expression.
-fn constant(expr: &Expr, session: &dyn Session, sig: &str) -> Result<ScalarValue, DataFusionError> {
+pub(crate) fn constant(
+    expr: &Expr,
+    session: &dyn Session,
+    sig: &str,
+) -> Result<ScalarValue, DataFusionError> {
     let start = session
         .execution_props()
         .query_execution_start_time
@@ -243,7 +177,11 @@ fn constant(expr: &Expr, session: &dyn Session, sig: &str) -> Result<ScalarValue
 }
 
 /// A non-NULL text argument.
-fn text_argument(value: ScalarValue, name: &str, sig: &str) -> Result<String, DataFusionError> {
+pub(crate) fn text_argument(
+    value: ScalarValue,
+    name: &str,
+    sig: &str,
+) -> Result<String, DataFusionError> {
     match value {
         ScalarValue::Utf8(Some(s))
         | ScalarValue::LargeUtf8(Some(s))
@@ -258,7 +196,11 @@ fn text_argument(value: ScalarValue, name: &str, sig: &str) -> Result<String, Da
 
 /// A time argument (timestamptz, a timestamp read as UTC, or an ISO-8601 string) as µs since
 /// the Unix epoch.
-fn time_argument(value: ScalarValue, name: &str, sig: &str) -> Result<i64, DataFusionError> {
+pub(crate) fn time_argument(
+    value: ScalarValue,
+    name: &str,
+    sig: &str,
+) -> Result<i64, DataFusionError> {
     if value.is_null() {
         return Err(sqlstate("22004", format!("{sig}: {name} is NULL")));
     }
