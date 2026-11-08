@@ -890,3 +890,23 @@ should add a dated line here per feature.
   undefined -> N/A; regex `host-(\d+)` -> 'Host $1' gave "Host 7" for host-7 and nothing for xhost-7; overlapping
   range(index 1)/value(index 0) on 5 -> Early. Check 7/7 after `bash ./init.sh`; linter, oxfmt, `tsc --noEmit` clean.
 - 2026-11-08T20:05:47Z supervisor: viz-value-mappings passed the gate in round 1
+
+## viz-grafana-unit-formats (round 1)
+- **What.** New `packages/common/src/eng1799/grafanaUnits.ts`, exported from `@lightdash/common` index:
+  `grafanaUnitToCustomFormat(unit, { decimals })` -> `CustomFormat` (undefined for an empty/missing unit, so the caller
+  keeps the field's own format). `decimals` becomes `round` (rounded, min 0); unset keeps automatic decimals.
+  - `none` -> NUMBER; `short` -> NUMBER with compact auto; `percent` (0-100) -> NUMBER with suffix `%`; `percentunit`
+    (0-1) -> PERCENT; `bytes`/`Bps`/`binBps` -> BYTES_IEC, `decbytes`/`decBps` -> BYTES_SI; time units (ns, µs/us, ms,
+    s, m, h, d) and rates (reqps, reqpm, ops, opm, rps, wps, iops, cps, bps, pps) -> NUMBER with a fixed suffix
+    (` ms`, ` req/s`, ...); dateTimeAs{Iso,System,US} -> TIMESTAMP; currencyUSD/GBP/EUR -> CURRENCY; Grafana custom
+    `suffix:X` / `prefix:X`; anything else is a free-text suffix (`vCPU` -> "4 vCPU").
+- **Gaps (in the module doc).** Grafana auto-scales bytes/time/rates (1500 ms -> 1.5 s); Lightdash keeps the base
+  unit (byte formats have no compact set, so they render as plain byte counts). Byte rates lose their "/s". `Bps` is
+  mapped IEC because the acceptance test requires it (current Grafana labels Bps as SI) - revisit in the importer.
+- **Tested as a user.** Throwaway node script (deleted) against built `dist/cjs`: panel `{unit:'ms', decimals:1}` ->
+  `{type:number, suffix:' ms', round:1}` -> "12.3 ms" for 12.3456; percentunit 0.42 -> "42%"; percent 42 -> "42%";
+  s 30 -> "30 s"; reqps 12 -> "12 req/s"; ops 7 -> "7 ops/s"; vCPU 4 -> "4 vCPU"; short 1234567 -> "1.235M";
+  `suffix:/h` -> "3/h"; `constructor` is a free-text unit (own-property lookup), '' -> undefined. Check 12/12 after
+  `bash ./init.sh`; linter, oxfmt, `tsc --noEmit` clean.
+- **Trap.** `npx tsc` in packages/common fails on the node devEngines pin; use `pnpm exec tsc`.
+- 2026-11-08T20:08:46Z supervisor: viz-grafana-unit-formats passed the gate in round 1
