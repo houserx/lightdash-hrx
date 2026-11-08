@@ -766,3 +766,21 @@ token verification for a *valid* token, which feature 39 then hardens.
   json'` gave 22P02. The check `promql::eng_series_name_function` passes, and every feature in the
   passing list still passes.
 - 2026-11-08T18:16:45Z supervisor: eng-series-name-function passed the gate in round 1
+- 2026-11-08 eng-promql-pushdown-and-sql (worker, round 1): no code change was needed; the
+  behaviour already holds after eng-promql-range + eng-label-function. `PromqlQuery` (src/promql.rs)
+  keeps DataFusion's default `supports_filters_pushdown` = Unsupported and ignores `_filters`/`_limit`
+  in `scan`, so WHERE/GROUP BY/JOIN always run in the engine. The query text is form-posted to
+  /api/v1/query_range as-is, with one fetch per `promql(...)` call in a statement. Decision for
+  later sessions: keep it that way. Never rewrite or append matchers to the native query. If a later
+  feature adds pushdown (e.g. LIMIT), it must not change the `query` parameter.
+  Tested as a user: `../tmp/pgclient/src/bin/pushdown.rs` (mock prom-a on 127.0.0.1:59098 with 4
+  series pod api-0/api-1 x container c0..c3, config `../tmp/promql/pushdown.toml`) spawns
+  `target/debug/engine` and runs SQL over tokio-postgres. The `sum by (pod, container) (rate(
+  ...{namespace="web",pod=~"api-.*"}[5m]))` query with `WHERE "value" > 0.45 GROUP BY 1` gave
+  api-0 5 / 1.4, api-1 10 / 1.9. The mock saw exactly one POST /api/v1/query_range whose
+  form-decoded `query` equals the SQL string byte for byte. A JOIN against `VALUES
+  ('api-0','blue'),('api-1','green')` on `label(a.labels,'pod')` at one timestamp gave 4 rows with
+  the right team, and a LEFT JOIN + GROUP BY gave blue 10/7.0 and NULL 10/12.0, again with one
+  upstream request each. The check `promql::eng_promql_pushdown_and_sql` passes, and every feature
+  in the passing list still passes (full suite: 25 pass; the failures are all unbuilt/halted features).
+- 2026-11-08T18:20:38Z supervisor: eng-promql-pushdown-and-sql passed the gate in round 1
