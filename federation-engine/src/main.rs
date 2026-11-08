@@ -14,6 +14,7 @@ mod promql;
 mod server;
 mod session;
 mod sources;
+mod traceql;
 mod transaction;
 
 use std::path::PathBuf;

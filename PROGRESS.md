@@ -1147,3 +1147,31 @@ token verification for a *valid* token, which feature 39 then hardens.
   sources::eng_cloudwatch_logs_failure_and_cancel passes. eng_cloudwatch_logs_insights still passes.
   The 3 cloudwatch_logs unit tests pass. No build warnings.
 - 2026-11-08T19:55:08Z supervisor: eng-cloudwatch-logs-failure-and-cancel passed the gate in round 1
+- eng-traceql-search (worker, round 1): new `src/traceql.rs`, registered as `traceql` in
+  `pg.rs`. `sources.rs` `base_url` now also covers `SourceSettings::Tempo`. traceql(query, start,
+  end[, limit = 20, source]) sends `GET <url>/api/search?q=<query unchanged>&start&end&limit`.
+  start and end are integer Unix seconds: start rounded down, end rounded up, so the range is never
+  narrowed. Columns are trace_id text (NOT NULL), root_service text, root_name text, start
+  timestamptz, duration_ms float8, span_count int8, one row per trace in Tempo's order. Errors: limit
+  not a positive integer → 22023 (non-integer 42804, NULL 22004); end before start → 22023; 3–5
+  arguments (42883); a non-2xx answer → "tempo source \"<name>\": HTTP <code>: <body, 500 chars>";
+  more traces than max_rows → 54000.
+  - Contract assumptions (CONTRACTS §1.1 names the columns but doesn't define them):
+    `span_count` is the number of *matched* spans, summed over `spanSets[].matched`, falling back to
+    `spanSet.matched`, else NULL. Tempo's search answer has no total span count.
+    Tempo omits proto3 zero values, so a missing `durationMs` → 0 and a missing `matched` → 0.
+    A missing `startTimeUnixNano` / root name / root service → NULL. Trace ids are lowercased and
+    left-padded to 32 hex digits, because Tempo search drops leading zeros. That is the form
+    `trace()` (eng-trace-by-id) should accept and print.
+  - `Traceql` and `limit_argument` are separate from logql's on purpose: different signature text.
+    eng-trace-by-id can reuse `tempo_answer` and the Tempo `HttpSources`.
+  Tested as a user: `../tmp/traceql/run.sh` starts a Python Tempo mock and the engine (tempo-a with a
+  trailing-slash url, plus loki-a), then runs queries through pg-wire. The step query returned 2 rows
+  ordered by start: 2f3e…2e54 | web | GET /orders | 2025-11-08 00:00:00.5+00 | 557.0 | 3. The second
+  row's trace id came back as 0af7…319c, padded from the mock's 31-digit id. The mock saw GET
+  /api/search with q byte-for-byte, start 1762560000, end 1762563600, limit 20. Passing 5 sent
+  limit 5. Passing 7 with 'tempo-a' and fractional bounds sent start 1762560000 and end 1762563600,
+  and GROUP BY root_service worked. A Tempo 400 came back as XX000 with Tempo's text. limit 0 →
+  22023; 'loki-a' → 42809; end before start → 22023. The check sources::eng_traceql_search passes,
+  eng_logql_streams still passes, and the 4 traceql unit tests pass. No build warnings.
+- 2026-11-08T19:59:07Z supervisor: eng-traceql-search passed the gate in round 1

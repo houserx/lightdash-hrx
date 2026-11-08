@@ -1,6 +1,6 @@
 //! Picking the source a table-function call reads: the named one or the kind's default
-//! (CONTRACTS §1.1), with its row cap, and for the HTTP sources (`prometheus`, `loki`) its base
-//! URL.
+//! (CONTRACTS §1.1), with its row cap, and for the HTTP sources (`prometheus`, `loki`, `tempo`)
+//! its base URL.
 
 use std::collections::HashMap;
 
@@ -118,7 +118,9 @@ impl HttpSources {
 /// The base URL of an HTTP source.
 fn base_url(settings: &SourceSettings) -> Option<&String> {
     match settings {
-        SourceSettings::Prometheus { url } | SourceSettings::Loki { url, .. } => Some(url),
+        SourceSettings::Prometheus { url }
+        | SourceSettings::Loki { url, .. }
+        | SourceSettings::Tempo { url } => Some(url),
         _ => None,
     }
 }
