@@ -1407,3 +1407,18 @@ token verification for a *valid* token, which feature 39 then hardens.
   restricted mock saw 1 request and the store 2 calls. The check passed after init, as did the
   `identity::` unit tests. rustfmt and clippy aren't installed on this machine, so neither was run.
 - 2026-11-08T20:31:54Z supervisor: eng-identity-agent-and-system passed the gate in round 1
+- 2026-11-08 eng-audited-query-description-required (round 1): this was already implemented when
+  the session started. `verify` in `src/identity.rs` keeps `audit.description` only if it is a
+  non-blank string, and `Identity::check_restricted` returns 42501 `audited query requires a
+  description` when it is missing. That check runs at plan time, before any source request or
+  audit write. This session verified the behaviour and changed no engine code.
+  - Order of checks for a restricted source: agent first, then telemetry_restricted, then the
+    description. A token that lacks both the attr and a description gets the `needs
+    telemetry_restricted` message, not the description one.
+  Tested as a user: `../tmp/description-required/run.sh <out>` starts the open and restricted
+  Prometheus mocks, the DynamoDB+S3 store and the engine. On one pg-wire session it SETs tokens
+  with the claim and runs the restricted promql count after each one. The token variants were: no
+  description, "", "   " and no `audit` object. Each returned 42501 `audited query requires a
+  description`. A token with a description then returned 2. The restricted mock saw 1 request
+  and the store saw 2 calls, both from the allowed query. The check passed after init.
+- 2026-11-08T20:33:14Z supervisor: eng-audited-query-description-required passed the gate in round 1
