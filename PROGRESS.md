@@ -2035,3 +2035,30 @@ token verification for a *valid* token, which feature 39 then hardens.
   write::eng_write_confirmations_verify_endpoint. Clippy -D warnings (tmp/rustup 1.99.1) is clean;
   the new file is rustfmt-clean.
 - 2026-11-08T22:27:38Z supervisor: eng-audit-browser-by-month passed the gate in round 1
+- eng-audit-browser-by-ticket-and-user (functional): `audit_browser::browse` now picks the index
+  in the portal's order: non-empty `ticket` (byTicket, `linearTicketId`), else non-empty `user`
+  (byUser, `executedByEmail`), else `month` (byMonth, unchanged). All three use
+  `AuditWriter::query_page` (Limit 25, newest first). For ticket and user, the cursor is
+  base64(JSON(LastEvaluatedKey)) (A14). `plain_cursor_key` decodes it; anything that is not
+  base64 of a JSON object is 400. The month cursor keeps its `{month, key}` shape and its
+  month check. Both decoders share `decode_cursor`, which still reads a space as `+`. An empty
+  parameter counts as absent. With none of the three, the answer is still 400, now worded "one
+  of ticket, user or month=YYYY-MM is required".
+  Not built: the portal's no-parameter last-30-days browse (A14, untested). It is not in this
+  feature's steps and no portal source is available here to copy its exact behaviour, so a
+  later session needs a decision or the portal code before building it. I added the unit test
+  `audit_browser::tests::plain_cursors_are_the_last_evaluated_key`.
+  Tested as a user: `../tmp/audit-ticket-user/run.sh <out>` uses ports 59691-59695. The engine
+  runs against a Query-only DynamoDB stand-in seeded like the acceptance test: 27 ENG-7 records
+  (b@example.com when i%3==0) and 6 ENG-8 records for b@example.com. With curl:
+  - ticket=ENG-7 gave 200, 25 ENG-7 items newest first, from a byTicket Query (Limit 25,
+    ScanIndexForward false). Its nextCursor decoded to {id, linearTicketId, createdAt}.
+  - Following that cursor gave 2 items and nextCursor null. No overlap; the union is 27.
+  - user=b@example.com gave 15 items, all b@example.com, from a byUser Query.
+  - ticket=ENG-8&user=a@example.com gave the 6 ENG-8 items from a byTicket Query.
+  - month=2026-10 still works (byMonth).
+  - A garbage cursor gave 400, no parameter gave 400 and no bearer gave 401.
+  The check passes, and so do audit::eng_audit_browser_by_month and
+  audit::eng_audit_browser_authorization. Clippy -D warnings (tmp/rustup 1.99.1) is clean, and
+  audit_browser.rs is rustfmt-clean.
+- 2026-11-08T22:30:51Z supervisor: eng-audit-browser-by-ticket-and-user passed the gate in round 1

@@ -3,14 +3,18 @@
 //! nextCursor}`, 25 items a page, newest first (contract assumption A14 in PROGRESS.md).
 //!
 //! A request needs a valid bearer identity token (else 401) holding `attrs.platform_read` (else
-//! 403); both are checked before the store is touched. Then:
+//! 403); both are checked before the store is touched. Then, in the portal's precedence:
 //!
-//! - `month=YYYY-MM` queries the `byMonth` index (`createdAtMonth`, `createdAt`), that one
+//! - `ticket=` queries the `byTicket` index (`linearTicketId`, `createdAt`);
+//! - else `user=` (an email) queries the `byUser` index (`executedByEmail`, `createdAt`). For
+//!   both, the cursor is the portal's: base64 of the JSON of DynamoDB's `LastEvaluatedKey`;
+//! - else `month=YYYY-MM` queries the `byMonth` index (`createdAtMonth`, `createdAt`), that one
 //!   partition. A month that is not `YYYY-MM` with a month 01-12 is 400. Its cursor is the
 //!   portal's: base64 of the JSON `{month, key}`, `key` being DynamoDB's `LastEvaluatedKey`.
 //!
-//! `nextCursor` is null on the last page. A cursor that does not decode, or that belongs to
-//! another month, is 400. A store that cannot be queried is 502; an engine without `[audit]` 503.
+//! An empty parameter counts as absent; with none of the three the answer is 400 (the portal's
+//! last-30-days browse is not built). `nextCursor` is null on the last page. A cursor that does
+//! not decode, or a month cursor that belongs to another month, is 400. A store that cannot be queried is 502; an engine without `[audit]` 503.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -86,20 +90,31 @@ async fn browse(
             "the audit browser needs attrs.platform_read",
         ));
     }
-    let month = params
-        .get("month")
-        .ok_or_else(|| refuse(StatusCode::BAD_REQUEST, "month=YYYY-MM is required"))?;
-    if !is_month(month) {
-        return Err(refuse(
-            StatusCode::BAD_REQUEST,
-            format!("month must be YYYY-MM, got {month:?}"),
-        ));
-    }
-    let start = params
-        .get("cursor")
-        .filter(|c| !c.is_empty())
-        .map(|c| month_cursor_key(c, month))
-        .transpose()?;
+    // Precedence as in the portal: ticket, then user, then month. An empty value counts as absent.
+    let param = |name: &str| params.get(name).filter(|v| !v.is_empty());
+    let cursor = param("cursor");
+    let (index, key_attr, key_value, start, month) = if let Some(ticket) = param("ticket") {
+        let start = cursor.map(|c| plain_cursor_key(c)).transpose()?;
+        ("byTicket", "linearTicketId", ticket, start, None)
+    } else if let Some(user) = param("user") {
+        let start = cursor.map(|c| plain_cursor_key(c)).transpose()?;
+        ("byUser", "executedByEmail", user, start, None)
+    } else {
+        let month = param("month").ok_or_else(|| {
+            refuse(
+                StatusCode::BAD_REQUEST,
+                "one of ticket, user or month=YYYY-MM is required",
+            )
+        })?;
+        if !is_month(month) {
+            return Err(refuse(
+                StatusCode::BAD_REQUEST,
+                format!("month must be YYYY-MM, got {month:?}"),
+            ));
+        }
+        let start = cursor.map(|c| month_cursor_key(c, month)).transpose()?;
+        ("byMonth", "createdAtMonth", month, start, Some(month))
+    };
     let store = browser.store.as_ref().ok_or_else(|| {
         refuse(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -107,21 +122,18 @@ async fn browse(
         )
     })?;
     let (items, next) = store
-        .query_page(
-            "byMonth",
-            "createdAtMonth",
-            month,
-            PAGE_SIZE,
-            start.as_ref(),
-        )
+        .query_page(index, key_attr, key_value, PAGE_SIZE, start.as_ref())
         .await
         .map_err(|e| {
             eprintln!("engine: audit browser query failed: {e}");
             refuse(StatusCode::BAD_GATEWAY, "audit store query failed")
         })?;
     let next_cursor = next.map(|key| {
-        base64::engine::general_purpose::STANDARD
-            .encode(json!({"month": month, "key": key}).to_string())
+        let cursor = match month {
+            Some(month) => json!({"month": month, "key": key}),
+            None => key,
+        };
+        base64::engine::general_purpose::STANDARD.encode(cursor.to_string())
     });
     Ok(json!({"items": items, "nextCursor": next_cursor}))
 }
@@ -135,19 +147,34 @@ fn is_month(s: &str) -> bool {
         && matches!(s[5..].parse::<u8>(), Ok(1..=12))
 }
 
-/// The `key` of a month cursor (base64 of `{month, key}`) that belongs to `month`.
-fn month_cursor_key(cursor: &str, month: &str) -> Result<Map<String, Value>, Refusal> {
-    let bad = || {
-        refuse(
-            StatusCode::BAD_REQUEST,
-            "cursor is not a valid audit cursor",
-        )
-    };
-    // A `+` left unescaped in the query string arrives as a space.
+/// 400 for a cursor this browser did not hand out.
+fn bad_cursor() -> Refusal {
+    refuse(
+        StatusCode::BAD_REQUEST,
+        "cursor is not a valid audit cursor",
+    )
+}
+
+/// The JSON a cursor encodes in base64. A `+` left unescaped in the query string arrives as a
+/// space.
+fn decode_cursor(cursor: &str) -> Result<Value, Refusal> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(cursor.replace(' ', "+"))
-        .map_err(|_| bad())?;
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| bad())?;
+        .map_err(|_| bad_cursor())?;
+    serde_json::from_slice(&bytes).map_err(|_| bad_cursor())
+}
+
+/// The `LastEvaluatedKey` of a ticket or user cursor (base64 of the key's JSON, as in the portal).
+fn plain_cursor_key(cursor: &str) -> Result<Map<String, Value>, Refusal> {
+    match decode_cursor(cursor)? {
+        Value::Object(key) => Ok(key),
+        _ => Err(bad_cursor()),
+    }
+}
+
+/// The `key` of a month cursor (base64 of `{month, key}`) that belongs to `month`.
+fn month_cursor_key(cursor: &str, month: &str) -> Result<Map<String, Value>, Refusal> {
+    let value = decode_cursor(cursor)?;
     if value.get("month").and_then(Value::as_str) != Some(month) {
         return Err(refuse(
             StatusCode::BAD_REQUEST,
@@ -156,7 +183,7 @@ fn month_cursor_key(cursor: &str, month: &str) -> Result<Map<String, Value>, Ref
     }
     match value.get("key") {
         Some(Value::Object(key)) => Ok(key.clone()),
-        _ => Err(bad()),
+        _ => Err(bad_cursor()),
     }
 }
 
@@ -194,5 +221,21 @@ mod tests {
             month_cursor_key("not base64!", "2026-10").unwrap_err().0,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[test]
+    fn plain_cursors_are_the_last_evaluated_key() {
+        let key =
+            json!({"id": "x", "linearTicketId": "ENG-7", "createdAt": "2026-10-05T10:00:00.000Z"});
+        let cursor = base64::engine::general_purpose::STANDARD.encode(key.to_string());
+        assert_eq!(Value::Object(plain_cursor_key(&cursor).unwrap()), key);
+        let not_object = base64::engine::general_purpose::STANDARD.encode("[1]");
+        for bad in [not_object.as_str(), "not base64!", "bm90IGpzb24="] {
+            assert_eq!(
+                plain_cursor_key(bad).unwrap_err().0,
+                StatusCode::BAD_REQUEST,
+                "{bad}"
+            );
+        }
     }
 }
