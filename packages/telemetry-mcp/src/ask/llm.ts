@@ -46,14 +46,31 @@ export type LlmToolChoice =
     | { type: 'none' }
     | { type: 'tool'; name: string };
 
+/** A system prompt block; `cache_control` marks the end of a cacheable prompt prefix (the data assistant's). */
+export interface LlmSystemBlock {
+    type: 'text';
+    text: string;
+    cache_control?: { type: 'ephemeral' };
+}
+
 export interface LlmRequest {
     model: string;
     max_tokens: number;
-    system?: string;
+    system?: string | LlmSystemBlock[];
     messages: LlmMessage[];
     tools?: LlmTool[];
     tool_choice?: LlmToolChoice;
     temperature?: number;
+    /** Extended thinking setting, passed through as given (the data assistant sends `{ type: 'between_tools' }`). */
+    thinking?: { type: string };
+}
+
+/** Per-call transport options (the portal passed these as the SDK's request options). */
+export interface LlmCallOptions {
+    /** Give up after this long. */
+    timeoutMs?: number;
+    /** Aborted when the caller goes away. */
+    signal?: AbortSignal;
 }
 
 export interface LlmUsage {
@@ -72,7 +89,7 @@ export interface LlmResponse {
 }
 
 export interface LlmClient {
-    createMessage(params: LlmRequest): Promise<LlmResponse>;
+    createMessage(params: LlmRequest, options?: LlmCallOptions): Promise<LlmResponse>;
 }
 
 /** The text of a response: every text block, newline-joined and trimmed (the portal's extraction). */

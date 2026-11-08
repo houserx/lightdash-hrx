@@ -69,11 +69,13 @@ export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bear
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';
 export { responseText } from './ask/llm.js';
 export type {
+    LlmCallOptions,
     LlmClient,
     LlmContentBlock,
     LlmMessage,
     LlmRequest,
     LlmResponse,
+    LlmSystemBlock,
     LlmTextBlock,
     LlmTool,
     LlmToolChoice,
@@ -135,6 +137,47 @@ export type {
 } from './ask/ask-memory.service.js';
 export { createExampleQueries } from './ask/example-queries.service.js';
 export type { ExampleQueries, ExampleQueriesOptions } from './ask/example-queries.service.js';
+export { DOMAIN_NOTES } from './ask/ask-domain-notes.js';
+export {
+    PLATFORM_COLUMNS_SQL,
+    PLATFORM_TABLES_SQL,
+    createPlatformCatalog,
+    formatCatalogForPrompt,
+    qualifiedName,
+} from './ask/schema-catalog.service.js';
+export type {
+    CatalogColumn,
+    CatalogEntry,
+    PlatformCatalog,
+    PlatformCatalogOptions,
+    ResolvedColumn,
+} from './ask/schema-catalog.service.js';
+export {
+    AskError,
+    DATA_ASSISTANT_DEFAULTS,
+    MAX_QUESTION_CHARS,
+    NOT_CONFIGURED_MESSAGE as ASK_NOT_CONFIGURED_MESSAGE,
+    auditDescription,
+    createDataAssistant,
+    elideOldToolResults,
+    normalizeAnswer,
+    normalizeVisualizations,
+    sanitizeHistory,
+} from './ask/data-assistant.service.js';
+export type {
+    AbstainReason,
+    AskAnswer,
+    AskContext,
+    AskHistoryTurn,
+    AskInput,
+    AskProgress,
+    AskQuery,
+    AskResult,
+    AskVisualization,
+    AskVisualizationType,
+    DataAssistant,
+    DataAssistantOptions,
+} from './ask/data-assistant.service.js';
 export type {
     AdvisePlanInput,
     ExistingIndex,

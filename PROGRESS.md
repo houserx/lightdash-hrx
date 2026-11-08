@@ -1548,3 +1548,92 @@ docs/eng-1799/telemetry-mcp.md
   - Results: the feature check passes (1/1), the unit files pass 10/10 and 7/7, `pnpm typecheck` is clean, and strict
     tsc over both test files passes via `../tmp/example-queries-port/tsconfig.json`.
 - 2026-11-08T18:47:42Z supervisor: mcp-example-queries-port passed the gate in round 1
+
+### mcp-data-assistant-port (session 2026-11-08, round 1)
+
+- Source: portal `api/src/services/data-assistant.service.ts`, its `.test.ts`, `ask-domain-notes.ts` and
+  `schema-catalog.service.ts` at `aea73de` (read-only).
+- New `src/ask/ask-domain-notes.ts`, verbatim (re-indented), next to the data assistant (the acceptance test pins
+  this).
+- New `src/ask/schema-catalog.service.ts`, the engine-backed port of the portal's schema catalog.
+  - `createPlatformCatalog({ engine, audit })` returns `{ loadCatalog, describeTables, searchSchema, findJoinPath,
+    resolveColumn }`. `qualifiedName`, `formatCatalogForPrompt`, `PLATFORM_TABLES_SQL` and `PLATFORM_COLUMNS_SQL`
+    are free exports.
+  - It reads only `SELECT * FROM platform_tables()` and `SELECT * FROM platform_columns($1, $2)` (schema and table
+    are bind params). Every read carries the ask's audit block.
+  - Tables and per-table columns are cached for the catalog's lifetime (one ask, one caller). Failed reads are not
+    cached.
+- New `src/ask/data-assistant.service.ts`. Prompts, tools, limits, grounding, visualizations, the submit retry loop,
+  figure verification and the memory flow are the portal's.
+  - `createDataAssistant({ llm, engine, memory, examples, model?, maxTokens?, maxSteps?, maxQueries?, maxRows?,
+    maxCellChars?, maxResultChars?, queryTimeoutMs?, deadlineMs?, shareRows?, now?, onError? })` returns
+    `{ askData(input) }`. Defaults are in `DATA_ASSISTANT_DEFAULTS` (the portal's `AI_ASK_*`: sonnet-5-5, 8000
+    tokens, 60 steps, 60 queries, 50 rows, 200 chars per cell, 16000 result chars, 30 s, 600 s, share rows).
+  - `AskInput.user` is `AskMemoryUser {sub, email}`.
+  - `HttpError` became `AskError` with `.status`: 503 not configured (`ASK_NOT_CONFIGURED_MESSAGE` in index), 502
+    schema/model failure, 500 audit failure, 499 cancelled.
+  - `run_sql`/`sample_values` run `SELECT * FROM platform_query($1)`. The param is the portal's wrapped
+    `SELECT * FROM (\n<sql>\n) AS _ask LIMIT 51`, with `maxRows: 51`.
+  - Every engine read of an ask (catalog and queries) carries `audit {description: auditDescription(ctx), ticket:
+    null}`, i.e. `AI Ask (<model>; rows shared with model): <question>`.
+- **Contract assumption 10 (engine-side Ask audit and catalog).**
+  - (a) The engine writes the audit record. The portal's `recordExecution` is gone. A statement rejected locally
+    (empty, over the query budget, or not leading with SELECT/WITH) never reaches the engine, so it has no audit
+    record; it is still in `queries` and reported to the model. The portal's `guardQuery` was **not** ported: §5 says
+    the guard runs in the engine. Locally only the portal's SELECT/WITH check remains.
+  - (b) SQLSTATE 58000 from any engine read fails the whole ask with `AskError` 500 and no rows ("An AI query's audit
+    record could not be persisted (…)"), mirroring the portal's fail-closed audit.
+  - (c) A catalog read failure is 502 "Could not read the database schema…". For an `EngineError` with a SQLSTATE,
+    `engineErrorText` is appended, so a missing `platform_read` is named.
+  - (d) Through §1.1 there are no comments, row estimates, enums, constraints, indexes or FKs. `describe_tables` lists
+    columns (type, NOT NULL), and the catalog shows `[table, row count unknown]`. `find_join_path` says FKs are not
+    visible and gives the naming-convention hint (it still counts as a schema lookup). `search_schema` matches table
+    names, plus columns of tables already described in this ask. Searching every column would be one audited
+    `platform_columns()` per table.
+- `src/ask/llm.ts`: `LlmRequest.system` may be `LlmSystemBlock[]` (with `cache_control`). `LlmRequest.thinking` was
+  added. `createMessage(params, options?: LlmCallOptions {timeoutMs, signal})`. **For the real fetch client (next
+  features):** send `system` blocks and `thinking` through as given, and honour `signal`/`timeoutMs`.
+- Tests:
+  - `src/ask/data-assistant.service.test.ts` (33 cases) holds the portal's 33 in order. The LLM mock is `create`.
+    The engine is a fake `EngineClient` answering platform_tables/columns/query. Memory is
+    `createAskMemoryService` over a mocked store, and examples are a stub. Env tweaks became options.
+  - 8 cases were adapted because they asserted portal plumbing (pool `BEGIN READ ONLY`/`ROLLBACK`/`DISCARD`,
+    `recordExecution`):
+    - the SQL is only the bind param of `platform_query($1)`, with an audit description;
+    - a DELETE never reaches the engine;
+    - every engine read carries model and question;
+    - 58000 on a schema lookup gives 500 after 1 model call;
+    - 58000 on a query gives 500 after 1 model call;
+    - a failed query reached the engine with an audit description;
+    - find_join_path gives the naming-convention hint;
+    - the sample_values audit description.
+  - `src/ask/schema-catalog.service.test.ts` (6 cases).
+- **For mcp-tool-ask-data:** per request, build `createDataAssistant({ llm, engine: <request engine client>, memory:
+  <server-wide AskMemoryService>, examples: createExampleQueries({audit: createEngineAuditBrowser(...)}), maxSteps:
+  config.askMaxSteps, queryTimeoutMs: config.statementTimeoutMs, now: deps.now, onError })`.
+  - Call `askData({question, database: config.platformSource, user: {sub: userUuid, email}, history})`.
+  - Map `AskError` to an `isError` result with its message.
+  - Validate the question (1..1000 chars, `MAX_QUESTION_CHARS`) before calling.
+  - The acceptance fake answers `platform_query` only when the param matches `count(*) AS n FROM orders`. The
+    wrapped param still matches.
+- Tested as a user: after `bash ./init.sh`, `../tmp/data-assistant-port/drive.test.ts` (run with vitest so it can use
+  the acceptance fakes) drove the built `dist/index.js`. It used the real pg-wire `createEngineClient` +
+  `createIdentitySession` against `startFakeEngine` with `installPlatformCatalog`, a `/v1/audit` page and a
+  `ScriptedLlm`.
+  - Run: describe_tables(orders, ghost), then find_example_queries, sample_values(orders.status), run_sql DELETE,
+    run_sql count, then submit with a learning.
+    - The answer "42" was grounded on query 3.
+    - The DELETE was rejected and never reached the engine.
+    - The engine got exactly platform_tables, platform_columns, and 2× platform_query.
+    - Every identity token had `agent: true` and `audit.description` "AI Ask (claude-sonnet-5-5; rows shared with
+      model): How many orders are there?".
+    - Examples were scrubbed (`'?'`) and fetched with Bearer.
+    - Memory learned 1 query_pattern.
+    - Progress events were streamed. 0 connections were left open.
+  - 58000 gave AskError 500 after 1 model call. `llm: null` gave 503 "not configured". A 42501 on platform_tables gave
+    502 naming platform_read.
+- Results:
+  - The feature check passes (2/2). The unit files pass 33/33 and 6/6.
+  - The `plan-advice` acceptance file passes 5/5 (the `LlmClient` signature changed).
+  - `pnpm typecheck` is clean, and strict tsc over both new test files passes via `../tmp/data-assistant-port/tsconfig.json`.
+- 2026-11-08T18:58:32Z supervisor: mcp-data-assistant-port passed the gate in round 1
