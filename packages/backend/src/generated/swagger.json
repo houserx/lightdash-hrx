@@ -36425,9 +36425,9 @@
                                                                                 "caseSensitiveFilters": {
                                                                                     "type": "string",
                                                                                     "enum": [
+                                                                                        "true",
                                                                                         "false",
-                                                                                        "not_applicable",
-                                                                                        "true"
+                                                                                        "not_applicable"
                                                                                     ]
                                                                                 },
                                                                                 "fieldFilterType": {

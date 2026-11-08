@@ -37494,6 +37494,13 @@ const models: TsoaRoute.Models = {
                                                                                                     dataType:
                                                                                                         'enum',
                                                                                                     enums: [
+                                                                                                        'true',
+                                                                                                    ],
+                                                                                                },
+                                                                                                {
+                                                                                                    dataType:
+                                                                                                        'enum',
+                                                                                                    enums: [
                                                                                                         'false',
                                                                                                     ],
                                                                                                 },
@@ -37502,13 +37509,6 @@ const models: TsoaRoute.Models = {
                                                                                                         'enum',
                                                                                                     enums: [
                                                                                                         'not_applicable',
-                                                                                                    ],
-                                                                                                },
-                                                                                                {
-                                                                                                    dataType:
-                                                                                                        'enum',
-                                                                                                    enums: [
-                                                                                                        'true',
                                                                                                     ],
                                                                                                 },
                                                                                             ],
