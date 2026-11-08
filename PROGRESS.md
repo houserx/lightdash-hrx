@@ -707,3 +707,21 @@ should add a dated line here per feature.
 - **For the next sessions.** Collapse (buttons "Collapse <name>"/"Expand <name>"), the span drawer (click on the
   name) and the trace picker (replace `model.traces[0]`) all hang off `SpanRow` / `TraceWaterfallView` here.
 - 2026-11-08T19:32:37Z supervisor: viz-trace-waterfall-view passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-service-colours (session)
+
+- **What.** `TraceWaterfallView.tsx` gains a `ServiceLegend` (`data-testid="trace-service-legend"`, aria-label
+  "Services") above the time axis: one `trace-service-legend-item` (`data-service`) per service of the shown trace, in
+  order of first appearance in the span rows, each a 10 px swatch in the model's `span.color` and the service name
+  (blank service shows "(no service)"). CSS classes `.legend` and `.swatch` in the module. Bars already used
+  `span.color` since `viz-trace-waterfall-view`, so no change there.
+- **Decisions.** The legend lists only the services of the drawn trace (`model.traces[0]`), not every service in the
+  model; the colour comes from the model, which assigns one colour per service across the whole model, so the trace
+  picker feature can reuse this legend unchanged. Colours repeat only when there are more services than palette
+  entries (model behaviour, unchanged).
+- **Tested as a user.** No app mounts the view yet, so I rendered it from a throwaway vitest file (deleted) with
+  BASIC_TRACE plus a second postgres span: legend gateway, auth, orders-api, postgres, redis, each in a different
+  colour; every row's bar matched its service's legend swatch (both postgres spans the same yellow). After
+  `bash ./init.sh` the check passes 2/2; `trace-waterfall-view` 5/5 still passes; frontend `tsc --noEmit` clean;
+  oxlint and oxfmt clean on the component folder.
+- 2026-11-08T19:35:13Z supervisor: viz-trace-waterfall-service-colours passed the gate in round 1

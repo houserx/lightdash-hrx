@@ -49,6 +49,44 @@ const TimeAxis: FC<{ durationMs: number }> = ({ durationMs }) => (
     </Group>
 );
 
+/** The trace's services in order of first appearance, each with its colour. */
+const servicesOf = (
+    spans: TraceWaterfallSpan[],
+): { service: string; color: string }[] => {
+    const colors = new Map<string, string>();
+    for (const span of spans) {
+        if (!colors.has(span.service)) colors.set(span.service, span.color);
+    }
+    return [...colors].map(([service, color]) => ({ service, color }));
+};
+
+const ServiceLegend: FC<{ spans: TraceWaterfallSpan[] }> = ({ spans }) => (
+    <Group
+        data-testid="trace-service-legend"
+        aria-label="Services"
+        gap="sm"
+        className={classes.legend}
+    >
+        {servicesOf(spans).map(({ service, color }) => (
+            <Group
+                key={service}
+                gap={4}
+                wrap="nowrap"
+                data-testid="trace-service-legend-item"
+                data-service={service}
+            >
+                <Box
+                    className={classes.swatch}
+                    // The swatch shows the service's colour, which is data.
+                    // oxlint-disable-next-line lightdash-ui/no-inline-style-prop
+                    style={{ backgroundColor: color }}
+                />
+                <Text fz="xs">{service || '(no service)'}</Text>
+            </Group>
+        ))}
+    </Group>
+);
+
 const SpanRow: FC<{ span: TraceWaterfallSpan; traceDurationMs: number }> = ({
     span,
     traceDurationMs,
@@ -112,7 +150,8 @@ const SpanRow: FC<{ span: TraceWaterfallSpan; traceDurationMs: number }> = ({
  * A trace waterfall: one row per span of the first trace, in the model's
  * tree order and indented by depth, each with its name, service and
  * duration and a bar placed on a time axis that runs from 0 ms to the
- * trace's duration. Spans whose status is an error are marked in red.
+ * trace's duration. Bars take their service's colour, and a legend above
+ * names each service in it. Spans whose status is an error are marked in red.
  */
 export const TraceWaterfallView: FC<Props> = ({ model }) => {
     const trace = model.traces[0];
@@ -127,6 +166,7 @@ export const TraceWaterfallView: FC<Props> = ({ model }) => {
     }
     return (
         <Stack gap={0} h="100%" className={classes.root}>
+            <ServiceLegend spans={trace.spans} />
             <TimeAxis durationMs={trace.durationMs} />
             <ScrollArea flex={1} type="auto">
                 {trace.spans.map((span) => (
