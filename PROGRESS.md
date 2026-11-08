@@ -1593,3 +1593,32 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     audit-fields 3/3 and time-range 2/2. frontend typecheck, oxlint and oxfmt are clean.
     The useOperationsSavedSql hook has no unit test.
 - 2026-11-08T21:38:44Z supervisor: ldq-saved-sql-picker passed the gate in round 1
+- ldq-cli-import-portal-scripts (round 1):
+  - New `packages/cli/src/handlers/importPortalScripts.ts` and the `lightdash import portal-scripts
+    <file> [--path <dir>] [--space <slug>] [--verbose]` command (`import` is a new parent command in
+    index.ts, after `upload`). It writes `<path>/charts/<slug>.yml`, and `--path` defaults to
+    ./lightdash like download/upload. Each script becomes a `sql_chart`: version 1, name = title
+    (trimmed), description (empty becomes null), sql, spaceSlug, limit 500 (the SQL runner's
+    default), chartKind table, and config `{metadata:{version:1}, type:table, columns:{}, display:{}}`.
+    Only id/title/description/sql are read, so author email/Auth0 sub, tags and execution stats
+    never reach the YAML.
+  - Slugs: `generateSlug(title)`, truncated to leave room for a suffix. Repeated slugs get `-2`,
+    `-3`, ... in export order. A title with no letters or digits gets `saved-script` instead of
+    generateSlug's random slug, so re-imports write the same files. Existing files with the
+    same slug are overwritten.
+  - Validation runs before anything is written. Anything that is not a JSON array of objects
+    with non-empty string id/title/sql (and a string or null description) fails with ParseError
+    "<file> is not a db-query-portal saved-scripts export: <reason>...". Exit code 1, and no
+    charts/ folder is created. An empty array is valid and writes 0 charts.
+  - Contract assumptions: CONTRACTS/ADR 0004 say only "saved scripts become shared saved SQL in
+    the Operations Project". The default `--space` is `platform-saved-sql` (the slug the
+    acceptance test uses). `--space` is taken as given (nested `a/b` slugs allowed), only
+    trimmed. The export shape is the acceptance test's SavedScript fixture.
+  - Tested: ran the built CLI (dist/index.js) by hand on a synthetic 3-script export. It wrote 3
+    files (stuck-refills-by-status, -2, rx-pending-7-days) and printed "Imported 3 saved
+    scripts...". `lightdash lint --path lightdash` found the 3 files valid, and it flags one when
+    broken. `{"hello":"world"}`, invalid JSON and a missing file each fail with a clear message,
+    exit 1, and leave no output. Feature check 2/2. New unit test importPortalScripts.test.ts
+    10/10. cli typecheck, oxlint and oxfmt are clean. `lightdash upload` against a real server
+    was not run (no backend).
+- 2026-11-08T21:44:11Z supervisor: ldq-cli-import-portal-scripts passed the gate in round 1

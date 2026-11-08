@@ -39,6 +39,10 @@ import { generateHandler } from './handlers/generate';
 import { generateExposuresHandler } from './handlers/generateExposures';
 import { getProjectHandler } from './handlers/getProject';
 import {
+    DEFAULT_PORTAL_SCRIPTS_SPACE,
+    importPortalScriptsHandler,
+} from './handlers/importPortalScripts';
+import {
     getVersionWithSkills,
     installSkillsHandler,
 } from './handlers/installSkills';
@@ -1410,6 +1414,30 @@ const uploadCommand = program
     );
 
 uploadCommand.action(withOrganizationMode(uploadHandler));
+
+const importProgram = program
+    .command('import')
+    .description(
+        'Converts content exported from other tools into content as code',
+    );
+
+importProgram
+    .command('portal-scripts <file>')
+    .description(
+        "Converts db-query-portal's saved-scripts JSON export into SQL chart YAML for `lightdash upload`",
+    )
+    .option(
+        '-p, --path <path>',
+        'folder to write charts/ into (defaults to ./lightdash, where `lightdash upload` reads)',
+        undefined,
+    )
+    .option(
+        '-s, --space <slug>',
+        'slug of the space the SQL charts go to',
+        DEFAULT_PORTAL_SCRIPTS_SPACE,
+    )
+    .option('--verbose', undefined, false)
+    .action(importPortalScriptsHandler);
 
 const appsProgram = program
     .command('apps')
