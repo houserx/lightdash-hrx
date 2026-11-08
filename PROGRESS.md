@@ -290,3 +290,24 @@ docs/eng-1799/telemetry-mcp.md
   with `pg@8.13.1`, `jose@6.1.3` and the SDK 1.31.0 client.
 - 2026-11-08T15:02:43Z supervisor: initialized: 53 features, run 20261108-093244
 - 2026-11-08T15:44:20Z supervisor: initialized: 53 features, run 20261108-104127
+
+### mcp-package-skeleton (2026-11-08)
+
+- Added `packages/telemetry-mcp`: `package.json` (`@lightdash/telemetry-mcp`, `"type": "module"`, deps
+  `@modelcontextprotocol/sdk@1.31.0` + `pg@8.13.1`; dev `@types/node`, `@types/pg`, `typescript@7.0.2`, `vitest`),
+  `tsconfig.json` (standalone, `NodeNext`, strict, `src` → `dist`, excludes `src/**/*.test.ts`), unit
+  `vitest.config.ts` (`src/**/*.test.ts`), `.gitignore` (dist). `pnpm-lock.yaml` has the new importer.
+- `src/config.ts`: **skeleton `loadConfig`** that only reads `MCP_HOST` (default `0.0.0.0`) and `MCP_PORT` (default
+  `8080`, 0 allowed). `Config` is `{host, port}` for now. The `mcp-config-validation` session extends it with every
+  required variable (zod is in the lockfile but not yet a dependency: add it then, ≤ 8 deps total).
+- `src/http/server.ts`: `startServer({config})` on `node:http`; `GET|HEAD /healthz` → 200 `{"status":"ok"}`, other
+  paths 404. Returns `{url: "http://127.0.0.1:<port>", close()}` (`close` drops keep-alive connections). Later
+  features add `deps`, `/.well-known/*` and `/mcp` here.
+- `src/main.ts`: env → `loadConfig` → `startServer`; config error → stderr + exit 1; SIGTERM/SIGINT close cleanly.
+- `src/index.ts` exports `loadConfig`, `startServer` and their types. Source uses `.js` relative import suffixes
+  (NodeNext); vitest resolves them to `.ts`, so acceptance tests can import `src/index.ts` directly.
+- Tested as a user: `bash ./init.sh`, `pnpm install --frozen-lockfile`, started `dist/main.js` with the dummy env,
+  `GET /healthz` → 200 `application/json` `{"status":"ok"}`, unknown path → 404, SIGTERM → exit 0; `MCP_PORT=x` →
+  stderr message, exit 1. Unit tests (`pnpm -F @lightdash/telemetry-mcp test`) and the skeleton check pass.
+- Trap: macOS has no `timeout`; drive the server from a small node script (spawn, fetch, kill) in `../tmp`.
+- 2026-11-08T15:46:17Z supervisor: mcp-package-skeleton passed the gate in round 1
