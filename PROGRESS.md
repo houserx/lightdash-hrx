@@ -1906,3 +1906,18 @@ token verification for a *valid* token, which feature 39 then hardens.
   and commit with that token 409. Widget 10's note stayed NULL. The store held 2 write audits
   (1 commit, 1 preview) plus the 3 read audits, and every hash matched. Check passes.
 - 2026-11-08T22:09:22Z supervisor: eng-write-confirmation-single-use passed the gate in round 1
+- eng-write-confirmation-binding (security): no code change needed. eng-write-preview had already
+  built it: write::verify_confirmation (assumption A6) accepts only a token signed with the
+  identity secret, v 1, typ write_confirmation, statement_sha256 equal to the hex SHA-256 of the
+  statement as sent, sub and project equal to the bearer identity's, now < exp, iat at most 60 s
+  ahead and exp - iat <= 120. Any mismatch, a missing token or garbage gives the same 403 ("the
+  confirmation token is missing or not valid for this statement, user and project"), after the
+  guard and before the single-use spend, so a refused token is not spent and writes no audit.
+  An identity token fails on typ. Tested as a user: `../tmp/write-binding/run.sh <out>` (write-commit
+  rig on ports 59621-59625, `ctok.py` builds confirmation tokens with any statement/sub/project/
+  iat/exp/key). With curl, commits with tokens for another statement, another user, another
+  project, an expired one, one living 121 s, one signed with another key, the identity token,
+  "garbage" and no token all gave 403. Widget 11's note through platform_query stayed NULL. The
+  right token then gave 200 rows_affected 1 and the note was 'bound'. The store held 1 write audit
+  (the commit) plus 3 read audits, every hash matched. Check passes.
+- 2026-11-08T22:11:09Z supervisor: eng-write-confirmation-binding passed the gate in round 1
