@@ -64,6 +64,7 @@ import { buildSankeyEchartsOption, resolveSankeyChartConfig } from './sankey';
 import { type SankeySeriesDataPoint } from './sankey/transform';
 import {
     buildTableModel,
+    getTableColumnValueMappings,
     getTableColumnWidth,
     getTableFieldLabelOverride,
     isTableColumnFrozen,
@@ -572,6 +573,8 @@ export const buildChart = (
                         isTableColumnFrozen(columnProperties, id),
                     getColumnWidth: (id) =>
                         getTableColumnWidth(columnProperties, id),
+                    getColumnValueMappings: (id) =>
+                        getTableColumnValueMappings(columnProperties, id),
                     showTableNames: config.showTableNames ?? false,
                     getFieldLabelOverride: (id) =>
                         getTableFieldLabelOverride(columnProperties, id),

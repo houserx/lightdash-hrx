@@ -1,13 +1,18 @@
 import {
+    applyValueMappings,
     formatItemValue,
     isCustomDimension,
     isDimension,
     isField,
+    type GrafanaMappableValue,
+    type GrafanaValueMapping,
+    type GrafanaValueMappingResult,
     type ItemsMap,
     type MergeColumnTotal,
     type ParametersValuesMap,
     type PivotData,
     type ResultRow,
+    type ResultValue,
 } from '@lightdash/common';
 import { canHaveWarehouseTotal } from './totals';
 
@@ -51,10 +56,16 @@ export type TableModelColumn = {
     /** For image columns with explicit width: the fixed width in px. */
     imageWidth: number | undefined;
     total: TableTotalCell;
+    /** Grafana value mappings that replace the displayed text of a cell. */
+    valueMappings: GrafanaValueMapping[] | undefined;
 };
 
 export type TableModel = {
     columns: TableModelColumn[];
+    /**
+     * The result rows; a cell of a column with value mappings shows the
+     * mapped text in `formatted` and keeps `raw` (sorting, export) as is.
+     */
     rows: ResultRow[];
     totals: Record<string, number> | undefined;
     groupedSubtotals: Record<string, Record<string, number>[]> | undefined;
@@ -68,6 +79,7 @@ export type TableColumnsInput = {
     isColumnVisible: (key: string) => boolean;
     isColumnFrozen: (key: string) => boolean;
     getColumnWidth: (key: string) => number | undefined;
+    getColumnValueMappings?: (key: string) => GrafanaValueMapping[] | undefined;
     showTableNames: boolean;
     getFieldLabelOverride: (key: string) => string | undefined;
     columnOrder: string[];
@@ -229,6 +241,7 @@ export const buildTableColumns = ({
     isColumnVisible,
     isColumnFrozen,
     getColumnWidth,
+    getColumnValueMappings,
     showTableNames,
     getFieldLabelOverride,
     columnOrder,
@@ -269,9 +282,70 @@ export const buildTableColumns = ({
                 mergeColumnTotals,
                 parameters,
             }),
+            valueMappings: getColumnValueMappings?.(itemId),
         };
         return [...acc, column];
     }, []);
+};
+
+const toMappableValue = (
+    raw: unknown,
+): { value: GrafanaMappableValue } | undefined => {
+    if (
+        raw === null ||
+        raw === undefined ||
+        typeof raw === 'string' ||
+        typeof raw === 'number' ||
+        typeof raw === 'boolean'
+    ) {
+        return { value: raw };
+    }
+    if (typeof raw === 'bigint') return { value: String(raw) };
+    // Dates, JSON and other objects have no Grafana mapping.
+    return undefined;
+};
+
+/**
+ * The value mapping that applies to a cell's raw value (text and colour),
+ * or undefined when the column has none or none matches.
+ */
+export const getTableCellValueMapping = (
+    value: ResultValue | undefined,
+    mappings: readonly GrafanaValueMapping[] | undefined,
+): GrafanaValueMappingResult | undefined => {
+    if (!mappings || mappings.length === 0) return undefined;
+    const mappable = toMappableValue(value?.raw);
+    if (!mappable) return undefined;
+    return applyValueMappings(mappable.value, mappings);
+};
+
+/**
+ * The rows with each mapped cell's `formatted` replaced by the mapping's
+ * text. `raw` is untouched, so sorting and export use the real value.
+ */
+export const applyTableValueMappings = (
+    rows: ResultRow[],
+    columns: Pick<TableModelColumn, 'id' | 'valueMappings'>[],
+): ResultRow[] => {
+    const mapped = columns.filter(
+        (column) => column.valueMappings && column.valueMappings.length > 0,
+    );
+    if (mapped.length === 0) return rows;
+    return rows.map((row) => {
+        let next: ResultRow | undefined;
+        mapped.forEach(({ id, valueMappings }) => {
+            const cell = row[id];
+            if (!cell) return;
+            const text = getTableCellValueMapping(
+                cell.value,
+                valueMappings,
+            )?.text;
+            if (text === undefined) return;
+            next = next ?? { ...row };
+            next[id] = { ...cell, value: { ...cell.value, formatted: text } };
+        });
+        return next ?? row;
+    });
 };
 
 /**
@@ -293,7 +367,7 @@ export const buildTableModel = ({
 
     return {
         columns,
-        rows,
+        rows: applyTableValueMappings(rows, columns),
         totals: columnsInput.totals,
         groupedSubtotals: columnsInput.groupedSubtotals,
         pivotData,

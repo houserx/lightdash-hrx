@@ -12,6 +12,7 @@ import {
     calculateConditionalFormattingMinMaxMap,
     getFieldsNeedingMinMax,
     getRowTotalIndexFieldIds,
+    getTableColumnValueMappings,
     getTableColumnWidth,
     getTableFieldLabelDefault,
     getTableFieldLabelOverride,
@@ -206,6 +207,12 @@ const useTableConfig = () => {
         [columnProperties],
     );
 
+    const getColumnValueMappings = useCallback(
+        (fieldId: string) =>
+            getTableColumnValueMappings(columnProperties, fieldId),
+        [columnProperties],
+    );
+
     // Subtotals re-derive from the metric query behind the source query. A
     // merge has no such query — its metric query describes the merged result
     // rather than anything the warehouse can be asked to group again.
@@ -343,6 +350,7 @@ const useTableConfig = () => {
             getFieldLabelOverride,
             isColumnFrozen,
             getColumnWidth,
+            getColumnValueMappings,
             columnOrder,
             totals: asyncTotals,
             totalsLoading: isCalculatingColumnTotals,
@@ -363,6 +371,7 @@ const useTableConfig = () => {
         showTableNames,
         isColumnFrozen,
         getColumnWidth,
+        getColumnValueMappings,
         getFieldLabelOverride,
         asyncTotals,
         isMerged,

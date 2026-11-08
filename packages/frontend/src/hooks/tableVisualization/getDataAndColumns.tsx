@@ -6,6 +6,7 @@ import {
     getRowSubtotalValue,
     getSubtotalGroupKey,
     getSubtotalValueFromGroup,
+    getTableCellValueMapping,
     getTableSubtotalCell,
     type TableColumnsInput,
     type TableModelColumn,
@@ -172,7 +173,24 @@ const getDataAndColumns = (args: Args): Array<TableHeader | TableColumn> => {
                         {renderHeader(modelColumn.header)}
                     </TableHeaderLabelContainer>
                 ),
-                cell: (info) => getFormattedValueCell(info, parameters),
+                cell: (info) => {
+                    // A value mapping replaces the displayed text only; the
+                    // accessor keeps the raw value for sorting and export.
+                    const mapped = getTableCellValueMapping(
+                        info.getValue()?.value,
+                        modelColumn.valueMappings,
+                    );
+                    if (mapped?.text !== undefined) {
+                        return mapped.color ? (
+                            <Text span inherit c={mapped.color}>
+                                {mapped.text}
+                            </Text>
+                        ) : (
+                            mapped.text
+                        );
+                    }
+                    return getFormattedValueCell(info, parameters);
+                },
 
                 footer: () => renderTotal(modelColumn.total),
                 meta: {

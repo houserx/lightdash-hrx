@@ -1346,3 +1346,30 @@ should add a dated line here per feature.
 - **Next.** viz-table-value-mappings: the table renderer reads `columns[field].valueMappings` and applies them with the
   existing `applyValueMappings` in `eng1799/grafanaValueMappings.ts` (text plus colour).
 - 2026-11-08T21:20:24Z supervisor: viz-table-value-mappings-config passed the gate in round 1
+
+## viz-table-value-mappings (round 1)
+- **What changed.** In `packages/visualization/src/table/`:
+  - `config.ts` gains `getTableColumnValueMappings(columnProperties, id)`. It returns undefined when a column has none.
+  - `model.ts`: `TableColumnsInput` gains an optional `getColumnValueMappings`, and `TableModelColumn` gains `valueMappings`.
+    The new `getTableCellValueMapping(value, mappings)` applies the common `applyValueMappings` to the cell's **raw** value.
+    It skips Date, JSON and other objects, and turns bigint into a string. The new `applyTableValueMappings(rows, columns)`
+    replaces only `formatted` on mapped cells and keeps `raw`. It copies only the rows that change.
+  - `buildTableModel` returns mapped rows. `render.ts` passes the getter, so `renderChart(...).model.rows` shows Down and Up.
+
+  Both helpers and the getter are exported from `@lightdash/visualization/editor`. In the frontend, `useTableConfig` passes
+  `getColumnValueMappings`. The `cell` renderer in `getDataAndColumns.tsx` shows the mapped text in the mapped colour, using
+  a Mantine `Text` with `c`. The accessor still returns the raw row cell. The new unit test is
+  `visualization/src/table/valueMappings.test.ts` (3 tests).
+- **Sort and export.** The explorer table does not sort on the client: sorts go into the metric query and run in the
+  warehouse on raw values. Export (`ExportResults`) downloads by query UUID from the backend. So neither sees the mapped
+  text. The table data rows (`ResultRow`) the frontend keeps are not changed. Only the cell render is.
+- **Tested as a user.** I used a throwaway vitest drive, since deleted. It mounted the real `<Table>` with the columns from
+  `getDataAndColumns`, a status column mapped 0→Down (red) and 1→Up (green), and the `metricData` fixture. jsdom needs
+  offsetHeight and getBoundingClientRect mocked, or the virtualiser renders no rows. The fixture fields also need
+  `table`/`name`, or `getItemId` throws. The rendered rows were `5 Down`, `15 Up` and `25 Down`, with Down in a span coloured
+  rgb(242,73,92), which is Grafana red. The row data still held raw 0/1/0 with formatted "0"/"1"/"0". Check 2/2 after
+  `bash ./init.sh`, and `table.test.ts` 9/9. Visualization and frontend typecheck, oxlint and oxfmt are clean on the changed
+  files.
+- **Next.** There is no editor UI yet for table value mappings. They come from YAML or chart-as-code only. Pivot tables
+  are not mapped, because the model has no flat columns there.
+- 2026-11-08T21:25:25Z supervisor: viz-table-value-mappings passed the gate in round 1
