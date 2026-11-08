@@ -17,6 +17,26 @@ type EngineRequest = {
     label: string;
 };
 
+const REDACTED = '[redacted]';
+
+/**
+ * Removes the identity token, and each of its dot-separated parts, from text that came from
+ * outside Lightdash (the engine's error body, a fetch failure). An engine that echoes the
+ * bearer back in an error must not get it into a Lightdash error response or log line.
+ */
+export const redactIdentityToken = (
+    text: string,
+    identityToken: string,
+): string => {
+    const secrets = [identityToken, ...identityToken.split('.')]
+        .filter((part) => part.length >= 8)
+        .sort((a, b) => b.length - a.length);
+    return secrets.reduce(
+        (redacted, secret) => redacted.split(secret).join(REDACTED),
+        text,
+    );
+};
+
 const engineErrorMessage = (
     body: unknown,
     status: number,
@@ -62,9 +82,10 @@ export const requestEngine = async ({
         });
     } catch (error) {
         throw new UnexpectedServerError(
-            `Could not reach the Federation Engine: ${
-                error instanceof Error ? error.message : String(error)
-            }`,
+            `Could not reach the Federation Engine: ${redactIdentityToken(
+                error instanceof Error ? error.message : String(error),
+                identityToken,
+            )}`,
         );
     }
     const text = await response.text();
@@ -75,7 +96,10 @@ export const requestEngine = async ({
         body = undefined;
     }
     if (!response.ok) {
-        const message = engineErrorMessage(body, response.status, label);
+        const message = redactIdentityToken(
+            engineErrorMessage(body, response.status, label),
+            identityToken,
+        );
         if (response.status >= 400 && response.status < 500) {
             throw new LightdashError({
                 message,

@@ -1859,3 +1859,23 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     a new case covers Next with the applied filters rather than the edited form, First page,
     and Apply restarting at page 1. Frontend typecheck, oxlint and oxfmt are clean.
 - 2026-11-08T22:22:53Z supervisor: ldq-audit-browser-pagination passed the gate in round 1
+- ldq-identity-token-not-logged (round 1):
+  - The acceptance check already passed on arrival: `requestEngine` never puts the bearer into
+    its own messages, and no Federation code logs tokens or the signing secret. One real gap
+    remained. The engine's own `error`/`message` text, and a `fetch` failure message, were
+    passed through word for word into the Lightdash error response and the error log, so an
+    engine that echoed the bearer (e.g. "invalid token <jwt>") would have leaked it.
+  - `services/FederationService/engineHttp.ts`: new exported `redactIdentityToken(text, token)`
+    replaces the whole token and each dot-separated part of 8+ characters (header, payload,
+    signature) with `[redacted]`. Both the engine-error path and the unreachable-engine path
+    use it. Write and audit both go through `requestEngine`, so they're both covered.
+  - New `engineHttp.test.ts` 4/4: redaction of the token and its parts, and a local HTTP
+    server that echoes the token in 403 and 500 errors, so the thrown error carries only
+    `[redacted]`.
+  - Tested: no running server or browser. The acceptance check drives the real TSOA routes
+    (write preview, audit) against the fake engine failing with 500/503, and captures
+    console, Logger, stdout and stderr. Feature check 2/2. engineAudit 9/9, engineWrite 11/11.
+    Backend typecheck, oxlint and oxfmt are clean.
+  - Next session: any new call to the engine should go through `requestEngine` (or use
+    `redactIdentityToken`), so engine text never reaches a user or a log unredacted.
+- 2026-11-08T22:25:45Z supervisor: ldq-identity-token-not-logged passed the gate in round 1
