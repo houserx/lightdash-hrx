@@ -104,4 +104,36 @@ describe('InvestigateWorkspace', () => {
             expect.not.objectContaining({ audit: expect.anything() }),
         ]);
     });
+
+    it('asks for audit fields when the engine requires them, for that SQL only', async () => {
+        const descriptionRequired = new Error(
+            'ERROR: audited query requires a description (SQLSTATE 42501)',
+        );
+        const runQuery = vi
+            .fn()
+            .mockRejectedValueOnce(descriptionRequired)
+            .mockRejectedValueOnce(descriptionRequired);
+        renderWorkspace(runQuery);
+        writePromql('up');
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+        expect(await screen.findByLabelText(/Description/)).toBeRequired();
+        expect(screen.queryByText('Query failed')).toBeNull();
+        expect(screen.getByRole('button', { name: 'Run' })).toBeDisabled();
+
+        // Refused again even with a description: shown as a failure, not another prompt.
+        fireEvent.change(screen.getByLabelText(/Description/), {
+            target: { value: 'Checking an alert' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+        expect(await screen.findByText('Query failed')).toBeInTheDocument();
+        expect(runQuery.mock.calls[1]).toEqual([
+            expect.objectContaining({
+                audit: { description: 'Checking an alert' },
+            }),
+        ]);
+
+        // Different SQL is not covered by the engine's request.
+        writePromql('rate(up[5m])');
+        expect(screen.queryByLabelText(/Description/)).toBeNull();
+    });
 });

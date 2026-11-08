@@ -1414,3 +1414,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     the SQL away from platform_query dropping both the fields and the audit. Regression
     investigate-time-range 2/2. frontend tsc, oxlint and oxfmt are clean.
 - 2026-11-08T21:08:02Z supervisor: ldq-investigate-audited-query passed the gate in round 1
+- ldq-investigate-restricted-description (round 1):
+  - `InvestigateWorkspace` handles the engine asking for a description. If a run *without*
+    `audit` fails with an error matching common's `isAuditDescriptionRequiredError`, the
+    workspace remembers that exact SQL (`descriptionRequiredForSql`). It treats that SQL as
+    audited, so the same Description (required) and Linear ticket fields from
+    ldq-investigate-audited-query appear and Run waits for a description. It shows a yellow
+    "Audited Query" alert instead of the red "Query failed" one, and the rerun sends `audit`.
+    The engine's request covers only the SQL it refused: editing the SQL hides the fields
+    again, until the engine asks again. A run that already sent `audit` and is refused again
+    shows as a normal failure, so it never loops on prompts. Other engine errors (e.g. a
+    missing claim) show as before.
+  - Trap: the alert title must not contain the word "Description". Mantine labels the alert
+    by its title, so `getByLabelText(/Description/)` would match it too.
+  - Not done: the `access` and `onSaveAsChart` props are still undeclared (the tests pass
+    them as `any`).
+  - Tested: no browser or backend (no Docker), so I drove the workspace through its rendered UI
+    in vitest. Feature check 2/2. InvestigateWorkspace.test.tsx 5/5. Its new test covers the
+    engine prompt, Run disabled until a description is given, a second refusal with audit
+    shown as "Query failed", and different SQL hiding the fields. Regression
+    investigate-audit-fields 3/3. frontend tsc, oxlint and oxfmt are clean.
+- 2026-11-08T21:10:35Z supervisor: ldq-investigate-restricted-description passed the gate in round 1

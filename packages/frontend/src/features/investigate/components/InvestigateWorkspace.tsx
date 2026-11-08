@@ -1,4 +1,5 @@
 import {
+    isAuditDescriptionRequiredError,
     isAuditedSql,
     type QueryAudit,
     type QueryTimeRange,
@@ -60,14 +61,17 @@ type RunState =
           timeRange: TimeRangeInput;
           result: InvestigateQueryResult;
       }
-    | { status: 'failed'; timeRange: TimeRangeInput; error: string };
+    | { status: 'failed'; timeRange: TimeRangeInput; error: string }
+    | { status: 'description-required'; timeRange: TimeRangeInput };
 
 /**
  * Investigate: the query editor, one time range control and the result. Every run sends the
  * SQL in the SQL box with the range shown in the control; the result is labelled with the range
  * it was run over, so a later change to the control does not misdescribe it. SQL that touches
  * the Platform Database is an Audited Query: Run waits for a Description, a Linear ticket is
- * optional, and both are sent with the run.
+ * optional, and both are sent with the run. The engine can also ask for a description for SQL
+ * the client cannot recognise as audited (a Restricted Telemetry source); the same fields are
+ * then shown for that SQL and the rerun sends them.
  */
 export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     runQuery,
@@ -79,6 +83,10 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     const [auditDescription, setAuditDescription] = useState('');
     const [auditTicket, setAuditTicket] = useState('');
     const [run, setRun] = useState<RunState>({ status: 'idle' });
+    // The SQL the engine refused for lack of an Audited Query description, if any.
+    const [descriptionRequiredForSql, setDescriptionRequiredForSql] = useState<
+        string | null
+    >(null);
     // Only the latest run may set the result; an earlier one finishing late is dropped.
     const latestRun = useRef(0);
 
@@ -86,7 +94,8 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
         setSql(change.sql);
 
     // Platform Database SQL is an Audited Query: the engine refuses it without a description.
-    const isAudited = isAuditedSql(sql);
+    // The engine's own request counts for exactly the SQL it refused.
+    const isAudited = isAuditedSql(sql) || descriptionRequiredForSql === sql;
     const description = auditDescription.trim();
     const ticket = auditTicket.trim();
     const audit: QueryAudit | undefined = isAudited
@@ -108,13 +117,22 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
             setRun({ status: 'done', timeRange: runTimeRange, result });
         } catch (error) {
             if (runId !== latestRun.current) return;
+            const message =
+                error instanceof Error && error.message
+                    ? error.message
+                    : 'The query failed';
+            if (!audit && isAuditDescriptionRequiredError(message)) {
+                setDescriptionRequiredForSql(sql);
+                setRun({
+                    status: 'description-required',
+                    timeRange: runTimeRange,
+                });
+                return;
+            }
             setRun({
                 status: 'failed',
                 timeRange: runTimeRange,
-                error:
-                    error instanceof Error && error.message
-                        ? error.message
-                        : 'The query failed',
+                error: message,
             });
         }
     };
@@ -172,6 +190,16 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                             title="Query failed"
                         >
                             {run.error}
+                        </Alert>
+                    )}
+                    {run.status === 'description-required' && (
+                        <Alert
+                            color="yellow"
+                            icon={<MantineIcon icon={IconAlertCircle} />}
+                            title="Audited Query"
+                        >
+                            This is an Audited Query. Add a description and run
+                            it again.
                         </Alert>
                     )}
                     {run.status === 'done' && (
