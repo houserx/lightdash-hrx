@@ -602,3 +602,4 @@ token verification for a *valid* token, which feature 39 then hardens.
 - 2026-11-08T17:27:39Z supervisor: eng-promql-pushdown-and-sql halted: the worker halted on eng-promql-pushdown-and-sql
 - 2026-11-08T17:28:21Z supervisor: eng-max-rows-overflow halted: the worker halted on eng-max-rows-overflow
 - 2026-11-08T17:29:05Z supervisor: eng-pg-statement-timeout halted: the worker halted on eng-pg-statement-timeout
+- 2026-11-08T17:29:36Z supervisor: eng-pg-cancel-request halted: the worker halted on eng-pg-cancel-request
