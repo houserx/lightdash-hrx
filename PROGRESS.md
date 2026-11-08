@@ -2076,3 +2076,47 @@ token verification for a *valid* token, which feature 39 then hardens.
   - A token with platform_read gave 200 with 25 items, from 1 Query.
   The check `audit::eng_audit_browser_authorization` passes.
 - 2026-11-08T22:32:18Z supervisor: eng-audit-browser-authorization passed the gate in round 1
+- eng-ops-marts-catalog (functional): new module `src/ops_marts.rs`. When at least one `bigquery`
+  source exists, `PgHandlers::new` registers the DataFusion catalog `ops_marts`. It has one schema
+  per dataset and one table per `allow` entry. If two sources allow the same `dataset.table`, the
+  first one serves it. Names match case-sensitively, exactly as written in `allow`. Nothing
+  outside the allowlist is listed or resolved, so it is never named to BigQuery.
+  - Listing (`information_schema.tables`) makes no BigQuery call: `table_type` is overridden to
+    return `Base` ('BASE TABLE').
+  - Resolving a table (planning a query, or reading `information_schema.columns`, which
+    DataFusion builds by resolving every table) calls `tables.get`:
+    `GET {api_base_url}/bigquery/v2/projects/{project}/datasets/{d}/tables/{t}`, with the
+    bearer. The schema is cached per table for 5 minutes (`SCHEMA_TTL`).
+  Contract assumptions (the spec doesn't say):
+  - Type map: INTEGER/INT64 -> Int64 (int8), FLOAT/FLOAT64 -> Float64, BOOLEAN/BOOL -> Boolean,
+    TIMESTAMP -> Timestamp(us, UTC) (timestamptz), DATETIME -> Timestamp(us) (timestamp),
+    DATE -> Date32 and NUMERIC -> Decimal128(38, 9), which goes out as text.
+    REPEATED/RECORD columns and every other type become Utf8.
+  - Only mode REQUIRED makes a column NOT NULL.
+  - A failed tables.get is a plain Execution error (XX000) that names the source, the table and
+    BigQuery's message.
+  Left for the next features, on purpose:
+  - `OpsMartTable::scan` returns 0A000 "reading Ops Mart rows is not supported yet". Replace it
+    in eng-ops-marts-query (jobs.query / getQueryResults paging). The mock's TIMESTAMP cells are
+    float seconds unless `formatOptions.useInt64Timestamp`.
+  - `BigQuerySource::token` returns 0A000 for workload identity. Replace it in
+    eng-ops-marts-workload-identity. All token use goes through `token()`, so a cached
+    federated token can live there.
+  Unit test: `ops_marts::tests::bigquery_fields_map_to_postgres_shaped_arrow_types`.
+  Tested as a user: `../tmp/ops-marts-catalog/run.sh <out>` (ports 59711, 59712, 59715). It runs
+  the engine with a bigquery source allowing ops_marts.fills_hourly and ops_marts.queue_depth,
+  against a Python tables.get stand-in that also has not_allowlisted. Then
+  `../tmp/pgclient/target/debug/opsmarts`, a tokio-postgres client, ran the steps:
+  - getAllTables gave exactly (ops_marts, ops_marts, fills_hourly | queue_depth, BASE TABLE),
+    with 0 BigQuery calls.
+  - columns gave hour, pharmacy, fills, avg_minutes, late, in order.
+  - prepare SELECT * gave OIDs 1184, 25, 20, 701, 16 (queue_depth: 1184, 25, 20).
+  - Running the select gave 0A000.
+  - not_allowlisted gave 42P01.
+  - The stand-in saw exactly 2 tables.get calls (both allowlisted, with the bearer), because the
+    later prepares used the cache.
+  The check passes, and so does pgwire::eng_pg_information_schema. Clippy -D warnings
+  (tmp/rustup 1.99.1) is clean, and ops_marts.rs is rustfmt-clean.
+  Trap: psql is blocked by the sandbox ("Operation not permitted"). Drive the engine with the
+  tokio-postgres bins in ../tmp/pgclient instead.
+- 2026-11-08T22:40:11Z supervisor: eng-ops-marts-catalog passed the gate in round 1

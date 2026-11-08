@@ -12,6 +12,7 @@ mod cloudwatch_logs;
 mod identity;
 mod labels;
 mod logql;
+mod ops_marts;
 mod pg;
 mod platform;
 mod promql;
