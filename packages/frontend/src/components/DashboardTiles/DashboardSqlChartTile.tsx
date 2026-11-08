@@ -27,6 +27,7 @@ import {
     useDashboardSelector,
 } from '../../features/dashboard/store';
 import { TileTimeRangeIndicator } from '../../features/dashboardTimeRange/components/TileTimeRangeIndicator';
+import { useDashboardQueryTimeRange } from '../../features/dashboardTimeRange/hooks/useDashboardQueryTimeRange';
 import { isTileMarkedNotAffectedByTimeRange } from '../../features/dashboardTimeRange/utils/tileTimeRangeIndicator';
 import { useSavedSqlChartResults } from '../../features/sqlRunner/hooks/useSavedSqlChartResults';
 import useDashboardFiltersForTile from '../../hooks/dashboard/useDashboardFiltersForTile';
@@ -104,6 +105,7 @@ const SqlChartTile: FC<Props> = ({
     const dashboardTimeRange = useDashboardContext(
         (c) => c.dashboard?.timeRange,
     );
+    const queryTimeRange = useDashboardQueryTimeRange();
     const effectiveProjectUuid = projectUuidOverride ?? projectUuid;
     const effectiveDashboardUuid = dashboardUuidOverride ?? dashboardUuid;
     const context = useSearchParams('context') || undefined;
@@ -175,6 +177,7 @@ const SqlChartTile: FC<Props> = ({
                   dashboardSorts: [],
                   parameters,
                   invalidateCache,
+                  ...(queryTimeRange && { timeRange: queryTimeRange }),
               },
     );
     const connections = useConnectionBadges(effectiveProjectUuid);

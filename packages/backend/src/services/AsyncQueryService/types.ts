@@ -24,12 +24,14 @@ import {
     type ItemsMap,
     type ParametersValuesMap,
     type PreAggregateExecutionEngine,
+    type QueryAudit,
     type QueryExecutionContext,
     type QueryHistory,
     type QueryResultProducer,
     type QueryResultReader,
     type QuerySourceTableName,
     type QuerySurface,
+    type QueryTimeRange,
     type QueryUsageMetadata,
     type ResultColumns,
     type ResultsPaginationArgs,
@@ -160,6 +162,8 @@ export type ExecuteAsyncDashboardChartQueryArgs = CommonAsyncQueryArgs & {
     sessionTimezone?: string | null;
     preloadedSavedChart?: SavedChartDAO;
     preloadedProjectParameters?: DbProjectParameter[];
+    /** The dashboard's effective time range; filters the tile if it is mapped. */
+    timeRange?: QueryTimeRange;
 };
 
 export type ExecuteAsyncUnderlyingDataQueryArgs = CommonAsyncQueryArgs & {
@@ -207,6 +211,10 @@ export type ExecuteAsyncSqlQueryArgs = CommonAsyncQueryArgs & {
     limit?: number;
     pivotConfiguration?: PivotConfiguration;
     warehouseConnectionUuid?: string | null;
+    /** Resolves the reserved time parameters (`__from`, `__to`, ...) in the SQL. */
+    timeRange?: QueryTimeRange;
+    /** Description and ticket of an Audited Query, for the identity token. */
+    audit?: QueryAudit;
 };
 
 export type EstimateAsyncMetricQueryArgs = Pick<
@@ -276,6 +284,8 @@ export type ExecuteAsyncDashboardSqlChartCommonArgs = CommonAsyncQueryArgs & {
     tileUuid: string;
     dashboardFilters: DashboardFilters;
     dashboardSorts: SortField[];
+    /** The dashboard's effective time range; resolves the reserved time parameters. */
+    timeRange?: QueryTimeRange;
 };
 
 export type ExecuteAsyncDashboardSqlChartByUuidArgs =

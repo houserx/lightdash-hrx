@@ -15,33 +15,37 @@ import DashboardSqlChartTile from './DashboardSqlChartTile';
 const mocks = vi.hoisted(() => ({
     timeRange: undefined as DashboardTimeRange | undefined,
     sql: 'SELECT 1',
+    resultsArgs: undefined as Record<string, unknown> | undefined,
 }));
 
 // The tile is rendered with its chart already fetched; nothing may reach the network.
 vi.mock('../../api');
 vi.mock('../../features/sqlRunner/hooks/useSavedSqlChartResults', () => ({
-    useSavedSqlChartResults: () => ({
-        chartQuery: {
-            data: {
-                sql: mocks.sql,
-                slug: 'up-over-time',
-                config: { type: ChartKind.VERTICAL_BAR },
-                warehouseConnectionUuid: null,
-                organization: { organizationUuid: 'org-uuid' },
-                project: { projectUuid: 'project-uuid' },
+    useSavedSqlChartResults: (args: Record<string, unknown>) => {
+        mocks.resultsArgs = args;
+        return {
+            chartQuery: {
+                data: {
+                    sql: mocks.sql,
+                    slug: 'up-over-time',
+                    config: { type: ChartKind.VERTICAL_BAR },
+                    warehouseConnectionUuid: null,
+                    organization: { organizationUuid: 'org-uuid' },
+                    project: { projectUuid: 'project-uuid' },
+                },
+                isLoading: false,
+                error: null,
             },
-            isLoading: false,
-            error: null,
-        },
-        // Results still running: the tile header is already shown.
-        chartResultsQuery: {
-            data: undefined,
-            isLoading: true,
-            error: null,
-            isFetching: true,
-        },
-        getDownloadQueryUuid: async () => 'query-uuid',
-    }),
+            // Results still running: the tile header is already shown.
+            chartResultsQuery: {
+                data: undefined,
+                isLoading: true,
+                error: null,
+                isFetching: true,
+            },
+            getDownloadQueryUuid: async () => 'query-uuid',
+        };
+    },
 }));
 vi.mock('../../hooks/useConnectionBadges', () => ({
     useConnectionBadges: () => undefined,
@@ -101,10 +105,10 @@ const timeRange: DashboardTimeRange = {
     },
 };
 
-const renderTile = () =>
+const renderTile = (url = '/') =>
     renderWithProviders(
         <DashboardStoreTestProvider store={createDashboardTestStore({})}>
-            <MemoryRouter>
+            <MemoryRouter initialEntries={[url]}>
                 <DashboardSqlChartTile
                     tile={tile}
                     isEditMode={false}
@@ -119,7 +123,34 @@ describe('DashboardSqlChartTile under a dashboard time range', () => {
     afterEach(() => {
         mocks.timeRange = undefined;
         mocks.sql = 'SELECT 1';
+        mocks.resultsArgs = undefined;
         cleanup();
+    });
+
+    it('runs its query over the saved time range', () => {
+        mocks.timeRange = timeRange;
+        renderTile();
+
+        expect(mocks.resultsArgs).toMatchObject({
+            tileUuid: 'tile-sql',
+            timeRange: { from: 'now-6h', to: 'now', refreshInterval: null },
+        });
+    });
+
+    it('runs its query over the range in the URL', () => {
+        mocks.timeRange = timeRange;
+        renderTile('/?from=now-1h&to=now&refresh=30s');
+
+        expect(mocks.resultsArgs).toMatchObject({
+            timeRange: { from: 'now-1h', to: 'now', refreshInterval: '30s' },
+        });
+    });
+
+    it('sends no time range when the dashboard has none', () => {
+        renderTile('/?from=now-1h&to=now');
+
+        expect(mocks.resultsArgs).toBeDefined();
+        expect(mocks.resultsArgs).not.toHaveProperty('timeRange');
     });
 
     it('marks SQL without the reserved time parameters as not affected', () => {

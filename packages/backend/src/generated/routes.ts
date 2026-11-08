@@ -27579,6 +27579,43 @@ const models: TsoaRoute.Models = {
         },
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    QueryTimeRange: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                refreshInterval: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { ref: 'DashboardRefreshInterval' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
+                },
+                to: { dataType: 'string', required: true },
+                from: { dataType: 'string', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    QueryAudit: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                ticket: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
+                },
+                description: { dataType: 'string', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     ExecuteAsyncSqlQueryRequestParams: {
         dataType: 'refAlias',
         type: {
@@ -27588,6 +27625,8 @@ const models: TsoaRoute.Models = {
                 {
                     dataType: 'nestedObjectLiteral',
                     nestedProperties: {
+                        audit: { ref: 'QueryAudit' },
+                        timeRange: { ref: 'QueryTimeRange' },
                         warehouseConnectionUuid: {
                             dataType: 'union',
                             subSchemas: [
@@ -27726,6 +27765,7 @@ const models: TsoaRoute.Models = {
                 {
                     dataType: 'nestedObjectLiteral',
                     nestedProperties: {
+                        timeRange: { ref: 'QueryTimeRange' },
                         includeUnpublishedDraft: { dataType: 'boolean' },
                         pivotResults: { dataType: 'boolean' },
                         limit: {
@@ -27799,6 +27839,7 @@ const models: TsoaRoute.Models = {
                 {
                     dataType: 'nestedObjectLiteral',
                     nestedProperties: {
+                        timeRange: { ref: 'QueryTimeRange' },
                         limit: { dataType: 'double' },
                         dashboardSorts: {
                             dataType: 'array',

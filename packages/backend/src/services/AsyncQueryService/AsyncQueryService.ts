@@ -463,6 +463,11 @@ import {
     QueryEstimateCache,
 } from './queryCostEstimate';
 import { canReuseApiResult, canReuseQueryResult } from './queryResultReuse';
+import {
+    normalizeQueryAudit,
+    withTimeRangeParameters,
+    withTimeRangeTileFilter,
+} from './queryTimeRange';
 import { queryUsageProperties, queryWorkloadOrigin } from './queryUsage';
 import {
     EstimateAsyncMetricQueryArgs,
@@ -9746,6 +9751,7 @@ export class AsyncQueryService extends ProjectService {
         preloadedSavedChart,
         preloadedProjectParameters,
         userAttributeOverrides,
+        timeRange,
     }: ExecuteAsyncDashboardChartQueryArgs): Promise<ApiExecuteAsyncDashboardChartQueryResults> {
         assertIsAccountWithOrg(account);
 
@@ -9818,9 +9824,24 @@ export class AsyncQueryService extends ProjectService {
                 }),
             );
 
+        // A tile mapped to a time dimension in the saved Dashboard Time Range is
+        // filtered on it over the requested range.
+        const dashboardFiltersWithTimeRange = timeRange
+            ? withTimeRangeTileFilter({
+                  dashboardFilters,
+                  timeRange,
+                  savedTimeRange:
+                      await this.dashboardModel.getDashboardTimeRangeByIdOrSlug(
+                          resolvedDashboardUuid,
+                          projectUuid,
+                      ),
+                  tileUuid,
+              })
+            : dashboardFilters;
+
         const resolvedDashboardFilters = await resolveDashboardDateFilters({
             tileUuid,
-            dashboardFilters,
+            dashboardFilters: dashboardFiltersWithTimeRange,
             explore,
             findExploreContainingTable: (tableName) =>
                 this.projectModel.findExploreContainingTable(
@@ -9987,6 +10008,7 @@ export class AsyncQueryService extends ProjectService {
             dateZoom,
             limit,
             parameters: combinedParameters,
+            ...(timeRange ? { timeRange } : {}),
         };
 
         const { fields, dateZoomApplied } = await this.getMetricQueryFields({
@@ -10463,7 +10485,14 @@ export class AsyncQueryService extends ProjectService {
         parameters,
         userAttributeOverrides,
         warehouseConnectionUuid: requestedConnectionUuid,
+        timeRange,
+        audit,
     }: ExecuteAsyncSqlQueryArgs): Promise<ApiExecuteAsyncSqlQueryResults> {
+        // Refuse a blank Audited Query description before any warehouse work.
+        // The identity token's audit block is not wired to the warehouse
+        // client yet (see PROGRESS.md, ldq-query-routes-time-range-audit).
+        normalizeQueryAudit(audit);
+
         const { organizationUuid, provisioningSource } =
             await this.projectModel.getSummary(projectUuid);
 
@@ -10519,11 +10548,11 @@ export class AsyncQueryService extends ProjectService {
             );
         }
 
-        // Combine default parameter values with request parameters first
-        const combinedParameters = await this.combineParameters(
-            projectUuid,
-            undefined,
-            parameters,
+        // Combine default parameter values with request parameters first, then
+        // add the reserved time parameters resolved from the time range.
+        const combinedParameters = withTimeRangeParameters(
+            await this.combineParameters(projectUuid, undefined, parameters),
+            timeRange,
         );
 
         const {
@@ -10577,6 +10606,7 @@ export class AsyncQueryService extends ProjectService {
                 invalidateCache,
                 parameters: combinedParameters,
                 context,
+                ...(timeRange ? { timeRange } : {}),
             },
         );
 
@@ -15444,13 +15474,18 @@ export class AsyncQueryService extends ProjectService {
             rawDashboardParameters,
         );
 
-        // Combine default parameter values, dashboard parameters, and request parameters first
-        const combinedParameters = await this.combineParameters(
-            projectUuid,
-            undefined,
-            args.parameters,
-            dashboardParameters,
-            projectParameters,
+        // Combine default parameter values, dashboard parameters, and request
+        // parameters first, then add the reserved time parameters resolved from
+        // the dashboard's time range.
+        const combinedParameters = withTimeRangeParameters(
+            await this.combineParameters(
+                projectUuid,
+                undefined,
+                args.parameters,
+                dashboardParameters,
+                projectParameters,
+            ),
+            args.timeRange,
         );
 
         const {

@@ -604,6 +604,7 @@ export class QueryController extends BaseController {
                 parameters: body.parameters,
                 pivotResults: body.pivotResults,
                 includeUnpublishedDraft: body.includeUnpublishedDraft,
+                timeRange: body.timeRange,
             });
 
         return {
@@ -692,6 +693,8 @@ export class QueryController extends BaseController {
                 limit: body.limit,
                 parameters: body.parameters,
                 warehouseConnectionUuid: body.warehouseConnectionUuid,
+                timeRange: body.timeRange,
+                audit: body.audit,
             });
 
         return {
@@ -872,6 +875,7 @@ export class QueryController extends BaseController {
                 context: context ?? QueryExecutionContext.SQL_RUNNER,
                 limit: body.limit,
                 parameters: body.parameters,
+                timeRange: body.timeRange,
                 ...(isExecuteAsyncDashboardSqlChartByUuidParams(body)
                     ? { savedSqlUuid: body.savedSqlUuid }
                     : { slug: body.slug }),

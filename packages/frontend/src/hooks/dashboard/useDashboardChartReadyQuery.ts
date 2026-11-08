@@ -29,6 +29,7 @@ import {
 } from '../../features/dashboard/store';
 import { useTileQueryQueue } from '../../features/dashboard/tileQueryQueue/useTileQueryQueue';
 import { waitForQueryToFinish } from '../../features/dashboard/tileQueryQueue/waitForQueryToFinish';
+import { useDashboardQueryTimeRange } from '../../features/dashboardTimeRange/hooks/useDashboardQueryTimeRange';
 import useDashboardContext from '../../providers/Dashboard/useDashboardContext';
 import useDashboardTileStatusContext from '../../providers/Dashboard/useDashboardTileStatusContext';
 import { useLightdashApi } from '../../providers/LightdashApi/useLightdashApi';
@@ -146,6 +147,7 @@ export const useDashboardChartReadyQuery = (
         (c) => c.includeUnpublishedDraft,
     );
     const sessionTimezone = useSessionTimezone();
+    const timeRange = useDashboardQueryTimeRange();
     const chartQuery = useSavedQuery({
         uuidOrSlug: chartUuid ?? undefined,
         projectUuid,
@@ -305,6 +307,7 @@ export const useDashboardChartReadyQuery = (
             sessionTimezone,
             chartVersion,
             includeUnpublishedDraft,
+            timeRange ?? null,
         ],
         [
             chartQuery.data?.projectUuid,
@@ -323,6 +326,7 @@ export const useDashboardChartReadyQuery = (
             sessionTimezone,
             chartVersion,
             includeUnpublishedDraft,
+            timeRange,
         ],
     );
 
@@ -379,6 +383,7 @@ export const useDashboardChartReadyQuery = (
                               ...(includeUnpublishedDraft && {
                                   includeUnpublishedDraft: true,
                               }),
+                              ...(timeRange && { timeRange }),
                           },
                       );
 

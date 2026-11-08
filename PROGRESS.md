@@ -1047,3 +1047,52 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     10s, saved_query does not, tile keeps its data; off -> no re-run. Feature check 3/3, header
     13/13, url acceptance 5/5, frontend typecheck, oxlint, oxfmt clean.
 - 2026-11-08T20:02:48Z supervisor: ldq-dashboard-auto-refresh passed the gate in round 1
+- 2026-11-08 ldq-query-routes-time-range-audit (session):
+  - common `types/api/paginatedQuery.ts`: new `QueryTimeRange` ({from, to, refreshInterval?:
+    DashboardRefreshInterval|null}) and `QueryAudit` ({description, ticket?: string|null}).
+    `timeRange?` on ExecuteAsyncSqlQuery/DashboardChart/DashboardSqlChart request params; `audit?`
+    on the SQL one only (as this file's API section says). Matching args in the backend
+    `AsyncQueryService/types.ts`; `QueryController` passes them through unchanged (routes regenerated
+    by init; generated routes/swagger diffs are part of this change, as in earlier features).
+  - New `AsyncQueryService/queryTimeRange.ts`: `withTimeRangeParameters(params, range, now?)` adds
+    `__from/__to/__interval/__range` (resolveReservedParameterValues, refresh bucket, user value
+    wins); `withTimeRangeTileFilter({dashboardFilters, timeRange, savedTimeRange, tileUuid})` adds
+    the `dashboard-time-range:<tile>` inBetween rule from getDashboardTimeRangeFilterRules for a
+    mapped tile; `normalizeQueryAudit` (trim, blank description -> ParameterError, blank ticket ->
+    null). Invalid ranges -> ParameterError "Invalid time range ...".
+  - AsyncQueryService: SQL runner and dashboard SQL chart tiles merge the time parameters into the
+    combined parameters before substitution, so `${ld.parameters.__from}` now works in the SQL
+    runner (it threw "Missing values" before) and the cache key carries the resolved bucket.
+    Dashboard chart tiles load the saved range's tileTimeDimensions with the new lightweight
+    `DashboardModel.getDashboardTimeRangeByIdOrSlug` (only when the request has a range) and
+    add the tile's rule before resolveDashboardDateFilters (merge charts get it too). The request
+    `timeRange` (not audit) is recorded in query history requestParameters for sql and
+    dashboard-chart, so rerun keeps the range.
+  - Frontend: `features/dashboardTimeRange/hooks/useDashboardQueryTimeRange()` = saved range
+    overridden by URL from/to/refresh (undefined when the dashboard has none, same as the
+    control). useDashboardChartReadyQuery and DashboardSqlChartTile -> useSavedSqlChartResults ->
+    getDashboardSqlChartPivotChartData send it (registered path only; embed endpoints untouched)
+    and it is in the query keys. Relative ranges keep the same key; auto-refresh invalidation
+    re-runs them and the backend resolves the next bucket.
+  - NOT DONE, needs a decision (follow-up): `audit` stops at AsyncQueryService (validated, then
+    unused). FederationIdentityService is still not registered in ServiceRepository and no
+    query path passes `getIdentityToken` to the warehouse client. Warehouse clients are cached and
+    shared across users/jobs (WarehouseClientFactory cacheKey), so a per-query audit/tile uuid
+    cannot ride the client options without either adding user+audit to the cache key or a
+    per-query context (AsyncLocalStorage) the provider reads. That integration belongs to whoever
+    wires WarehouseClientFactory (see "Work with no acceptance check"); until then the engine sees
+    no identity, and Audited Queries fail closed at the engine. Audit is deliberately not stored in
+    query history (free-text description may hold sensitive detail).
+  - Tested: no full stack (no Docker). Feature check 3/3. New queryTimeRange.test.ts 13/13.
+    AsyncQueryService.test.ts 998/998 incl. new cases: SQL runner substitutes promql(...) with
+    the absolute range ('5m' interval for 1d) and records timeRange; reserved params without a
+    range -> ParameterError; bad range / blank audit refused before the warehouse; mapped chart
+    tile gets the inBetween filter (fails with the wiring removed), unmapped/no-range untouched;
+    dashboard SQL chart gets the four params. Frontend: new
+    useDashboardChartReadyQuery.timeRange.test.tsx (real DashboardProvider + mocked API: saved
+    range, URL override, none; fails with the wiring removed), DashboardSqlChartTile.timeRange
+    6/6, useSavedSqlChartResults 4/4, bridge 10/10, merge 16/16, header 13/13. Backend acceptance
+    persisted/federation-access/time-cache-key and frontend dashboard-auto-refresh pass. common,
+    backend, frontend typecheck clean; oxfmt/oxlint clean on changed files (run oxfmt per file:
+    one run over AsyncQueryService.test.ts plus others was killed, exit 137).
+- 2026-11-08T20:21:47Z supervisor: ldq-query-routes-time-range-audit passed the gate in round 1

@@ -19,6 +19,7 @@ import {
     DashboardSqlChartTile,
     DashboardTab,
     DashboardTileTypes,
+    DashboardTimeRange,
     DashboardUnversionedFields,
     DashboardVersionedFields,
     HTML_SANITIZE_MARKDOWN_TILE_RULES,
@@ -1709,6 +1710,55 @@ export class DashboardModel {
         }
 
         return row.parameters ?? undefined;
+    }
+
+    /**
+     * Lightweight query for the Dashboard Time Range of a dashboard's latest
+     * version (null when it has none), without loading tiles or metadata.
+     * Used by dashboard chart query execution to find a tile's time dimension.
+     */
+    async getDashboardTimeRangeByIdOrSlug(
+        dashboardUuidOrSlug: string,
+        projectUuid: string,
+    ): Promise<DashboardTimeRange | null> {
+        const query = this.database(DashboardsTableName)
+            .innerJoin(
+                DashboardVersionsTableName,
+                `${DashboardsTableName}.dashboard_id`,
+                `${DashboardVersionsTableName}.dashboard_id`,
+            )
+            .select<{ time_range: DashboardTimeRange | null } | undefined>(
+                `${DashboardVersionsTableName}.time_range`,
+            )
+            .where(`${DashboardsTableName}.project_uuid`, projectUuid)
+            .whereNull(`${DashboardsTableName}.deleted_at`)
+            .orderBy(`${DashboardVersionsTableName}.created_at`, 'desc');
+
+        const fetchByUuid = (dashboardUuid: string) =>
+            query
+                .clone()
+                .where(`${DashboardsTableName}.dashboard_uuid`, dashboardUuid)
+                .first();
+
+        let row = isValidUuid(dashboardUuidOrSlug)
+            ? await fetchByUuid(dashboardUuidOrSlug)
+            : undefined;
+
+        if (!row) {
+            const resolvedDashboardUuid = await this.resolveDashboardUuidBySlug(
+                dashboardUuidOrSlug,
+                projectUuid,
+            );
+            row = resolvedDashboardUuid
+                ? await fetchByUuid(resolvedDashboardUuid)
+                : undefined;
+        }
+
+        if (!row) {
+            throw new NotFoundError('Dashboard not found');
+        }
+
+        return row.time_range ?? null;
     }
 
     /*

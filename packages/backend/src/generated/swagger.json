@@ -29306,6 +29306,46 @@
                 ],
                 "description": "A compose-engine merge run, which may reference existing results."
             },
+            "QueryTimeRange": {
+                "properties": {
+                    "refreshInterval": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/DashboardRefreshInterval"
+                            }
+                        ],
+                        "nullable": true,
+                        "description": "Relative bounds round down to this interval (10s when absent or null)."
+                    },
+                    "to": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    },
+                    "from": {
+                        "type": "string",
+                        "description": "`now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset."
+                    }
+                },
+                "required": ["to", "from"],
+                "type": "object",
+                "description": "The time range a query runs over: the Dashboard Time Range of a tile's\ndashboard (saved range overridden by the URL) or Investigate's range. The\nreserved time parameters (`__from`, `__to`, `__interval`, `__range`) and the\ntile time-dimension filters resolve from it before the query is compiled."
+            },
+            "QueryAudit": {
+                "properties": {
+                    "ticket": {
+                        "type": "string",
+                        "nullable": true,
+                        "description": "Optional Linear ticket, e.g. `ENG-123`."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Why the query is run; required by the engine for Audited Queries."
+                    }
+                },
+                "required": ["description"],
+                "type": "object",
+                "description": "The fields an Audited Query carries into the identity token's audit block."
+            },
             "ExecuteAsyncSqlQueryRequestParams": {
                 "allOf": [
                     {
@@ -29313,6 +29353,14 @@
                     },
                     {
                         "properties": {
+                            "audit": {
+                                "$ref": "#/components/schemas/QueryAudit",
+                                "description": "Description and ticket of an Audited Query."
+                            },
+                            "timeRange": {
+                                "$ref": "#/components/schemas/QueryTimeRange",
+                                "description": "Resolves the reserved time parameters in the SQL."
+                            },
                             "warehouseConnectionUuid": {
                                 "type": "string",
                                 "nullable": true
@@ -29476,6 +29524,10 @@
                     },
                     {
                         "properties": {
+                            "timeRange": {
+                                "$ref": "#/components/schemas/QueryTimeRange",
+                                "description": "The dashboard's effective time range; filters a mapped tile."
+                            },
                             "includeUnpublishedDraft": {
                                 "type": "boolean"
                             },
@@ -29566,6 +29618,10 @@
                     },
                     {
                         "properties": {
+                            "timeRange": {
+                                "$ref": "#/components/schemas/QueryTimeRange",
+                                "description": "The dashboard's effective time range; resolves the reserved time parameters."
+                            },
                             "limit": {
                                 "type": "number",
                                 "format": "double"
