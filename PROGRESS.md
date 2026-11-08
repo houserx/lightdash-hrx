@@ -1319,3 +1319,24 @@ token verification for a *valid* token, which feature 39 then hardens.
   eng_audit_fail_closed, and the audit unit tests (new: js_pretty_is_two_space_json_stringify).
   No build warnings.
 - 2026-11-08T20:22:30Z supervisor: eng-audit-s3-object passed the gate in round 1
+- 2026-11-08 eng-audit-integrity-hash (round 1): already implemented by eng-audit-dynamodb-item
+  (`audit::integrity_hash` + `js_json`). This session verified it and changed no engine code.
+  - Checked against the portal's real source (read-only ref
+    `~/Locals/Tinkering/eng-1799-factory/refs/db-query-portal@aea73de/api/src/services/audit.service.ts`):
+    the canonical object is {sql, mode, description, database, linearTicketId, executedBySub,
+    status, rowCount, preview, action ?? 'query', createdAt}. `linearTicketId` is typed
+    `string | null`, so the engine's null for "no ticket" matches (it is never omitted from the
+    hash). An empty `AUDIT_INTEGRITY_KEY` would make the portal fall back to sha256. The engine
+    instead rejects a named-but-empty or missing key env at startup (config problem), so it never
+    silently downgrades.
+  Tested as a user: `../tmp/integrity/fixture.mjs` copies the portal's computeIntegrityHash
+  verbatim and reproduced all 3 entries of `fixtures/integrity_hash.json` (hmac and sha256).
+  `../tmp/integrity/run.sh <out> key|nokey` starts the Prometheus mocks, the DynamoDB+S3 logger
+  and the engine. It runs the restricted query over the extended protocol, with SQL whose comment
+  holds unicode, ✓, `"`, backslashes, 🚀 and \x01, and a token description that holds \n, \t,
+  quotes, backslashes, unicode, an emoji and \x01. Both are stored verbatim (2 rows returned).
+  `verify.mjs` recomputes the hash of the PutItem with the portal function: the hmac-sha256 hash
+  matched under key `k`. With `integrity_key_env` removed (env var still set), the item got a
+  `sha256:` hash that matched the portal fallback. Check passed after init, as did the
+  `audit::` unit tests.
+- 2026-11-08T20:24:40Z supervisor: eng-audit-integrity-hash passed the gate in round 1
