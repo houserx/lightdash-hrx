@@ -806,3 +806,30 @@ token verification for a *valid* token, which feature 39 then hardens.
   unbuilt or halted features).
 - 2026-11-08T18:27:15Z supervisor: eng-max-rows-overflow passed the gate in round 1
 - 2026-11-08T18:35:23Z supervisor: eng-pg-statement-timeout halted: command engine.feature.eng-pg-statement-timeout.r1.rerun-eng-promql-upstream-errors stopped: STOP file present
+- 2026-11-08 eng-pg-statement-timeout (worker, round 1 of the rerun after the STOP-file halt):
+  `Sql::execute` (src/pg.rs) wraps `df.collect()` in `tokio::time::timeout` when the connection's
+  `statement_timeout` is above 0. On expiry it fails with SQLSTATE 57014 "canceling statement due
+  to statement timeout". Dropping the collect future also drops the in-flight reqwest call made
+  in `PromqlQuery::scan`, so the source sees the connection close. Both protocols go through
+  `execute`, so both are covered. The timer covers execution only, not planning. Planning does no
+  source I/O today. If a later source does I/O at plan time, move the timeout up.
+  - session.rs: `SET statement_timeout` is validated now. Allowed forms are integer ms, or a
+    number with a unit (`us`, `ms`, `s`, `min`, `h`, `d`), with 0..=2147483647 ms after
+    rounding, as Postgres allows. Anything else gets 22023 `invalid value for parameter
+    "statement_timeout"`. The value is still stored raw, so `current_setting` echoes it
+    (`600000`, `5s`). `Settings::statement_timeout()` returns `None` for 0 (no limit). One new
+    unit test.
+  - For eng-pg-cancel-request / eng-pg-disconnect-cleanup / eng-platform-statement-timeout:
+    use the same drop-the-future approach. pgwire races `do_query` against the cancel receiver
+    (see the eng-pg-cursor-batches note), and that drop is what abandons the source request.
+    The platform feature may also want to forward the limit to Postgres; the engine-level
+    timer already applies to every source.
+  Tested as a user: `../tmp/pgclient/src/bin/timeout.rs` (mock on 127.0.0.1:59100, slow = 20 s
+  and medium = 1.2 s, config `../tmp/promql/timeout.toml`) spawns `target/debug/engine` and uses
+  tokio-postgres. With `SET statement_timeout = 500`, promql('slow') gave 57014 in 503 ms
+  (extended) and 502 ms (simple), and the mock logged "engine dropped the request" after ~500 ms
+  both times. SELECT 1 still worked afterwards. '1s' cut 'medium' at 1002 ms. 'soon' and -1 gave
+  22023. With 0, and after RESET, 'medium' returned 1 row in 1203 ms in both protocols. The check
+  `pgwire::eng_pg_statement_timeout` passes. All pgwire/promql/config/harness checks in the
+  passing list still pass; the failures are the unbuilt tls/cancel/disconnect features.
+- 2026-11-08T18:39:58Z supervisor: eng-pg-statement-timeout passed the gate in round 1

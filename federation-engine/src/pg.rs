@@ -277,6 +277,8 @@ impl Sql {
         Ok(Action::Query(plan))
     }
 
+    /// Runs a plan to completion in a connection's settings. With a `statement_timeout` set,
+    /// a run that outlasts it fails with SQLSTATE 57014.
     async fn execute(
         &self,
         plan: LogicalPlan,
@@ -284,7 +286,19 @@ impl Sql {
     ) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
         let df = DataFrame::new(self.state_for(settings)?, plan);
         let schema = df.schema().as_arrow().clone();
-        let batches = df.collect().await?;
+        let batches = match settings.statement_timeout() {
+            None => df.collect().await?,
+            // On timeout the collect future is dropped, and with it any in-flight source
+            // request (CONTRACTS §1 "Cancellation").
+            Some(limit) => tokio::time::timeout(limit, df.collect())
+                .await
+                .map_err(|_| {
+                    sqlstate(
+                        "57014",
+                        "canceling statement due to statement timeout".to_string(),
+                    )
+                })??,
+        };
         Ok((schema, batches))
     }
 }

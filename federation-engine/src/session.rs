@@ -2,13 +2,15 @@
 //! and what `current_setting(name)` reports.
 //!
 //! Settings live in the pg-wire client's metadata, so each connection has its own and they end
-//! with it. `timezone` is validated and changes the zone queries are planned in; every other
-//! name (`statement_timeout`, `lightdash.agent`, `search_path`, unknown ones) is stored as given
-//! and has no other effect here.
+//! with it. `timezone` is validated and changes the zone queries are planned in;
+//! `statement_timeout` is validated and limits how long a statement may execute (pg.rs). Every
+//! other name (`lightdash.agent`, `search_path`, unknown ones) is stored as given and has no other
+//! effect here.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use datafusion::arrow::array::{AsArray, StringArray};
 use datafusion::arrow::compute::cast;
@@ -77,6 +79,37 @@ impl Settings {
     pub fn time_zone(&self) -> Option<&str> {
         self.0.get("timezone").map(String::as_str)
     }
+
+    /// The limit `SET statement_timeout` puts on a statement; `None` when it is `0` (no limit).
+    pub fn statement_timeout(&self) -> Option<Duration> {
+        self.get("statement_timeout")
+            .and_then(timeout_millis)
+            .filter(|ms| *ms > 0)
+            .map(Duration::from_millis)
+    }
+}
+
+/// The milliseconds a `statement_timeout` value means, as Postgres reads it: a number of
+/// milliseconds, or a number with a unit (`us`, `ms`, `s`, `min`, `h`, `d`), between 0 and
+/// 2147483647 ms after rounding. `None` if the value is not one.
+fn timeout_millis(value: &str) -> Option<u64> {
+    let value = value.trim();
+    let split = value
+        .find(|c: char| c.is_ascii_alphabetic())
+        .unwrap_or(value.len());
+    let (number, unit) = value.split_at(split);
+    let number: f64 = number.trim().parse().ok()?;
+    let per_unit = match unit.trim() {
+        "" | "ms" => 1.0,
+        "us" => 0.001,
+        "s" => 1_000.0,
+        "min" => 60_000.0,
+        "h" => 3_600_000.0,
+        "d" => 86_400_000.0,
+        _ => return None,
+    };
+    let ms = (number * per_unit).round();
+    (ms.is_finite() && (0.0..=f64::from(i32::MAX)).contains(&ms)).then_some(ms as u64)
 }
 
 /// A validated `SET` or `RESET`.
@@ -144,6 +177,19 @@ impl Change {
                     value: Some(zone.to_string()),
                 })
             }
+            Change::Set {
+                name,
+                value: Some(value),
+            } if name == "statement_timeout" => match timeout_millis(&value) {
+                Some(_) => Ok(Change::Set {
+                    name,
+                    value: Some(value),
+                }),
+                None => Err(sqlstate(
+                    "22023",
+                    format!("invalid value for parameter \"statement_timeout\": \"{value}\""),
+                )),
+            },
             other => Ok(other),
         }
     }
@@ -318,6 +364,41 @@ mod tests {
                 panic!("{sql}: not a SQLSTATE error")
             };
             assert_eq!(e.downcast_ref::<SqlStateError>().unwrap().code, "22023");
+        }
+    }
+
+    #[test]
+    fn statement_timeouts_read_as_postgres_reads_them() {
+        let limit = |value: &str| {
+            let mut meta = HashMap::new();
+            set("statement_timeout", Some(value)).apply(&mut meta);
+            Settings::of(&meta).statement_timeout()
+        };
+        assert_eq!(Settings::default().statement_timeout(), None);
+        assert_eq!(limit("0"), None);
+        assert_eq!(limit("500"), Some(Duration::from_millis(500)));
+        assert_eq!(limit("5s"), Some(Duration::from_secs(5)));
+        assert_eq!(limit("1.5 s"), Some(Duration::from_millis(1500)));
+        assert_eq!(limit("2min"), Some(Duration::from_secs(120)));
+        assert_eq!(limit("1h"), Some(Duration::from_secs(3600)));
+        assert_eq!(limit("250ms"), Some(Duration::from_millis(250)));
+        let ok = |sql: &str| change(sql).unwrap().unwrap();
+        assert_eq!(
+            ok("SET statement_timeout = '5s'"),
+            set("statement_timeout", Some("5s"))
+        );
+        assert_eq!(ok("SET statement_timeout = 0"), set("statement_timeout", Some("0")));
+        for sql in [
+            "SET statement_timeout = -1",
+            "SET statement_timeout = 'soon'",
+            "SET statement_timeout = '5 fortnights'",
+            "SET statement_timeout = 3000000000",
+        ] {
+            let e = change(sql).unwrap().unwrap_err();
+            let DataFusionError::External(e) = e else {
+                panic!("{sql}: not a SQLSTATE error")
+            };
+            assert_eq!(e.downcast_ref::<SqlStateError>().unwrap().code, "22023", "{sql}");
         }
     }
 
