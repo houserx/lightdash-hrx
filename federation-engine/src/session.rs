@@ -7,6 +7,7 @@
 //! other name (`lightdash.agent`, `search_path`, unknown ones) is stored as given and has no other
 //! effect here.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ fn default_of(name: &str) -> Option<&'static str> {
 /// An error that carries its own Postgres SQLSTATE, wrapped in `DataFusionError::External`.
 #[derive(Debug)]
 pub struct SqlStateError {
-    pub code: &'static str,
+    pub code: Cow<'static, str>,
     pub message: String,
 }
 
@@ -51,7 +52,18 @@ impl std::error::Error for SqlStateError {}
 
 /// A DataFusion error carrying the given SQLSTATE.
 pub fn sqlstate(code: &'static str, message: String) -> DataFusionError {
-    DataFusionError::External(Box::new(SqlStateError { code, message }))
+    DataFusionError::External(Box::new(SqlStateError {
+        code: Cow::Borrowed(code),
+        message,
+    }))
+}
+
+/// [`sqlstate`] with a code known only at run time, e.g. one the Platform Database sent.
+pub fn sqlstate_owned(code: String, message: String) -> DataFusionError {
+    DataFusionError::External(Box::new(SqlStateError {
+        code: Cow::Owned(code),
+        message,
+    }))
 }
 
 /// One connection's settings, as of the statement being planned.

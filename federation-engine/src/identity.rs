@@ -1,4 +1,5 @@
-//! Identity tokens (CONTRACTS §3) and the access rules for Restricted Telemetry (§1.2).
+//! Identity tokens (CONTRACTS §3) and the access rules for Restricted Telemetry and the Platform
+//! Database (§1.2).
 //!
 //! A client sends `SET hrx.identity = '<token>'` before each query. The token is
 //! `<base64url(payload_json)>.<base64url(HMAC-SHA256(secret, base64url(payload_json)))>`. It is
@@ -6,8 +7,9 @@
 //! no identity at all, never as a partial one.
 //!
 //! Planning a statement puts an [`Access`] into the DataFusion session config. A table function
-//! that picks a restricted source asks it with [`Access::require_restricted`], which refuses with
-//! SQLSTATE 42501 or remembers the source, so the statement becomes an Audited Query (§6).
+//! that picks a restricted source asks it with [`Access::require_restricted`] (the Platform
+//! Database: [`Access::require`] with [`Claim::PlatformRead`]), which refuses with SQLSTATE 42501
+//! or remembers the source, so the statement becomes an Audited Query (§6).
 
 use std::sync::{Arc, Mutex};
 
@@ -38,6 +40,8 @@ pub struct Identity {
     /// The system identity (`sys = true`). It counts as `agent = false` (§1.2).
     pub sys: bool,
     pub telemetry_restricted: bool,
+    /// `attrs.platform_read`: may read the Platform Database (agents too, §1.2).
+    pub platform_read: bool,
     /// `audit.description`, when it is a non-blank string.
     pub description: Option<String>,
     /// `audit.ticket`, when it is a non-blank string.
@@ -94,6 +98,50 @@ impl Identity {
         }
         Ok(())
     }
+
+    /// May this identity run an Audited Query that needs `claim` on source `source`?
+    pub fn check(
+        identity: Option<&Identity>,
+        source: &str,
+        claim: Claim,
+    ) -> Result<(), DataFusionError> {
+        match claim {
+            Claim::TelemetryRestricted => Identity::check_restricted(identity, source),
+            Claim::PlatformRead => {
+                let Some(id) = identity.filter(|id| id.platform_read) else {
+                    return Err(sqlstate(
+                        "42501",
+                        format!(
+                            "source \"{source}\" is the Platform Database and needs platform_read"
+                        ),
+                    ));
+                };
+                if id.description.is_none() {
+                    return Err(sqlstate(
+                        "42501",
+                        "audited query requires a description".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// The claim an Audited Query needs on the source it reads (§1.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Claim {
+    /// Restricted Telemetry: `attrs.telemetry_restricted`, never an agent.
+    TelemetryRestricted,
+    /// The Platform Database: `attrs.platform_read`.
+    PlatformRead,
+}
+
+/// A source an Audited Query reads, and the claim reading it needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditedRead {
+    pub source: String,
+    pub claim: Claim,
 }
 
 /// Verifies a token against `secret` at `now` (epoch seconds). `None` unless the signature
@@ -121,6 +169,8 @@ pub fn verify(token: &str, secret: &[u8], now: i64) -> Option<Identity> {
             .map(str::to_string)
     };
     let audit = claims.get("audit");
+    let attr =
+        |name: &str| claims.get("attrs").and_then(|a| a.get(name)) == Some(&Value::Bool(true));
     Some(Identity {
         sub: text(claims.get("sub"))?,
         email: text(claims.get("email"))?,
@@ -128,10 +178,8 @@ pub fn verify(token: &str, secret: &[u8], now: i64) -> Option<Identity> {
         agent: claims.get("agent") != Some(&Value::Bool(false))
             || claims.get("iss").and_then(Value::as_str) == Some("telemetry-mcp"),
         sys: claims.get("sys") == Some(&Value::Bool(true)),
-        telemetry_restricted: claims
-            .get("attrs")
-            .and_then(|a| a.get("telemetry_restricted"))
-            == Some(&Value::Bool(true)),
+        telemetry_restricted: attr("telemetry_restricted"),
+        platform_read: attr("platform_read"),
         description: text(audit.and_then(|a| a.get("description"))),
         ticket: text(audit.and_then(|a| a.get("ticket"))),
     })
@@ -141,8 +189,8 @@ pub fn verify(token: &str, secret: &[u8], now: i64) -> Option<Identity> {
 #[derive(Debug, Default)]
 pub struct Access {
     identity: Option<Identity>,
-    /// Restricted sources the statement reads, in the order it names them, without repeats.
-    audited: Mutex<Vec<String>>,
+    /// Audited sources the statement reads, in the order it names them, without repeats.
+    audited: Mutex<Vec<AuditedRead>>,
 }
 
 impl Access {
@@ -156,20 +204,35 @@ impl Access {
     /// Lets a table function read restricted source `source` (42501 otherwise), and makes the
     /// statement an Audited Query. A session without an [`Access`] gets no access.
     pub fn require_restricted(session: &dyn Session, source: &str) -> Result<(), DataFusionError> {
+        Access::require(session, source, Claim::TelemetryRestricted)
+    }
+
+    /// Lets a table function read `source` when the session's identity has `claim` (42501
+    /// otherwise), and makes the statement an Audited Query. A session without an [`Access`]
+    /// gets no access.
+    pub fn require(
+        session: &dyn Session,
+        source: &str,
+        claim: Claim,
+    ) -> Result<(), DataFusionError> {
         let access: Option<Arc<Access>> = session.config().get_extension();
         let identity = access.as_ref().and_then(|a| a.identity.as_ref());
-        Identity::check_restricted(identity, source)?;
+        Identity::check(identity, source, claim)?;
         if let Some(access) = access {
             let mut audited = access.audited.lock().unwrap_or_else(|e| e.into_inner());
-            if !audited.iter().any(|s| s == source) {
-                audited.push(source.to_string());
+            let read = AuditedRead {
+                source: source.to_string(),
+                claim,
+            };
+            if !audited.contains(&read) {
+                audited.push(read);
             }
         }
         Ok(())
     }
 
-    /// The restricted sources the planned statement reads.
-    pub fn audited(&self) -> Vec<String> {
+    /// The audited sources the planned statement reads.
+    pub fn audited(&self) -> Vec<AuditedRead> {
         self.audited
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -266,5 +329,28 @@ mod tests {
         let quiet = id(with("audit", json!({"description": "  "}))).unwrap();
         assert!(code(Identity::check_restricted(Some(&quiet), "s")).contains("description"));
         assert_eq!(id(with("sys", json!(true))).unwrap().action(), "assertion");
+    }
+
+    #[test]
+    fn the_platform_database_needs_platform_read_and_a_description() {
+        let id = |c: Value| verify(&mint(&c, SECRET), SECRET, NOW);
+        let check = |c: Value| Identity::check(id(c).as_ref(), "p", Claim::PlatformRead);
+        let code = |r: Result<(), DataFusionError>| match r {
+            Err(DataFusionError::External(e)) => e.to_string(),
+            other => panic!("{other:?}"),
+        };
+        let reader = with("attrs", json!({"platform_read": true}));
+        assert!(check(reader.clone()).is_ok());
+        // Agents may read it (MCP platform_query); the attr is what counts.
+        let mut agent = reader.clone();
+        agent["agent"] = json!(true);
+        assert!(check(agent).is_ok());
+        assert!(code(check(claims())).contains("platform_read"));
+        let stringly = with("attrs", json!({"platform_read": "true"}));
+        assert!(code(check(stringly)).contains("platform_read"));
+        assert!(code(Identity::check(None, "p", Claim::PlatformRead)).contains("platform_read"));
+        let mut quiet = reader;
+        quiet["audit"] = json!({"description": ""});
+        assert!(code(check(quiet)).contains("description"));
     }
 }

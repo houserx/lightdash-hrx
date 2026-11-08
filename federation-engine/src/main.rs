@@ -12,6 +12,7 @@ mod identity;
 mod labels;
 mod logql;
 mod pg;
+mod platform;
 mod promql;
 mod selectors;
 mod server;

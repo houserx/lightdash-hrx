@@ -57,8 +57,9 @@ use crate::audit::{AuditWriter, Execution};
 use crate::cloudwatch::Cloudwatch;
 use crate::cloudwatch_logs::CloudwatchLogs;
 use crate::labels::{label_udf, series_name_udf};
-use crate::identity::{Access, Identity};
+use crate::identity::{Access, AuditedRead, Identity};
 use crate::logql::Logql;
+use crate::platform::PlatformQuery;
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
 use crate::trace::Trace;
@@ -158,6 +159,8 @@ impl PgHandlers {
         sql.ctx.register_udtf("logql", Arc::new(logql));
         let traceql = Traceql::new(config, http.clone());
         sql.ctx.register_udtf("traceql", Arc::new(traceql));
+        let platform = PlatformQuery::new(config, SOURCE_CONNECT_TIMEOUT);
+        sql.ctx.register_udtf("platform_query", Arc::new(platform));
         let trace = Trace::new(config, http.clone());
         sql.ctx.register_udtf("trace", Arc::new(trace));
         let promql = Promql::new(config, http);
@@ -226,8 +229,8 @@ pub struct Sql {
 /// What a planned statement does when executed.
 #[derive(Debug)]
 enum Action {
-    /// A query, with the Restricted Telemetry sources it reads (non-empty: an Audited Query).
-    Query(LogicalPlan, Vec<String>),
+    /// A query, with the audited sources it reads (non-empty: an Audited Query).
+    Query(LogicalPlan, Vec<AuditedRead>),
     Change(Change),
     Transaction(Transaction),
 }
@@ -348,15 +351,15 @@ impl Sql {
         Ok(Action::Query(plan, access.audited()))
     }
 
-    /// Runs a planned query. An Audited Query (one that reads the Restricted Telemetry sources
-    /// in `audited`) is checked again against the identity the connection has now, and its
-    /// audit record is written after it ran and before any row is returned: if the write fails,
-    /// the query fails with 58000 and returns nothing (CONTRACTS §6). `sql` is the statement as
-    /// the client sent it.
+    /// Runs a planned query. An Audited Query (one that reads the Restricted Telemetry or
+    /// Platform Database sources in `audited`) is checked again against the identity the
+    /// connection has now, and its audit record is written after it ran and before any row is
+    /// returned: if the write fails, the query fails with 58000 and returns nothing (CONTRACTS
+    /// §6). `sql` is the statement as the client sent it.
     async fn run(
         &self,
         plan: LogicalPlan,
-        audited: &[String],
+        audited: &[AuditedRead],
         sql: &str,
         settings: &Settings,
     ) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
@@ -364,8 +367,14 @@ impl Sql {
             return self.execute(plan, settings).await;
         }
         let identity = self.identity(settings);
-        for source in audited {
-            Identity::check_restricted(identity.as_ref(), source)?;
+        for read in audited {
+            Identity::check(identity.as_ref(), &read.source, read.claim)?;
+        }
+        let mut sources: Vec<String> = vec![];
+        for read in audited {
+            if !sources.contains(&read.source) {
+                sources.push(read.source.clone());
+            }
         }
         let (Some(identity), Some(writer)) = (identity, &self.audit) else {
             return Err(audit_write_failed("no identity or no [audit] store".to_string()));
@@ -375,7 +384,7 @@ impl Sql {
         let execution = Execution {
             identity: &identity,
             sql,
-            sources: audited,
+            sources: &sources,
             row_count: batches.iter().map(RecordBatch::num_rows).sum(),
             duration: started.elapsed(),
         };
@@ -665,7 +674,7 @@ impl ExtendedQueryHandler for QueryHandler {
 /// inferred from context (`col = $1`), the target of a direct cast (`$1::bigint`), else text.
 fn prepare(
     plan: LogicalPlan,
-    audited: Vec<String>,
+    audited: Vec<AuditedRead>,
     sql: &str,
     declared: &[Option<Type>],
 ) -> PgWireResult<Prepared> {
@@ -1104,7 +1113,7 @@ fn query_error(e: DataFusionError) -> PgWireError {
     if let DataFusionError::External(inner) = root
         && let Some(e) = inner.downcast_ref::<SqlStateError>()
     {
-        return user_error(e.code, e.message.clone());
+        return user_error(&e.code, e.message.clone());
     }
     let code = match root {
         // DataFusion has no typed "unknown table" error, only this wording (unit-tested below).

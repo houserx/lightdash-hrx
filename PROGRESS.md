@@ -1480,3 +1480,42 @@ token verification for a *valid* token, which feature 39 then hardens.
   identity::eng_identity_restricted_denied, identity::eng_restricted_loki_selectors and the
   `sources::` unit test. rustfmt and clippy are not installed on this toolchain; formatted by hand.
 - 2026-11-08T20:41:32Z supervisor: eng-restricted-cloudwatch-log-groups passed the gate in round 1
+- 2026-11-08 eng-platform-query-basic (round 1): `platform_query(sql)` reads the Platform
+  Database. New `src/platform.rs`: at plan time the table function checks the claim, then does a
+  describe-only round trip (tokio-postgres `prepare` = Parse/Describe, never Execute) on a fresh
+  connection to the source's read URL and turns the column types into the schema. At scan time it
+  prepares again, refuses with 0A000 if the column types changed since planning, and streams the
+  rows (binary) with `query_raw`, failing 54000 past `max_rows`. Postgres errors keep their own
+  SQLSTATE (`session::sqlstate_owned`; `SqlStateError.code` is now a `Cow<'static, str>`).
+  Access: `Identity` gained `platform_read`; `identity::Claim` (TelemetryRestricted |
+  PlatformRead) and `AuditedRead {source, claim}` replace the plain source list in
+  `Access`/`Action::Query`, and `Sql::run` re-checks each read with `Identity::check` before
+  executing and auditing (database = source name). Agents with platform_read may read (§1.2).
+  New dependency: tokio-postgres 0.7 (with-chrono-0_4), already in Cargo.lock as a dev-dep.
+  - Contract assumptions: platform_query has no source argument, so it reads the kind's default
+    `platform_postgres` source (the only one, or `default = true`); none → 42704. Types: bool,
+    int2/4/8, float4/8, date, timestamp, timestamptz keep their type; text-likes (incl. citext),
+    uuid and numeric (exact text, decoded from binary) are text; json/jsonb are json. Anything
+    else (arrays, intervals, bytea, ...) fails 0A000 telling the user to cast to text. Duplicate
+    column names fail 42701 (DataFusion can't hold them).
+  - Traps for the next sessions: table functions are synchronous, so the describe uses
+    `tokio::task::block_in_place` + `Handle::block_on` (needs the multi-thread runtime; a
+    CancelRequest/statement_timeout is not observed while planning blocks). Each describe and each
+    run opens its own connection: eng-platform-pools must add a pool. The connection is `NoTls`;
+    a read URL with `sslmode=require` fails closed — TLS to RDS is a follow-up. No guard yet
+    (eng-guard-read-mode); the read-only role is the only write protection for now. Don't add
+    `default_transaction_read_only`: nextval() in the describe-only test would fail.
+  - eng-platform-query-enforcement's acceptance test already passes with this change (run once,
+    informational).
+  Tested as a user: `../tmp/platform-basic/run.sh <out>` initdb's a throwaway cluster (synthetic
+  widgets/patients, seeded with pgclient's new `seed` bin because psql is blocked by the sandbox),
+  starts the audit store mock and the engine, and drives one session with pgclient's new
+  `platform` bin. Without platform_read: 42501 naming platform_read, and Postgres saw no
+  statement. With platform_read + description: prepare showed id int8, name text, active bool,
+  created_at timestamptz, score float8, note text; 3 rows, note NULL; the simple-protocol count
+  returned "2". Postgres's log showed each statement executed exactly once; the store saw one
+  dynamo put + one S3 put per query. Bad column → 42703 from Postgres; ARRAY column → 0A000.
+  The check passed after init, as did identity::eng_identity_restricted_denied,
+  identity::eng_audited_query_description_required, audit::eng_audit_dynamodb_item and the
+  `platform::`/`identity::`/`audit::`/`transaction::`/`session::`/`pg::` unit tests.
+- 2026-11-08T20:51:04Z supervisor: eng-platform-query-basic passed the gate in round 1

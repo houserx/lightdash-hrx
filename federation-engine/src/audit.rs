@@ -28,7 +28,7 @@ pub struct Execution<'a> {
     pub identity: &'a Identity,
     /// The SQL statement as the client sent it.
     pub sql: &'a str,
-    /// The restricted sources the statement read (the portal's `database`).
+    /// The audited sources the statement read (the portal's `database`).
     pub sources: &'a [String],
     pub row_count: usize,
     pub duration: Duration,
@@ -297,6 +297,7 @@ mod tests {
             agent: false,
             sys: false,
             telemetry_restricted: true,
+            platform_read: false,
             description: Some("why".into()),
             ticket: ticket.map(str::to_string),
         }
