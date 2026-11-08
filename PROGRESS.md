@@ -2120,3 +2120,39 @@ token verification for a *valid* token, which feature 39 then hardens.
   Trap: psql is blocked by the sandbox ("Operation not permitted"). Drive the engine with the
   tokio-postgres bins in ../tmp/pgclient instead.
 - 2026-11-08T22:40:11Z supervisor: eng-ops-marts-catalog passed the gate in round 1
+- eng-ops-marts-query (functional): `OpsMartTable::scan` in `src/ops_marts.rs` now reads rows.
+  It sends `SELECT <projected cols> FROM \`<project>.<dataset>.<table>\` [LIMIT n]` (GoogleSQL,
+  backtick-quoted) with jobs.query (`POST .../projects/{p}/queries`, `useLegacySql: false`,
+  `formatOptions.useInt64Timestamp: true`). Then it follows `pageToken` with jobs.getQueryResults
+  (`GET .../queries/{jobId}?formatOptions.useInt64Timestamp=true&location=..&pageToken=..`) until
+  there is no next page. If `jobComplete` is false, it asks getQueryResults again without a page
+  token. All rows go into one RecordBatch behind a MemorySourceConfig, the same pattern as the
+  other sources. WHERE, aggregates and joins all run in DataFusion: no filter pushdown, and only
+  `limit` is sent, which DataFusion pushes only when no filter sits above the scan. Every call
+  (tables.get included) goes through `Marts::call`, which adds `bearer_auth(source.token()?)`.
+  Contract assumptions:
+  - Result columns are matched by name against the answer's `schema.fields`; the mock always
+    returns the full table.
+  - Cells are parsed by casting text to the column's Arrow type (strict cast, so a bad cell
+    errors and names the column). TIMESTAMP cells are int64 microseconds.
+  - REPEATED/RECORD cells are their JSON, as text.
+  - With an empty projection (count(*)), the first column is read for its row count.
+  - The Ops Mart source now enforces `max_rows` (source override, else top-level): more rows than
+    that gives 54000 "result exceeds max_rows (N) for source \"..\"", checked page by page.
+  Unit tests: `ops_marts::tests::{select_sql_quotes_names_and_sends_the_limit,
+  cells_parse_into_the_column_types, pages_map_result_columns_by_name}`.
+  Tested as a user: `python3 -I ../tmp/ops-marts-query/run.py out` (ports 59721, 59722, 59725).
+  It runs a threaded paging BigQuery stand-in (2 rows per page, int64 timestamps, 401 without the
+  bearer) and the engine as a child process, stopped in `finally`. The queries go through the new
+  `../tmp/pgclient/target/debug/sqlat <port> <user> <pw> <sql>...` (simple query):
+  - The GROUP BY gave pharmacy-a 24, pharmacy-b 19, reading 3 pages.
+  - The pharmacy-b filter gave 3 rows: 2025-11-08 08:00/09:00/10:00+00, 20.25 / NULL / 30.0,
+    and t / t / f.
+  - The VALUES join gave intake 10 team-a and review 1 team-b.
+  - count(*) gave 3, and LIMIT 1 gave 1 row.
+  - The stand-in saw 15 calls, and every one carried `Bearer <token>`.
+  The check passes, and so do ops_marts::eng_ops_marts_catalog and (already)
+  eng_ops_marts_allowlist. Clippy -D warnings (tmp/rustup 1.99.1) is clean, and ops_marts.rs is
+  rustfmt-clean.
+  Next (eng-ops-marts-workload-identity): only `BigQuerySource::token` has to change.
+- 2026-11-08T22:45:14Z supervisor: eng-ops-marts-query passed the gate in round 1

@@ -5,19 +5,28 @@
 //! to BigQuery. A table's columns come from BigQuery's `tables.get` the first time the table is
 //! resolved (planning a query on it, or reading `information_schema.columns`), and are cached
 //! for [`SCHEMA_TTL`]. Listing tables (`information_schema.tables`) needs no BigQuery call.
+//!
+//! Reading a table runs `SELECT <projected columns> FROM <table> [LIMIT n]` with `jobs.query` and
+//! reads every result page with `jobs.getQueryResults`; filters, aggregates and joins run in the
+//! engine. Every call carries the source's bearer token.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use datafusion::arrow::array::{ArrayRef, StringArray};
+use datafusion::arrow::compute::{CastOptions, cast_with_options};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::error::ArrowError;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchOptions};
+use datafusion::catalog::memory::MemorySourceConfig;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, Session, TableProvider};
 use datafusion::error::DataFusionError;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use engine_config::{BigQueryAuth, BigQuerySettings, Config, SourceSettings};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::session::sqlstate;
 
@@ -27,7 +36,7 @@ pub const CATALOG: &str = "ops_marts";
 /// How long a table's BigQuery schema is reused before `tables.get` is asked again.
 const SCHEMA_TTL: Duration = Duration::from_secs(300);
 
-/// One `bigquery` source: where its API is and how calls authenticate.
+/// One `bigquery` source: where its API is, how calls authenticate, and its row cap.
 #[derive(Debug)]
 struct BigQuerySource {
     name: String,
@@ -35,6 +44,8 @@ struct BigQuerySource {
     /// `api_base_url` without a trailing `/`.
     api_base_url: String,
     auth: BigQueryAuth,
+    /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
+    max_rows: usize,
 }
 
 impl BigQuerySource {
@@ -89,54 +100,217 @@ impl Marts {
     }
 
     async fn fetch_schema(&self, t: &MartTable) -> Result<Schema, DataFusionError> {
-        let source = &t.source;
-        let fail = |what: String| {
-            DataFusionError::Execution(format!(
-                "bigquery source \"{}\": table {}.{}: {what}",
-                source.name, t.dataset, t.table
-            ))
-        };
-        let mut url = reqwest::Url::parse(&source.api_base_url)
-            .map_err(|e| fail(format!("api_base_url is not a URL: {e}")))?;
-        url.path_segments_mut()
-            .map_err(|()| fail("api_base_url cannot take a path".to_string()))?
-            .pop_if_empty()
-            .extend([
-                "bigquery",
-                "v2",
-                "projects",
-                &source.project,
-                "datasets",
-                &t.dataset,
-                "tables",
-                &t.table,
-            ]);
-        let response = self
-            .http
-            .get(url)
-            .bearer_auth(source.token()?)
+        let url = t.api_url(&["datasets", &t.dataset, "tables", &t.table])?;
+        let answer = self.call(t, self.http.get(url)).await?;
+        let fields = answer["schema"]["fields"]
+            .as_array()
+            .ok_or_else(|| t.fail("the table has no schema.fields"))?;
+        Ok(Schema::new(
+            fields.iter().map(arrow_field).collect::<Vec<_>>(),
+        ))
+    }
+
+    /// Sends one BigQuery API call with the source's bearer and returns its JSON answer. A
+    /// non-2xx answer is an error carrying BigQuery's message.
+    async fn call(
+        &self,
+        t: &MartTable,
+        request: reqwest::RequestBuilder,
+    ) -> Result<Value, DataFusionError> {
+        let response = request
+            .bearer_auth(t.source.token()?)
             .send()
             .await
-            .map_err(|e| fail(format!("BigQuery is unreachable: {e}")))?;
+            .map_err(|e| t.fail(format!("BigQuery is unreachable: {e}")))?;
         let status = response.status();
         let body = response
             .bytes()
             .await
-            .map_err(|e| fail(format!("reading the response failed: {e}")))?;
+            .map_err(|e| t.fail(format!("reading the response failed: {e}")))?;
         let answer: Value = serde_json::from_slice(&body)
-            .map_err(|_| fail(format!("HTTP {status} with a response that is not JSON")))?;
+            .map_err(|_| t.fail(format!("HTTP {status} with a response that is not JSON")))?;
         if !status.is_success() {
             let message = answer["error"]["message"]
                 .as_str()
                 .unwrap_or("no error message");
-            return Err(fail(format!("HTTP {status}: {message}")));
+            return Err(t.fail(format!("HTTP {status}: {message}")));
         }
-        let fields = answer["schema"]["fields"]
-            .as_array()
-            .ok_or_else(|| fail("the table has no schema.fields".to_string()))?;
-        Ok(Schema::new(
-            fields.iter().map(arrow_field).collect::<Vec<_>>(),
+        Ok(answer)
+    }
+
+    /// Reads `columns` of every row of the table (at most `limit` rows) with `jobs.query`, then
+    /// `jobs.getQueryResults` until BigQuery has no next page. Filters, aggregates and joins run
+    /// in the engine. More than the source's `max_rows` rows fails with SQLSTATE 54000.
+    async fn read(
+        &self,
+        t: &MartTable,
+        columns: &Schema,
+        limit: Option<usize>,
+    ) -> Result<RecordBatch, DataFusionError> {
+        let source = &t.source;
+        let sql = select_sql(&source.project, t, columns, limit);
+        let mut answer = self
+            .call(
+                t,
+                self.http.post(t.api_url(&["queries"])?).json(&json!({
+                    "query": sql,
+                    "useLegacySql": false,
+                    "formatOptions": {"useInt64Timestamp": true},
+                })),
+            )
+            .await?;
+        let mut cells: Vec<Vec<Option<String>>> = vec![Vec::new(); columns.fields().len()];
+        let mut rows = 0usize;
+        loop {
+            let complete = answer["jobComplete"].as_bool().unwrap_or(false);
+            if complete {
+                rows += add_page(t, columns, &answer, &mut cells)?;
+                if rows > source.max_rows {
+                    return Err(sqlstate(
+                        "54000",
+                        format!(
+                            "result exceeds max_rows ({}) for source \"{}\"",
+                            source.max_rows, source.name
+                        ),
+                    ));
+                }
+            }
+            let page_token = answer["pageToken"].as_str().filter(|s| !s.is_empty());
+            if complete && page_token.is_none() {
+                break;
+            }
+            let job = &answer["jobReference"];
+            let job_id = job["jobId"]
+                .as_str()
+                .ok_or_else(|| t.fail("the query answer has no jobReference.jobId"))?;
+            let mut query = vec![("formatOptions.useInt64Timestamp", "true".to_string())];
+            if let Some(location) = job["location"].as_str() {
+                query.push(("location", location.to_string()));
+            }
+            // An incomplete job is asked again without a page token: getQueryResults waits for it.
+            if let Some(token) = page_token.filter(|_| complete) {
+                query.push(("pageToken", token.to_string()));
+            }
+            let url = t.api_url(&["queries", job_id])?;
+            answer = self.call(t, self.http.get(url).query(&query)).await?;
+        }
+        let arrays = columns
+            .fields()
+            .iter()
+            .zip(cells)
+            .map(|(field, cells)| column_array(t, field, cells))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(RecordBatch::try_new_with_options(
+            Arc::new(columns.clone()),
+            arrays,
+            &RecordBatchOptions::new().with_row_count(Some(rows)),
+        )?)
+    }
+}
+
+impl MartTable {
+    /// A failure reading this table, naming the source and the table.
+    fn fail(&self, what: impl std::fmt::Display) -> DataFusionError {
+        DataFusionError::Execution(format!(
+            "bigquery source \"{}\": table {}.{}: {what}",
+            self.source.name, self.dataset, self.table
         ))
+    }
+
+    /// `{api_base_url}/bigquery/v2/projects/{project}/{path...}`, each segment escaped.
+    fn api_url(&self, path: &[&str]) -> Result<reqwest::Url, DataFusionError> {
+        let source = &self.source;
+        let mut url = reqwest::Url::parse(&source.api_base_url)
+            .map_err(|e| self.fail(format!("api_base_url is not a URL: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|()| self.fail("api_base_url cannot take a path"))?
+            .pop_if_empty()
+            .extend(["bigquery", "v2", "projects", &source.project])
+            .extend(path);
+        Ok(url)
+    }
+}
+
+/// The GoogleSQL statement reading `columns` of the table, with every name quoted.
+fn select_sql(project: &str, t: &MartTable, columns: &Schema, limit: Option<usize>) -> String {
+    let quote = |name: &str| format!("`{}`", name.replace('\\', "\\\\").replace('`', "\\`"));
+    let list = columns
+        .fields()
+        .iter()
+        .map(|f| quote(f.name()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let table = quote(&format!("{project}.{}.{}", t.dataset, t.table));
+    let mut sql = format!("SELECT {list} FROM {table}");
+    if let Some(n) = limit {
+        sql.push_str(&format!(" LIMIT {n}"));
+    }
+    sql
+}
+
+/// Appends one result page's cells to `cells` (one list per wanted column), matching result
+/// columns by name. Returns the page's row count.
+fn add_page(
+    t: &MartTable,
+    columns: &Schema,
+    answer: &Value,
+    cells: &mut [Vec<Option<String>>],
+) -> Result<usize, DataFusionError> {
+    let Some(rows) = answer["rows"].as_array() else {
+        return Ok(0);
+    };
+    let names: Vec<&str> = answer["schema"]["fields"]
+        .as_array()
+        .ok_or_else(|| t.fail("the query answer has no schema.fields"))?
+        .iter()
+        .map(|f| f["name"].as_str().unwrap_or_default())
+        .collect();
+    let positions = columns
+        .fields()
+        .iter()
+        .map(|f| {
+            names
+                .iter()
+                .position(|n| n == f.name())
+                .ok_or_else(|| t.fail(format!("the query answer has no column {}", f.name())))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for row in rows {
+        let row = row["f"]
+            .as_array()
+            .ok_or_else(|| t.fail("a result row has no cells"))?;
+        for (out, &at) in cells.iter_mut().zip(&positions) {
+            out.push(match row.get(at).map(|c| &c["v"]) {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(s.clone()),
+                // REPEATED and RECORD cells: their JSON, as text.
+                Some(other) => Some(other.to_string()),
+            });
+        }
+    }
+    Ok(rows.len())
+}
+
+/// One column of BigQuery cells as the field's Arrow type. TIMESTAMP cells are int64
+/// microseconds (`formatOptions.useInt64Timestamp`); the other types parse from BigQuery's text.
+fn column_array(
+    t: &MartTable,
+    field: &Field,
+    cells: Vec<Option<String>>,
+) -> Result<ArrayRef, DataFusionError> {
+    let text: ArrayRef = Arc::new(StringArray::from(cells));
+    let strict = CastOptions {
+        safe: false,
+        ..Default::default()
+    };
+    let bad = |e: ArrowError| t.fail(format!("column {}: {e}", field.name()));
+    match field.data_type() {
+        DataType::Utf8 => Ok(text),
+        DataType::Timestamp(TimeUnit::Microsecond, Some(_)) => {
+            let micros = cast_with_options(&text, &DataType::Int64, &strict).map_err(bad)?;
+            cast_with_options(&micros, field.data_type(), &strict).map_err(bad)
+        }
+        other => cast_with_options(&text, other, &strict).map_err(bad),
     }
 }
 
@@ -188,6 +362,7 @@ pub fn catalog(config: &Config, http: reqwest::Client) -> Option<Arc<dyn Catalog
             project: project.clone(),
             api_base_url: api_base_url.trim_end_matches('/').to_string(),
             auth: auth.clone(),
+            max_rows: usize::try_from(s.max_rows.unwrap_or(config.max_rows)).unwrap_or(usize::MAX),
         });
         for entry in allow {
             // The config check guarantees `dataset.table`.
@@ -258,7 +433,11 @@ impl SchemaProvider for Dataset {
             return Ok(None);
         };
         let schema = self.marts.schema(t).await?;
-        Ok(Some(Arc::new(OpsMartTable { schema })))
+        Ok(Some(Arc::new(OpsMartTable {
+            marts: self.marts.clone(),
+            table: t.clone(),
+            schema,
+        })))
     }
 
     /// Listing tables needs no schema, so no BigQuery call.
@@ -274,6 +453,8 @@ impl SchemaProvider for Dataset {
 /// An allowlisted table with its BigQuery schema.
 #[derive(Debug)]
 struct OpsMartTable {
+    marts: Arc<Marts>,
+    table: MartTable,
     schema: SchemaRef,
 }
 
@@ -287,24 +468,38 @@ impl TableProvider for OpsMartTable {
         TableType::Base
     }
 
-    /// Reading rows is not built yet: tables can be listed, described and planned only.
+    /// Reads the projected columns of every row from BigQuery (filters stay in the engine, so a
+    /// pushed-down `limit` is safe to send). With no column wanted (e.g. `count(*)`), the first
+    /// column is read for its row count only.
     async fn scan(
         &self,
         _state: &dyn Session,
-        _projection: Option<&Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         _filters: &[Expr],
-        _limit: Option<usize>,
+        limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        Err(sqlstate(
-            "0A000",
-            "reading Ops Mart rows is not supported yet".to_string(),
-        ))
+        let (wanted, output) = match projection {
+            Some(p) if p.is_empty() => (vec![0], Some(vec![])),
+            Some(p) => (p.clone(), None),
+            None => ((0..self.schema.fields().len()).collect(), None),
+        };
+        if self.schema.fields().is_empty() {
+            return Err(self.table.fail("the table has no columns"));
+        }
+        let columns = self.schema.project(&wanted)?;
+        let batch = self.marts.read(&self.table, &columns, limit).await?;
+        Ok(MemorySourceConfig::try_new_exec(
+            &[vec![batch]],
+            Arc::new(columns),
+            output,
+        )?)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use datafusion::arrow::array::{Array, AsArray};
+    use datafusion::arrow::datatypes::{Float64Type, TimestampMicrosecondType};
 
     use super::*;
 
@@ -351,5 +546,76 @@ mod tests {
         assert!(field("x", "STRING", "NULLABLE").is_nullable());
         assert!(!field("x", "STRING", "REQUIRED").is_nullable());
         assert!(arrow_field(&json!({"name": "x", "type": "STRING"})).is_nullable());
+    }
+
+    fn mart_table() -> MartTable {
+        MartTable {
+            source: Arc::new(BigQuerySource {
+                name: "ops-marts".into(),
+                project: "p-1".into(),
+                api_base_url: "http://127.0.0.1:1".into(),
+                auth: BigQueryAuth::WorkloadIdentity {
+                    audience: String::new(),
+                    service_account: String::new(),
+                    sts_url: String::new(),
+                    iam_credentials_url: String::new(),
+                },
+                max_rows: 10,
+            }),
+            dataset: "ops_marts".into(),
+            table: "fills_hourly".into(),
+        }
+    }
+
+    #[test]
+    fn select_sql_quotes_names_and_sends_the_limit() {
+        let t = mart_table();
+        let columns = Schema::new(vec![
+            Field::new("hour", DataType::Utf8, true),
+            Field::new("we`ird", DataType::Utf8, true),
+        ]);
+        assert_eq!(
+            select_sql("p-1", &t, &columns, None),
+            "SELECT `hour`, `we\\`ird` FROM `p-1.ops_marts.fills_hourly`"
+        );
+        assert!(select_sql("p-1", &t, &columns, Some(5)).ends_with(" LIMIT 5"));
+    }
+
+    #[test]
+    fn cells_parse_into_the_column_types() {
+        let t = mart_table();
+        let cells = |v: &[Option<&str>]| v.iter().map(|c| c.map(str::to_string)).collect();
+        let ts = Field::new(
+            "hour",
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            true,
+        );
+        let a = column_array(&t, &ts, cells(&[Some("1762588800000000"), None])).unwrap();
+        let a = a.as_primitive::<TimestampMicrosecondType>();
+        assert_eq!(a.value(0), 1_762_588_800_000_000);
+        assert!(a.is_null(1));
+        let f = Field::new("f", DataType::Float64, true);
+        let a = column_array(&t, &f, cells(&[Some("20.25"), None])).unwrap();
+        assert_eq!(a.as_primitive::<Float64Type>().value(0), 20.25);
+        assert!(a.is_null(1));
+        let b = Field::new("b", DataType::Boolean, true);
+        let a = column_array(&t, &b, cells(&[Some("true"), Some("false")])).unwrap();
+        assert!(a.as_boolean().value(0) && !a.as_boolean().value(1));
+        let n = Field::new("n", DataType::Int64, true);
+        let e = column_array(&t, &n, cells(&[Some("x")])).unwrap_err();
+        assert!(e.to_string().contains("column n"), "{e}");
+    }
+
+    #[test]
+    fn pages_map_result_columns_by_name() {
+        let t = mart_table();
+        let columns = Schema::new(vec![Field::new("b", DataType::Utf8, true)]);
+        let answer = json!({
+            "schema": {"fields": [{"name": "a"}, {"name": "b"}]},
+            "rows": [{"f": [{"v": "1"}, {"v": "x"}]}, {"f": [{"v": "2"}, {"v": null}]}]
+        });
+        let mut cells = vec![Vec::new()];
+        assert_eq!(add_page(&t, &columns, &answer, &mut cells).unwrap(), 2);
+        assert_eq!(cells, vec![vec![Some("x".to_string()), None]]);
     }
 }
