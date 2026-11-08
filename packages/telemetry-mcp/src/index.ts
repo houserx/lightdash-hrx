@@ -108,6 +108,29 @@ export type {
     MemoryNote,
     UpsertNoteInput,
 } from './ask/ask-memory-store.js';
+export {
+    DEFAULT_ASK_MEMORY_MAX_RECALL,
+    createAskMemoryService,
+    formatNotesForPrompt,
+    looksSensitive,
+    memoryDisabledResult,
+    qualityScore,
+    rankNotes,
+    sanitizeLearning,
+    scrubSql,
+    shortId,
+    toView,
+} from './ask/ask-memory.service.js';
+export type {
+    AskMemoryResult,
+    AskMemoryService,
+    AskMemoryServiceOptions,
+    AskMemoryUser,
+    LearnArgs,
+    LearningCandidate,
+    LearningContext,
+    MemoryNoteView,
+} from './ask/ask-memory.service.js';
 export type {
     AdvisePlanInput,
     ExistingIndex,

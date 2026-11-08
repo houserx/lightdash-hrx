@@ -1462,3 +1462,44 @@ docs/eng-1799/telemetry-mcp.md
   Results: the feature check passes (5/5), the unit file passes 6/6, `pnpm typecheck` is clean, and a strict tsc over
   the test file passes via `../tmp/ask-memory-store/tsconfig.json`.
 - 2026-11-08T18:40:11Z supervisor: mcp-ask-memory-store passed the gate in round 1
+
+### mcp-ask-memory-port (session 2026-11-08, round 1)
+
+- Source: portal `api/src/services/ask-memory.service.ts`, its `.test.ts` and `api/src/dynamo/askMemory.test.ts` at
+  `aea73de` (read-only).
+- New `src/ask/ask-memory.service.ts`. These are verbatim from the portal (re-indented only):
+  - the pure helpers `looksSensitive`, `scrubSql`, `qualityScore`, `rankNotes`, `shortId`, `formatNotesForPrompt`,
+    `sanitizeLearning`, `toView` and `memoryDisabledResult`;
+  - the types `MemoryNoteView`, `AskMemoryResult`, `LearningContext`, `LearnArgs` and `LearningCandidate` (now
+    exported);
+  - the limits (3 learnings, 60 s recall cache, min weight 2, 1500-char SQL template).
+
+  The portal's module-level state is now per service: `createAskMemoryService({ store, enabled = true,
+  maxRecall = 8, now = Date.now, onError? })` returns `recallNotes`, `learnFromAnswer`, `recordFeedback`,
+  `listNoteViews`, `removeNote`, `resetMemoryCache` and `enabled`.
+  - `PortalUser` is now `AskMemoryUser { sub, email }`, and `sub` is the voter id (the portal used `auth0Sub`).
+  - Sentry is now `onError(err, 'askMemory.<where>')`, still throttled to one call a minute. KPI metrics are dropped.
+  - Everything is re-exported from `src/index.ts`.
+- New `src/ask/ask-memory.service.test.ts` (24 cases). The portal's cases come first, unchanged except that the jest
+  module mock became a stub `AskMemoryStore`. They are followed by 5 port cases: learn, touch, flag and recall over
+  `InMemoryAskMemoryStore`; the recall cache and its drop after learning; store failures that never throw and are
+  reported once a minute; disabled mode; list and remove.
+- New `src/ask/ask-memory-store.test.ts` (10 cases). It holds the portal's `dynamo/askMemory.test.ts` describes and
+  cases. The `ddb.send` request assertions are rewritten as store behaviour: a repeat or missing vote gives null,
+  hiding happens at the threshold, upsert merges and never un-hides and sets sqlTemplate only when given, and the list
+  is filtered by database, newest first.
+- **For data-assistant-port / ask_data:** build a single `createAskMemoryService({ store: deps.askMemoryStore, now,
+  onError })` per server and pass it in. The portal's `resetMemoryCache()` in `beforeEach` maps to the service method,
+  or to a new service per test. The portal's `env.aiAskMemoryEnabled` in data-assistant maps to `memory.enabled`.
+- Tested as a user: after `bash ./init.sh`, `../tmp/ask-memory-port/drive.mjs` imported the built `dist/index.js`
+  and ran three learnings through `learnFromAnswer`:
+  - only the valid query_pattern was stored, with SQL scrubbed to `... note = '?' AND id = ?`; the MRN-shaped and
+    unknown-table lessons were rejected;
+  - recall returned it with the UNVERIFIED prompt text;
+  - feedback counted 1, and a repeat vote counted 0;
+  - the views showed 1 upvote and 1 confirmation, and remove emptied the list.
+
+  Results: the feature check passes (2/2), the unit files pass 24/24 and 10/10, the ask-memory-store acceptance check
+  still passes (5/5), `pnpm typecheck` is clean, and strict tsc over both test files passes via
+  `../tmp/ask-memory-port/tsconfig.json`.
+- 2026-11-08T18:43:59Z supervisor: mcp-ask-memory-port passed the gate in round 1
