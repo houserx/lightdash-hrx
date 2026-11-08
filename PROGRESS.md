@@ -1932,3 +1932,19 @@ docs/eng-1799/telemetry-mcp.md
   pnpm 12's filtered `--frozen-lockfile` install and the `--prod` prune work in the container; consider a
   package-scoped .dockerignore if the root context is too large.
 - 2026-11-08T19:22:43Z supervisor: mcp-dockerfile passed the gate in round 1
+
+## mcp-readme (2026-11-08)
+
+- Added `packages/telemetry-mcp/README.md`: what the server does (bearer challenge, Okta check, user mapping and
+  attributes, hrx.identity tokens, caps, /healthz), a table of all 14 tools, a table of every env var read by
+  `src/config.ts` (the 23 the test lists plus `MCP_ASK_MAX_STEPS` and `LOG_LEVEL`) with required/default/meaning,
+  and the `pnpm -F @lightdash/telemetry-mcp` build, typecheck, start and single-file test commands.
+- It links to `docs/eng-1799/telemetry-mcp.md`, which does not exist yet: the next feature (mcp-docs-attach-guide)
+  creates it. The link is relative (`../../docs/eng-1799/telemetry-mcp.md`).
+- Checked each claim against the source: time inputs are ISO-8601 or `now`/`now-<duration>` (not epoch); the
+  acceptance harness imports `src/index.ts`, not `dist/`; defaults come from `loadConfig`.
+- Tested as a user: read the README through; scanned it for the test's AVOID_TERMS and for the wider CONTEXT.md
+  _Avoid_ lists (warehouse, connection, proxy, gateway, execution, panel, dry run…) and found none; ran the README's
+  documented unit-test command (`src/config.test.ts`, 6/6). After `bash ./init.sh` the feature check passed 3/3.
+- Trap: if a tool or env var is added or renamed, update the README tables too (the readme test pins the names).
+- 2026-11-08T19:24:51Z supervisor: mcp-readme passed the gate in round 1
