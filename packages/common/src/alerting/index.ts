@@ -5,3 +5,4 @@ export * from './conditions';
 export * from './series';
 export * from './stateMachine';
 export * from './evaluatorIdentity';
+export * from './routingMatchers';
