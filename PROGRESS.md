@@ -559,3 +559,15 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Flushes at 09:11 and 09:20 → no more POSTs. The log has 3 `sent` rows (firing, firing, resolved), and 0 groups are left.
   - Next session: a send that fails still drops the resolved alert from the group (same as firing sends today). alert-contact-retries should cover retrying it.
 - 2026-11-08T20:45:38Z supervisor: alert-notify-resolve passed the gate in round 1
+- alert-notify-routing (round 1) — 2026-11-08
+  - Changed: no code. Routing already works: alert-notify-firing built `AlertNotifier.groupAlerts` on `routeAlert` from common, which handles nested routes, `continue` and the default route (unit-tested under alert-routing-tree). This session only checked it.
+  - Tested:
+    - After init, the check passes (1 passed, 7 skipped).
+    - As a user: a scratch walk over real HTTP through the acceptance harness (`tmp/walk`, with its own vitest config and run.sh copy; removed afterwards):
+      - Developer creates webhooks default-cp, infra-cp and critical-cp. Admin PUTs the tree: team=infra → infra-cp (continue), severity=~critical|high → critical-cp, default default-cp, groupWait 0s. The viewer GET returns the tree as saved.
+      - Critical infra rule → infra-cp and critical-cp get it; default-cp gets nothing.
+      - team=Support rule → default-cp only.
+      - team=web, severity=high rule → critical-cp only.
+      - team=infra, severity=low rule → infra-cp only. Its route matched, so the default route is not used, as in Alertmanager.
+  - Next session: if you need a scratch walk, put console output in a file. The harness setup swallows stdout.
+- 2026-11-08T20:47:53Z supervisor: alert-notify-routing passed the gate in round 1
