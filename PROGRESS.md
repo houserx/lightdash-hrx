@@ -751,3 +751,30 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     09:00Z→10:30Z → '1h30m', and now-90m → '1h30m'.
   - Next: ldq-time-reserved-parameters (registry wiring) is still open; see the previous entry.
 - 2026-11-08T18:58:58Z supervisor: ldq-time-range-parameter passed the gate in round 1
+- 2026-11-08 ldq-time-reserved-parameters (session):
+  - `packages/common/src/parameters/reservedParameters.ts`: the registry now has `__from`, `__to`,
+    `__interval` and `__range` next to `date_zoom`. Each one resolves through
+    `getReservedTimeParameterValues`. `ReservedParameterContext` gains the optional fields
+    `timeRange`, `refreshInterval`, `now` and `maxDataPoints`. `resolveReservedParameterValues`
+    reads the clock once per call (`now ?? new Date()`), so all four values come from the same
+    instant and can't straddle a rounding bucket. User parameters still win through the unchanged
+    `mergeReservedValues`/`mergeReservedDefinitions`/`mergeReservedNames`.
+  - Contract assumption: with no time range in the context (every current caller, e.g.
+    QueryComposer passes only `{ dateZoom }`), the four values resolve to '', the same as
+    date_zoom without a zoom. Through `safeReplaceParametersWithSqlBuilder` an empty reserved value
+    is still reported in missingReferences and left unsubstituted. date_zoom does the same today,
+    so this is existing behaviour, not something this feature added. No backend caller passes
+    `timeRange` yet. Wiring it from dashboards and the SQL runner belongs to later features
+    (ldq-time-cache-key-buckets, ldq-query-routes-time-range-audit). The four names now also show up
+    wherever reserved definitions are listed (the parameters UI, available parameters).
+  - `reservedParameters.test.ts`: the mergeReservedNames expectations now include the new names.
+    Added tests that resolve from a range and that give '' without one.
+  - Tested: ran init, then the feature check (4/4) and time-relative (5/5). Ran these unit tests
+    one at a time: common reservedParameters, compiler/parameters, dashboardTileParameters and
+    exploreCompiler; backend QueryBuilder/parameters, queryCompiler and ProjectService. All passed.
+    A scratch backend tsx script (deleted) compiled
+    `promql('up', ${ld.parameters.__from}, …__to, …__interval, …__range)` through
+    safeReplaceParametersWithSqlBuilder on the real clock with refresh 5m and got quoted ISO
+    timestamps, '30s' and '6h'. A user `__from` overrode only __from. common tsc, oxlint and
+    oxfmt are clean.
+- 2026-11-08T19:04:02Z supervisor: ldq-time-reserved-parameters passed the gate in round 1
