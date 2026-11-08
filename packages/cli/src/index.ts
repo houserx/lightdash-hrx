@@ -1127,6 +1127,11 @@ const downloadCommand = program
         'download only space definitions and access',
         false,
     )
+    .option(
+        '--alerting-only',
+        'download only Alert Rules, Contact Points and the Notification Route tree, as YAML in alert-rules/, contact-points/ and notification-routes/',
+        false,
+    )
     .option('--skip-charts', 'skip downloading charts', false)
     .option('--skip-dashboards', 'skip downloading dashboards', false)
     .option('--include-alerts', 'include all alerts in the download', false)

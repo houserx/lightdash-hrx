@@ -99,6 +99,7 @@ import {
     toAgentAsCodeFile,
     writeAgentKnowledgeDocuments,
 } from './aiAgentKnowledgeDocuments';
+import { downloadAlertingAsCode } from './alertingAsCode';
 import {
     applySdkMirrorToTemplateDeps,
     attachDependenciesToCode,
@@ -250,6 +251,7 @@ export type DownloadHandlerOptions = {
     includeAll: boolean;
     appsOnly?: boolean; // download: implies skipCharts + skipDashboards + skipSpaces; upload: apps-only filtered run
     chartTypesOnly?: boolean; // download: implies skipCharts + skipDashboards + skipSpaces; upload: chart-types-only filtered run
+    alertingOnly?: boolean; // download: only Alert Rules, Contact Points and the Notification Route tree (alerting as code)
     stripPivotSeries: boolean; // Strip per-value pivot series config for portable chart YAML
     validate?: boolean; // Validate charts and dashboards after upload
     concurrency: number;
@@ -2105,6 +2107,41 @@ export const downloadHandler = async (
         throw new ParameterError(
             '--apps-only cannot be combined with --chart-types-only.',
         );
+    }
+
+    if (options.alertingOnly) {
+        const conflicting = [
+            options.appsOnly && '--apps-only',
+            options.chartTypesOnly && '--chart-types-only',
+            options.spacesOnly && '--spaces-only',
+            isOrganizationDownload && '--organization',
+        ].filter(Boolean);
+        if (conflicting.length > 0) {
+            throw new ParameterError(
+                `--alerting-only cannot be combined with ${conflicting.join(', ')}.`,
+            );
+        }
+        await checkLightdashVersion();
+        const alertingConfig = await (getAgentConnectionSelection() === null
+            ? getConfig()
+            : getConfig({ readOnly: true }));
+        await resolveCredential(alertingConfig);
+        const alertingProject = await selectProject(
+            alertingConfig,
+            options.project,
+        );
+        if (!alertingProject) {
+            throw new LightdashError({
+                message:
+                    'No project selected. Run lightdash config set-project',
+                name: 'Not Found',
+                statusCode: 404,
+                data: {},
+            });
+        }
+        logSelectedProject(alertingProject, alertingConfig, 'Downloading from');
+        await downloadAlertingAsCode(alertingProject.projectUuid, options.path);
+        return;
     }
 
     // Bare --apps-only means "all apps": imply --include-apps.

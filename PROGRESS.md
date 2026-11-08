@@ -965,3 +965,21 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Uploading the rule with `paused: true` was `updated`, and the rule was paused at v2 and still managed. Upload also renamed the contact point and changed the tree root.
       - A UI-made rule could be PATCHed by an editor and DELETEd by an admin (200).
 - 2026-11-08T22:50:14Z supervisor: alert-managed-readonly passed the gate in round 1
+- alert-cli-download (round 1) — 2026-11-08
+  - Changes:
+    - Added `lightdash download --alerting-only` (`packages/cli/src/index.ts`) and the new module `packages/cli/src/handlers/alertingAsCode.ts`.
+    - The new branch in `downloadHandler` returns early, before any space, chart or dashboard work. It checks the version, loads config and credentials, selects the project, makes one `GET /api/v2/projects/{uuid}/alerting/as-code` call, and writes `alert-rules/<slug>.yml`, `contact-points/<slug>.yml` and `notification-routes/notification-routes.yml` under `--path` (default `./lightdash`).
+    - The YAML keeps the server's key order and doesn't fold long lines (`lineWidth: -1`). It does not sort keys like other content-as-code does, so the files match what the server returned.
+    - Each slug is checked against the schema slug pattern before it becomes a file name. All paths are resolved before anything is written, so a bad document writes nothing.
+    - `--alerting-only` together with `--apps-only`, `--chart-types-only`, `--spaces-only` or `--organization` is a ParameterError.
+  - Common: added `AlertingAsCodeDownload` to the `ApiResults` union in `packages/common/src/types/api.ts`, because `lightdashApi<T>` requires it. The next CLI features (upload, shadow-report) need to add `AlertingAsCodeUploadResult` and the shadow report result the same way.
+  - Fixed something that was already broken: `src/credentialBoundaryInventory.test.ts` "child launcher inventory" was failing because the protected `__acceptance__/alerting/support.ts` imports `child_process`. I added that file to the explicit list with a comment. The protected file is unchanged.
+  - For the next session (alert-cli-upload): `alertingAsCode.ts` exports the folder and file names (`ALERT_RULES_FOLDER`, etc.). Reuse them when reading files. The `--alerting-only` flag is only on `download`; upload still needs its own option.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped). The new `alertingAsCode.test.ts` passes 3/3, `download.test.ts` 103/103 and `credentialBoundaryInventory.test.ts` 6/6. CLI typecheck, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock Lightdash server in tmp/ (removed afterwards) and the real CLI from source.
+      - A rule with a long query, a contact point with a quoted name and a tree gave exit 0 with three files that read back equal. The only requests were `/api/v1/health` and `/alerting/as-code`.
+      - An empty project gave exit 0 and "Downloaded 0 ...".
+      - A slug of `../evil` gave exit 1 with "invalid slug", and no file was written.
+      - `--spaces-only` gave exit 1 with no requests.
+- 2026-11-08T22:55:14Z supervisor: alert-cli-download passed the gate in round 1
