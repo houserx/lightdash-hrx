@@ -81,3 +81,27 @@ export type ApiWriteConfirmationResponse = {
     status: 'ok';
     results: WriteConfirmation;
 };
+
+export type WriteMode = 'preview' | 'commit';
+
+/** Body of POST /api/v2/projects/{projectUuid}/write (CONTRACTS §4.2). */
+export type ApiWriteRequest = {
+    statement: string;
+    mode: WriteMode;
+    confirmationToken: string;
+    description: string;
+    ticket?: string | null;
+};
+
+/** The Federation Engine's POST /v1/write result, passed back as the engine sent it. */
+export type WriteResult = {
+    audit_id: string;
+    rows_affected: number;
+    preview: boolean;
+    returning: Record<string, unknown>[] | null;
+};
+
+export type ApiWriteResponse = {
+    status: 'ok';
+    results: WriteResult;
+};

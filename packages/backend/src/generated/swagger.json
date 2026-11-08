@@ -72771,6 +72771,81 @@
                 "type": "object",
                 "description": "Body of POST /api/v2/projects/{projectUuid}/write/confirmations (CONTRACTS §4.2)."
             },
+            "WriteResult": {
+                "properties": {
+                    "returning": {
+                        "items": {
+                            "$ref": "#/components/schemas/Record_string.unknown_"
+                        },
+                        "type": "array",
+                        "nullable": true
+                    },
+                    "preview": {
+                        "type": "boolean"
+                    },
+                    "rows_affected": {
+                        "type": "number",
+                        "format": "double"
+                    },
+                    "audit_id": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "returning",
+                    "preview",
+                    "rows_affected",
+                    "audit_id"
+                ],
+                "type": "object",
+                "description": "The Federation Engine's POST /v1/write result, passed back as the engine sent it."
+            },
+            "ApiWriteResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/WriteResult"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
+            "WriteMode": {
+                "type": "string",
+                "enum": ["preview", "commit"]
+            },
+            "ApiWriteRequest": {
+                "properties": {
+                    "ticket": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "confirmationToken": {
+                        "type": "string"
+                    },
+                    "mode": {
+                        "$ref": "#/components/schemas/WriteMode"
+                    },
+                    "statement": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "description",
+                    "confirmationToken",
+                    "mode",
+                    "statement"
+                ],
+                "type": "object",
+                "description": "Body of POST /api/v2/projects/{projectUuid}/write (CONTRACTS §4.2)."
+            },
             "FederationAttrs": {
                 "properties": {
                     "platform_explain": {
@@ -118517,6 +118592,57 @@
                         "application/json": {
                             "schema": {
                                 "$ref": "#/components/schemas/ApiWriteConfirmationRequest"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2/projects/{projectUuid}/write": {
+            "post": {
+                "operationId": "runWrite",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiWriteResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Previews a Write Mode statement: forwards it to the Federation Engine's POST /v1/write\nwith a fresh identity token, and returns the engine's result. A description is\nrequired. Requires the platform_write user attribute.",
+                "summary": "Run a Write Mode statement",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiWriteRequest"
                             }
                         }
                     }

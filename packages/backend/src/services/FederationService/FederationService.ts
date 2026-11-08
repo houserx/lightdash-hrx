@@ -13,11 +13,14 @@ import {
     type FederationAccess,
     type RegisteredAccount,
     type WriteConfirmation,
+    type WriteResult,
 } from '@lightdash/common';
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
 import type { UserAttributesModel } from '../../models/UserAttributesModel';
 import { BaseService } from '../BaseService';
+import { FederationIdentityService } from '../FederationIdentity/FederationIdentityService';
 import { identityAttrsFromUserAttributes } from '../FederationIdentity/identityToken';
+import { parseWriteRequest, postEngineWrite } from './engineWrite';
 import { mintWriteConfirmationToken } from './writeConfirmationToken';
 
 type FederationServiceArguments = {
@@ -33,6 +36,8 @@ export class FederationService extends BaseService {
 
     private readonly userAttributesModel: FederationServiceArguments['userAttributesModel'];
 
+    private readonly federationIdentityService: FederationIdentityService;
+
     constructor({
         projectModel,
         userAttributesModel,
@@ -40,6 +45,9 @@ export class FederationService extends BaseService {
         super();
         this.projectModel = projectModel;
         this.userAttributesModel = userAttributesModel;
+        this.federationIdentityService = new FederationIdentityService({
+            userAttributesModel,
+        });
     }
 
     /** Loads the project (with credentials) after checking the account may view it. */
@@ -133,5 +141,71 @@ export class FederationService extends BaseService {
             confirmationToken: token,
             expiresAt: new Date(payload.exp * 1000).toISOString(),
         };
+    }
+
+    /**
+     * CONTRACTS §4.2: runs a Write Mode statement through the engine's POST /v1/write, with a
+     * fresh identity token (audit source write_mode) for the account's user. Never goes
+     * through AsyncQueryService. Requires view access and the platform_write user attribute;
+     * a missing description is refused before anything else. Only mode "preview" is
+     * supported here: the engine runs it inside a transaction it rolls back.
+     */
+    async write(
+        account: RegisteredAccount,
+        projectUuid: string,
+        body: unknown,
+    ): Promise<WriteResult> {
+        const request = parseWriteRequest(body);
+        const project = await this.getViewableProject(account, projectUuid);
+        const credentials = project.warehouseConnection;
+        if (!isFederationCredentials(credentials)) {
+            throw new NotSupportedError(
+                'Write Mode is only available on Federation Engine projects',
+            );
+        }
+        const attrs = await this.getAttrs(account, project.organizationUuid);
+        if (!attrs.platform_write) {
+            throw new ForbiddenError(
+                'Write Mode requires the platform_write user attribute',
+            );
+        }
+        if (!credentials.identitySigningSecret) {
+            throw new NotSupportedError(
+                'This Federation Engine connection has no identity signing secret',
+            );
+        }
+        if (!credentials.httpBaseUrl) {
+            throw new NotSupportedError(
+                'This Federation Engine connection has no HTTP base URL',
+            );
+        }
+        const { email } = account.user;
+        if (!email) {
+            throw new ForbiddenError(
+                'Write Mode requires a user with an email address',
+            );
+        }
+        const identityToken = await this.federationIdentityService.mintForUser({
+            secret: credentials.identitySigningSecret,
+            user: {
+                userUuid: account.user.userUuid,
+                email,
+                organizationUuid: project.organizationUuid,
+            },
+            projectUuid,
+            audit: {
+                description: request.description,
+                ticket: request.ticket,
+                source: 'write_mode',
+                resource_uuid: null,
+            },
+        });
+        return postEngineWrite(credentials.httpBaseUrl, identityToken, {
+            statement: request.statement,
+            mode: request.mode,
+            confirmation_token: request.confirmationToken,
+            description: request.description,
+            ticket: request.ticket,
+        });
     }
 }

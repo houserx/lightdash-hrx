@@ -3,6 +3,8 @@ import {
     type ApiErrorPayload,
     type ApiWriteConfirmationRequest,
     type ApiWriteConfirmationResponse,
+    type ApiWriteRequest,
+    type ApiWriteResponse,
 } from '@lightdash/common';
 import {
     Body,
@@ -61,6 +63,35 @@ export class FederationWriteController extends BaseController {
                     projectUuid,
                     body.statement,
                 ),
+        };
+    }
+
+    /**
+     * Previews a Write Mode statement: forwards it to the Federation Engine's POST /v1/write
+     * with a fresh identity token, and returns the engine's result. A description is
+     * required. Requires the platform_write user attribute.
+     * @summary Run a Write Mode statement
+     */
+    @Middlewares([
+        allowApiKeyAuthentication,
+        isAuthenticated,
+        unauthorisedInDemo,
+    ])
+    @SuccessResponse('200', 'Success')
+    @Post('/')
+    @OperationId('runWrite')
+    async runWrite(
+        @Path() projectUuid: string,
+        @Body() body: ApiWriteRequest,
+        @Request() req: express.Request,
+    ): Promise<ApiWriteResponse> {
+        assertRegisteredAccount(req.account);
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: await this.services
+                .getFederationService()
+                .write(req.account, projectUuid, body),
         };
     }
 }
