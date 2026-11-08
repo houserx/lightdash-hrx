@@ -1873,3 +1873,17 @@ token verification for a *valid* token, which feature 39 then hardens.
   Note: rustfmt (in tmp/rustup) flags lines across the crate that were there before; I did not
   reformat files I didn't touch.
 - 2026-11-08T22:04:32Z supervisor: eng-write-commit passed the gate in round 1
+- eng-write-authorization (security): no code change needed. eng-write-preview had already built
+  the checks in write::run, in this order: bearer identity (401) -> Write Mode configured (503,
+  "Write Mode is off: source ... has no write_url_env") -> body parse (400) -> platform_write
+  (403 "Write Mode needs platform_write") -> non-blank description (400) -> mode preview|commit
+  (400) -> agent commit (403) -> guard -> confirmation token. Note: an engine without Write Mode
+  answers 503 to any valid bearer, even if the body or attrs are wrong; only the 401 comes first.
+  Tested as a user: `../tmp/write-auth/run.sh <out>` (throwaway Postgres on 59603, store mock on
+  59605, one engine with write_url_env on 59591/59592 and one without on 59601/59602). With curl:
+  no bearer, "not-a-token" and an expired token gave 401; a reader-only person gave 403 naming
+  platform_write; an empty description and mode "yolo" gave 400; preview and commit to the
+  engine without write_url_env gave 503 "Write Mode is off". Through platform_query, widget 1's
+  note was still NULL and no widget had a note. The store held only the 2 read audits from
+  those platform_query lookups, no write audit. Check passes.
+- 2026-11-08T22:06:59Z supervisor: eng-write-authorization passed the gate in round 1
