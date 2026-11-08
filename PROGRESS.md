@@ -338,3 +338,21 @@ docs/eng-1799/telemetry-mcp.md
   `env -i node dist/main.js` → the 11-line message on stderr, exit 1; full env → `/healthz` 200, SIGTERM exit 0.
   `config-validation` and `package-skeleton` acceptance checks pass, plus unit tests and typecheck.
 - 2026-11-08T15:48:54Z supervisor: mcp-config-validation passed the gate in round 1
+
+### mcp-identity-token (2026-11-08)
+
+- `src/identity/token.ts`: `mintIdentityToken({secret, sub, email, org, project, attrs, audit?, nowSeconds?, nonce?})`
+  → `<b64url(payload)>.<b64url(HMAC-SHA256(secret, b64url(payload)))>`, unpadded. The payload is built as a literal in
+  CONTRACTS §3 key order (attrs too, whatever order the caller passes), so tokens are byte-for-byte reproducible.
+  Fixed by the MCP server: `v 1`, `iss "telemetry-mcp"`, `agent true`, `sys false`, `audit.source "mcp"`,
+  `audit.resource_uuid null`, `exp = iat + 60`. `audit: null`/omitted → description and ticket `null`. Default clock
+  is `Date.now()`, default nonce 16 random bytes. The secret comes from `config.identitySecret` (callers pass it).
+- `src/index.ts` exports `mintIdentityToken`, `IDENTITY_TOKEN_ISSUER`, `IDENTITY_TOKEN_LIFETIME_SECONDS` and the
+  input types. Unit tests: `src/identity/token.test.ts`.
+- Contract assumption: the MCP never sets `resource_uuid` (no tile/rule behind an MCP call) and attr flags are coerced
+  with `=== true`.
+- Tested as a user: from a node script against `dist/index.js`, the fixed acceptance inputs gave both expected
+  signatures (with and without audit); two unpinned mints → different 16-byte nonces, 60 s lifetime,
+  iss telemetry-mcp, agent true, sys false. `identity-token`, `config-validation`, `package-skeleton` acceptance
+  checks, unit tests and typecheck pass.
+- 2026-11-08T15:50:38Z supervisor: mcp-identity-token passed the gate in round 1

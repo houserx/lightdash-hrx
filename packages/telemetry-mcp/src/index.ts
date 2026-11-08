@@ -1,4 +1,14 @@
 export { ConfigError, LOG_LEVELS, SOURCE_KINDS, loadConfig } from './config.js';
 export type { Config, LogLevel, SourceConfig, SourceKind } from './config.js';
+export {
+    IDENTITY_TOKEN_ISSUER,
+    IDENTITY_TOKEN_LIFETIME_SECONDS,
+    mintIdentityToken,
+} from './identity/token.js';
+export type {
+    IdentityAttrs,
+    IdentityAuditInput,
+    MintIdentityTokenInput,
+} from './identity/token.js';
 export { startServer } from './http/server.js';
 export type { RunningServer } from './http/server.js';
