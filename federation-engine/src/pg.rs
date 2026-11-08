@@ -202,6 +202,12 @@ fn text_rows(fields: &Arc<Vec<FieldInfo>>, batches: &[RecordBatch]) -> PgWireRes
 /// Maps a DataFusion error to an ErrorResponse with a SQLSTATE.
 fn query_error(e: DataFusionError) -> PgWireError {
     let code = match e.find_root() {
+        // DataFusion has no typed "unknown table" error, only this wording (unit-tested below).
+        DataFusionError::Plan(msg)
+            if msg.starts_with("table '") && msg.ends_with("' not found") =>
+        {
+            "42P01"
+        }
         DataFusionError::SQL(..) => "42601",
         DataFusionError::Plan(_) | DataFusionError::SchemaError(..) => "42000",
         DataFusionError::NotImplemented(_) => "0A000",
@@ -232,6 +238,26 @@ mod tests {
         assert_eq!(get(Some("a")).password(), [2]);
         assert_eq!(get(Some("nobody")).password(), [4]);
         assert_eq!(get(None).password(), [4]);
+    }
+
+    fn sqlstate_of(sql: &str) -> String {
+        let handler = QueryHandler {
+            ctx: SessionContext::new(),
+        };
+        let e = futures::executor::block_on(handler.run(sql)).unwrap_err();
+        match query_error(e) {
+            PgWireError::UserError(info) => info.code.clone(),
+            other => panic!("not a user error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn query_errors_carry_postgres_sqlstates() {
+        assert_eq!(sqlstate_of("SELECT * FROM no_such_table"), "42P01");
+        assert_eq!(sqlstate_of("SELECT * FROM public.no_such_table"), "42P01");
+        assert_eq!(sqlstate_of("SELECT no_such_column"), "42000");
+        assert_eq!(sqlstate_of("SELEC 1"), "42601");
+        assert_eq!(sqlstate_of("CREATE TABLE t (a int)"), "42000");
     }
 
     #[test]

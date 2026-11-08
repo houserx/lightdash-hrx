@@ -353,3 +353,21 @@ token verification for a *valid* token, which feature 39 then hardens.
     pgwire's wording). Harmless, but a later session may want a custom message.
   - The first build compiles DataFusion (several minutes for clippy's separate target dir).
 - 2026-11-08T16:08:29Z supervisor: eng-pg-startup-auth passed the gate in round 1
+- 2026-11-08 eng-pg-simple-query (session 3): The simple query path from eng-pg-startup-auth already met
+  every step (text rows, real NULL, EmptyQueryResponse from pgwire for `""`, ErrorResponse then
+  ReadyForQuery so the session stays usable). The check passed before any change. One change in
+  `src/pg.rs` `query_error`: DataFusion's "table '…' not found" planning error now maps to **42P01**
+  (undefined_table, as Postgres does; eng-ops-marts-allowlist also expects 42P01) instead of 42000.
+  DataFusion has no typed error for this, so the match is on the message text. The new unit test
+  `query_errors_carry_postgres_sqlstates` runs real DataFusion queries, so a wording change on a
+  DataFusion upgrade fails it. "table function '…' not found" is deliberately not matched.
+  Tested as a user: I started `engine --config` with one `[[users]]` and used the throwaway tokio-postgres
+  client in `../tmp/pgclient` (it now runs several queries on one session). Results:
+  `SELECT 1 AS a, 'x' AS b, NULL AS c, 2.5 AS d` → columns a,b,c,d and row 1, x, NULL, 2.5. `""` →
+  empty response. `SELECT * FROM no_such_table` → ERROR 42P01. `SELECT 3` → 3 on the same session.
+  Check `pgwire::eng_pg_simple_query`, the earlier features' checks, harness self-tests, unit tests,
+  fmt and clippy (`--workspace --all-targets -D warnings`) all pass.
+  For later sessions:
+  - Unaliased expressions get DataFusion's column names (`SELECT 3` → `Int64(3)`, not Postgres's
+    `?column?`). No feature on this line asked for this, so I left it alone.
+- 2026-11-08T16:11:11Z supervisor: eng-pg-simple-query passed the gate in round 1
