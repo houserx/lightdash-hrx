@@ -16,8 +16,14 @@
 //!
 //! Column types: `bool`, `int2`, `int4`, `int8`, `float4`, `float8`, `date`, `timestamp` and
 //! `timestamptz` keep their type; `text`, `varchar`, `bpchar`, `name`, `citext`, `uuid` and
-//! `numeric` (exact, as Postgres prints it) are text; `json` and `jsonb` are json. Any other type
-//! is refused with SQLSTATE 0A000 and a hint to cast the column to text in `sql`.
+//! `numeric` (exact, as Postgres prints it) are text; `json` and `jsonb` are json; `void` (what
+//! e.g. `pg_sleep` returns) is text and reads as `''`, as Postgres prints it. Any other type is
+//! refused with SQLSTATE 0A000 and a hint to cast the column to text in `sql`.
+//!
+//! Cancellation (CONTRACTS §1 "Cancellation"): when a statement stops before its Platform Database
+//! read has finished (`statement_timeout`, a cancel request, the client going away), the read's
+//! future is dropped, and dropping it sends Postgres a cancel request for the backend running it,
+//! so that backend stops too ([`CancelOnDrop`]).
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -42,7 +48,7 @@ use engine_config::{Config, SourceKind, SourceSettings};
 use engine_guard::Mode;
 use futures::{TryStreamExt, pin_mut};
 use tokio_postgres::types::{FromSql, Type};
-use tokio_postgres::{Client, NoTls, Row};
+use tokio_postgres::{CancelToken, Client, NoTls, Row};
 
 use crate::identity::{Access, Claim};
 use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, UTC, constant, text_argument};
@@ -423,7 +429,7 @@ fn arrow_type(ty: &Type) -> Option<(DataType, bool)> {
         Type::TIMESTAMP => DataType::Timestamp(TimeUnit::Microsecond, None),
         Type::TIMESTAMPTZ => DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())),
         Type::JSON | Type::JSONB => return Some((DataType::Utf8, true)),
-        Type::UUID | Type::NUMERIC => DataType::Utf8,
+        Type::UUID | Type::NUMERIC | Type::VOID => DataType::Utf8,
         ref other if <String as FromSql>::accepts(other) => DataType::Utf8,
         _ => return None,
     };
@@ -487,6 +493,7 @@ impl PlatformTable {
     async fn fetch(&self) -> Result<Vec<Row>, DataFusionError> {
         let source = &self.source;
         let client = source.connect(self.connect_timeout).await?;
+        let mut running = CancelOnDrop(Some(client.cancel_token()));
         let statement = client
             .prepare(&self.sql)
             .await
@@ -521,7 +528,34 @@ impl PlatformTable {
             }
             rows.push(row);
         }
+        running.finished();
         Ok(rows)
+    }
+}
+
+/// Cancels whatever its Platform Database connection is running when dropped, unless the read
+/// [`finished`](CancelOnDrop::finished). Dropping a `tokio_postgres::Client` alone leaves the
+/// backend running the statement to its end; the cancel request stops it (Postgres answers it
+/// with 57014 on that connection, which nobody reads any more).
+struct CancelOnDrop(Option<CancelToken>);
+
+impl CancelOnDrop {
+    /// The read is done: nothing to cancel.
+    fn finished(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        let Some(token) = self.0.take() else { return };
+        // Drop cannot wait, so the cancel request goes out on its own task; it opens a new
+        // connection to the same server, sends the backend's key and closes.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = token.cancel_query(NoTls).await;
+            });
+        }
     }
 }
 
@@ -634,13 +668,17 @@ impl<'a> FromSql<'a> for AsText {
             },
             Type::UUID => uuid_text(raw)?,
             Type::NUMERIC => numeric_text(raw)?,
+            // Postgres sends a void as zero bytes and prints it as the empty string.
+            Type::VOID => String::new(),
             _ => String::from_sql(ty, raw)?,
         }))
     }
 
     fn accepts(ty: &Type) -> bool {
-        matches!(*ty, Type::JSON | Type::JSONB | Type::UUID | Type::NUMERIC)
-            || <String as FromSql>::accepts(ty)
+        matches!(
+            *ty,
+            Type::JSON | Type::JSONB | Type::UUID | Type::NUMERIC | Type::VOID
+        ) || <String as FromSql>::accepts(ty)
     }
 }
 
@@ -776,6 +814,7 @@ mod tests {
             ("score".into(), Type::FLOAT8),
             ("doc".into(), Type::JSONB),
             ("amount".into(), Type::NUMERIC),
+            ("slept".into(), Type::VOID),
         ])
         .unwrap();
         let types: Vec<DataType> = schema.fields().iter().map(|f| f.data_type().clone()).collect();
@@ -789,6 +828,7 @@ mod tests {
                 DataType::Float64,
                 DataType::Utf8,
                 DataType::Utf8,
+                DataType::Utf8,
             ]
         );
         assert_eq!(
@@ -796,6 +836,7 @@ mod tests {
             Some(JSON_EXTENSION)
         );
         assert!(schema.field(6).metadata().is_empty());
+        assert_eq!(AsText::from_sql(&Type::VOID, &[]).unwrap().0, "");
     }
 
     #[test]

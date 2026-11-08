@@ -1655,3 +1655,31 @@ token verification for a *valid* token, which feature 39 then hardens.
   (audit, cloudwatch*, logql, promql, …). Revert the unrelated hunks rather than committing them,
   or let a dedicated change do the reformat.
 - 2026-11-08T21:22:57Z supervisor: eng-platform-explain passed the gate in round 1
+- 2026-11-08 eng-platform-statement-timeout (round 1): `federation-engine/src/platform.rs` only.
+  The check first failed with 0A000 because `pg_sleep` returns `void`, which platform_query
+  refused. And nothing stopped the Postgres backend on timeout: dropping a tokio_postgres
+  `Client` leaves an in-flight statement running to its end. Changes: (1) `void` columns map to
+  text and read as `''` (Postgres prints void as the empty string, and its binary form is 0
+  bytes). (2) `CancelOnDrop` in `PlatformTable::fetch` holds the connection's `CancelToken`. If
+  the fetch future is dropped before the rows are all read (statement_timeout drops the collect
+  future in pg.rs, and so do a cancel request or a disconnect), or if fetch fails (e.g. max_rows),
+  its Drop spawns `cancel_query(NoTls)`, so the backend stops (CONTRACTS §1 "Cancellation"). It is
+  disarmed after the last row. This covers platform_query, platform_tables/columns and
+  platform_explain, since they all use `PlatformTable`.
+  Contract assumption: a `void` column is text `''`. The contract has no type list for void, and
+  the feature's own step selects `pg_sleep(30) AS s`.
+  Tested as a user: `../tmp/platform-timeout/run.sh <out>` (throwaway cluster, audit store mock,
+  engine; a new pgclient bin `ptimeout`, simple protocol, plus a superuser pg_stat_activity
+  probe; psql is blocked by the sandbox). SET statement_timeout = 500, then
+  platform_query('SELECT pg_sleep(30) AS s') -> 57014 "canceling statement due to statement
+  timeout" after 511 ms. pg_stat_activity shows 0 active pg_sleep(30) backends at once and 1.5 s
+  later. The Postgres log shows "canceling statement due to user request" for it. Then with
+  statement_timeout = 0, a widgets query gives 2 rows and pg_sleep(1) gives one '' row after about
+  1 s. The check, platform unit tests, platform::eng_platform_query_basic, _describe_only and
+  _explain pass. clippy -D warnings is clean (private toolchain), and the new hunks are
+  fmt-clean (old unformatted test hunks left as is).
+  Observed, not changed: a statement that times out writes no audit record, because pg.rs audits
+  after a successful execute. `SHOW statement_timeout` fails with 42000 (DataFusion does not know
+  the variable). eng-platform-cancel-on-disconnect may already pass thanks to CancelOnDrop. It
+  was not run here.
+- 2026-11-08T21:28:52Z supervisor: eng-platform-statement-timeout passed the gate in round 1
