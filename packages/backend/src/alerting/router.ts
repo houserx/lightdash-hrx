@@ -233,6 +233,16 @@ export const createAlertingApiRouter = (
             ),
         ),
     );
+    router.post(
+        `${base}/contact-points/:contactPointUuid/test`,
+        route((user, req) =>
+            services.contactPoints.sendTest(
+                user,
+                req.params.projectUuid,
+                req.params.contactPointUuid,
+            ),
+        ),
+    );
     router.delete(
         `${base}/contact-points/:contactPointUuid`,
         route(async (user, req) => {

@@ -667,3 +667,21 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - /notifications showed two rows: `sent`, `email`, attempts 1.
   - Next session: whoever wires `createAlertingModule` into the app must adapt Lightdash's `EmailClient` (`clients/EmailClient/EmailClient.ts`) to `email.sendEmail`. The adapter should throw `NotificationSendError(msg, false)` when SMTP isn't configured.
 - 2026-11-08T21:22:24Z supervisor: alert-contact-email passed the gate in round 1
+- alert-contact-test-notification (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotifier.ts`: the old `sendIntegration` is now two steps. `deliver({group, alerts, contactPoint, integration, now, retry, generatorURL})` builds one integration's message and sends it, returning `{payload, attempts, error}`. `sendIntegration` keeps the `disableResolveMessage` filter and the send-log insert. New `sendTest(projectUuid, contactPoint)` → `ContactPointTestResult` `{ok, results: [{type, ok, error?}]}`, one result per integration in order. New exports: `TEST_ALERT_LABELS` and `TEST_ALERT_ANNOTATIONS`.
+    - `ContactPointService.sendTest` needs the `manage ContactPoint` ability (viewer, interactive_viewer and editor get 403). An unknown uuid returns 404. A new dep, `testNotifier`, is wired in `index.ts`, where the notifier is now built before the services. `router.ts` has `POST /contact-points/:contactPointUuid/test`.
+  - Contract assumptions (PROGRESS API table: "synthetic `TestAlert`; `{ok, results}`"; narrowest reading):
+    - The alert is one firing alert, shaped like Grafana's test alert. Labels: `{alertname: TestAlert, instance: Lightdash}`. Annotations: summary `Notification test` and a fixed description. Its fingerprint comes from the labels, `startsAt` is the clock's now, and `ruleUuid` is `''`. `generatorURL` points to `/projects/<p>/alerting/contact-points/<uuid>`. groupKey is `test:<slug>`, and groupLabels are `{}`.
+    - Each integration gets exactly **one attempt**, with no retry or backoff, so the user gets an answer right away. A failed send is a result (`ok: false` plus the error, such as `Webhook responded with HTTP 500 Internal Server Error` or `Secret "nope" could not be resolved`); the HTTP request still returns 200.
+    - Test sends are **not** written to `alert_notifications` and don't touch notification groups. The send log is for rule notifications, and a log row needs ruleUuids. Managed Contact Points can still be tested, because a test doesn't change them. Shadow mode doesn't apply, because a Contact Point has no shadow flag.
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). integrations.accept.ts passes 6/6, notifications.accept.ts 8/8 and contact-points.accept.ts 3/3. AlertNotifier.test.ts passes 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through a copy of the harness in `src/__walk__/alerting`, removed afterwards.
+      - Created contact point `ops` with webhook, slack_webhook, slack_app and email integrations. As admin, POST /test returned 200 `{ok: true}` with 4 ok results in order.
+      - The webhook got an Alertmanager v4 payload with `alertname: TestAlert`. The Slack webhook got one attachment, `1 Notification test`. The Slack app posted to `#ops`. /notifications stayed empty.
+      - With the webhook answering 500, a test as developer returned `ok: false`; the webhook result carried the HTTP 500 error and the other three were ok.
+      - A slack_webhook with secretRef `nope` returned ok false with an error naming the secret.
+      - viewer, interactive_viewer and editor got 403, no user got 401, and an unknown uuid got 404.
+  - Next: the UI's `ContactPointsList` `onSendTest` should call this endpoint and show "Test notification sent", or the failing results' errors.
+- 2026-11-08T21:28:36Z supervisor: alert-contact-test-notification passed the gate in round 1

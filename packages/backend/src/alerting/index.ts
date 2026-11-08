@@ -77,6 +77,16 @@ export const createAlertingModule = (
         warehouseClients: deps.warehouseClients,
         clock: deps.clock,
     });
+    const notifier = new AlertNotifier({
+        alertNotificationModel,
+        notificationRouteModel,
+        secrets: deps.secrets,
+        slackApp: deps.slackApp,
+        email: deps.email,
+        clock: deps.clock,
+        retry: deps.retry,
+        siteUrl: deps.siteUrl,
+    });
     return {
         alertRules: new AlertRuleService({
             alertRuleModel,
@@ -90,6 +100,7 @@ export const createAlertingModule = (
         contactPoints: new ContactPointService({
             contactPointModel: new ContactPointModel(deps.database),
             notificationRouteModel,
+            testNotifier: notifier,
             clock: deps.clock,
         }),
         notificationRoutes: new NotificationRouteService({
@@ -102,16 +113,7 @@ export const createAlertingModule = (
             jobQueue: deps.jobQueue,
             clock: deps.clock,
         }),
-        notifier: new AlertNotifier({
-            alertNotificationModel,
-            notificationRouteModel,
-            secrets: deps.secrets,
-            slackApp: deps.slackApp,
-            email: deps.email,
-            clock: deps.clock,
-            retry: deps.retry,
-            siteUrl: deps.siteUrl,
-        }),
+        notifier,
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},
     };

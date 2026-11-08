@@ -16,6 +16,7 @@
 import {
     alertGroupKey,
     alertGroupLabels,
+    alertLabelsFingerprint,
     buildAlertmanagerWebhookPayload,
     getErrorMessage,
     parsePrometheusDuration,
@@ -131,6 +132,27 @@ export const sendWithRetry = async (
         // eslint-disable-next-line no-await-in-loop
         await sleep(Math.max(0, policy.initialDelayMs) * 2 ** (attempt - 1));
     }
+};
+
+/** The synthetic alert 'Send test notification' sends (as Grafana's does). */
+export const TEST_ALERT_LABELS: Readonly<Record<string, string>> = {
+    alertname: 'TestAlert',
+    instance: 'Lightdash',
+};
+export const TEST_ALERT_ANNOTATIONS: Readonly<Record<string, string>> = {
+    summary: 'Notification test',
+    description:
+        'This is a test notification from Lightdash alerting. If you can read it, this Contact Point works.',
+};
+
+/** The outcome of a test notification, per integration in order. */
+export type ContactPointTestResult = {
+    ok: boolean;
+    results: Array<{
+        type: ContactPointIntegration['type'];
+        ok: boolean;
+        error?: string;
+    }>;
 };
 
 /** A firing alert, or a resolved one (which has `endsAt`). */
@@ -444,10 +466,122 @@ export class AlertNotifier {
               )
             : groupAlertsSorted;
         if (alerts.length === 0) return;
-        const siteUrl = this.deps.siteUrl.replace(/\/+$/, '');
+        const { payload, attempts, error } = await this.deliver({
+            group,
+            alerts,
+            contactPoint,
+            integration,
+            now,
+            retry: this.deps.retry,
+            generatorURL: (alert) =>
+                `${this.siteUrl()}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`,
+        });
+        if (error !== null) {
+            Logger.warn(
+                `Alerting notification to contact point ${contactPoint.uuid} failed after ${attempts} attempt(s): ${error}`,
+            );
+        }
+        await this.deps.alertNotificationModel.insertNotification({
+            projectUuid: group.projectUuid,
+            ruleUuids: [...new Set(alerts.map((alert) => alert.ruleUuid))],
+            contactPointUuid: contactPoint.uuid,
+            integrationType: integration.type,
+            groupKey: group.groupKey,
+            status: error === null ? 'sent' : 'failed',
+            attempts,
+            alerts: alerts.map((alert) => ({
+                ruleUuid: alert.ruleUuid,
+                fingerprint: alert.fingerprint,
+                status: alertStatus(alert),
+            })),
+            payload,
+            error,
+            at: now,
+        });
+    }
+
+    /**
+     * Sends a synthetic firing `TestAlert` through every integration of
+     * `contactPoint`, one attempt each, and reports each outcome. Nothing is
+     * written to the send log or the notification groups.
+     */
+    async sendTest(
+        projectUuid: string,
+        contactPoint: NotificationContactPoint,
+    ): Promise<ContactPointTestResult> {
+        const now = this.deps.clock.now();
+        const labels = { ...TEST_ALERT_LABELS };
+        const alert: ActiveAlert = {
+            projectUuid,
+            ruleUuid: '',
+            fingerprint: alertLabelsFingerprint(labels),
+            labels,
+            annotations: { ...TEST_ALERT_ANNOTATIONS },
+            startsAt: now,
+        };
+        const group: NotificationGroup = {
+            projectUuid,
+            route: {
+                id: 'test',
+                path: [],
+                contactPoint: contactPoint.slug,
+                groupBy: [],
+                groupWait: '0s',
+                groupInterval: '0s',
+                repeatInterval: '0s',
+            },
+            contactPointSlug: contactPoint.slug,
+            groupKey: `test:${contactPoint.slug}`,
+            alerts: [alert],
+        };
+        const results: ContactPointTestResult['results'] = [];
+        for (const integration of contactPoint.integrations) {
+            // Integrations are tried one at a time, in order.
+            // eslint-disable-next-line no-await-in-loop
+            const { error } = await this.deliver({
+                group,
+                alerts: [alert],
+                contactPoint,
+                integration,
+                now,
+                // A test reports at once; it is not retried.
+                retry: { maxAttempts: 1, initialDelayMs: 0 },
+                generatorURL: () =>
+                    `${this.siteUrl()}/projects/${projectUuid}/alerting/contact-points/${contactPoint.uuid}`,
+            });
+            results.push(
+                error === null
+                    ? { type: integration.type, ok: true }
+                    : { type: integration.type, ok: false, error },
+            );
+        }
+        return { ok: results.every((result) => result.ok), results };
+    }
+
+    private siteUrl(): string {
+        return this.deps.siteUrl.replace(/\/+$/, '');
+    }
+
+    /** Builds one integration's message for `alerts` and sends it. */
+    private async deliver({
+        group,
+        alerts,
+        contactPoint,
+        integration,
+        now,
+        retry,
+        generatorURL,
+    }: {
+        group: NotificationGroup;
+        alerts: NotificationAlert[];
+        contactPoint: NotificationContactPoint;
+        integration: ContactPointIntegration;
+        now: Date;
+        retry: NotificationRetryPolicy;
+        generatorURL: (alert: NotificationAlert) => string;
+    }): Promise<{ payload: unknown; attempts: number; error: string | null }> {
+        const siteUrl = this.siteUrl();
         const groupLabels = alertGroupLabels(group.route, alerts[0].labels);
-        const generatorURL = (alert: NotificationAlert) =>
-            `${siteUrl}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`;
         let payload: unknown = null;
         let post: () => Promise<void>;
         if (
@@ -540,29 +674,8 @@ export class AlertNotifier {
                 }
             }
         }
-        const { attempts, error } = await sendWithRetry(post, this.deps.retry);
-        if (error !== null) {
-            Logger.warn(
-                `Alerting notification to contact point ${contactPoint.uuid} failed after ${attempts} attempt(s): ${error}`,
-            );
-        }
-        await this.deps.alertNotificationModel.insertNotification({
-            projectUuid: group.projectUuid,
-            ruleUuids: [...new Set(alerts.map((alert) => alert.ruleUuid))],
-            contactPointUuid: contactPoint.uuid,
-            integrationType: integration.type,
-            groupKey: group.groupKey,
-            status: error === null ? 'sent' : 'failed',
-            attempts,
-            alerts: alerts.map((alert) => ({
-                ruleUuid: alert.ruleUuid,
-                fingerprint: alert.fingerprint,
-                status: alertStatus(alert),
-            })),
-            payload,
-            error,
-            at: now,
-        });
+        const { attempts, error } = await sendWithRetry(post, retry);
+        return { payload, attempts, error };
     }
 
     private async postWebhook(

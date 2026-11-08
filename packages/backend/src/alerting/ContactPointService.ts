@@ -22,6 +22,10 @@ import {
     UUID_PATTERN,
     type AlertingAction,
 } from './alertingAccess';
+import {
+    type AlertNotifier,
+    type ContactPointTestResult,
+} from './AlertNotifier';
 import { type ContactPointModel } from './ContactPointModel';
 import { type NotificationRouteModel } from './NotificationRouteModel';
 
@@ -89,6 +93,7 @@ export class ContactPointService {
         private readonly deps: {
             contactPointModel: ContactPointModel;
             notificationRouteModel: NotificationRouteModel;
+            testNotifier: Pick<AlertNotifier, 'sendTest'>;
             clock: { now(): Date };
         },
     ) {}
@@ -242,6 +247,24 @@ export class ContactPointService {
         });
         if (!updated) throw new NotFoundError('Contact Point not found');
         return this.getOrThrow(projectUuid, contactPointUuid);
+    }
+
+    /**
+     * 'Send test notification': a synthetic TestAlert through every
+     * integration, reporting each outcome. A failed send is a result, not an
+     * error, so the request itself succeeds.
+     */
+    async sendTest(
+        user: SessionUser,
+        projectUuid: string,
+        contactPointUuid: string,
+    ): Promise<ContactPointTestResult> {
+        await this.assertAbility(user, 'manage', projectUuid);
+        const contactPoint = await this.getOrThrow(
+            projectUuid,
+            contactPointUuid,
+        );
+        return this.deps.testNotifier.sendTest(projectUuid, contactPoint);
     }
 
     async delete(
