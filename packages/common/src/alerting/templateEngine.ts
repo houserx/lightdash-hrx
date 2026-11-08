@@ -1,3 +1,4 @@
+import { PORTED_GRAFANA_TEMPLATES } from './portedTemplates';
 // Message templates (ENG-1799). A TypeScript implementation of the Go
 // `text/template` subset that Grafana notification templates use, so the
 // templates in today's Grafana render the same in Lightdash:
@@ -33,9 +34,11 @@ import {
 import { AlertTemplateError, type AlertTemplateOptions } from './templateTypes';
 
 export * from './templateTypes';
+export * from './portedTemplates';
 
 const MAX_TEMPLATE_DEPTH = 100;
 const MAIN_TEMPLATE_NAME = 'message';
+const PORTED_TEMPLATES_NAME = 'grafana';
 
 type Variable = { name: string; value: unknown };
 
@@ -235,9 +238,11 @@ class Executor {
 
 /**
  * Renders a notification template (Go text/template syntax, as in Grafana)
- * against `data`, usually an {@link AlertTemplateData}. `options.templates`
- * holds extra template source whose `define`s can be called with
- * `{{ template "name" . }}`; defines in `template` itself override them.
+ * against `data`, usually an {@link AlertTemplateData}. The ported Grafana
+ * templates ({@link PORTED_GRAFANA_TEMPLATES}, e.g. `slack.title`) are always
+ * defined. `options.templates` holds extra template source whose `define`s
+ * can be called with `{{ template "name" . }}` and override the ported ones;
+ * defines in `template` itself override both.
  * Throws an AlertTemplateError on a parse error or an execution error such
  * as an unknown template name.
  */
@@ -247,6 +252,11 @@ export const renderAlertTemplate = (
     options: AlertTemplateOptions = {},
 ): string => {
     const defines = new Map<string, Node[]>();
+    parseTemplateSource(
+        PORTED_GRAFANA_TEMPLATES,
+        PORTED_TEMPLATES_NAME,
+        defines,
+    );
     const extra =
         typeof options.templates === 'string'
             ? [options.templates]
