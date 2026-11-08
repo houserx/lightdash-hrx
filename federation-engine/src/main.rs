@@ -5,6 +5,7 @@
 //! sources.
 
 mod pg;
+mod promql;
 mod server;
 mod session;
 mod transaction;
@@ -72,6 +73,8 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
+    // rustls is built with both aws-lc-rs and ring, so it can't pick a default on its own.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

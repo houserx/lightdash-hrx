@@ -31,6 +31,12 @@ futures = "0.3.34"
 getrandom = "0.3"
 pgwire = "0.42"
 postgres-types = "0.2.14"
+# Telemetry Source HTTP clients: rustls with the webpki root store (no OS keychain). main()
+# installs aws-lc-rs as the process default. reqwest's ring fallback is enabled on purpose: its
+# features unify with the harness's reqwest, whose clients would otherwise panic "No provider set".
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+rustls = "0.23"
+serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
 
 # Used only by tests/acceptance. They drive the real `engine` binary through pg-wire and HTTP,

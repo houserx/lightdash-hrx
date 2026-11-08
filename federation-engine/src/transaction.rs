@@ -157,7 +157,11 @@ mod tests {
             let DataFusionError::External(e) = e else {
                 panic!("{sql}: not a SQLSTATE error")
             };
-            assert_eq!(e.downcast_ref::<SqlStateError>().unwrap().code, "0A000", "{sql}");
+            assert_eq!(
+                e.downcast_ref::<SqlStateError>().unwrap().code,
+                "0A000",
+                "{sql}"
+            );
         }
     }
 
@@ -168,7 +172,9 @@ mod tests {
             _ => panic!("not a transaction response"),
         };
         assert!(tag(Transaction::Commit.response(TransactionStatus::Error)).contains("ROLLBACK"));
-        assert!(tag(Transaction::Commit.response(TransactionStatus::Transaction)).contains("COMMIT"));
+        assert!(
+            tag(Transaction::Commit.response(TransactionStatus::Transaction)).contains("COMMIT")
+        );
         assert!(tag(Transaction::Begin.response(TransactionStatus::Idle)).contains("BEGIN"));
     }
 

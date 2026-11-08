@@ -29,7 +29,7 @@ pub async fn run(config: Config) -> Result<(), String> {
         config.sources.len()
     );
 
-    let handlers = Arc::new(PgHandlers::new(&config.users));
+    let handlers = Arc::new(PgHandlers::new(&config)?);
     let http_server = axum::serve(http, http_router());
     tokio::select! {
         r = http_server => r.map_err(|e| format!("HTTP server failed: {e}")),

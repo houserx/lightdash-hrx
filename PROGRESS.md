@@ -605,3 +605,59 @@ token verification for a *valid* token, which feature 39 then hardens.
 - 2026-11-08T17:29:36Z supervisor: eng-pg-cancel-request halted: the worker halted on eng-pg-cancel-request
 - 2026-11-08T17:30:10Z supervisor: eng-pg-disconnect-cleanup halted: the worker halted on eng-pg-disconnect-cleanup
 - 2026-11-08T17:33:41Z supervisor: eng-pg-tls halted: worker engine.feature.eng-pg-tls.r1 stopped: STOP file present
+- 2026-11-08 eng-promql-range (session 11, run 20261108-104127 round 1, after the harness date fix
+  e3750c334): `promql(query, start, end, step[, source])` is a DataFusion table function in the new
+  `src/promql.rs`. It is registered in `PgHandlers::new`, which now takes the whole `&Config`.
+  - Arguments are constant-folded at plan time (`ExprSimplifier` with the session's config and
+    query start time), so a bad argument fails before any request is sent. Times are cast to
+    `Timestamp(µs, "+00:00")`, so ISO-8601 strings with offsets and fractions, timestamptz,
+    naive timestamps (read as UTC), `to_timestamp(..)` and `now() - INTERVAL ..` all work. Step
+    is a Prometheus duration (`30s`, `1h30m`, `500ms`) or plain seconds, and must be > 0.
+    Errors: 22007 for a bad time, 22023 for a bad step, 22004 for NULL, 42883 for the wrong
+    argument count, 0A000 for a non-constant argument (e.g. `$1`). Source: 42704 for an unknown
+    name or no default, 42809 for a source of another kind. A `restricted = true` Prometheus
+    source is refused with 42501 (fail closed) until the identity features check tokens.
+  - The HTTP call happens in `TableProvider::scan`, so it runs at execution, not at
+    Parse/Describe. It is `POST {url}/api/v1/query_range` with a form body
+    (query unchanged, start/end/step as decimal Unix seconds). It is cancellable by dropping the
+    future, the same as the rest of execution. Upstream errors name the source and pass on
+    Prometheus's `errorType: error` text. Non-JSON answers say `HTTP <status>`. A connect failure
+    says "is unreachable". These are all XX000 for now.
+  - **json columns:** a Utf8 field with metadata `ARROW:extension:name = arrow.json`
+    (`promql::EXTENSION_NAME_KEY`/`JSON_EXTENSION`) is described as `json` (OID 114) by pg.rs
+    `columns_of`. Its text and binary forms are the same bytes. DataFusion keeps that metadata
+    through `SELECT *` and plain column references (verified). An expression over the column
+    (e.g. a CASE) probably loses it and is described as text (not tested). Use `promql::sample_schema()` for the other
+    PromQL-shaped functions (promql_instant, logql_metric, cloudwatch).
+  - `series` = `promql::series_name` (keys sorted, values Go-`strconv.Quote` escaped). `labels` is
+    the metric object as compact JSON with sorted keys (serde_json's default map). Reuse both for
+    eng-series-name-function / eng-label-function.
+  - Text-format float8/float4 now prints Postgres's `NaN`, `Infinity`, `-Infinity`. Arrow
+    printed `inf`, which node-postgres can't parse. Finite floats are unchanged (`1.0`, not
+    Postgres's `1`; pre-existing, left alone).
+  - **Dependencies:** `reqwest` 0.12 (features `json`, `rustls-tls-webpki-roots`), `rustls` 0.23 and
+    `serde_json` are now normal dependencies. **Trap:** reqwest's features unify with the
+    harness's dev-dependency reqwest. With the `-no-provider` TLS variant, the harness's own
+    `reqwest::Client` panicked "No provider set" in every test. The ring-fallback variant avoids
+    that. Because rustls then has both ring and aws-lc-rs, `main()` installs aws-lc-rs as the
+    process default before the runtime starts. Any new rustls user in the engine relies on that.
+    The harness builds its TLS configs with an explicit aws-lc-rs provider, so it is unaffected.
+    The webpki root store is used rather than the OS keychain.
+  - Housekeeping: rustfmt/clippy are installed in `tmp/rustup` (see the toolchain note) and now
+    run clean. I applied `cargo fmt` to the drift earlier sessions left in pg.rs, session.rs and
+    transaction.rs, and fixed one clippy lint (`dialect_from_str(options.dialect)`).
+  Tested as a user: `../tmp/pgclient/src/bin/promql.rs` (an in-process mock Prometheus on
+  127.0.0.1:59090; config `../tmp/promql/prom.toml`) spawns `target/debug/engine` and uses
+  tokio-postgres with the feature's own SQL and 2026 dates. Prepare describes timestamp 1184,
+  value 701, labels 114, series 25 and sends nothing to Prometheus. Execute returns 6 rows. In
+  text form they are `2026-11-08 00:00:00+00 | 1.0 | {"__name__":...} | {__name__="http_requests_total",job="api",pod="api-1"}`,
+  … `NaN` … `Infinity` …. Prometheus received
+  `query=rate(http_requests_total{job="api"}[5m])` unchanged, with start=1794096000,
+  end=1794099600 and step=30. `promql('up', ..)` against an empty matrix returns 0 rows.
+  `'yesterday'` gets 22007. The check `promql::eng_promql_range`, the ten earlier checks, the
+  3 harness self-tests and 27 unit tests (6 new in promql.rs) pass. fmt and clippy
+  (`--workspace --all-targets -D warnings`) are clean.
+  For later sessions: `promql::eng_time_arguments` and `promql::eng_promql_upstream_errors`
+  already pass. `eng_promql_source_selection` fails only because `promql_instant` doesn't exist
+  yet. max_rows (54000), statement_timeout and the `/healthz` source probes are not done.
+- 2026-11-08T17:53:42Z supervisor: eng-promql-range passed the gate in round 1

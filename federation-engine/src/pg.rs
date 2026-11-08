@@ -4,8 +4,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, NaiveDateTime, Offset, TimeZone, Timelike};
 use datafusion::arrow::array::timezone::Tz;
 use datafusion::arrow::array::{Array, ArrayRef, AsArray};
 use datafusion::arrow::compute::cast;
@@ -19,17 +21,16 @@ use datafusion::common::ScalarValue;
 use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion::dataframe::DataFrame;
 use datafusion::error::DataFusionError;
+use datafusion::execution::FunctionRegistry;
 use datafusion::execution::context::SQLOptions;
 use datafusion::execution::{SessionState, SessionStateBuilder};
-use datafusion::execution::FunctionRegistry;
 use datafusion::logical_expr::{
     Cast, ColumnarValue, Expr, LogicalPlan, ScalarUDF, TryCast, Volatility, create_udf,
 };
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::{DFParserBuilder, Statement as DFStatement};
 use datafusion::sql::sqlparser::dialect::dialect_from_str;
-use chrono::{DateTime, NaiveDateTime, Offset, TimeZone, Timelike};
-use engine_config::User;
+use engine_config::{Config, User};
 use futures::{Sink, stream};
 use pgwire::api::auth::sasl::SASLAuthStartupHandler;
 use pgwire::api::auth::sasl::scram::{ScramAuth, gen_salted_password};
@@ -51,6 +52,7 @@ use pgwire::messages::data::DataRow;
 use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
+use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, Promql};
 use crate::session::{Change, Settings, SqlStateError, current_setting_udf, sqlstate};
 use crate::transaction::{Transaction, aborted_block, check_not_aborted};
 
@@ -67,6 +69,9 @@ const VERSION_STRING: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     ")"
 );
+
+/// How long a Telemetry Source has to accept a connection.
+const SOURCE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The session time zone: DataFusion's zone for `TIMESTAMP WITH TIME ZONE` and `now()`.
 const SESSION_TIME_ZONE: &str = "+00:00";
@@ -118,18 +123,24 @@ pub struct PgHandlers {
 }
 
 impl PgHandlers {
-    pub fn new(users: &[User]) -> PgHandlers {
-        let mut scram = ScramAuth::new(Arc::new(Logins::new(users)));
+    /// Fails only if the HTTP client for Telemetry Sources cannot be built.
+    pub fn new(config: &Config) -> Result<PgHandlers, String> {
+        let http = reqwest::Client::builder()
+            .connect_timeout(SOURCE_CONNECT_TIMEOUT)
+            .build()
+            .map_err(|e| format!("cannot build the HTTP client for sources: {e}"))?;
+        let sql = Sql::new();
+        sql.ctx
+            .register_udtf("promql", Arc::new(Promql::new(config, http)));
+        let mut scram = ScramAuth::new(Arc::new(Logins::new(&config.users)));
         scram.set_iterations(SCRAM_ITERATIONS);
         let mut params = DefaultServerParameterProvider::default();
         params.server_version = SERVER_VERSION.to_string();
         params.is_superuser = false;
-        PgHandlers {
+        Ok(PgHandlers {
             startup: Arc::new(SASLAuthStartupHandler::new(Arc::new(params)).with_scram(scram)),
-            query: Arc::new(QueryHandler {
-                sql: Arc::new(Sql::new()),
-            }),
-        }
+            query: Arc::new(QueryHandler { sql: Arc::new(sql) }),
+        })
     }
 }
 
@@ -207,7 +218,7 @@ impl Sql {
     fn statements(&self, sql: &str) -> Result<VecDeque<DFStatement>, DataFusionError> {
         let config = self.ctx.copied_config();
         let options = &config.options().sql_parser;
-        let dialect = dialect_from_str(&options.dialect).ok_or_else(|| {
+        let dialect = dialect_from_str(options.dialect).ok_or_else(|| {
             DataFusionError::Plan(format!("unsupported SQL dialect: {}", options.dialect))
         })?;
         DFParserBuilder::new(sql)
@@ -641,13 +652,12 @@ fn bind_params(stmt: &Prepared, portal: &Portal<Arc<Prepared>>) -> PgWireResult<
                 return ScalarValue::try_from(dt).map_err(query_error);
             };
             let value = if portal.parameter_format.is_binary(i) {
-                decode_binary(&pg_type(dt), bytes)
-                    .ok_or_else(|| {
-                        user_error(
-                            "22P03",
-                            format!("invalid binary value for parameter ${}", i + 1),
-                        )
-                    })?
+                decode_binary(&pg_type(dt), bytes).ok_or_else(|| {
+                    user_error(
+                        "22P03",
+                        format!("invalid binary value for parameter ${}", i + 1),
+                    )
+                })?
             } else {
                 let text = std::str::from_utf8(bytes).map_err(|_| {
                     user_error("22021", format!("parameter ${} is not valid UTF-8", i + 1))
@@ -691,7 +701,10 @@ fn check_format_count(format: &Format, count: usize, what: &str) -> PgWireResult
     match format {
         Format::Individual(codes) if codes.len() != count => Err(user_error(
             "08P01",
-            format!("bind message has {} {what} formats but {count} {what}s", codes.len()),
+            format!(
+                "bind message has {} {what} formats but {count} {what}s",
+                codes.len()
+            ),
         )),
         _ => Ok(()),
     }
@@ -702,7 +715,15 @@ fn columns_of(schema: &Schema) -> Vec<(String, Type)> {
     schema
         .fields()
         .iter()
-        .map(|f| (f.name().clone(), pg_type(f.data_type())))
+        .map(|f| {
+            let json =
+                f.metadata().get(EXTENSION_NAME_KEY).map(String::as_str) == Some(JSON_EXTENSION);
+            let ty = match f.data_type() {
+                DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View if json => Type::JSON,
+                dt => pg_type(dt),
+            };
+            (f.name().clone(), ty)
+        })
         .collect()
 }
 
@@ -816,6 +837,20 @@ fn encode_rows(
                             None => put(&formatter.value(row).to_string(), &Type::TEXT)?,
                         }
                     }
+                    (false, &Type::FLOAT8) => {
+                        let v = col.as_primitive::<Float64Type>().value(row);
+                        match float_special(v) {
+                            Some(text) => put(&text, &Type::TEXT)?,
+                            None => put(&formatter.value(row).to_string(), &Type::TEXT)?,
+                        }
+                    }
+                    (false, &Type::FLOAT4) => {
+                        let v = col.as_primitive::<Float32Type>().value(row);
+                        match float_special(v.into()) {
+                            Some(text) => put(&text, &Type::TEXT)?,
+                            None => put(&formatter.value(row).to_string(), &Type::TEXT)?,
+                        }
+                    }
                     // Same wire layout as int4: days since 2000-01-01.
                     (true, &Type::DATE) => {
                         let days = col.as_primitive::<Date32Type>().value(row);
@@ -830,6 +865,18 @@ fn encode_rows(
     Ok(rows)
 }
 
+/// Postgres text for the floats Arrow prints differently (`NaN`, `inf`): `NaN`, `Infinity`,
+/// `-Infinity`. `None` for finite values.
+fn float_special(v: f64) -> Option<&'static str> {
+    if v.is_nan() {
+        Some("NaN")
+    } else if v.is_infinite() {
+        Some(if v > 0.0 { "Infinity" } else { "-Infinity" })
+    } else {
+        None
+    }
+}
+
 /// Postgres text output for a timestamp (`2026-01-02 03:04:05.5`) or, given its zone, a
 /// timestamptz (`2026-01-02 03:04:05.5+00`, `...+05:30`). `None` if out of chrono's range.
 fn timestamp_text(micros: i64, zone: Option<&Tz>) -> Option<String> {
@@ -839,8 +886,16 @@ fn timestamp_text(micros: i64, zone: Option<&Tz>) -> Option<String> {
     };
     let local = zone.from_utc_datetime(&utc.naive_utc());
     let offset = local.offset().fix().local_minus_utc();
-    let (sign, offset) = if offset < 0 { ('-', -offset) } else { ('+', offset) };
-    let mut text = format!("{}{sign}{:02}", naive_text(&local.naive_local()), offset / 3600);
+    let (sign, offset) = if offset < 0 {
+        ('-', -offset)
+    } else {
+        ('+', offset)
+    };
+    let mut text = format!(
+        "{}{sign}{:02}",
+        naive_text(&local.naive_local()),
+        offset / 3600
+    );
     if offset % 3600 != 0 {
         text.push_str(&format!(":{:02}", offset / 60 % 60));
     }
@@ -1125,16 +1180,16 @@ mod tests {
         // The information_schema scan spawns tasks, so it needs a Tokio runtime.
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let _guard = runtime.enter();
-        let (_, batches) = run(
-            "SELECT table_name FROM information_schema.tables \
-             WHERE table_schema = 'information_schema'",
-        )
+        let (_, batches) = run("SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = 'information_schema'")
         .unwrap();
         let names: Vec<String> = batches
             .iter()
             .flat_map(|b| {
                 let col = b.column(0).as_string::<i32>();
-                (0..col.len()).map(|i| col.value(i).to_string()).collect::<Vec<_>>()
+                (0..col.len())
+                    .map(|i| col.value(i).to_string())
+                    .collect::<Vec<_>>()
             })
             .collect();
         assert!(names.iter().any(|n| n == "tables"), "{names:?}");
@@ -1146,7 +1201,10 @@ mod tests {
         let (_, batches) = run("SELECT version()").unwrap();
         let v = batches[0].column(0).as_string::<i32>().value(0).to_string();
         let crate_version = env!("CARGO_PKG_VERSION");
-        assert_eq!(v, format!("PostgreSQL 16.0 (hrx-federation-engine {crate_version})"));
+        assert_eq!(
+            v,
+            format!("PostgreSQL 16.0 (hrx-federation-engine {crate_version})")
+        );
         assert!(v.starts_with(&format!("PostgreSQL {SERVER_VERSION} ")));
     }
 }

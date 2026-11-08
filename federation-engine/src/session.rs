@@ -238,9 +238,9 @@ pub fn current_setting_udf(settings: Settings) -> ScalarUDF {
         Volatility::Stable,
         Arc::new(move |args: &[ColumnarValue]| match &args[0] {
             ColumnarValue::Scalar(name) => match name.cast_to(&DataType::Utf8)? {
-                ScalarValue::Utf8(Some(name)) => {
-                    Ok(ColumnarValue::Scalar(ScalarValue::Utf8(Some(lookup(&name)?))))
-                }
+                ScalarValue::Utf8(Some(name)) => Ok(ColumnarValue::Scalar(ScalarValue::Utf8(
+                    Some(lookup(&name)?),
+                ))),
                 _ => Ok(ColumnarValue::Scalar(ScalarValue::Utf8(None))),
             },
             ColumnarValue::Array(names) => {
@@ -302,7 +302,10 @@ mod tests {
             ok("SET search_path TO public, other"),
             set("search_path", Some("public, other"))
         );
-        assert_eq!(ok("SET SESSION application_name = 'x'"), set("application_name", Some("x")));
+        assert_eq!(
+            ok("SET SESSION application_name = 'x'"),
+            set("application_name", Some("x"))
+        );
         assert_eq!(ok("SET LOCAL timezone = 'UTC'"), Change::Ignored);
         assert!(change("SELECT 1").is_none());
     }
