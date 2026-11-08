@@ -67,7 +67,18 @@ impl Identity {
         identity: Option<&Identity>,
         source: &str,
     ) -> Result<(), DataFusionError> {
-        let Some(id) = identity.filter(|id| id.telemetry_restricted && !id.agent) else {
+        // AI agents (and every MCP token) never read it, whatever their attrs say (§2, §8).
+        // The system identity is not an agent and is checked like a person.
+        if identity.is_some_and(|id| id.agent) {
+            return Err(sqlstate(
+                "42501",
+                format!(
+                    "source \"{source}\" is Restricted Telemetry, which an AI agent identity \
+                     (agent = true) may never read"
+                ),
+            ));
+        }
+        let Some(id) = identity.filter(|id| id.telemetry_restricted) else {
             return Err(sqlstate(
                 "42501",
                 format!(
@@ -248,8 +259,10 @@ mod tests {
             let agent = id(agent).unwrap();
             assert_eq!(agent.action(), "ai_ask");
             let refusal = code(Identity::check_restricted(Some(&agent), "s"));
-            assert!(refusal.contains("telemetry_restricted"));
+            assert!(refusal.contains("agent"), "{refusal}");
         }
+        let system = id(with("sys", json!(true))).unwrap();
+        assert!(Identity::check_restricted(Some(&system), "s").is_ok());
         let quiet = id(with("audit", json!({"description": "  "}))).unwrap();
         assert!(code(Identity::check_restricted(Some(&quiet), "s")).contains("description"));
         assert_eq!(id(with("sys", json!(true))).unwrap().action(), "assertion");

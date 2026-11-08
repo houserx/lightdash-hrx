@@ -1388,3 +1388,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   token (query 42501). A fresh session afterwards got 42501. The restricted mock saw 19 requests
   and the store saw 38 calls, exactly the allowed queries. The check passed after init.
 - 2026-11-08T20:29:30Z supervisor: eng-identity-per-session passed the gate in round 1
+- 2026-11-08 eng-identity-agent-and-system (round 1): `Identity::check_restricted` in
+  `src/identity.rs` now checks for an agent first. Any agent identity (`agent` not exactly
+  `false`, or `iss = telemetry-mcp`) gets 42501 `source "<s>" is Restricted Telemetry, which an AI
+  agent identity (agent = true) may never read`, whatever its attrs say. Before this change agents
+  were also refused, but the message only named telemetry_restricted, and the acceptance test wants
+  "agent" in it. The system identity (`sys = true`) is checked like a person: it needs the attr
+  (otherwise the `needs telemetry_restricted` text) and a description. The unit test now asserts
+  the agent wording and that a system identity with the attr is allowed.
+  - CONTRACTS doesn't specify the message text. The test only requires "agent" in it.
+  - Platform agent rules (preview-only writes, §5) are a separate feature and aren't touched here.
+  Tested as a user: `../tmp/agent-system/run.sh <out>` starts the open and restricted Prometheus
+  mocks, the DynamoDB+S3 store and the engine. On one pg-wire session it SETs each token from
+  `tok.py` and runs the restricted query, then the open one. agent=true with the attr: restricted
+  query 42501 naming agent, open query 2. MCP token (iss telemetry-mcp): the same. System
+  (system:alert-evaluator) with the attr and a description: restricted query 2, open query 2.
+  System without the attr: restricted query 42501 needs telemetry_restricted, open query 2. The
+  restricted mock saw 1 request and the store 2 calls. The check passed after init, as did the
+  `identity::` unit tests. rustfmt and clippy aren't installed on this machine, so neither was run.
+- 2026-11-08T20:31:54Z supervisor: eng-identity-agent-and-system passed the gate in round 1
