@@ -860,3 +860,50 @@ token verification for a *valid* token, which feature 39 then hardens.
   `pgwire::eng_pg_cancel_request` passes. The statement_timeout, startup_auth, extended_query
   and cursor_batches checks still pass.
 - 2026-11-08T18:43:31Z supervisor: eng-pg-cancel-request passed the gate in round 1
+- 2026-11-08 eng-pg-disconnect-cleanup (worker, round 1): the only change is in src/server.rs.
+  pgwire 0.42's connection loop awaits `process_message` without reading the socket, so a
+  hang-up went unnoticed until the slow query finished. Before this change the check failed at
+  the simple-protocol step. Each accepted socket now goes through `serve_connection`. It makes a
+  second tokio handle on the same socket (`into_std` + `try_clone` + `from_std`; no new crate)
+  and `select!`s `process_socket` against `hung_up(&watcher)`. That function waits on READABLE
+  readiness only and never reads. When the read side is closed (FIN or RST), the connection
+  future is dropped. That drops `do_query` and the in-flight reqwest, the same drop path that
+  cancel and statement_timeout use. Plain readable data just clears that handle's readiness
+  (`try_io` returning WouldBlock) and waits for the next edge, so the watcher doesn't spin. The
+  watcher is dropped when the connection ends, so the socket still closes then.
+  - Decision: a half-close (client FIN while still reading) counts as a hang-up, as with Postgres'
+    client_connection_check_interval (POLLRDHUP). A client that shuts down its write side and then
+    waits for the result would lose the result. No known client does this.
+  - For eng-pg-tls: the watcher sits on the raw TCP socket under any TLS, so it keeps working once
+    a tls_acceptor is passed to `process_socket` in `serve_connection`. Keep that call there.
+  - For eng-platform-cancel-on-disconnect: the engine side already stops the source work when the
+    client goes away.
+  Tested as a user: `../tmp/pgclient/src/bin/disconnect.rs` uses the cancel.rs mock on 59100
+  (query=slow = 20 s) and config `../tmp/promql/timeout.toml`. It spawns `target/debug/engine`
+  and uses tokio-postgres, aborting the connection task to drop the TCP connection without
+  Terminate. Simple protocol: promql('slow') ran 700 ms, meanwhile a second session's SELECT 1
+  worked, then the hang-up. The mock logged "engine dropped the request" at 727 ms. Extended: in
+  a transaction, prepare, then bind a named portal, then query_portal(…, 100) (Execute on the named
+  portal), then hang up at 703 ms. The mock dropped the request at 703 ms. A new connection's
+  SELECT 1 then worked. The check `pgwire::eng_pg_disconnect_cleanup` passes. So do
+  cancel_request, statement_timeout, cursor_batches, extended_query, simple_query, startup_auth,
+  transaction_statements and session_settings.
+- 2026-11-08 eng-pg-disconnect-cleanup (worker, round 2): the gate failed eng_pg_cancel_request,
+  and the failure was random. A CancelRequest connection writes 16 bytes and then FINs straight
+  away (the harness's `send_cancel`, psql too). The round-1 hang-up watcher saw read-closed and
+  could drop `process_socket` before pgwire had read or handled the cancel (`select!` picks a
+  ready branch at random), so the raw right-key cancel was sometimes lost. Fix in
+  `serve_connection` (src/server.rs): after a hang-up, the connection future is driven for up to
+  `HANGUP_GRACE` (250 ms) before it is dropped. A cancel or a Terminate finishes in that time on
+  its own, and a slow query is dropped 250 ms after the hang-up.
+  - Trap for later edits: never drop the connection the moment read-closed shows. Buffered
+    messages sent just before the FIN must still be handled. That includes cancels, and TLS
+    close_notify once eng-pg-tls lands.
+  Tested as a user: `../tmp/pgclient` bins with args `<engine> ../promql/timeout.toml`.
+  disconnect: a simple query hung up at 700 ms, and the mock saw the drop 988 ms after the
+  request. A named-portal Execute hung up at 702 ms, drop at 954 ms. Meanwhile and afterwards
+  SELECT 1 worked. cancel: right-key cancels (extended and simple) gave 57014 at once. Six
+  wrong-key cancels did nothing, then the right key cancelled. Checks: cancel_request passed 6
+  times in a row. disconnect_cleanup, statement_timeout, extended_query, simple_query,
+  startup_auth and cursor_batches pass.
+- 2026-11-08T18:51:52Z supervisor: eng-pg-disconnect-cleanup passed the gate in round 2
