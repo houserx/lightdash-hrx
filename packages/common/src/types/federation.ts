@@ -65,3 +65,19 @@ export type ApiFederationAccessResponse = {
     status: 'ok';
     results: FederationAccess;
 };
+
+/** Body of POST /api/v2/projects/{projectUuid}/write/confirmations (CONTRACTS §4.2). */
+export type ApiWriteConfirmationRequest = {
+    statement: string;
+};
+
+/** A single-statement Write Mode confirmation; `expiresAt` is the token's exp, ISO 8601. */
+export type WriteConfirmation = {
+    confirmationToken: string;
+    expiresAt: string;
+};
+
+export type ApiWriteConfirmationResponse = {
+    status: 'ok';
+    results: WriteConfirmation;
+};

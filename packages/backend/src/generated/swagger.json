@@ -72734,6 +72734,43 @@
                 "required": ["source"],
                 "type": "object"
             },
+            "WriteConfirmation": {
+                "properties": {
+                    "expiresAt": {
+                        "type": "string"
+                    },
+                    "confirmationToken": {
+                        "type": "string"
+                    }
+                },
+                "required": ["expiresAt", "confirmationToken"],
+                "type": "object",
+                "description": "A single-statement Write Mode confirmation; `expiresAt` is the token's exp, ISO 8601."
+            },
+            "ApiWriteConfirmationResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/WriteConfirmation"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
+            "ApiWriteConfirmationRequest": {
+                "properties": {
+                    "statement": {
+                        "type": "string"
+                    }
+                },
+                "required": ["statement"],
+                "type": "object",
+                "description": "Body of POST /api/v2/projects/{projectUuid}/write/confirmations (CONTRACTS §4.2)."
+            },
             "FederationAttrs": {
                 "properties": {
                     "platform_explain": {
@@ -118429,6 +118466,57 @@
                         "application/json": {
                             "schema": {
                                 "$ref": "#/components/schemas/UpdateOrganizationAgentIdentityRule"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v2/projects/{projectUuid}/write/confirmations": {
+            "post": {
+                "operationId": "createWriteConfirmation",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiWriteConfirmationResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Returns a single-use confirmation token bound to this statement, the current user and\nthe project, expiring within 120 seconds. Requires the platform_write user attribute.",
+                "summary": "Create a Write Mode confirmation",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApiWriteConfirmationRequest"
                             }
                         }
                     }
