@@ -108,4 +108,25 @@ describe('groupAlerts', () => {
             ['default', 'root:{alertname="Disk almost full"}', ['web-1']],
         ]);
     });
+
+    it('splits alerts on one route into a group per group_by value', () => {
+        const groups = groupAlerts(
+            'project',
+            { contactPoint: 'ops', groupBy: ['alertname'] },
+            [
+                alert('db-1'),
+                alert('db-1', { alertname: 'CPU high' }),
+                alert('db-2'),
+            ],
+        );
+        expect(
+            groups.map((group) => [
+                group.groupKey,
+                group.alerts.map((a) => a.labels.instance),
+            ]),
+        ).toEqual([
+            ['root:{alertname="Disk almost full"}', ['db-1', 'db-2']],
+            ['root:{alertname="CPU high"}', ['db-1']],
+        ]);
+    });
 });

@@ -505,3 +505,20 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - One `sent` row in alert_notifications.
       - Recovery → the group row is gone. Refire at 09:03 → nothing at +29s and a second POST at +30s with startsAt 09:03.
 - 2026-11-08T20:31:21Z supervisor: alert-notify-firing passed the gate in round 1
+- alert-notify-grouping (round 1) — 2026-11-08
+  - Changed:
+    - No production code. The dispatcher from alert-notify-firing already does grouping, group_interval and no re-send of unchanged groups. The rules live in `isNotificationGroupDue` and `groupAlerts` in `AlertNotifier.ts`.
+    - `AlertNotifier.test.ts`: one more unit test showing that one route splits its alerts into one group per group_by value (`root:{alertname="…"}` keys). The file now has 5 tests.
+  - How it works (for later sessions):
+    - group_interval is counted from the group's last **send** (`last_sent_at`), not from the time the new alert arrived. So db-2, firing at 09:01 in a group first sent at 09:00:30 with group_interval 5m, goes out at 09:05:30.
+    - A new alertname is its own group with its own group_wait. It doesn't wait for another group's interval.
+  - Tested:
+    - The check passes (1 passed, 7 skipped). The unit file passes 5/5. oxlint and oxfmt are clean on the test file.
+    - As a user: a scratch walk over real HTTP through the harness (`src/alerting/__walk__` plus a copy of run.sh in tmp with HERE pinned; both removed):
+      - Setup: developer POSTs webhook `ops` → 200. Admin PUTs the tree `{groupBy:[alertname], groupWait:30s, groupInterval:5m, repeatInterval:4h}` → 200. Editor creates the rules "Disk almost full" and "Memory high".
+      - db-1 fires at 09:00. One POST at 09:00:30.
+      - db-2 joins at 09:01. Evaluations every minute and flushes up to 09:05:29 → still 1 POST.
+      - At 09:05:30, the 2nd POST holds db-1 and db-2, with groupLabels `{alertname: Disk almost full}`.
+      - "Memory high" fires at 09:06. Nothing at 09:06:29. Its own POST at 09:06:30, with groupKey `root:{alertname="Memory high"}`.
+      - Flushes at 09:07, 09:10, 09:11 and 09:20 → still 3 POSTs, so unchanged groups aren't re-sent. There are 3 `sent` rows in alert_notifications.
+- 2026-11-08T20:34:40Z supervisor: alert-notify-grouping passed the gate in round 1
