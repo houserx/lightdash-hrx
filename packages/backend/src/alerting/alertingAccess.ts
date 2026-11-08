@@ -2,6 +2,7 @@ import { subject } from '@casl/ability';
 import {
     ForbiddenError,
     NotFoundError,
+    ParameterError,
     type SessionUser,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
@@ -74,6 +75,28 @@ export const assertAlertingAbility = async (
     ) {
         throw new ForbiddenError();
     }
+};
+
+/** The query parameter's values; repeated parameters arrive as an array. */
+export const queryValues = (key: string, value: unknown): string[] => {
+    if (value === undefined) return [];
+    const values = Array.isArray(value) ? value : [value];
+    if (!values.every((v): v is string => typeof v === 'string')) {
+        throw new ParameterError(`${key} must be a string`);
+    }
+    return values;
+};
+
+/** The query parameter's value; 400 when it is given more than once. */
+export const singleQueryValue = (
+    key: string,
+    value: unknown,
+): string | undefined => {
+    const values = queryValues(key, value);
+    if (values.length > 1) {
+        throw new ParameterError(`${key} must be given at most once`);
+    }
+    return values[0];
 };
 
 /** `base`, or `base-2`, `base-3`… : the first one not in `taken`. */

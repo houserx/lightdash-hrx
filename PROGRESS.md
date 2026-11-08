@@ -571,3 +571,22 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - team=infra, severity=low rule → infra-cp only. Its route matched, so the default route is not used, as in Alertmanager.
   - Next session: if you need a scratch walk, put console output in a file. The harness setup swallows stdout.
 - 2026-11-08T20:47:53Z supervisor: alert-notify-routing passed the gate in round 1
+- alert-notifications-log (round 1) — 2026-11-08
+  - Changed:
+    - common: new `alerting/notifications.ts` with `AlertNotification`, `AlertNotificationStatus` (`sent|failed|shadow`), `AlertNotificationAlert` and `AlertNotificationListFilters`.
+    - backend: new `AlertNotificationService` (`list`, `listForRule`) and `parseAlertNotificationListQuery`. `AlertNotificationModel` gained `listNotifications`, `ruleExists` and `findProjectOrganizationUuid`. Routes: `GET .../alerting/notifications` and `GET .../alerting/rules/{uuid}/notifications`. The module exposes `alertNotifications`.
+    - `queryValues` / `singleQueryValue` moved from `AlertRuleService` to `alertingAccess` so both services share them (no behaviour change).
+    - Unit file `AlertNotificationService.test.ts` (9 tests, query parsing).
+  - Contract assumptions (CONTRACTS.md defines no notification-log API; narrowest reading):
+    - Who may read: anyone with `view:AlertRule` in the project (viewers and up). Outsiders 403, anonymous 401, unknown project 404.
+    - Query: `rule=<uuid>`, `contactPoint=<uuid>`, `limit=<1..1000>` (default 100), each at most once; malformed → 400. Unknown uuids return `[]`. `/rules/{uuid}/notifications` 404s when the rule isn't in the project and also takes `contactPoint` and `limit`.
+    - Order: `created_at` desc, then uuid. `alertStatus` is `firing` if any alert in the entry fires, else `resolved` (Alertmanager's group status). `ruleUuids` comes from `alerts`, so a group spanning rules (null `alert_rule_uuid`) is listed under each of its rules (the rule filter uses `alerts @> [{ruleUuid}]`).
+    - The payload is not returned (it can be large); `alerts`, `error`, `attempts`, `createdAt` and `sentAt` are.
+  - Tested:
+    - The check passes after init (1 passed, 7 skipped). Whole notifications file: 7 passed; only alert-contact-retries' 5xx test fails (the next feature; the 4xx test passes already because sends are single-attempt). rules.accept.ts 4/4. oxlint, oxfmt and backend tsc are clean.
+    - As a user: a scratch walk over real HTTP through the harness (`tmp/walk`, removed). Webhooks `ops` and `audit`; tree default `ops`, team=infra → `audit` (continue), groupWait 0s, groupInterval 1m. Rule A fires at 09:00 and recovers at 09:02; rule B fires at 09:00.
+      - Viewer `?rule=A` → 200, `[resolved, firing]` with contactPointUuid of audit, `integrationType: webhook`, `attempts: 1`, `status: sent`, `error: null`, `sentAt` set. `?rule=B` → its one firing entry. Unfiltered → 3 entries, matching the 3 POSTs `audit` received.
+      - `?contactPoint=audit` → 3; `?rule=A&contactPoint=ops` → 0; `limit=1` → 1. Editor `/rules/A/notifications` → `[resolved, firing]`; unknown rule → 404. `rule=nope` and `limit=0` → 400. Outsider → 403 on both endpoints; no session → 401.
+      - With `groupBy: []` both rules share a group: two entries with `ruleUuids` of both rules; the 09:02 one is `firing` (one resolved + one firing), and both show under `?rule=B`.
+  - Next session (alert-contact-retries): `insertNotification` already writes `status`, `attempts` and `error`; the notifier hardcodes `attempts: 1`. alert-shadow-no-notify should insert `status: 'shadow'` rows; the list already types and returns them (`NotificationLogEntry.status` needs `'shadow'` added).
+- 2026-11-08T20:55:12Z supervisor: alert-notifications-log passed the gate in round 1

@@ -33,6 +33,8 @@ import {
     assertAlertingAbility,
     isUniqueViolation,
     nextFreeSlug,
+    queryValues,
+    singleQueryValue,
     SLUG_PATTERN,
     UUID_PATTERN,
     type AlertingAction,
@@ -259,24 +261,6 @@ const validateDefinition = (definition: AlertRuleDefinition) => {
             `errorState must be one of ${ALERT_ERROR_STATES.join(', ')}`,
         );
     }
-};
-
-/** The query parameter's values; repeated parameters arrive as an array. */
-const queryValues = (key: string, value: unknown): string[] => {
-    if (value === undefined) return [];
-    const values = Array.isArray(value) ? value : [value];
-    if (!values.every((v): v is string => typeof v === 'string')) {
-        throw new ParameterError(`${key} must be a string`);
-    }
-    return values;
-};
-
-const singleQueryValue = (key: string, value: unknown): string | undefined => {
-    const values = queryValues(key, value);
-    if (values.length > 1) {
-        throw new ParameterError(`${key} must be given at most once`);
-    }
-    return values[0];
 };
 
 /**

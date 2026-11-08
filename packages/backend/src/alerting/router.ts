@@ -12,6 +12,10 @@ import express, {
 } from 'express';
 import Logger from '../logging/logger';
 import {
+    parseAlertNotificationListQuery,
+    type AlertNotificationService,
+} from './AlertNotificationService';
+import {
     parseAlertRuleListFilters,
     type AlertRuleService,
 } from './AlertRuleService';
@@ -23,6 +27,7 @@ export const ALERTING_PROJECT_API_PATH =
 
 type AlertingRouterServices = {
     alertRules: AlertRuleService;
+    alertNotifications: AlertNotificationService;
     contactPoints: ContactPointService;
     notificationRoutes: NotificationRouteService;
 };
@@ -157,6 +162,17 @@ export const createAlertingApiRouter = (
             ),
         ),
     );
+    router.get(
+        `${base}/rules/:ruleUuid/notifications`,
+        route((user, req) =>
+            services.alertNotifications.listForRule(
+                user,
+                req.params.projectUuid,
+                req.params.ruleUuid,
+                parseAlertNotificationListQuery(req.query),
+            ),
+        ),
+    );
     router.patch(
         `${base}/rules/:ruleUuid`,
         route((user, req) =>
@@ -242,6 +258,17 @@ export const createAlertingApiRouter = (
                 user,
                 req.params.projectUuid,
                 req.body,
+            ),
+        ),
+    );
+
+    router.get(
+        `${base}/notifications`,
+        route((user, req) =>
+            services.alertNotifications.list(
+                user,
+                req.params.projectUuid,
+                parseAlertNotificationListQuery(req.query),
             ),
         ),
     );

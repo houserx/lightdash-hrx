@@ -1,8 +1,13 @@
 import {
     type AlertInstanceState,
+    type AlertNotification,
+    type AlertNotificationAlert,
+    type AlertNotificationListFilters,
+    type AlertNotificationStatus,
     type ContactPointIntegration,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
+import { findProjectOrganizationUuid } from './alertingAccess';
 import { AlertInstancesTableName, AlertRulesTableName } from './AlertRuleModel';
 import { AlertStateHistoryTableName } from './AlertStateHistoryModel';
 import { ContactPointsTableName } from './ContactPointModel';
@@ -84,6 +89,47 @@ const toGroupState = (row: DbGroup): NotificationGroupState => ({
     lastSentAt: row.last_sent_at,
     sentAlerts: row.sent_alerts,
 });
+
+type DbNotification = {
+    alert_notification_uuid: string;
+    project_uuid: string;
+    alert_rule_uuid: string | null;
+    contact_point_uuid: string | null;
+    integration_type: string | null;
+    group_key: string | null;
+    status: AlertNotificationStatus;
+    attempts: number;
+    alerts: AlertNotificationAlert[];
+    error: string | null;
+    created_at: Date;
+    sent_at: Date | null;
+};
+
+const toNotification = (row: DbNotification): AlertNotification => {
+    const ruleUuids = [...new Set(row.alerts.map((alert) => alert.ruleUuid))];
+    return {
+        uuid: row.alert_notification_uuid,
+        projectUuid: row.project_uuid,
+        ruleUuids:
+            ruleUuids.length === 0 && row.alert_rule_uuid !== null
+                ? [row.alert_rule_uuid]
+                : ruleUuids,
+        contactPointUuid: row.contact_point_uuid,
+        integrationType: row.integration_type,
+        groupKey: row.group_key,
+        status: row.status,
+        alertStatus:
+            row.alerts.length > 0 &&
+            row.alerts.every((alert) => alert.status === 'resolved')
+                ? 'resolved'
+                : 'firing',
+        attempts: row.attempts,
+        alerts: row.alerts,
+        error: row.error,
+        createdAt: row.created_at.toISOString(),
+        sentAt: row.sent_at ? row.sent_at.toISOString() : null,
+    };
+};
 
 /** Storage for the notifier: active alerts, group state and the send log. */
 export class AlertNotificationModel {
@@ -290,6 +336,66 @@ export class AlertNotificationModel {
         await this.database(AlertNotificationGroupsTableName)
             .whereIn('alert_notification_group_uuid', uuids)
             .delete();
+    }
+
+    findProjectOrganizationUuid(
+        projectUuid: string,
+    ): Promise<string | undefined> {
+        return findProjectOrganizationUuid(this.database, projectUuid);
+    }
+
+    async ruleExists(projectUuid: string, ruleUuid: string): Promise<boolean> {
+        const row = await this.database(AlertRulesTableName)
+            .where({ project_uuid: projectUuid, alert_rule_uuid: ruleUuid })
+            .first<{ alert_rule_uuid: string } | undefined>('alert_rule_uuid');
+        return row !== undefined;
+    }
+
+    /** The project's notification log, newest first, at most `limit`. */
+    async listNotifications(
+        projectUuid: string,
+        filters: AlertNotificationListFilters,
+        limit: number,
+    ): Promise<AlertNotification[]> {
+        const { ruleUuid, contactPointUuid } = filters;
+        const rows = await this.database(AlertNotificationsTableName)
+            .where('project_uuid', projectUuid)
+            .modify((query) => {
+                if (ruleUuid !== undefined) {
+                    // `alert_rule_uuid` is null for groups spanning several
+                    // rules; `alerts` names every rule.
+                    void query.where((where) =>
+                        where
+                            .where('alert_rule_uuid', ruleUuid)
+                            .orWhereRaw('alerts @> ?::jsonb', [
+                                JSON.stringify([{ ruleUuid }]),
+                            ]),
+                    );
+                }
+                if (contactPointUuid !== undefined) {
+                    void query.where('contact_point_uuid', contactPointUuid);
+                }
+            })
+            .orderBy([
+                { column: 'created_at', order: 'desc' },
+                { column: 'alert_notification_uuid', order: 'desc' },
+            ])
+            .limit(limit)
+            .select<DbNotification[]>(
+                'alert_notification_uuid',
+                'project_uuid',
+                'alert_rule_uuid',
+                'contact_point_uuid',
+                'integration_type',
+                'group_key',
+                'status',
+                'attempts',
+                'alerts',
+                'error',
+                'created_at',
+                'sent_at',
+            );
+        return rows.map(toNotification);
     }
 
     async insertNotification(entry: NotificationLogEntry): Promise<void> {
