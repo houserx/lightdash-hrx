@@ -174,3 +174,7 @@ examples/metricflow-demo/.fusion/
 
 # humanlayer task scratch
 .humanlayer/
+
+# ENG-1799 viz line: throwaway clusters and registry build output
+/tmp/
+/chart-registry/dist/
