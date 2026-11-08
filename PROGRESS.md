@@ -648,3 +648,16 @@ should add a dated line here per feature.
   visualization and frontend typechecks clean; oxlint/oxfmt clean on the new and touched src files (the package
   README was already not oxfmt-clean before this change and is not in the `format` script).
 - 2026-11-08T19:24:50Z supervisor: viz-trace-waterfall-model passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-orphans (session)
+
+- **What.** No code change. `placeSpans` in `packages/visualization/src/traceWaterfall/model.ts` (from
+  `viz-trace-waterfall-model`) already roots a span whose parent is not in its trace (depth 0, `isOrphan: true`),
+  orders it by start among the roots and keeps its children under it. This session confirmed that and changed nothing.
+- **Tested as a user.** No app mounts the waterfall yet, so I drove the built package's public `renderChart`
+  (`dist/cjs`) from a throwaway Node script (deleted) with `trace()`-shaped rows a→b→c plus `f` (parent
+  `missing-parent`, start +50 ms) and its child `g`. Got `traceWaterfall` with spans a(0) b(1) c(2) f(0, orphan)
+  g(1, not orphan) at +0/+10/+20/+50/+55 ms. After `bash ./init.sh` the check passes 3/3.
+- **For the next sessions.** A span whose parent id is its own id is rooted and flagged `isOrphan: true`, the same
+  as a missing parent. Clock skew is still not done (see the model entry above).
+- 2026-11-08T19:26:41Z supervisor: viz-trace-waterfall-orphans passed the gate in round 1
