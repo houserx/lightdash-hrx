@@ -22,6 +22,7 @@ mod promql;
 mod selectors;
 mod server;
 mod session;
+mod shutdown;
 mod sources;
 mod trace;
 mod traceql;

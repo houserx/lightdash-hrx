@@ -477,6 +477,7 @@ impl SimpleQueryHandler for QueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
+        let _in_flight = in_flight()?;
         let statements = self.sql.statements(query).map_err(query_error)?;
         let single = statements.len() == 1;
         // Each statement sees the settings and transaction status the ones before it left.
@@ -667,6 +668,7 @@ impl ExtendedQueryHandler for QueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
+        let _in_flight = in_flight()?;
         let stmt = &portal.statement.statement;
         let status = client.transaction_status();
         stmt.action.check_not_aborted(status)?;
@@ -1173,6 +1175,13 @@ fn query_error(e: DataFusionError) -> PgWireError {
 fn audit_write_failed(cause: String) -> DataFusionError {
     eprintln!("engine: audit write failed: {cause}");
     sqlstate("58000", "audit write failed".to_string())
+}
+
+/// Holds the statement open for graceful shutdown; once SIGTERM has arrived, new statements are
+/// refused with 57P01 (admin_shutdown) so the drain only waits for the ones already running.
+fn in_flight() -> PgWireResult<crate::shutdown::InFlight> {
+    crate::shutdown::InFlight::start()
+        .ok_or_else(|| user_error("57P01", "the engine is shutting down".to_string()))
 }
 
 /// An ErrorResponse with severity ERROR.

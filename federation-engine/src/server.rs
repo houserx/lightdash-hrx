@@ -1,4 +1,5 @@
-//! Binds the pg-wire and HTTP listeners and serves until the process is stopped.
+//! Binds the pg-wire and HTTP listeners and serves until SIGTERM or SIGINT, then drains
+//! in-flight work and returns (see [`crate::shutdown`]).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +28,7 @@ pub async fn run(config: Config) -> Result<(), String> {
     let http = TcpListener::bind(config.listen_http)
         .await
         .map_err(|e| format!("cannot listen on listen_http {}: {e}", config.listen_http))?;
+    let signals = crate::shutdown::signals()?;
     let tls_note = if tls.is_some() { " (TLS available)" } else { "" };
     eprintln!(
         "engine: serving pg-wire{tls_note} on {} and HTTP on {} ({} users, {} sources)",
@@ -39,10 +41,51 @@ pub async fn run(config: Config) -> Result<(), String> {
     let cert_pem = tls.as_ref().map(|t| t.cert_pem.as_slice());
     let handlers = Arc::new(PgHandlers::new(&config, cert_pem)?);
     let acceptor = tls.map(|t| t.acceptor);
-    let http_server = axum::serve(http, http_router(&config));
-    tokio::select! {
-        r = http_server => r.map_err(|e| format!("HTTP server failed: {e}")),
-        () = serve_pg(pg, acceptor, handlers) => Ok(()),
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let mut http_stopped = stopped.clone();
+    let http_server = axum::serve(http, http_router(&config))
+        .with_graceful_shutdown(async move {
+            let _ = http_stopped.wait_for(|s| *s).await;
+        })
+        .into_future();
+    let mut http_server = tokio::spawn(http_server);
+    let mut pg_server = tokio::spawn(serve_pg(pg, acceptor, handlers, stopped));
+
+    let signal = tokio::select! {
+        signal = signals => signal,
+        r = &mut http_server => return Err(format!("HTTP server stopped: {}", join_message(r))),
+        r = &mut pg_server => return Err(format!("pg-wire server stopped: {}", join_message(r))),
+    };
+    eprintln!("engine: {signal} received, no longer accepting connections; draining");
+    // Order matters: refuse new statements first, so the drain below can only shrink.
+    crate::shutdown::begin();
+    let _ = stop.send(true);
+    // Both listeners close here: pg-wire's accept loop returns, and axum drops its listener
+    // and waits for in-flight HTTP requests (Write Mode, /v1/audit) before it resolves.
+    let drain = async {
+        let _ = pg_server.await;
+        let _ = http_server.await;
+        crate::shutdown::drained().await;
+    };
+    if tokio::time::timeout(crate::shutdown::DRAIN_LIMIT, drain)
+        .await
+        .is_err()
+    {
+        eprintln!(
+            "engine: in-flight work still running after {} s; exiting anyway",
+            crate::shutdown::DRAIN_LIMIT.as_secs()
+        );
+    }
+    tokio::time::sleep(crate::shutdown::FLUSH_GRACE).await;
+    eprintln!("engine: shut down");
+    Ok(())
+}
+
+fn join_message(r: Result<std::io::Result<()>, tokio::task::JoinError>) -> String {
+    match r {
+        Ok(Ok(())) => "unexpectedly".to_string(),
+        Ok(Err(e)) => e.to_string(),
+        Err(e) => e.to_string(),
     }
 }
 
@@ -88,9 +131,20 @@ fn load_tls(files: &TlsFiles) -> Result<Tls, String> {
     })
 }
 
-async fn serve_pg(listener: TcpListener, tls: Option<TlsAcceptor>, handlers: Arc<PgHandlers>) {
+/// Accepts pg-wire connections until `stopped` turns true, then drops the listener so new
+/// connections are refused. Connections already open keep running.
+async fn serve_pg(
+    listener: TcpListener,
+    tls: Option<TlsAcceptor>,
+    handlers: Arc<PgHandlers>,
+    mut stopped: tokio::sync::watch::Receiver<bool>,
+) -> std::io::Result<()> {
     loop {
-        match listener.accept().await {
+        let accepted = tokio::select! {
+            _ = stopped.wait_for(|s| *s) => return Ok(()),
+            accepted = listener.accept() => accepted,
+        };
+        match accepted {
             Ok((socket, _)) => {
                 let handlers = handlers.clone();
                 tokio::spawn(serve_connection(socket, tls.clone(), handlers));

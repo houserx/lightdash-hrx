@@ -2283,3 +2283,32 @@ token verification for a *valid* token, which feature 39 then hardens.
   platform::eng_platform_query_basic also pass. Clippy -D warnings (tmp/rustup) is clean, and
   metrics.rs is fmt-clean. I didn't reformat the other files, whose existing fmt drift is unchanged.
 - 2026-11-08T23:02:44Z supervisor: eng-metrics passed the gate in round 1
+- eng-graceful-shutdown (operations): SIGTERM or SIGINT stops accepting, drains in-flight work,
+  and exits 0 (CONTRACTS A28). New file `src/shutdown.rs`. It holds a process-wide in-flight
+  counter and an `InFlight` guard, which each pg-wire `do_query` (simple and extended, in pg.rs)
+  holds while it runs. `server::run` installs the signal handlers before it prints "serving". It
+  now spawns the axum server with `with_graceful_shutdown` and the pg accept loop as tasks. On
+  a signal it calls `shutdown::begin()` and flips a watch channel. The pg accept loop then
+  returns and drops its listener, and axum drops its listener and waits for in-flight HTTP
+  requests (Write Mode, /v1/audit). Then it waits until the in-flight count reaches 0, sleeps
+  `FLUSH_GRACE` (250 ms) so the last responses are written out, and returns Ok, so the exit is 0.
+  Idle connections close when the process exits.
+  Decisions (CONTRACTS says only "stops accepting, drains in-flight queries, exits 0"):
+  - Once shutdown begins, a new statement on a connection that is already open fails with
+    57P01 ("the engine is shutting down"). This keeps the drain from growing.
+  - The drain is capped by `DRAIN_LIMIT` = 25 s, under the default Kubernetes 30 s grace period.
+    When the cap is hit the engine logs it and still exits 0.
+  - Describes (Parse/Describe) are not guarded. Only Execute/simple Query are.
+  Rows are encoded eagerly, before do_query returns, so once the guard drops only the socket
+  write remains. That is why the short flush grace is enough.
+  Tested as a user: `../tmp/shutdown-user/run.sh` (python mock on 59870 that answers /api/v1/
+  after 2 s; engine on 59871/59872). The script sends `count(*) FROM promql('up', ...)` and then
+  `SELECT 1` on the same connection, and sends SIGTERM 0.7 s in. The first query returned OK
+  `SELECT 1` (one row). The second got 57P01. The engine exited 0 after 1.65 s. A new pg
+  connection and a new HTTP connection were both refused (ECONNREFUSED). The log shows "SIGTERM
+  received ... draining" and then "shut down".
+  The check passes. pgwire::eng_pg_cancel_request, _disconnect_cleanup and _statement_timeout,
+  ops::eng_healthz, ops::eng_metrics and write::eng_write_preview also pass. Clippy
+  -D warnings (tmp/rustup) is clean, and shutdown.rs is fmt-clean. `cargo fmt --check` drift is
+  unchanged from the baseline (64 hunks, including the old tls_note line in server.rs).
+- 2026-11-08T23:07:02Z supervisor: eng-graceful-shutdown passed the gate in round 1
