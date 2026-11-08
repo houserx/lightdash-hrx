@@ -1150,3 +1150,30 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 4/4. Acceptance: 28 files pass and 25 fail. All 25 failures are unbuilt features
   (alert_history, ask_data, platform_*, docs, dockerfile, readme, structured-logs, tool-catalog and others).
 - 2026-11-08T17:52:40Z supervisor: mcp-tool-alert-state passed the gate in round 1
+
+## mcp-tool-alert-history (2026-11-08)
+
+- New `src/tools/alertHistory.ts`: `alert_history` takes optional `rule_uuid`, `from`, `to` and `limit`.
+  `buildAlertHistoryQuery(args, now)` checks them all before any Lightdash call. Then it calls
+  `alerting.get('history', { ruleUuid, from, to, limit })`. `from`/`to` go through `parseInstant` + `isoParam`, so
+  they are sent as absolute ISO strings and `now-1d` works. The limit is sent as a string. Undefined values are not sent.
+  The result goes through `alertingResult` (from `alertState.ts`) with a hint to narrow by rule, range or limit.
+- Refused before Lightdash: a non-uuid `rule_uuid`; a `limit` outside 1..1000 or not a whole number (the SDK zod
+  gives -32602 with isError, and `buildAlertHistoryQuery` checks again for direct callers); a bad time; and `to`
+  before `from`.
+  - Contract assumption: §7 / Contract assumption 2 give no limit bound and no default. The 1..1000 range is ours, and
+    a missing limit is left to the Lightdash default. The integration line may align it with the alerting line's API.
+- `src/mcp/server.ts`: `alert_history` is registered after `alert_state`, with the server clock `now`.
+- Unit tests: `src/tools/alertHistory.test.ts`. 226 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/alert-history-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 18999.
+  - tools/list showed `alert_history` with its 4 properties (`limit` is an integer from 1 to 1000).
+  - A call with no arguments returned `{results:[...]}`. Lightdash saw `GET .../alerting/history` with no query string
+    and the ApiKey service token.
+  - A filtered call sent `ruleUuid`, `from` and `to` (as ISO) and `limit` "25".
+  - limit 0, a bad `from`, `to` before `from` and a bad `rule_uuid` all returned isError and made 0 Lightdash calls.
+  - With Lightdash failing with a 503, the result was an isError naming HTTP 503, and the token did not leak.
+  - The engine received 0 data queries, and SIGTERM exited 0.
+- Results: the check passes 3/3. Acceptance: 29 files pass and 24 fail. All 24 failures are unbuilt features (ask_data,
+  platform_*, docs, dockerfile, readme, structured-logs, tool-catalog, write_preview and others).
+- 2026-11-08T17:56:18Z supervisor: mcp-tool-alert-history passed the gate in round 1

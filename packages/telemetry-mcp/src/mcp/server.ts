@@ -22,6 +22,7 @@ import type { Config } from '../config.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
 import { createAlertingClient, type AlertingClient } from '../lightdash/alerting.js';
+import { registerAlertHistory } from '../tools/alertHistory.js';
 import { registerAlertState } from '../tools/alertState.js';
 import { registerGetTrace } from '../tools/getTrace.js';
 import { registerListSources } from '../tools/listSources.js';
@@ -67,6 +68,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerSearchTraces(server, config, engine, now);
     registerGetTrace(server, config, engine);
     registerAlertState(server, config, alerting);
+    registerAlertHistory(server, config, alerting, now);
     return server;
 }
 
