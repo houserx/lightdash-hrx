@@ -715,3 +715,19 @@ token verification for a *valid* token, which feature 39 then hardens.
   passes. In the promql module, range/instant/time_arguments/upstream_errors pass too;
   label/series_name/pushdown_and_sql/max_rows still fail (not built yet).
 - 2026-11-08T18:04:59Z supervisor: eng-promql-source-selection passed the gate in round 1
+- 2026-11-08 eng-promql-upstream-errors (worker, round 1): no code change needed. The upstream
+  error mapping built in eng-promql-range (src/promql.rs) already satisfies the feature, as the
+  eng-time-arguments and eng-promql-source-selection entries noted. Only this entry was added.
+  Tested as a user: `../tmp/pgclient/src/bin/upstream.rs` (mock prom-a on 127.0.0.1:59094 as the
+  default, prom-down on the dead port 127.0.0.1:1; config `../tmp/promql/upstream.toml`) spawns
+  `target/debug/engine` and runs SQL over tokio-postgres. `promql('bad_query(', ..)` and
+  `promql_instant('bad_query(', ..)` get XX000 `prometheus source "prom-a": HTTP 400: bad_data:
+  parse error at char 11: unclosed left parenthesis`; 503 HTML gets `HTTP 503 with a response that
+  is not Prometheus JSON`; `{not json` with HTTP 200 gets `HTTP 200 with a response that is not
+  Prometheus JSON`; `'prom-down'` gets `prometheus source "prom-down" is unreachable: error
+  sending request for url (...)` for both range and instant. The same session then ran a normal
+  `promql('up', ..)` (1 row) and `SELECT 1`. The check `promql::eng_promql_upstream_errors` passes.
+  Contract assumption: CONTRACTS.md sets no SQLSTATE for upstream failures, so they stay XX000
+  with an "Execution error: " prefix from DataFusion. An integration line may want a specific
+  class here (e.g. 58000/08xxx).
+- 2026-11-08T18:06:56Z supervisor: eng-promql-upstream-errors passed the gate in round 1
