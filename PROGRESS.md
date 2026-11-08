@@ -991,3 +991,29 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     Feature check 3/3, header test 10/10, tileTimeDimensions.test 2/2, frontend typecheck, oxlint,
     oxfmt clean.
 - 2026-11-08T19:50:37Z supervisor: ldq-dashboard-time-range-settings passed the gate in round 1
+- 2026-11-08 ldq-dashboard-tile-not-affected (session):
+  - Frontend `features/dashboardTimeRange/utils/tileTimeRangeIndicator.ts`
+    `isTileMarkedNotAffectedByTimeRange({ timeRange, tile, sql })` (same args as common's
+    `isTileAffectedByTimeRange`): true only when there is a range, the tile is a saved_chart or
+    sql_chart, and the range does not reach it. `components/TileTimeRangeIndicator.tsx` (the
+    acceptance target) renders a gray Mantine Badge "Not affected by the time range" (clock-off icon,
+    tooltip) when that is true, else null.
+  - Decisions: markdown, heading, loom and data app tiles show no data, so they get no mark (avoids
+    noise). A sql_chart whose SQL is still undefined (loading) gets no mark, so telemetry tiles don't
+    flash it.
+  - Wiring: `DashboardChartTile` (main, non-minimal tile) and `DashboardSqlChartTile` (no-results and
+    results states) read `dashboard.timeRange` with useDashboardContext and pass the badge as
+    TileBase `visibleHeaderElement` only when marked. TRAP: any truthy visibleHeaderElement makes
+    the header pill always visible, so pass undefined (not a null-rendering element) for other
+    tiles. The chart tile merges it with the always-visible comments button.
+  - Uses the SAVED range's tileTimeDimensions (staged edits in the settings modal show after save);
+    URL overrides only change from/to/refresh, not mappings, so they don't matter here. Minimal /
+    embedded chart tiles and the chart tile's error/loading TileBase states carry no badge.
+  - Tested: no full stack (no Docker); rendered the real tiles in jsdom. DashboardChartTile (cases
+    added to DashboardChartTile.merge.test.tsx, mocked dashboard context gains timeRange): unmapped
+    tile shows the badge, mapped tile and no range show none. New
+    DashboardSqlChartTile.timeRange.test.tsx: plain SQL shows it; promql SQL with
+    ${ld.parameters.__from/__to/__interval} and no range show none. Both fail with the tile wiring
+    stashed. Feature check 3/3, merge test 16/16, SQL tile test 3/3, TileBase test 11/11, frontend
+    typecheck, oxlint, oxfmt clean.
+- 2026-11-08T19:56:20Z supervisor: ldq-dashboard-tile-not-affected passed the gate in round 1
