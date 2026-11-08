@@ -607,3 +607,21 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - 400 → 1 POST, `failed`, attempts 1, no wait. 429 → same. 200 → `sent`, attempts 1.
   - Next session: other integrations (slack/incident.io/email) should throw `NotificationSendError(msg, retryable)` for their own permanent failures (e.g. Slack app not installed → `false`) and wrap their send in `sendWithRetry(..., this.deps.retry)`.
 - 2026-11-08T20:58:59Z supervisor: alert-contact-retries passed the gate in round 1
+- alert-contact-slack-webhook (round 1) — 2026-11-08
+  - Changed:
+    - New backend `src/alerting/slackMessage.ts`: `buildAlertTemplateData` (Grafana's template data: Receiver, Status, Alerts[], GroupLabels, CommonLabels/CommonAnnotations as the key/values shared by every alert, ExternalURL), `renderSlackMessage(integration, data)` (title/text default to `{{ template "slack.title" . }}` / `{{ template "slack.message" . }}`; a render error is prefixed `Slack title|text template: `), and `buildSlackWebhookPayload` (one Grafana-style attachment: color `#D63232` firing / `#36a64f` resolved, title, text, fallback = title, footer `Lightdash`, ts). 6 unit tests in `slackMessage.test.ts`.
+    - `AlertNotifier.ts`: `sendIntegration` handles `slack_webhook` as well as `webhook`. Slack resolves `url.secretRef` on each attempt and POSTs the payload through `sendWithRetry`; the log row's `payload` is the Slack body (never the URL). Moved the fetch/status handling into a module-level `postJson(what, url, headers, payload)` and the secret lookup into `resolveSecret` (missing → non-retryable `Secret "<name>" could not be resolved`). Both integrations share them. A template that doesn't render is a non-retryable failure: nothing is POSTed, and the row is `failed` with attempts 1.
+  - Contract assumptions:
+    - Payload shape: CONTRACTS doesn't give one, so I used Grafana's Slack notifier shape (`attachments[0]` with title/text). `username` (CONTRACTS lists it) is still not in the as-code schema, so it isn't sent.
+    - DashboardURL, SilenceURL and ValueString are `''` because Lightdash has no rule dashboards, silences or values on ActiveAlert yet, so the ported templates drop the Dashboard link. A firing alert's EndsAt is Go's zero time `0001-01-01T00:00:00Z`, as in Grafana.
+    - Titles and texts are not trimmed. The ported templates' whitespace is kept as in Grafana.
+    - With the default templates, a resolved-only notification posts an empty title and text, because `slack.title`/`slack.message` only range `.Alerts.Firing`. Grafana does the same with these templates. Set `disableResolveMessage` or a custom template to avoid it.
+  - Tested:
+    - The check passes after init (2 passed, 4 skipped). notifications.accept.ts passes 8/8, AlertNotifier.test.ts 13/13 and slackMessage.test.ts 6/6. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (run.sh and config copied to `tmp/walk`, then removed). Five slack_webhook contact points were all routed with continue, and a rule fired on db-1 and db-2:
+      - Default templates → `/slack/infra` got title `2 Disk almost full` and the text had each description plus `- <https://runbooks.example.test/disk|Runbook>`.
+      - Custom templates → `firing: 2 alert(s)` / `<db-1><db-2>`.
+      - Missing secret → log `failed`, attempts 1, `Secret "missing-secret" could not be resolved`. Bad template → `failed`, `Slack text template: template: no such template "nope"`, no POST. Slack 404 → `failed`, attempts 1, `Slack webhook responded with HTTP 404 Not Found`.
+      - Recovery → green attachments; custom `resolved: 2 alert(s)`, and the default templates render blank, as noted above.
+  - Next session (alert-contact-slack-app): reuse `buildAlertTemplateData` and `renderSlackMessage` from `slackMessage.ts`, and add a `slack_app` branch in `sendIntegration` that calls `deps.slackApp.postMessage({organizationUuid, channel, text, blocks?})` inside `sendWithRetry`. "App not installed" should be `NotificationSendError(msg, false)`.
+- 2026-11-08T21:05:15Z supervisor: alert-contact-slack-webhook passed the gate in round 1

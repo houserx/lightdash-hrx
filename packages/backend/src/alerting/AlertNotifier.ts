@@ -32,6 +32,11 @@ import {
     type NotificationGroupState,
     type ResolvedAlert,
 } from './AlertNotificationModel';
+import {
+    buildAlertTemplateData,
+    buildSlackWebhookPayload,
+    renderSlackMessage,
+} from './slackMessage';
 
 const WEBHOOK_TIMEOUT_MS = 10_000;
 
@@ -200,6 +205,31 @@ export const groupAlerts = (
         });
     });
     return [...groups.values()];
+};
+
+/** POSTs `payload` as JSON; a non-2xx response throws a NotificationSendError. */
+const postJson = async (
+    what: string,
+    url: string,
+    headers: Record<string, string>,
+    payload: unknown,
+): Promise<void> => {
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+    });
+    // Drain the body so the connection is released.
+    await response.arrayBuffer().catch(() => undefined);
+    if (!response.ok) {
+        throw new NotificationSendError(
+            `${what} responded with HTTP ${response.status} ${response.statusText}`.trim(),
+            // 4xx means the request itself is wrong; sending it again won't
+            // help.
+            response.status < 400 || response.status >= 500,
+        );
+    }
 };
 
 export class AlertNotifier {
@@ -381,9 +411,13 @@ export class AlertNotifier {
         integration: ContactPointIntegration,
         now: Date,
     ): Promise<void> {
-        // Only generic webhooks so far; the other integration types are
-        // added by their own features (alert-contact-*).
-        if (integration.type !== 'webhook') return;
+        // Generic webhooks and Slack webhooks so far; the other integration
+        // types are added by their own features (alert-contact-*).
+        if (
+            integration.type !== 'webhook' &&
+            integration.type !== 'slack_webhook'
+        )
+            return;
         const alerts = integration.disableResolveMessage
             ? groupAlertsSorted.filter(
                   (alert) => alertStatus(alert) === 'firing',
@@ -391,27 +425,68 @@ export class AlertNotifier {
             : groupAlertsSorted;
         if (alerts.length === 0) return;
         const siteUrl = this.deps.siteUrl.replace(/\/+$/, '');
-        const payload = buildAlertmanagerWebhookPayload({
-            receiver: contactPoint.name,
-            groupKey: group.groupKey,
-            groupLabels: alertGroupLabels(group.route, alerts[0].labels),
-            externalURL: siteUrl,
-            maxAlerts: integration.maxAlerts,
-            alerts: alerts.map((alert) => ({
-                status: alertStatus(alert),
-                labels: alert.labels,
-                annotations: alert.annotations,
-                startsAt: alert.startsAt.toISOString(),
-                endsAt:
-                    'endsAt' in alert ? alert.endsAt.toISOString() : undefined,
-                generatorURL: `${siteUrl}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`,
-                fingerprint: alert.fingerprint,
-            })),
-        });
-        const { attempts, error } = await sendWithRetry(
-            () => this.postWebhook(integration, payload),
-            this.deps.retry,
-        );
+        const groupLabels = alertGroupLabels(group.route, alerts[0].labels);
+        const generatorURL = (alert: NotificationAlert) =>
+            `${siteUrl}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`;
+        let payload: unknown = null;
+        let post: () => Promise<void>;
+        if (integration.type === 'webhook') {
+            const webhookPayload = buildAlertmanagerWebhookPayload({
+                receiver: contactPoint.name,
+                groupKey: group.groupKey,
+                groupLabels,
+                externalURL: siteUrl,
+                maxAlerts: integration.maxAlerts,
+                alerts: alerts.map((alert) => ({
+                    status: alertStatus(alert),
+                    labels: alert.labels,
+                    annotations: alert.annotations,
+                    startsAt: alert.startsAt.toISOString(),
+                    endsAt:
+                        'endsAt' in alert
+                            ? alert.endsAt.toISOString()
+                            : undefined,
+                    generatorURL: generatorURL(alert),
+                    fingerprint: alert.fingerprint,
+                })),
+            });
+            payload = webhookPayload;
+            post = () => this.postWebhook(integration, webhookPayload);
+        } else {
+            const data = buildAlertTemplateData({
+                receiver: contactPoint.name,
+                groupLabels,
+                externalURL: siteUrl,
+                alerts: alerts.map((alert) => ({
+                    status: alertStatus(alert),
+                    labels: alert.labels,
+                    annotations: alert.annotations,
+                    startsAt: alert.startsAt,
+                    endsAt: 'endsAt' in alert ? alert.endsAt : undefined,
+                    fingerprint: alert.fingerprint,
+                    generatorURL: generatorURL(alert),
+                })),
+            });
+            let slackPayload: ReturnType<typeof buildSlackWebhookPayload>;
+            try {
+                slackPayload = buildSlackWebhookPayload({
+                    ...renderSlackMessage(integration, data),
+                    status: data.Status,
+                    at: now,
+                });
+                payload = slackPayload;
+                post = () => this.postSlackWebhook(integration, slackPayload);
+            } catch (e) {
+                // A template that doesn't render is a configuration error:
+                // nothing is sent and trying again won't help.
+                const renderError = new NotificationSendError(
+                    getErrorMessage(e),
+                    false,
+                );
+                post = () => Promise.reject(renderError);
+            }
+        }
+        const { attempts, error } = await sendWithRetry(post, this.deps.retry);
         if (error !== null) {
             Logger.warn(
                 `Alerting notification to contact point ${contactPoint.uuid} failed after ${attempts} attempt(s): ${error}`,
@@ -444,31 +519,39 @@ export class AlertNotifier {
             'content-type': 'application/json',
         };
         if (integration.authorization) {
-            const { secretRef } = integration.authorization;
-            const secret = await this.deps.secrets.resolve(secretRef);
-            if (secret === undefined) {
-                throw new NotificationSendError(
-                    `Secret "${secretRef}" could not be resolved`,
-                    false,
-                );
-            }
+            const secret = await this.resolveSecret(
+                integration.authorization.secretRef,
+            );
             headers.authorization = `Bearer ${secret}`;
         }
-        const response = await fetch(integration.url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-        });
-        // Drain the body so the connection is released.
-        await response.arrayBuffer().catch(() => undefined);
-        if (!response.ok) {
+        await postJson('Webhook', integration.url, headers, payload);
+    }
+
+    private async postSlackWebhook(
+        integration: Extract<
+            ContactPointIntegration,
+            { type: 'slack_webhook' }
+        >,
+        payload: unknown,
+    ): Promise<void> {
+        const url = await this.resolveSecret(integration.url.secretRef);
+        await postJson(
+            'Slack webhook',
+            url,
+            { 'content-type': 'application/json' },
+            payload,
+        );
+    }
+
+    /** A missing secret is a configuration error, so it is not retried. */
+    private async resolveSecret(secretRef: string): Promise<string> {
+        const secret = await this.deps.secrets.resolve(secretRef);
+        if (secret === undefined) {
             throw new NotificationSendError(
-                `Webhook responded with HTTP ${response.status} ${response.statusText}`.trim(),
-                // 4xx means the request itself is wrong; sending it again
-                // won't help.
-                response.status < 400 || response.status >= 500,
+                `Secret "${secretRef}" could not be resolved`,
+                false,
             );
         }
+        return secret;
     }
 }
