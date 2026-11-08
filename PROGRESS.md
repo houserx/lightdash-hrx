@@ -1127,3 +1127,23 @@ token verification for a *valid* token, which feature 39 then hardens.
   eng_cloudwatch_role_assumption: all pass. 9 cloudwatch unit tests pass. No build warnings. rustfmt
   isn't installed, so the code is formatted by hand.
 - 2026-11-08T19:52:28Z supervisor: eng-cloudwatch-logs-insights passed the gate in round 1
+- eng-cloudwatch-logs-failure-and-cancel (worker, round 1): `src/cloudwatch_logs.rs` only. The
+  Failed-status error already existed: "... Logs Insights query <id> ended with status Failed". New:
+  a `RunningQuery` drop guard is created right after StartQuery returns a queryId. It is disarmed
+  when GetQueryResults reports a final status (Complete or any non-Scheduled/Running status). If the
+  scan future is dropped before that (statement_timeout, CancelRequest, client disconnect) or polling
+  errors out, the guard's Drop spawns one `StopQuery(queryId)` on the current tokio runtime (no
+  runtime → nothing). A StopQuery failure is logged to stderr ("engine: cloudwatch_logs StopQuery
+  for <id> failed: ..."). It never surfaces to the client. Polling stops because the future is gone.
+  - Gap: if the future is dropped while StartQuery is still in flight there's no queryId yet, so no
+    StopQuery is sent. AWS doesn't let us stop an unknown query.
+  Tested as a user: `../tmp/cloudwatch-logs-cancel/run.sh` starts two JSON-1.1 mocks (one answers
+  Failed, one Running forever) and the engine with fake env credentials, then runs the steps on one
+  pg-wire session. The default source returned XX000 "... query query-1 ended with status Failed",
+  and its mock saw one StartQuery and one GetQueryResults, with no StopQuery. After `SET
+  statement_timeout = 700`, querying 'logs-never' returned 57014 about 0.70 s after StartQuery. That
+  mock saw 13 polls at 50 ms, then exactly one StopQuery {"queryId":"query-1"} 39 ms after the last
+  poll. The poll count was still 13 one and two seconds later. Check
+  sources::eng_cloudwatch_logs_failure_and_cancel passes. eng_cloudwatch_logs_insights still passes.
+  The 3 cloudwatch_logs unit tests pass. No build warnings.
+- 2026-11-08T19:55:08Z supervisor: eng-cloudwatch-logs-failure-and-cancel passed the gate in round 1

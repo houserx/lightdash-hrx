@@ -6,7 +6,9 @@
 //! Logs Insights and goes to `StartQuery` unchanged, with the range as epoch seconds (`start`
 //! rounded down, `end` up). `GetQueryResults` is then polled every `poll_interval_ms` of the source
 //! until the query leaves `Scheduled`/`Running`. `Complete` gives the rows; any other final status
-//! is an error naming it. Following contract assumption A20, `timestamp` is `@timestamp` read as
+//! (`Failed`, `Cancelled`, `Timeout`, ...) is an error naming it. A query abandoned before its final
+//! status (statement_timeout, cancel, disconnect, a failed poll) gets one `StopQuery` and is no
+//! longer polled. Following contract assumption A20, `timestamp` is `@timestamp` read as
 //! UTC, `message` is `@message` (either NULL when the result lacks it), and `fields` is a JSON
 //! object of every result field except `@ptr`.
 //!
@@ -231,6 +233,10 @@ impl LogsQuery {
                 self.name
             )));
         };
+        let mut running = RunningQuery {
+            client: client.clone(),
+            id: Some(id.to_string()),
+        };
         loop {
             let page = client
                 .get_query_results()
@@ -243,9 +249,11 @@ impl LogsQuery {
                     tokio::time::sleep(self.source.poll_interval).await;
                 }
                 Some(QueryStatus::Complete) => {
+                    running.finished();
                     return results_batch(&self.name, page.results(), self.max_rows);
                 }
                 other => {
+                    running.finished();
                     let status = other.map_or("missing", QueryStatus::as_str);
                     return Err(DataFusionError::Execution(format!(
                         "cloudwatch_logs source \"{}\": Logs Insights query {id} ended with \
@@ -255,6 +263,41 @@ impl LogsQuery {
                 }
             }
         }
+    }
+}
+
+/// A started Logs Insights query that has not reached a final status. Dropping it while still
+/// unfinished (the statement timed out, was cancelled, its client went away, or polling failed)
+/// sends one `StopQuery` in the background, so the query does not keep scanning in AWS.
+struct RunningQuery {
+    client: aws_sdk_cloudwatchlogs::Client,
+    /// `None` once the query has reached a final status.
+    id: Option<String>,
+}
+
+impl RunningQuery {
+    fn finished(&mut self) {
+        self.id = None;
+    }
+}
+
+impl Drop for RunningQuery {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let client = self.client.clone();
+        runtime.spawn(async move {
+            if let Err(e) = client.stop_query().query_id(&id).send().await {
+                eprintln!(
+                    "engine: cloudwatch_logs StopQuery for {id} failed: {}",
+                    DisplayErrorContext(&e)
+                );
+            }
+        });
     }
 }
 
