@@ -639,3 +639,15 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Set `installed = false` and fired "CPU high". No post was made, and the log row is `failed`, attempts 1, error `Slack app is not installed for this organization`.
   - Next session: the module still isn't wired into the app. Whoever wires `createAlertingModule` must adapt Lightdash's `SlackClient` (`clients/Slack/SlackClient.ts`) to `slackApp.postMessage`. When the org has no installation, the adapter should throw `NotificationSendError(msg, false)`, or an error whose message says "not installed".
 - 2026-11-08T21:10:07Z supervisor: alert-contact-slack-app passed the gate in round 1
+- alert-contact-incident-io (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotifier.ts`: `sendIntegration` now handles `incident_io` on the same path as `webhook`. It builds the Alertmanager v4 payload with `buildAlertmanagerWebhookPayload` (same receiver, groupKey, groupLabels and fingerprints), but without `maxAlerts`, because the incident_io schema has no such field. The new `postIncidentIo` resolves `token.secretRef` with `resolveSecret`, so a missing secret is a non-retryable failure. It then POSTs JSON to `integration.url` with `authorization: Bearer <token>` through `postJson`: a 4xx is not retried, a 5xx or network error is. The log row's `payload` is the v4 body, and the log message prefix is `incident.io responded with HTTP …`.
+  - Contract assumptions: CONTRACTS 4.3 says only "Alertmanager webhook v4", so the body is exactly what the generic webhook sends. There are no incident.io-specific fields such as `deduplication_key` or `metadata`, and the URL is taken as-is from the integration (not a secret).
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). The slack and incident-io checks in integrations.accept.ts pass 4/4, notifications.accept.ts passes 8/8 and AlertNotifier.test.ts passes 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness over real HTTP, using a copy of run.sh and the config in `src/__walk__/alerting`, removed afterwards.
+      - Created the incident.io contact point through the admin API (200), plus `bad-token` (secretRef `nope`) and `rejects` (an endpoint that answers 401), all routed with continue. Fired on db-1 and db-2 at t0, then recovered both at t+2m.
+      - `/incident` got two POSTs, each with `Bearer test-secret-not-real`, `application/json` and `version: "4"`. The first was `firing` with endsAt `0001-01-01T00:00:00Z`; the second was `resolved` with endsAt t+2m and the same fingerprints per instance.
+      - Log rows: `sent` with attempts 1; `failed` with attempts 1 and error `incident.io responded with HTTP 401 Unauthorized`; `failed` with attempts 1 and error `Secret "nope" could not be resolved`.
+  - Next session (alert-contact-email): add an `email` branch in `sendIntegration`. The remaining unsupported types still return early without logging.
+- 2026-11-08T21:14:31Z supervisor: alert-contact-incident-io passed the gate in round 1

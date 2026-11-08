@@ -426,12 +426,14 @@ export class AlertNotifier {
         integration: ContactPointIntegration,
         now: Date,
     ): Promise<void> {
-        // Generic webhooks, Slack webhooks and the Slack app so far; the other
-        // integration types are added by their own features (alert-contact-*).
+        // Generic webhooks, Slack webhooks, the Slack app and incident.io so
+        // far; the other integration types are added by their own features
+        // (alert-contact-*).
         if (
             integration.type !== 'webhook' &&
             integration.type !== 'slack_webhook' &&
-            integration.type !== 'slack_app'
+            integration.type !== 'slack_app' &&
+            integration.type !== 'incident_io'
         )
             return;
         const alerts = integration.disableResolveMessage
@@ -446,13 +448,21 @@ export class AlertNotifier {
             `${siteUrl}/projects/${group.projectUuid}/alerting/rules/${alert.ruleUuid}`;
         let payload: unknown = null;
         let post: () => Promise<void>;
-        if (integration.type === 'webhook') {
+        if (
+            integration.type === 'webhook' ||
+            integration.type === 'incident_io'
+        ) {
+            // incident.io takes the same Alertmanager v4 payload (CONTRACTS
+            // 4.3), with a bearer token from a secret.
             const webhookPayload = buildAlertmanagerWebhookPayload({
                 receiver: contactPoint.name,
                 groupKey: group.groupKey,
                 groupLabels,
                 externalURL: siteUrl,
-                maxAlerts: integration.maxAlerts,
+                maxAlerts:
+                    integration.type === 'webhook'
+                        ? integration.maxAlerts
+                        : undefined,
                 alerts: alerts.map((alert) => ({
                     status: alertStatus(alert),
                     labels: alert.labels,
@@ -467,7 +477,10 @@ export class AlertNotifier {
                 })),
             });
             payload = webhookPayload;
-            post = () => this.postWebhook(integration, webhookPayload);
+            post =
+                integration.type === 'webhook'
+                    ? () => this.postWebhook(integration, webhookPayload)
+                    : () => this.postIncidentIo(integration, webhookPayload);
         } else {
             const data = buildAlertTemplateData({
                 receiver: contactPoint.name,
@@ -552,6 +565,22 @@ export class AlertNotifier {
             headers.authorization = `Bearer ${secret}`;
         }
         await postJson('Webhook', integration.url, headers, payload);
+    }
+
+    private async postIncidentIo(
+        integration: Extract<ContactPointIntegration, { type: 'incident_io' }>,
+        payload: unknown,
+    ): Promise<void> {
+        const token = await this.resolveSecret(integration.token.secretRef);
+        await postJson(
+            'incident.io',
+            integration.url,
+            {
+                'content-type': 'application/json',
+                authorization: `Bearer ${token}`,
+            },
+            payload,
+        );
     }
 
     private async postSlackWebhook(
