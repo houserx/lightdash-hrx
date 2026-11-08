@@ -38,6 +38,8 @@ const DEFAULTS = {
     [ChartType.CUSTOM]: () => ({}),
     [ChartType.SANKEY]: () => ({}),
     [ChartType.DATA_APP_VIZ]: () => undefined, // no viz until one is picked
+    [ChartType.LOG_STREAM]: () => ({}),
+    [ChartType.TRACE_WATERFALL]: () => ({}),
 };
 
 // simple clone; reducer guarantees we’re not handing in drafts

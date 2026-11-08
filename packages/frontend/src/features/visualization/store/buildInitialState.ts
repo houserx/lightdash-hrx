@@ -62,6 +62,10 @@ const seedEditor = (
                     chartConfig.config,
                 ),
             };
+        case ChartType.LOG_STREAM:
+        case ChartType.TRACE_WATERFALL:
+            // No editor slice: their settings live in the chart config itself
+            return {};
         default:
             return assertUnreachable(chartConfig, 'Unknown chart type');
     }

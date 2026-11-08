@@ -5584,6 +5584,148 @@
                 "required": ["type"],
                 "type": "object"
             },
+            "ChartType.LOG_STREAM": {
+                "enum": ["log_stream"],
+                "type": "string"
+            },
+            "Partial_Record_LogLevel.string__": {
+                "properties": {
+                    "error": {
+                        "type": "string"
+                    },
+                    "critical": {
+                        "type": "string"
+                    },
+                    "warning": {
+                        "type": "string"
+                    },
+                    "info": {
+                        "type": "string"
+                    },
+                    "debug": {
+                        "type": "string"
+                    },
+                    "trace": {
+                        "type": "string"
+                    },
+                    "unknown": {
+                        "type": "string"
+                    }
+                },
+                "type": "object",
+                "description": "Make all properties in T optional"
+            },
+            "LogStreamChart": {
+                "properties": {
+                    "levelColors": {
+                        "$ref": "#/components/schemas/Partial_Record_LogLevel.string__",
+                        "description": "Colour overrides per log level, as CSS colours"
+                    },
+                    "showLabels": {
+                        "type": "boolean",
+                        "description": "Show each line's labels. Defaults to false"
+                    },
+                    "newestFirst": {
+                        "type": "boolean",
+                        "description": "Show the newest line first. Defaults to true"
+                    },
+                    "wrapLines": {
+                        "type": "boolean",
+                        "description": "Wrap long lines instead of truncating them. Defaults to false"
+                    },
+                    "labelsFieldId": {
+                        "type": "string",
+                        "description": "Field id of the labels column (a JSON object of string values)"
+                    },
+                    "levelFieldId": {
+                        "type": "string",
+                        "description": "Field id of the level column. Without one, the level comes from the labels"
+                    },
+                    "timestampFieldId": {
+                        "type": "string",
+                        "description": "Field id of the timestamp column"
+                    },
+                    "lineFieldId": {
+                        "type": "string",
+                        "description": "Field id of the log line column"
+                    }
+                },
+                "type": "object"
+            },
+            "LogStreamChartConfig": {
+                "properties": {
+                    "config": {
+                        "$ref": "#/components/schemas/LogStreamChart",
+                        "description": "Chart-type-specific configuration"
+                    },
+                    "type": {
+                        "$ref": "#/components/schemas/ChartType.LOG_STREAM",
+                        "description": "Type of chart visualization"
+                    }
+                },
+                "required": ["type"],
+                "type": "object"
+            },
+            "ChartType.TRACE_WATERFALL": {
+                "enum": ["trace_waterfall"],
+                "type": "string"
+            },
+            "TraceWaterfallChart": {
+                "properties": {
+                    "attributesFieldId": {
+                        "type": "string",
+                        "description": "Field id of the span attributes column (a JSON object)"
+                    },
+                    "statusFieldId": {
+                        "type": "string",
+                        "description": "Field id of the span status column"
+                    },
+                    "durationMsFieldId": {
+                        "type": "string",
+                        "description": "Field id of the span duration column, in milliseconds"
+                    },
+                    "startFieldId": {
+                        "type": "string",
+                        "description": "Field id of the span start time column"
+                    },
+                    "nameFieldId": {
+                        "type": "string",
+                        "description": "Field id of the span name column"
+                    },
+                    "serviceFieldId": {
+                        "type": "string",
+                        "description": "Field id of the service name column"
+                    },
+                    "parentSpanIdFieldId": {
+                        "type": "string",
+                        "description": "Field id of the parent span id column"
+                    },
+                    "spanIdFieldId": {
+                        "type": "string",
+                        "description": "Field id of the span id column"
+                    },
+                    "traceIdFieldId": {
+                        "type": "string",
+                        "description": "Field id of the trace id column"
+                    }
+                },
+                "type": "object",
+                "description": "Trace waterfall chart (ENG-1799): a native chart type that shows the spans\nof a trace from a Telemetry Source, one row per span."
+            },
+            "TraceWaterfallChartConfig": {
+                "properties": {
+                    "config": {
+                        "$ref": "#/components/schemas/TraceWaterfallChart",
+                        "description": "Chart-type-specific configuration"
+                    },
+                    "type": {
+                        "$ref": "#/components/schemas/ChartType.TRACE_WATERFALL",
+                        "description": "Type of chart visualization"
+                    }
+                },
+                "required": ["type"],
+                "type": "object"
+            },
             "ChartType.DATA_APP_VIZ": {
                 "enum": ["data_app_viz"],
                 "type": "string"
@@ -5762,6 +5904,12 @@
                     },
                     {
                         "$ref": "#/components/schemas/SankeyChartConfig"
+                    },
+                    {
+                        "$ref": "#/components/schemas/LogStreamChartConfig"
+                    },
+                    {
+                        "$ref": "#/components/schemas/TraceWaterfallChartConfig"
                     },
                     {
                         "$ref": "#/components/schemas/DataAppVizChartConfigAsCode"
@@ -7120,7 +7268,9 @@
                     "gauge",
                     "map",
                     "sankey",
-                    "data_app_viz"
+                    "data_app_viz",
+                    "log_stream",
+                    "trace_waterfall"
                 ],
                 "type": "string"
             },
@@ -10241,6 +10391,12 @@
                     },
                     {
                         "$ref": "#/components/schemas/SankeyChartConfig"
+                    },
+                    {
+                        "$ref": "#/components/schemas/LogStreamChartConfig"
+                    },
+                    {
+                        "$ref": "#/components/schemas/TraceWaterfallChartConfig"
                     }
                 ]
             },
@@ -11352,6 +11508,12 @@
                     },
                     {
                         "$ref": "#/components/schemas/SankeyChartConfig"
+                    },
+                    {
+                        "$ref": "#/components/schemas/LogStreamChartConfig"
+                    },
+                    {
+                        "$ref": "#/components/schemas/TraceWaterfallChartConfig"
                     },
                     {
                         "$ref": "#/components/schemas/DataAppVizChartConfigAsCode"
@@ -56360,7 +56522,9 @@
                     "custom",
                     "map",
                     "sankey",
-                    "data_app_viz"
+                    "data_app_viz",
+                    "log_stream",
+                    "trace_waterfall"
                 ],
                 "type": "string"
             },

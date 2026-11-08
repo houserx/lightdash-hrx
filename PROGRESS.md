@@ -252,3 +252,43 @@ should add a dated line here per feature.
 - 2026-11-08T18:07:19Z supervisor: viz-log-stream-order halted: the worker halted on viz-log-stream-order
 - 2026-11-08T18:08:02Z supervisor: viz-log-stream-view halted: the worker halted on viz-log-stream-view
 - 2026-11-08T18:08:51Z supervisor: viz-log-stream-virtualised halted: the worker halted on viz-log-stream-virtualised
+
+### 2026-11-08 viz-chart-type-members (session)
+
+- **What.** `ChartType`/`ChartKind` gained `LOG_STREAM = 'log_stream'` and `TRACE_WATERFALL = 'trace_waterfall'`, with
+  `getChartType`/`getChartKind` cases. Check passes.
+- **Why it is bigger than the enum lines (the trap that halted earlier rounds).** With only the enum members added, the
+  backend typecheck breaks in a **protected** file: `src/ee/services/AiAgentToolsService/AiAgentToolsService.documents.test.ts`
+  builds `chartConfig: { type: ChartType.TABLE }` in a widening position, which only typechecks while every `ChartType`
+  member has a member in `ChartConfig`/`ChartAsCodeConfig`. So this feature also added, per the handbook:
+  - `src/eng1799/logStream.ts` (`LogLevel` type, `LogStreamChart`, exactly the 8 properties, all optional so columns can
+    bind by name) and `src/eng1799/traceWaterfall.ts` (`TraceWaterfallChart`, 9 optional field ids), re-exported from
+    `index.ts`.
+  - `LogStreamChartConfig`/`TraceWaterfallChartConfig` in `savedCharts.ts`, members of `ChartConfig` and
+    `ChartAsCodeConfig`.
+  - Regenerated `backend/src/generated/{routes.ts,swagger.json}` (`pnpm -F backend generate-api:build`, which also runs
+    oxfmt. Plain `generate-api` leaves them unformatted with a 400k-line diff) and `chart-as-code-1.0.json`. As a side
+    effect, the `log-stream-as-code` and `trace-waterfall-as-code` acceptance tests pass already. Their sessions only
+    need to confirm them.
+- **Minimal switch cases to keep the regression gate green** (placeholders the later features replace):
+  - common `derivePivotConfigFromChart`: no pivot.
+  - backend `rename.ts`: renames every field id in both configs (real behaviour, done).
+  - visualization `render.ts`: both resolve and render as `{kind: 'unsupported'}` via a new `UnsupportedChartType`.
+    `viz-log-stream-model`/`viz-trace-waterfall-model` must replace that with `logStream`/`traceWaterfall` outputs.
+  - frontend: `VisualizationTelemetryConfig.tsx` (adapter exposing the prop config as `validConfig`, no emitting yet;
+    `editedChartConfig` returns null for both); `index.tsx` shows a SuboptimalState "This chart type can't be displayed
+    yet" (replace with the view adapters); `VisualizationConfig.tsx` returns an empty `NoConfigTabs` (replace with the
+    config panels); `buildInitialState` seeds no editor slice; preview field mapping keeps query roles; Explorer
+    `ConfigCacheMap`/`DEFAULTS` got `{}` entries. Names, icons, gallery and `CHART_TYPES_WITHOUT_IMAGE_EXPORT` are
+    still for `viz-chart-type-wiring`.
+- Also changed the non-protected upstream fixture `common/src/utils/documentMarkdown.test.ts` (`ChartType.BIG_NUMBER as
+  const`). It is not strictly needed now that the unions are extended, but it is harmless.
+- **Tested.** `bash ./init.sh`, then the check (4/4). Common, warehouses, backend, frontend and visualization typechecks
+  are green, `check:chart-as-code-schema` passes, and oxlint/oxfmt are clean on the touched files. Nearby unit tests
+  pass (common types/pivot, visualization render, backend RenameService, frontend Explorer/store/preview mapping). A tsx
+  script through `@lightdash/common`/`@lightdash/visualization` listed both members, JSON round-tripped a saved config
+  of each type to the same kind and type, and rendered them as `unsupported`. Saving to a DB needs the `chart_types`
+  migration (next feature).
+- **Tooling notes.** Format with `oxfmt` (`pnpm -F <pkg> exec oxfmt --check <files>`), not prettier. Running eslint/npx
+  hits the Node devEngines mismatch, so use `pnpm -F <pkg> run linter <files>` (oxlint).
+- 2026-11-08T18:19:19Z supervisor: viz-chart-type-members passed the gate in round 1

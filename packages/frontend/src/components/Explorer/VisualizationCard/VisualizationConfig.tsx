@@ -36,6 +36,8 @@ const VegaEditorUnavailable: FC = () => (
     </Config>
 );
 
+const NoConfigTabs: FC = () => null;
+
 type Props = {
     chartType: ChartType;
 };
@@ -72,6 +74,10 @@ const VisualizationConfig: FC<Props> = ({ chartType }) => {
                 return SankeyConfigTabs;
             case ChartType.DATA_APP_VIZ:
                 return DataAppVizConfigTabs;
+            case ChartType.LOG_STREAM:
+            case ChartType.TRACE_WATERFALL:
+                // Their config panels are not built yet
+                return NoConfigTabs;
             default:
                 return assertUnreachable(
                     chartType,

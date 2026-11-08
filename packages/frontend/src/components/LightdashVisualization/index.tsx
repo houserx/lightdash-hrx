@@ -298,6 +298,13 @@ const LightdashVisualization = memo(
                         />
                     );
                     break;
+                case ChartType.LOG_STREAM:
+                case ChartType.TRACE_WATERFALL:
+                    // Their views are not mounted yet
+                    chartContent = (
+                        <SuboptimalState title="This chart type can't be displayed yet" />
+                    );
+                    break;
                 default:
                     return assertUnreachable(
                         visualizationConfig,

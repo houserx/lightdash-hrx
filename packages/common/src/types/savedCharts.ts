@@ -1,4 +1,6 @@
 import { type DataAppVizOptionValue } from '../ee/apps/dataAppVizConfigOptions';
+import { type LogStreamChart } from '../eng1799/logStream';
+import { type TraceWaterfallChart } from '../eng1799/traceWaterfall';
 import assertUnreachable from '../utils/assertUnreachable';
 import { type AgentIdentityClaim } from './agentIdentity';
 import { type ViewStatistics } from './analytics';
@@ -38,6 +40,8 @@ export enum ChartKind {
     MAP = 'map',
     SANKEY = 'sankey',
     DATA_APP_VIZ = 'data_app_viz',
+    LOG_STREAM = 'log_stream',
+    TRACE_WATERFALL = 'trace_waterfall',
 }
 
 export enum ChartType {
@@ -52,6 +56,8 @@ export enum ChartType {
     MAP = 'map',
     SANKEY = 'sankey',
     DATA_APP_VIZ = 'data_app_viz',
+    LOG_STREAM = 'log_stream',
+    TRACE_WATERFALL = 'trace_waterfall',
 }
 
 export enum ComparisonFormatTypes {
@@ -917,6 +923,20 @@ export type SankeyChartConfig = {
     config?: SankeyChart;
 };
 
+export type LogStreamChartConfig = {
+    /** Type of chart visualization */
+    type: ChartType.LOG_STREAM;
+    /** Chart-type-specific configuration */
+    config?: LogStreamChart;
+};
+
+export type TraceWaterfallChartConfig = {
+    /** Type of chart visualization */
+    type: ChartType.TRACE_WATERFALL;
+    /** Chart-type-specific configuration */
+    config?: TraceWaterfallChart;
+};
+
 export type ChartConfig =
     | BigNumberConfig
     | CartesianChartConfig
@@ -928,7 +948,9 @@ export type ChartConfig =
     | GaugeChartConfig
     | DataAppVizChartConfig
     | MapChartConfig
-    | SankeyChartConfig;
+    | SankeyChartConfig
+    | LogStreamChartConfig
+    | TraceWaterfallChartConfig;
 
 export type SavedChartType = ChartType;
 
@@ -1284,6 +1306,10 @@ export const getChartType = (chartKind: ChartKind | undefined): ChartType => {
             return ChartType.SANKEY;
         case ChartKind.DATA_APP_VIZ:
             return ChartType.DATA_APP_VIZ;
+        case ChartKind.LOG_STREAM:
+            return ChartType.LOG_STREAM;
+        case ChartKind.TRACE_WATERFALL:
+            return ChartType.TRACE_WATERFALL;
         default:
             return ChartType.CARTESIAN;
     }
@@ -1346,6 +1372,10 @@ export const getChartKind = (
             return ChartKind.SANKEY;
         case ChartType.DATA_APP_VIZ:
             return ChartKind.DATA_APP_VIZ;
+        case ChartType.LOG_STREAM:
+            return ChartKind.LOG_STREAM;
+        case ChartType.TRACE_WATERFALL:
+            return ChartKind.TRACE_WATERFALL;
         default:
             return assertUnreachable(
                 chartType,

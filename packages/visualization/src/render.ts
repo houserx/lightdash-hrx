@@ -112,6 +112,13 @@ export type RenderOptions = {
     parameters?: ParametersValuesMap;
 };
 
+/** Chart types this package resolves but does not draw. */
+export type UnsupportedChartType =
+    | ChartType.MAP
+    | ChartType.DATA_APP_VIZ
+    | ChartType.LOG_STREAM
+    | ChartType.TRACE_WATERFALL;
+
 export type EChartsChartType =
     | ChartType.CARTESIAN
     | ChartType.PIE
@@ -148,10 +155,10 @@ export type RenderOutput =
           data: CustomVisualizationData;
       }
     | { kind: 'empty'; chartType: ChartType; reason: EmptyReason }
-    /** Drawn outside this package: maps and data-app visualizations. */
+    /** Not drawn by this package (yet): maps, data-app visualizations and telemetry charts. */
     | {
           kind: 'unsupported';
-          chartType: ChartType.MAP | ChartType.DATA_APP_VIZ;
+          chartType: UnsupportedChartType;
       };
 
 /** A drawn chart, and the colour assignments including its own. */
@@ -201,7 +208,7 @@ export type ResolvedChart =
           }
       >
     | Resolved<ChartType.CUSTOM, CustomVis>
-    | Resolved<ChartType.MAP | ChartType.DATA_APP_VIZ, unknown>;
+    | Resolved<UnsupportedChartType, unknown>;
 
 const DEFAULT_SIZE = { width: 600, height: 400 };
 
@@ -332,6 +339,8 @@ export const resolveChart = (
             };
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:
+        case ChartType.LOG_STREAM:
+        case ChartType.TRACE_WATERFALL:
             return {
                 chartType: chartConfig.type,
                 config: chartConfig.config,
@@ -552,6 +561,8 @@ export const buildChart = (
             });
         case ChartType.MAP:
         case ChartType.DATA_APP_VIZ:
+        case ChartType.LOG_STREAM:
+        case ChartType.TRACE_WATERFALL:
             return done({ kind: 'unsupported', chartType: resolved.chartType });
         default:
             return assertUnreachable(resolved, 'Unknown chart type');

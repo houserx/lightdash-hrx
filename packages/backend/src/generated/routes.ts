@@ -5367,6 +5367,136 @@ const models: TsoaRoute.Models = {
         },
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'ChartType.LOG_STREAM': {
+        dataType: 'refEnum',
+        enums: ['log_stream'],
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'Partial_Record_LogLevel.string__': {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                error: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                critical: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                warning: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                info: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                debug: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                trace: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+                unknown: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { dataType: 'string' },
+                        { dataType: 'undefined' },
+                    ],
+                },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    LogStreamChart: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                levelColors: { ref: 'Partial_Record_LogLevel.string__' },
+                showLabels: { dataType: 'boolean' },
+                newestFirst: { dataType: 'boolean' },
+                wrapLines: { dataType: 'boolean' },
+                labelsFieldId: { dataType: 'string' },
+                levelFieldId: { dataType: 'string' },
+                timestampFieldId: { dataType: 'string' },
+                lineFieldId: { dataType: 'string' },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    LogStreamChartConfig: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                config: { ref: 'LogStreamChart' },
+                type: { ref: 'ChartType.LOG_STREAM', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'ChartType.TRACE_WATERFALL': {
+        dataType: 'refEnum',
+        enums: ['trace_waterfall'],
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    TraceWaterfallChart: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                attributesFieldId: { dataType: 'string' },
+                statusFieldId: { dataType: 'string' },
+                durationMsFieldId: { dataType: 'string' },
+                startFieldId: { dataType: 'string' },
+                nameFieldId: { dataType: 'string' },
+                serviceFieldId: { dataType: 'string' },
+                parentSpanIdFieldId: { dataType: 'string' },
+                spanIdFieldId: { dataType: 'string' },
+                traceIdFieldId: { dataType: 'string' },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    TraceWaterfallChartConfig: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                config: { ref: 'TraceWaterfallChart' },
+                type: { ref: 'ChartType.TRACE_WATERFALL', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     'ChartType.DATA_APP_VIZ': {
         dataType: 'refEnum',
         enums: ['data_app_viz'],
@@ -5534,6 +5664,8 @@ const models: TsoaRoute.Models = {
                 { ref: 'GaugeChartConfig' },
                 { ref: 'MapChartConfig' },
                 { ref: 'SankeyChartConfig' },
+                { ref: 'LogStreamChartConfig' },
+                { ref: 'TraceWaterfallChartConfig' },
                 { ref: 'DataAppVizChartConfigAsCode' },
             ],
             validators: {},
@@ -6983,6 +7115,8 @@ const models: TsoaRoute.Models = {
             'map',
             'sankey',
             'data_app_viz',
+            'log_stream',
+            'trace_waterfall',
         ],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
@@ -9920,6 +10054,8 @@ const models: TsoaRoute.Models = {
                 { ref: 'DataAppVizChartConfig' },
                 { ref: 'MapChartConfig' },
                 { ref: 'SankeyChartConfig' },
+                { ref: 'LogStreamChartConfig' },
+                { ref: 'TraceWaterfallChartConfig' },
             ],
             validators: {},
         },
@@ -11036,6 +11172,8 @@ const models: TsoaRoute.Models = {
                 { ref: 'GaugeChartConfig' },
                 { ref: 'MapChartConfig' },
                 { ref: 'SankeyChartConfig' },
+                { ref: 'LogStreamChartConfig' },
+                { ref: 'TraceWaterfallChartConfig' },
                 { ref: 'DataAppVizChartConfigAsCode' },
             ],
             validators: {},
@@ -61980,6 +62118,8 @@ const models: TsoaRoute.Models = {
             'map',
             'sankey',
             'data_app_viz',
+            'log_stream',
+            'trace_waterfall',
         ],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
