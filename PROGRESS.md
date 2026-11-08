@@ -464,3 +464,21 @@ should add a dated line here per feature.
   and drop the fixed `height` in `.row`. jsdom measures 0 though, so keep the estimate as the fallback when the
   measured size is 0 (the jsdom window tests must still draw rows).
 - 2026-11-08T18:54:34Z supervisor: viz-log-stream-virtualised passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-level-bar (session)
+
+- **What.** Each `log-stream-row` in `packages/frontend/src/components/LogStream/LogStreamView.tsx` now starts with a
+  `log-stream-level-bar` `Box` coloured with the model's `line.color` (the chart's `levelColors` override, else
+  Grafana's default, already resolved by `@lightdash/visualization`). The colour goes through Mantine's `bg` style
+  prop, which renders inline (so jsdom's `toHaveStyle({backgroundColor})` sees it) and is the route the
+  `lightdash-ui(no-inline-style-prop)` rule recommends; no `style={{...}}`. Shape (3 px wide, full row height) lives in
+  `.levelBar` in the CSS module. The bar has `title={line.level}` for a hover hint.
+- **Tested as a user.** No app mounts the view yet, so I rendered `FIVE_LOGS` in a throwaway vitest file (deleted):
+  error rgb(226,77,66) red, warning rgb(234,184,57) yellow, info rgb(126,178,109) green, debug blue, critical purple.
+  With `levelColors: {error: '#ff00ff'}` only the error bar changed, to rgb(255,0,255). The check passes 2/2 after
+  `bash ./init.sh`; log-stream-view (3/3) and log-stream-virtualised (1/1) still pass. Frontend tsc, oxlint, oxfmt pass.
+- **For the next sessions.** For inline colours/values the tests read, a Mantine style prop (`bg`, `c`, `h`, ...) is
+  the lint-clean way; `log-stream-wrap-lines` (inline `whiteSpace`) has no Mantine style prop, so check that rule again
+  there. The bar uses `align-self: stretch` with `margin: -2px 0` to cover the row padding; with variable row heights it
+  still stretches.
+- 2026-11-08T18:57:13Z supervisor: viz-log-stream-level-bar passed the gate in round 1

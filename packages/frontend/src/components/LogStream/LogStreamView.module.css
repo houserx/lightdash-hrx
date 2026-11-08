@@ -15,6 +15,15 @@
     border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
+/* The level's colour (`bg` style prop) down the row's left edge. */
+.levelBar {
+    flex: 0 0 auto;
+    align-self: stretch;
+    width: 3px;
+    margin: -2px 0;
+    border-radius: 1px;
+}
+
 .timestamp {
     flex: 0 0 auto;
     white-space: nowrap;

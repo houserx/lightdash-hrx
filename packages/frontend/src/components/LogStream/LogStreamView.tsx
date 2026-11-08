@@ -43,6 +43,12 @@ const LogStreamRow: FC<{ line: LogStreamLine; start: number }> = ({
         wrap="nowrap"
         align="flex-start"
     >
+        <Box
+            data-testid="log-stream-level-bar"
+            className={classes.levelBar}
+            bg={line.color}
+            title={line.level}
+        />
         <Text
             data-testid="log-stream-timestamp"
             className={classes.timestamp}
