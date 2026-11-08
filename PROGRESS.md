@@ -625,3 +625,23 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     status 400 and the message above. Plain Postgres still produced a `type: postgres` profile.
 - 2026-11-08T18:32:04Z supervisor: ldq-federation-dbt-refused passed the gate in round 1
 - 2026-11-08T18:35:23Z supervisor: ldq-federation-project-types halted: worker ldq.feature.ldq-federation-project-types.r1 stopped: STOP file present
+- 2026-11-08 ldq-federation-project-types (session, round 1 after a STOP-file halt):
+  - No code change was needed. The tree was clean on arrival, and the feature check already
+    passed (4/4). Earlier features provide all of it.
+    `warehouseClientFromCredentials` returns a FederationWarehouseClient. The `none` and
+    native-git (`semanticLayer: 'lightdash'`, GitHub/Bitbucket) branches of
+    `projectAdapterFromConfig` never resolve a dbt target. The dbt branches (dbt, and
+    dbt-on-git) call the lazy `dbtTarget.resolve()`. In ProjectService that is
+    `warehouseClientFactory.toDbtTarget`, which reaches the `postgresTarget` refusal.
+  - Contract assumption: CONTRACTS §4.1 places the refusal "at the point where the dbt target
+    is built". So MANIFEST and DBT_CLOUD_IDE projects (no dbt target is built) are not
+    refused on federation connections. Left as is. The integration line can decide whether
+    they should be.
+  - Tested: init, then the feature check (4/4). A scratch vitest (deleted) ran against a
+    throwaway Postgres in tmp/. A `none` adapter on federation credentials held a
+    FederationWarehouseClient. `adapter.test()` and a query each sent `SET hrx.identity`
+    before running, and the config loaded. A local dbt project and a GitHub dbt project both
+    threw NotSupportedError (400) "dbt is not supported for the Federation Engine. ...".
+    Plain Postgres still built a DbtLocalCredentialsProjectAdapter. Native-git was tested
+    only up to construction, because cloning would need the network.
+- 2026-11-08T18:39:54Z supervisor: ldq-federation-project-types passed the gate in round 1
