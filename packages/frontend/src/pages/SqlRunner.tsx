@@ -17,6 +17,7 @@ import {
     type SqlRunnerMode,
 } from '../features/investigate/components/SqlRunnerModeSwitch';
 import { useInvestigateRunQuery } from '../features/investigate/hooks/useInvestigateRunQuery';
+import { useInvestigateSaveAsChart } from '../features/investigate/hooks/useInvestigateSaveAsChart';
 import { SqlRunnerSidebar } from '../features/sqlRunner';
 import { ContentPanel } from '../features/sqlRunner/components/ContentPanel';
 import { Header } from '../features/sqlRunner/components/Header';
@@ -87,6 +88,7 @@ const SqlRunner = ({
     const { data: project } = useProject(projectUuid);
     const [runnerMode, setRunnerMode] = useState<SqlRunnerMode>('sql');
     const runInvestigateQuery = useInvestigateRunQuery(projectUuid);
+    const saveInvestigateChart = useInvestigateSaveAsChart(projectUuid);
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
             projectUuid,
@@ -297,6 +299,7 @@ const SqlRunner = ({
                         <Box px="md" py="sm">
                             <InvestigateWorkspace
                                 runQuery={runInvestigateQuery}
+                                onSaveAsChart={saveInvestigateChart}
                             />
                         </Box>
                     ) : (

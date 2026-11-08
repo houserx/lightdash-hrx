@@ -316,6 +316,8 @@ largest files. Do them inside the features they serve, with unit tests, and keep
 9. **The audit browser** passes the engine's `Execution` items (the portal's
    `api/src/dynamo/executions.ts` fields) through unchanged.
 10. **The portal saved-scripts export** is a JSON array of `SavedScript`.
+11. **Investigate's Save as chart** saves to the first space the user can create charts in,
+    as a TABLE SQL chart on the default connection. The spec names no space picker.
 
 ## Status
 
@@ -1435,3 +1437,30 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     shown as "Query failed", and different SQL hiding the fields. Regression
     investigate-audit-fields 3/3. frontend tsc, oxlint and oxfmt are clean.
 - 2026-11-08T21:10:35Z supervisor: ldq-investigate-restricted-description passed the gate in round 1
+- ldq-investigate-save-as-chart (round 1):
+  - `InvestigateWorkspace` takes `onSaveAsChart?: ({ name, sql }) => Promise<void>`. When it is
+    given, a "Save as chart" button sits next to Run. It is disabled while the SQL box is empty;
+    a run is not required. It opens a "Save as chart" dialog with a "Chart name" field. The dialog
+    saves the SQL taken when it opened, with the name trimmed. If the save throws, the dialog
+    stays open with the reason. Without `onSaveAsChart` the button is hidden.
+  - New `useInvestigateSaveAsChart(projectUuid)` (features/investigate/hooks), wired in
+    `pages/SqlRunner.tsx`. It creates the chart through the existing
+    `useCreateSqlChartMutation`: POST /sqlRunner/saved with a TABLE config, limit
+    DEFAULT_SQL_LIMIT and no description. The mutation shows its success/error toast and
+    navigates to the new chart.
+  - Contract assumption (the spec doesn't say where the chart goes): it saves to the first space
+    the user can create charts in. That is the same space the SQL runner's own save dialog
+    preselects. With no such space it throws "You have no space you can save charts in", and the
+    dialog shows that. No warehouseConnectionUuid is sent, because Investigate runs don't send
+    one either.
+  - Trap: the Chart name field must not be `required`. Mantine's asterisk makes the label
+    "Chart name *", and the acceptance test matches 'Chart name' exactly. Save is disabled until
+    a name is entered instead.
+  - Not done: the `access` prop is still undeclared (it belongs to the write-mode/platform
+    features).
+  - Tested: no browser or backend (no Docker), so I drove the workspace through its rendered UI
+    in vitest. Feature check 2/2. InvestigateWorkspace.test.tsx 7/7: new tests cover the hidden
+    button without `onSaveAsChart`, and a failed save keeping the dialog open before a retry
+    succeeds with the trimmed name. Regression investigate-audit-retry 2/2. frontend tsc,
+    oxlint and oxfmt are clean. The page hook itself has no unit test.
+- 2026-11-08T21:14:30Z supervisor: ldq-investigate-save-as-chart passed the gate in round 1

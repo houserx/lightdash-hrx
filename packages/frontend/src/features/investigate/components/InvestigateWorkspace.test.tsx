@@ -136,4 +136,45 @@ describe('InvestigateWorkspace', () => {
         writePromql('rate(up[5m])');
         expect(screen.queryByLabelText(/Description/)).toBeNull();
     });
+
+    it('hides Save as chart when the page cannot save charts', async () => {
+        renderWorkspace(vi.fn());
+        expect(
+            screen.queryByRole('button', { name: 'Save as chart' }),
+        ).toBeNull();
+    });
+
+    it('keeps the Save as chart dialog open with the reason when saving fails', async () => {
+        const onSaveAsChart = vi
+            .fn()
+            .mockRejectedValueOnce(new Error('no space to save in'))
+            .mockResolvedValueOnce(undefined);
+        render(
+            <MantineProvider env="test" forceColorScheme="light">
+                <InvestigateWorkspace
+                    runQuery={vi.fn()}
+                    onSaveAsChart={onSaveAsChart}
+                />
+            </MantineProvider>,
+        );
+        writePromql('up');
+        fireEvent.click(screen.getByRole('button', { name: 'Save as chart' }));
+        fireEvent.change(await screen.findByLabelText('Chart name'), {
+            target: { value: '  Up  ' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        expect(
+            await screen.findByText('no space to save in'),
+        ).toBeInTheDocument();
+        expect(screen.getByLabelText('Chart name')).toHaveValue('  Up  ');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+        await waitFor(() =>
+            expect(screen.queryByLabelText('Chart name')).toBeNull(),
+        );
+        expect(onSaveAsChart).toHaveBeenLastCalledWith({
+            name: 'Up',
+            sql: expect.stringContaining("promql('up'"),
+        });
+    });
 });

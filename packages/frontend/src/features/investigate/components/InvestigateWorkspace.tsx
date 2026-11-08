@@ -10,11 +10,16 @@ import {
     Button,
     Group,
     Loader,
+    Modal,
     Stack,
     Text,
     TextInput,
 } from '@mantine/core';
-import { IconAlertCircle, IconPlayerPlay } from '@tabler/icons-react';
+import {
+    IconAlertCircle,
+    IconDeviceFloppy,
+    IconPlayerPlay,
+} from '@tabler/icons-react';
 import { useRef, useState, type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
 import { TimeRangePicker } from '../../timeRange/components/TimeRangePicker';
@@ -51,6 +56,14 @@ export type InvestigateWorkspaceProps = {
     ) => Promise<InvestigateQueryResult>;
     /** The range the time range control starts from. */
     initialTimeRange?: TimeRangeInput;
+    /** Saves the SQL in the SQL box as a SQL chart; Save as chart is hidden without it. */
+    onSaveAsChart?: (chart: InvestigateSaveAsChartRequest) => Promise<void>;
+};
+
+/** What Save as chart sends: the chart's name and the SQL exactly as shown in the SQL box. */
+export type InvestigateSaveAsChartRequest = {
+    name: string;
+    sql: string;
 };
 
 type RunState =
@@ -76,6 +89,7 @@ type RunState =
 export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     runQuery,
     initialTimeRange = DEFAULT_INVESTIGATE_TIME_RANGE,
+    onSaveAsChart,
 }) => {
     const [timeRange, setTimeRange] =
         useState<TimeRangeInput>(initialTimeRange);
@@ -87,6 +101,8 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     const [descriptionRequiredForSql, setDescriptionRequiredForSql] = useState<
         string | null
     >(null);
+    // The SQL being saved while the Save as chart dialog is open.
+    const [saveAsChartSql, setSaveAsChartSql] = useState<string | null>(null);
     // Only the latest run may set the result; an earlier one finishing late is dropped.
     const latestRun = useRef(0);
 
@@ -141,18 +157,33 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
         <Stack gap="md">
             <Group justify="space-between">
                 <TimeRangePicker value={timeRange} onChange={setTimeRange} />
-                <Button
-                    size="xs"
-                    leftSection={<MantineIcon icon={IconPlayerPlay} />}
-                    disabled={
-                        sql.trim() === '' ||
-                        (isAudited && description === '') ||
-                        run.status === 'running'
-                    }
-                    onClick={handleRun}
-                >
-                    Run
-                </Button>
+                <Group gap="xs">
+                    {onSaveAsChart && (
+                        <Button
+                            size="xs"
+                            variant="default"
+                            leftSection={
+                                <MantineIcon icon={IconDeviceFloppy} />
+                            }
+                            disabled={sql.trim() === ''}
+                            onClick={() => setSaveAsChartSql(sql)}
+                        >
+                            Save as chart
+                        </Button>
+                    )}
+                    <Button
+                        size="xs"
+                        leftSection={<MantineIcon icon={IconPlayerPlay} />}
+                        disabled={
+                            sql.trim() === '' ||
+                            (isAudited && description === '') ||
+                            run.status === 'running'
+                        }
+                        onClick={handleRun}
+                    >
+                        Run
+                    </Button>
+                </Group>
             </Group>
             <InvestigateEditor onChange={handleEditorChange} />
             {isAudited && (
@@ -176,6 +207,13 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                         }
                     />
                 </Group>
+            )}
+            {onSaveAsChart && (
+                <SaveAsChartModal
+                    sql={saveAsChartSql}
+                    onClose={() => setSaveAsChartSql(null)}
+                    onSave={onSaveAsChart}
+                />
             )}
             {run.status !== 'idle' && (
                 <Stack gap="xs" data-testid="investigate-result">
@@ -211,5 +249,94 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                 </Stack>
             )}
         </Stack>
+    );
+};
+
+type SaveAsChartModalProps = {
+    /** The SQL to save; the dialog is open while it is set. */
+    sql: string | null;
+    onClose: () => void;
+    onSave: (chart: InvestigateSaveAsChartRequest) => Promise<void>;
+};
+
+/** Asks for the chart's name and saves the SQL taken when the dialog opened. */
+const SaveAsChartModal: FC<SaveAsChartModalProps> = ({
+    sql,
+    onClose,
+    onSave,
+}) => {
+    const [name, setName] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const close = () => {
+        if (isSaving) return;
+        setName('');
+        setError(null);
+        onClose();
+    };
+
+    const handleSave = async () => {
+        if (sql === null || name.trim() === '') return;
+        setIsSaving(true);
+        setError(null);
+        try {
+            await onSave({ name: name.trim(), sql });
+            setIsSaving(false);
+            setName('');
+            onClose();
+        } catch (saveError) {
+            setIsSaving(false);
+            setError(
+                saveError instanceof Error && saveError.message
+                    ? saveError.message
+                    : 'The chart could not be saved',
+            );
+        }
+    };
+
+    return (
+        <Modal opened={sql !== null} onClose={close} title="Save as chart">
+            <form
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleSave();
+                }}
+            >
+                <Stack gap="sm">
+                    <TextInput
+                        label="Chart name"
+                        data-autofocus
+                        value={name}
+                        onChange={(event) => setName(event.currentTarget.value)}
+                    />
+                    {error && (
+                        <Alert
+                            color="red"
+                            icon={<MantineIcon icon={IconAlertCircle} />}
+                            title="Could not save the chart"
+                        >
+                            {error}
+                        </Alert>
+                    )}
+                    <Group justify="flex-end" gap="xs">
+                        <Button
+                            variant="default"
+                            onClick={close}
+                            disabled={isSaving}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="submit"
+                            loading={isSaving}
+                            disabled={name.trim() === ''}
+                        >
+                            Save
+                        </Button>
+                    </Group>
+                </Stack>
+            </form>
+        </Modal>
     );
 };
