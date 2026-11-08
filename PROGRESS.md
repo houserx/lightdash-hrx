@@ -522,3 +522,18 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - "Memory high" fires at 09:06. Nothing at 09:06:29. Its own POST at 09:06:30, with groupKey `root:{alertname="Memory high"}`.
       - Flushes at 09:07, 09:10, 09:11 and 09:20 → still 3 POSTs, so unchanged groups aren't re-sent. There are 3 `sent` rows in alert_notifications.
 - 2026-11-08T20:34:40Z supervisor: alert-notify-grouping passed the gate in round 1
+- alert-notify-repeat (round 1) — 2026-11-08
+  - Changed:
+    - Nothing. The dispatcher from alert-notify-firing already handles repeat_interval. In `isNotificationGroupDue` (`AlertNotifier.ts`), a group whose alerts were all already sent as firing waits `repeatInterval` from its last send (`last_sent_at`). A group with an unsent alert waits `groupInterval` instead.
+    - The unit test "waits group_interval for changes and repeat_interval otherwise" in `AlertNotifier.test.ts` already covers the rule, so no test was added.
+  - How it works (for later sessions):
+    - Each repeat is counted from the previous send, not from when the alert first fired: 09:00:30, then 09:10:30, then 09:20:30.
+    - Every send goes through `claimGroupSend`, which moves `last_sent_at`. With two workers there is still only one repeat per interval.
+  - Tested:
+    - The check passes after init (1 passed, 7 skipped).
+    - As a user: a scratch walk over real HTTP through the harness (`src/alerting/__walk__` and `tmp/walk/run.sh` with HERE pinned; both removed):
+      - Setup: developer POSTs webhook `ops` → 200. Admin PUTs the tree `{groupBy:[alertname], groupWait:30s, groupInterval:1m, repeatInterval:10m}` → 200. Editor POSTs the disk rule → 200.
+      - The rule is evaluated firing every minute from 09:00 to 09:21. Every 15s, two module instances flush at the same time.
+      - POST #1 at 09:00:30. A flush at 09:10:29 → still 1. POST #2 at 09:10:30, POST #3 at 09:20:30.
+      - All three are `firing` with startsAt 09:00:00 and the same groupKey. There are 3 `sent` rows in alert_notifications.
+- 2026-11-08T20:37:48Z supervisor: alert-notify-repeat passed the gate in round 1
