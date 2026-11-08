@@ -1416,3 +1416,39 @@ should add a dated line here per feature.
 - **Next.** viz-grafana-panel-option-mapping adds `getGrafanaPanelOptionMapping` to the same module. The
   docs-panel-mapping test expects the doc to link to this file's path.
 - 2026-11-08T21:33:22Z supervisor: viz-grafana-panel-type-mapping passed the gate in round 1
+
+## viz-grafana-panel-option-mapping (round 1)
+- **What changed.** `packages/common/src/eng1799/grafanaPanelMapping.ts` (same module as the panel types) gains
+  `getGrafanaPanelOptionMapping(type, path)` and the `GrafanaPanelOptionMapping` / `GrafanaPanelOptionTarget` types.
+  A mapping is `{ grafanaType, path, target, lightdash, note? }` for kept options, or `{ grafanaType, path, target: 'dropped', reason }`.
+  Targets: `builtin_chart_config`, `native_chart_config`, `registry_option` (`optionValues.<name>` of the registry entry),
+  `field_format` (`metricQuery.metricOverrides[field].formatOptions`), `tile`, `dropped`. It returns undefined for unknown panel
+  types, for paths the dashboards don't use, and for prototype keys.
+- **Structure.** There is one option table per panel type. timeseries and barchart share `CARTESIAN_FIELD_OPTIONS`. Every
+  non-dropped type also gets the fixture's `*` options (`COMMON_CHART_OPTIONS`). text and row override `description`, and row
+  also overrides `collapsed`. For the three dropped panel types (alertlist, dashlist, news), every listed path, `*` paths
+  included, is dropped with "The X panel is not imported: <panel reason>".
+- **Decisions (the spec doesn't make them; the wording is mine).** About 275 fixture paths map to real Lightdash config keys.
+  Some notable calls:
+  - stacking `percent` becomes a plain stack, since Lightdash has no 100% stacking.
+  - Soft min/max become the hard `yAxis[].min/max`, with a note.
+  - Cartesian and gauge value mappings are dropped. Pie value mappings go to `groupLabelOverrides`.
+  - Table thresholds and colour modes go to `conditionalFormattings`.
+  - Gauge thresholds go to `sections`.
+  - The `*` query-shaping options (interval, maxDataPoints, timeFrom, timeShift, transformations) are dropped, with reasons
+    pointing at the query converter.
+  - bargauge `mappings` is dropped because the bar-gauge entry has no valueMappings option.
+- **Tested as a user.** After `bash ./init.sh` rebuilt common, a throwaway `node -e` from packages/backend used the built
+  `@lightdash/common` to look up these:
+  - logs `options.wrapLogMessage` returned `LogStreamChart.wrapLines`.
+  - logs `options.dedupStrategy` returned dropped, with its reason.
+  - timeseries unit returned field_format.
+  - stat graphMode returned `optionValues.graphMode`.
+  - alertlist viewMode returned dropped, with the panel reason.
+  - text content returned the markdown tile content.
+  - `options.notAnOption`, `constructor` and `toString` returned undefined.
+
+  The check passed 16/16, and grafana-panel-types still passes. Common tsc, oxlint and oxfmt are clean.
+- **Next.** viz-docs-panel-mapping should write `docs/eng-1799/grafana-panel-mapping.md` from these tables, with every
+  fixture path in backticks, and link this module's path.
+- 2026-11-08T21:39:19Z supervisor: viz-grafana-panel-option-mapping passed the gate in round 1
