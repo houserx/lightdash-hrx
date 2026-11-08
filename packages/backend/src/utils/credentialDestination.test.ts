@@ -337,6 +337,30 @@ describe('credential destinations', () => {
         },
     );
 
+    test('treats a changed federation engine URL as a new destination', () => {
+        const federation = {
+            ...postgres,
+            flavor: 'federation' as const,
+            identitySigningSecret: 'secret',
+            httpBaseUrl: 'http://engine.example.com:8088',
+        };
+        expect(
+            hasSameWarehouseCredentialDestination(
+                {
+                    ...federation,
+                    httpBaseUrl: 'HTTP://Engine.example.com:8088',
+                },
+                federation,
+            ),
+        ).toBe(true);
+        expect(
+            hasSameWarehouseCredentialDestination(
+                { ...federation, httpBaseUrl: 'http://other.example.com:8088' },
+                federation,
+            ),
+        ).toBe(false);
+    });
+
     test('ignores dormant SSH field edits while the tunnel is disabled', () => {
         expect(
             hasSameWarehouseCredentialDestination(

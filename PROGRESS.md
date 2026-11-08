@@ -354,3 +354,28 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     httpBaseUrl. Also ran the feature check (5/5), the common unit tests, the related backend unit
     tests, and the backend and frontend typechecks.
 - 2026-11-08T17:32:03Z supervisor: ldq-federation-credential-fields passed the gate in round 1
+- 2026-11-08 ldq-federation-secret-stripping (session):
+  - The check already passed on arrival, because ldq-federation-credential-fields put
+    `identitySigningSecret` in `sensitiveCredentialsFieldNames`. I traced the real paths:
+    `ProjectModel.get` and `stripSensitiveWarehouseCredentials` (the API responses) drop it.
+    `ProjectService` update → `ProjectModel.mergeMissingProjectConfigSecrets` →
+    `mergeMissingWarehouseSecrets` restores it when it comes back as `''` or is omitted (after
+    `omitEmptySecrets`).
+  - One change, in `backend/src/utils/credentialDestination.ts`: the Postgres credential
+    destination now includes the normalized `httpBaseUrl` (Redshift is unchanged). Saved secrets
+    only carry over when the destination is unchanged. Before this change, pointing a federation
+    connection at a different engine URL, with the same host and port, silently kept the saved
+    signing secret. Tokens minted with it would then go to the new URL. Plain Postgres has no
+    `httpBaseUrl`, so both sides normalize to `''` and nothing changes for it. Contract
+    assumption: a new engine URL counts as a new destination, so the admin must re-enter the
+    secret. Unit test added in `credentialDestination.test.ts`.
+  - Tested: ran a throwaway in-process round trip (deleted afterwards). Save federation creds with
+    the secret → the strip function's response has no secret → resubmit the loaded form with blank
+    password and secret, both raw and through `omitEmptySecrets` → the merged project keeps the
+    stored secret. Changing httpBaseUrl drops it. I did not boot the full server: it needs a
+    migrated DB and session. I ran the feature check (3/3), the credentialDestination,
+    ProjectModel, ProjectService, WarehouseConnectionService, AiServiceAccountService and
+    inheritUpstreamSshTunnelPrivateKey unit tests (2540 pass), and the backend typecheck.
+  - Trap: running the whole `src/__acceptance__/ldq/` folder shows many failures. Those belong to
+    features that aren't built yet. Run single check files.
+- 2026-11-08T17:37:29Z supervisor: ldq-federation-secret-stripping passed the gate in round 1

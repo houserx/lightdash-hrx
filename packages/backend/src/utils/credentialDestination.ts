@@ -179,6 +179,14 @@ const getWarehouseCredentialDestination = (
         case WarehouseTypes.BIGQUERY:
             return [normalizeCredentialBaseUrl(config.accessUrl)];
         case WarehouseTypes.POSTGRES:
+            return [
+                normalizeCredentialHost(config.host),
+                config.port,
+                ...getSshTunnelDestination(config),
+                // A federation identitySigningSecret mints tokens for the
+                // engine at httpBaseUrl, so a new engine URL is a new destination.
+                normalizeCredentialBaseUrl(config.httpBaseUrl),
+            ];
         case WarehouseTypes.REDSHIFT:
             return [
                 normalizeCredentialHost(config.host),
