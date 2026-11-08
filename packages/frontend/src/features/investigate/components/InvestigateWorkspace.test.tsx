@@ -218,4 +218,71 @@ describe('InvestigateWorkspace', () => {
             ),
         );
     });
+
+    it('explains the Platform SQL, not the SQL box, and shows why an explain failed', async () => {
+        const runQuery = vi.fn(async (request: InvestigateRunRequest) => {
+            if (request.sql.includes("'select 2'")) {
+                throw new Error('permission denied: platform_explain');
+            }
+            return {
+                columns: ['plan'],
+                rows: [
+                    {
+                        plan: [
+                            {
+                                Plan: {
+                                    'Node Type': 'Result',
+                                    'Startup Cost': 0,
+                                    'Total Cost': 0.01,
+                                    'Plan Rows': 1,
+                                    'Plan Width': 4,
+                                },
+                            },
+                        ],
+                    },
+                ],
+            };
+        });
+        renderWorkspace(runQuery);
+        fireEvent.click(
+            screen.getByRole('radio', { name: 'Platform Database' }),
+        );
+        fireEvent.change(screen.getByLabelText('Platform SQL'), {
+            target: { value: 'select 1' },
+        });
+        expect(screen.getByRole('button', { name: 'Explain' })).toBeDisabled();
+        fireEvent.change(screen.getByLabelText(/Description/), {
+            target: { value: 'Plan check' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Explain' }));
+        expect(
+            await screen.findByText(
+                'Result  (cost=0.00..0.01 rows=1 width=4)',
+                { normalizer: (text) => text },
+            ),
+        ).toBeInTheDocument();
+        expect(runQuery.mock.calls[0][0]).toMatchObject({
+            sql: "SELECT plan FROM platform_explain('select 1')",
+            audit: { description: 'Plan check' },
+        });
+        expect(screen.queryByText(/Results over/)).toBeNull();
+
+        fireEvent.change(screen.getByLabelText('Platform SQL'), {
+            target: { value: 'select 2' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Explain' }));
+        expect(await screen.findByText('Explain failed')).toBeInTheDocument();
+        expect(
+            screen.getByText('permission denied: platform_explain'),
+        ).toBeInTheDocument();
+        expect(
+            screen.queryByRole('link', { name: 'Download JSON' }),
+        ).toBeNull();
+
+        // Clearing the Platform SQL leaves nothing to explain.
+        fireEvent.change(screen.getByLabelText('Platform SQL'), {
+            target: { value: '' },
+        });
+        expect(screen.getByRole('button', { name: 'Explain' })).toBeDisabled();
+    });
 });

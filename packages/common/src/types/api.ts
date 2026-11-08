@@ -273,6 +273,7 @@ import {
     type StagedExternalSourceUpload,
 } from './externalSources';
 import { type ApiFavoriteItems, type ApiToggleFavorite } from './favorites';
+import { type ApiFederationAccessResponse } from './federation';
 import {
     type DimensionType,
     type FilterableField,
@@ -1842,7 +1843,8 @@ type ApiResults =
     | ApiLearnCommandOutputResponse['results']
     | ApiAiProviderCredentialsResponse['results']
     | ApiAiProviderCredentialCreatedResponse['results']
-    | ApiProjectAiCredentialResponse['results'];
+    | ApiProjectAiCredentialResponse['results']
+    | ApiFederationAccessResponse['results'];
 // Note: EE API types removed from ApiResults to avoid circular imports
 // They can still be used with ApiResponse<T> by importing from '@lightdash/common'
 

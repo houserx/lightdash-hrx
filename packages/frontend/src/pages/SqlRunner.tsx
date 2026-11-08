@@ -16,6 +16,7 @@ import {
     SqlRunnerModeSwitch,
     type SqlRunnerMode,
 } from '../features/investigate/components/SqlRunnerModeSwitch';
+import { useFederationAccess } from '../features/investigate/hooks/useFederationAccess';
 import { useInvestigateRunQuery } from '../features/investigate/hooks/useInvestigateRunQuery';
 import { useInvestigateSaveAsChart } from '../features/investigate/hooks/useInvestigateSaveAsChart';
 import { usePlatformSchemaLoaders } from '../features/investigate/hooks/usePlatformSchemaLoaders';
@@ -90,6 +91,10 @@ const SqlRunner = ({
     const [runnerMode, setRunnerMode] = useState<SqlRunnerMode>('sql');
     const runInvestigateQuery = useInvestigateRunQuery(projectUuid);
     const saveInvestigateChart = useInvestigateSaveAsChart(projectUuid);
+    const { data: federationAccess } = useFederationAccess(
+        projectUuid,
+        isFederationProject(project),
+    );
     const platformSchema = usePlatformSchemaLoaders(projectUuid);
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
@@ -303,6 +308,7 @@ const SqlRunner = ({
                                 runQuery={runInvestigateQuery}
                                 onSaveAsChart={saveInvestigateChart}
                                 platformSchema={platformSchema}
+                                access={federationAccess?.attrs}
                             />
                         </Box>
                     ) : (

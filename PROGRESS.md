@@ -1533,3 +1533,33 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     new explainPlan.test.ts 3/3 (joins, aggregates, index scans, subplans, bad input).
     auditedSql.test.ts 8/8. common tsc, oxlint and oxfmt are clean.
 - 2026-11-08T21:27:32Z supervisor: ldq-platform-explain-sql passed the gate in round 1
+- ldq-platform-explain-only (round 1):
+  - `InvestigateWorkspace` takes an optional `access?: FederationAttrs`. On the Platform Database
+    source, Run shows only with `platform_read`, and Explain shows with `platform_read` or
+    `platform_explain` (CONTRACTS 1.2). Other sources always show Run. With no `access` (the
+    unit tests, or before the claims load), both show and the engine decides.
+  - Explain sends `buildPlatformExplainSql(<Platform SQL statement>)`, which wraps the raw
+    statement, not the SQL box. It always sends the audit (description plus optional ticket)
+    and waits for a description. The `plan` cell of row 0 may be JSON text or an object. It
+    renders through `formatExplainPlanAsText` in new `components/ExplainPlan.tsx`: a Code block,
+    plus "Download JSON" / "Download text" data: links (explain-plan.json / .txt; the JSON is
+    pretty-printed). A failure shows an "Explain failed" alert. The plan has no
+    "Results over ..." label.
+  - Audit fields: always shown for an explain-only user on the Platform Database. For everyone
+    else they still follow the SQL box (an existing unit test pins this), and Explain stays
+    disabled while they are hidden.
+  - `InvestigateEditor` adds the optional `onSourceChange` and `onPlatformSqlChange` callbacks.
+    The workspace needs the source before any SQL exists, and an emptied Platform SQL box,
+    which never produces an editor change.
+  - Page wiring: new `hooks/useFederationAccess(projectUuid, enabled)` fetches GET
+    `/api/v2/projects/{uuid}/federation/access`. SqlRunner enables it only for federation
+    projects and passes `attrs` as `access`. common `types/api.ts` adds
+    `ApiFederationAccessResponse['results']` to `ApiResults` so lightdashApi accepts it.
+  - Tested: no browser or backend, so I drove the components through vitest. Feature check 3/3.
+    InvestigateWorkspace.test.tsx 9/9: the new test explains the Platform SQL, then a failed
+    explain, then clearing the SQL disables Explain. Regressions investigate-audit-fields 3/3,
+    audit-retry 2/2, time-range 2/2, save-as-chart 2/2 and editor-sources 6/6. frontend
+    typecheck, oxlint and oxfmt are clean. The useFederationAccess hook has no unit test.
+  - Next (write-mode-toggle) already passes `access` with `platform_write`. This feature does
+    not interpret `platform_write`.
+- 2026-11-08T21:34:37Z supervisor: ldq-platform-explain-only passed the gate in round 1

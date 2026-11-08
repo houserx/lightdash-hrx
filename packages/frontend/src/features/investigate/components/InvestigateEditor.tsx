@@ -55,6 +55,10 @@ export type InvestigateEditorChange =
 
 type Props = {
     onChange: (change: InvestigateEditorChange) => void;
+    /** Called when the user picks another source; the editor starts on Prometheus. */
+    onSourceChange?: (source: InvestigateSource) => void;
+    /** Called with the Platform SQL statement whenever it changes, including to empty. */
+    onPlatformSqlChange?: (statement: string) => void;
     /** SQL to show in the SQL box before anything is generated, e.g. a query being reopened. */
     initialSql?: string;
     /** Reads the Platform Database catalog; the schema browser is offered only with it. */
@@ -93,6 +97,8 @@ const kindOfSource = (
  */
 export const InvestigateEditor: FC<Props> = ({
     onChange,
+    onSourceChange,
+    onPlatformSqlChange,
     initialSql,
     platformSchema,
 }) => {
@@ -101,7 +107,11 @@ export const InvestigateEditor: FC<Props> = ({
     const [logql, setLogql] = useState('');
     const [isLogqlMetric, setIsLogqlMetric] = useState(false);
     const [traceql, setTraceql] = useState('');
-    const [platformSql, setPlatformSql] = useState('');
+    const [platformSql, setPlatformSqlState] = useState('');
+    const setPlatformSql = (statement: string) => {
+        setPlatformSqlState(statement);
+        onPlatformSqlChange?.(statement);
+    };
     const [isSchemaBrowserOpen, setIsSchemaBrowserOpen] = useState(false);
     const platformSqlInput = useRef<HTMLTextAreaElement>(null);
     const [cloudWatchForm, setCloudWatchForm] = useState<CloudWatchFormValues>(
@@ -250,7 +260,10 @@ export const InvestigateEditor: FC<Props> = ({
                 aria-label="Source"
                 data={SOURCE_OPTIONS}
                 value={source}
-                onChange={(value) => setSource(value as InvestigateSource)}
+                onChange={(value) => {
+                    setSource(value as InvestigateSource);
+                    onSourceChange?.(value as InvestigateSource);
+                }}
             />
             {source === 'prometheus' && (
                 <Textarea
