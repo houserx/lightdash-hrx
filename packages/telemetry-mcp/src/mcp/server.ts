@@ -21,6 +21,7 @@ import { UserMappingError, type MappedUser, type UserResolver } from '../auth/us
 import type { Config } from '../config.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
+import { registerGetTrace } from '../tools/getTrace.js';
 import { registerListSources } from '../tools/listSources.js';
 import { registerQueryCloudwatch } from '../tools/queryCloudwatch.js';
 import { registerQueryCloudwatchLogs } from '../tools/queryCloudwatchLogs.js';
@@ -57,6 +58,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerQueryCloudwatch(server, config, engine, now);
     registerQueryCloudwatchLogs(server, config, engine, now);
     registerSearchTraces(server, config, engine, now);
+    registerGetTrace(server, config, engine);
     return server;
 }
 

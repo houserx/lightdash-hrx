@@ -1026,3 +1026,31 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 2/2. 26 acceptance files pass: the earlier 24, this one, and `sql-injection-safety`, which
   now passes fully. `tool-catalog` still fails until every contract tool exists. `get_trace` is the next feature.
 - 2026-11-08T17:24:21Z supervisor: mcp-tool-search-traces passed the gate in round 1
+
+## mcp-tool-get-trace (2026-11-08)
+
+- New `src/tools/getTrace.ts`. It is registered in `src/mcp/server.ts` after `search_traces`, and `src/index.ts` exports
+  `GET_TRACE_TOOL`, `TRACE_ID_PATTERN`, `buildTraceQuery` and `GetTraceArgs`.
+  - Inputs: `trace_id` (required) and an optional `source` that must name a `tempo` kind source.
+  - SQL: `SELECT * FROM trace($1[, $2])`, following CONTRACTS §1.1. The id is always a bind parameter and is sent as
+    given, with no case change. The result goes through `successResult(table, config.maxOutputBytes)`, so the row and
+    size caps apply, and the root span's null `parent_span_id` stays null.
+  - Refused before any engine connection: a `trace_id` that is not `^[0-9a-fA-F]{16,32}$` (non-hex, injection text,
+    40 hex, empty), a missing or non-string id (SDK zod -32602 with `isError`), and a wrong-kind or unknown source.
+  - Contract assumptions: §1.1/§7 give no id format. The 16-32 hex rule comes from the acceptance test, which matches
+    Tempo's 64-bit and 128-bit ids. Upper-case hex is accepted.
+- Unit tests: `src/tools/getTrace.test.ts`. 198 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/get-trace-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` on port 18993 with an
+  RS256 token, the fake Lightdash and the fake engine.
+  - tools/list shows get_trace as readOnly, with trace_id required.
+  - A 32-hex id sent one extended-protocol `trace($1)` with the id only in params. All 3 spans came back, with the root's
+    parent_span_id null and the attributes as JSON. A 16-hex id with a source sent `trace($1, $2)`.
+  - These gave `isError` with 0 engine queries: `xyz`, `4bf92f35'); --`, a 40-hex id, "", a missing id, a number, a loki
+    source and an unknown source. SIGTERM exits 0.
+  - Trap: something else was already listening on 127.0.0.1:18987, the port the earlier `traces-ut` script uses (pid
+    64110 at the time). The server then failed with EADDRINUSE, and the client hit that listener and got 401
+    invalid_token. Pick a free port in user-test scripts.
+- Results: the check passes 2/2. 27 acceptance files pass: the earlier 26 plus this one. `tool-catalog` still fails until
+  every contract tool exists.
+- 2026-11-08T17:28:44Z supervisor: mcp-tool-get-trace passed the gate in round 1
