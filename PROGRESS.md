@@ -1355,3 +1355,20 @@ token verification for a *valid* token, which feature 39 then hardens.
   bucket refusing: DynamoDB ok, S3 refused, 58000 on both. After the store is restored: 2 rows on
   each protocol. The check passed after init.
 - 2026-11-08T20:26:02Z supervisor: eng-audit-fail-closed passed the gate in round 1
+- 2026-11-08 eng-identity-token-verification (round 1): eng-audit-dynamodb-item already built this
+  (`identity::verify` in `src/identity.rs`). This session verified it and changed no engine code.
+  - Behaviour to keep in mind: the payload must be base64url without padding (a padded payload or
+    signature fails to decode, so it counts as no claims). `v` must be the integer 1 (`1.0` is
+    rejected). `exp == now` counts as expired. Whitespace around the whole token is trimmed. A
+    token that fails verification gives the same 42501 text as no token at all
+    (`... needs telemetry_restricted`). It never reaches the source or the audit store.
+  Tested as a user: `../tmp/token-verify/run.sh <out>` starts the open and restricted Prometheus
+  mocks, the DynamoDB+S3 store and the engine. On one pg-wire session it SETs hrx.identity and
+  runs the restricted promql count for each variant that `tok.py` mints. Fresh, iat +30 s, and
+  near expiry (iat −290 s, exp +10 s) each returned 2. Expired, iat +120 s, 301 s lifetime, v 2,
+  v missing, wrong key, tampered email, `not-a-token` and empty were each accepted by SET, and
+  each query then failed with 42501. After that, a good token returned 2 again. The restricted
+  mock saw 4 requests and the store 8 calls (one PutItem and one PutObject per allowed query),
+  so the rejected tokens reached neither. The check passed after init, as did the `identity::`
+  unit tests.
+- 2026-11-08T20:27:41Z supervisor: eng-identity-token-verification passed the gate in round 1
