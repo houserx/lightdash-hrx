@@ -742,3 +742,12 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     6h→30s, 24h→5m/'1d', 7d→15m, 30d→1h, 90d→3h; maxDataPoints 0 threw ParameterError.
     common tsc, oxlint and oxfmt are clean.
 - 2026-11-08T18:57:26Z supervisor: ldq-time-interval-parameter passed the gate in round 1
+- 2026-11-08 ldq-time-range-parameter (session):
+  - No code change needed. The ldq-time-interval-parameter session already implemented `__range`
+    as `formatPrometheusDuration(to - from)` in `packages/common/src/utils/timeRange.ts`, using the
+    largest whole units d/h/m/s combined (e.g. `1h30m`, `1d2h5s`). This session confirmed it.
+  - Tested: init, then the feature check (3/3). A scratch tsx script (deleted) on the real clock
+    gave these results: now-6h → `__range` '6h' (refresh off and refresh '5m'), absolute
+    09:00Z→10:30Z → '1h30m', and now-90m → '1h30m'.
+  - Next: ldq-time-reserved-parameters (registry wiring) is still open; see the previous entry.
+- 2026-11-08T18:58:58Z supervisor: ldq-time-range-parameter passed the gate in round 1
