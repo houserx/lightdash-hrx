@@ -16,15 +16,20 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { JWTPayload } from 'jose';
+import { InMemoryAskMemoryStore } from '../ask/ask-memory-store.js';
+import { createAskMemoryService, type AskMemoryService } from '../ask/ask-memory.service.js';
+import { createExampleQueries } from '../ask/example-queries.service.js';
 import type { LlmClient } from '../ask/llm.js';
 import type { VerifiedAccessToken } from '../auth/okta.js';
 import { UserMappingError, type MappedUser, type UserResolver } from '../auth/userMapping.js';
 import type { Config } from '../config.js';
+import { createEngineAuditBrowser } from '../engine/audit.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
 import { createAlertingClient, type AlertingClient } from '../lightdash/alerting.js';
 import { registerAlertHistory } from '../tools/alertHistory.js';
 import { registerAlertState } from '../tools/alertState.js';
+import { registerAskData, type AskDataDeps } from '../tools/askData.js';
 import { registerGetTrace } from '../tools/getTrace.js';
 import { registerListSources } from '../tools/listSources.js';
 import { registerPlatformExplain } from '../tools/platformExplain.js';
@@ -52,8 +57,14 @@ export interface McpServerDeps {
     alerting?: AlertingClient;
     /** The server clock (epoch ms); relative time arguments such as `now-1h` resolve against it. */
     now: () => number;
-    /** The model client for AI features (plan advice); absent means AI is not configured. */
+    /** The model client for AI features (plan advice, ask_data); absent means AI is not configured. */
     llm?: LlmClient;
+    /**
+     * What ask_data needs besides the engine, model and clock: the server-wide team memory, the caller's example
+     * queries and identity. Default (unit tests): an in-memory team memory, no example queries and no caller, so an
+     * ask fails before any query.
+     */
+    ask?: Pick<AskDataDeps, 'memory' | 'examples' | 'user' | 'onError'>;
 }
 
 /**
@@ -66,6 +77,20 @@ export interface McpRequestContext {
     logger: Logger;
     /** The model client for AI features; absent means AI is not configured. */
     llm?: LlmClient;
+    /** ask_data's team memory, shared by every request and user of this server. */
+    askMemory: AskMemoryService;
+}
+
+/** The ask_data collaborators used when `McpServerDeps.ask` is not given. */
+function standaloneAsk(now: () => number): NonNullable<McpServerDeps['ask']> {
+    return {
+        memory: createAskMemoryService({ store: new InMemoryAskMemoryStore(), now }),
+        examples: {
+            findExampleQueries: () => Promise.resolve('Past-query examples are unavailable right now.'),
+            resetExamplesCache: () => undefined,
+        },
+        user: () => Promise.reject(new Error('ask_data has no caller identity in this server')),
+    };
 }
 
 /** Builds the MCP server for one request, with every tool registered. */
@@ -86,6 +111,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerPlatformSchema(server, config, engine);
     registerPlatformQuery(server, config, engine);
     registerPlatformExplain(server, config, engine, llm);
+    registerAskData(server, config, { engine, llm, now, ...(deps.ask ?? standaloneAsk(now)) });
     return server;
 }
 
@@ -154,11 +180,28 @@ export async function serveMcpRequest(
     } else {
         // Every tool call opens its own engine connection as the caller (SET hrx.identity, SET statement_timeout).
         const session = createIdentitySession(config, users, auth.claims, context.now);
-        server = createMcpServer(config, { engine: createEngineClient(config.engine, session, [
-                config.identitySecret,
-                config.lightdash.apiToken,
-                config.anthropicApiKey,
-            ]), now: context.now, llm: context.llm });
+        const secrets = [config.identitySecret, config.lightdash.apiToken, config.anthropicApiKey];
+        const { logger } = context;
+        const onError = (err: unknown, where: string): void =>
+            logger.warn('ask_data internal error', { where, error: err instanceof Error ? err.name : typeof err });
+        server = createMcpServer(config, {
+            engine: createEngineClient(config.engine, session, secrets),
+            now: context.now,
+            llm: context.llm,
+            ask: {
+                memory: context.askMemory,
+                examples: createExampleQueries({
+                    audit: createEngineAuditBrowser(config.engine.httpUrl, session, secrets),
+                    now: context.now,
+                    onError,
+                }),
+                user: async () => {
+                    const user = await users.user();
+                    return { sub: user.userUuid, email: user.email };
+                },
+                onError,
+            },
+        });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     logToolCalls(transport, parsedBody, context.logger, sub, context.now);

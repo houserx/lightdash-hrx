@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { AccessTokenError, createOktaVerifier, type AccessTokenVerifier } from '../auth/okta.js';
 import { createCachedUserResolver } from '../auth/userCache.js';
 import { createLightdashUserResolver } from '../auth/userMapping.js';
+import { InMemoryAskMemoryStore, type AskMemoryStore } from '../ask/ask-memory-store.js';
+import { createAskMemoryService } from '../ask/ask-memory.service.js';
 import type { LlmClient } from '../ask/llm.js';
 import type { Config } from '../config.js';
 import { configSecrets, createLogger, type Logger } from '../log.js';
@@ -18,8 +20,10 @@ export interface ServerDeps {
      * Receives each structured log line (one JSON object, no newline), at or above `LOG_LEVEL`. Default: stdout.
      */
     log: (line: string) => void;
-    /** The model client for AI features (plan advice). Default: none, so AI features report "not configured". */
+    /** The model client for AI features (plan advice, ask_data). Default: none, so AI features report "not configured". */
     llm: LlmClient;
+    /** ask_data's team memory store, shared by every user. Default: in memory, lost on restart. */
+    askMemoryStore: AskMemoryStore;
 }
 
 export interface RunningServer {
@@ -149,6 +153,12 @@ export async function startServer({
         now,
         logger,
         llm: deps.llm,
+        askMemory: createAskMemoryService({
+            store: deps.askMemoryStore ?? new InMemoryAskMemoryStore(),
+            now,
+            onError: (err, where) =>
+                logger.warn('ask memory store failed', { where, error: err instanceof Error ? err.name : typeof err }),
+        }),
     };
     const server = http.createServer((req, res) => {
         const start = now();

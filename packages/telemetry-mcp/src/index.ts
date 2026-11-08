@@ -61,6 +61,8 @@ export type { QueryCloudwatchLogsArgs } from './tools/queryCloudwatchLogs.js';
 export { SEARCH_TRACES_TOOL, TRACEQL_DEFAULT_LIMIT, TRACEQL_MAX_LIMIT, buildTraceqlQuery } from './tools/searchTraces.js';
 export type { SearchTracesArgs } from './tools/searchTraces.js';
 export { GET_TRACE_TOOL, TRACE_ID_PATTERN, buildTraceQuery } from './tools/getTrace.js';
+export { ASK_DATA_TOOL, ASK_DATA_TOO_LARGE, askDataResult, parseAskDataArgs } from './tools/askData.js';
+export type { AskDataArgs, AskDataDeps } from './tools/askData.js';
 export type { GetTraceArgs } from './tools/getTrace.js';
 export type { QueryPromqlArgs } from './tools/queryPromql.js';
 export { ToolInputError, capTableBytes, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';

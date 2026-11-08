@@ -1637,3 +1637,61 @@ docs/eng-1799/telemetry-mcp.md
   - The `plan-advice` acceptance file passes 5/5 (the `LlmClient` signature changed).
   - `pnpm typecheck` is clean, and strict tsc over both new test files passes via `../tmp/data-assistant-port/tsconfig.json`.
 - 2026-11-08T18:58:32Z supervisor: mcp-data-assistant-port passed the gate in round 1
+
+## mcp-tool-ask-data (round 1)
+
+- New `src/tools/askData.ts`: the `ask_data` tool. Input is `{question: string 1..1000, history?: [{question, answer}]}`.
+  - zod enforces the length limits. That means an empty or 1001-character question comes back as an SDK `-32602`
+    error. The handler also refuses a blank (whitespace-only) question and malformed history with `ToolInputError`
+    (`parseAskDataArgs`). Both checks happen before any model call or engine connection.
+  - For each call it builds `createDataAssistant({llm: deps.llm ?? null, engine, memory, examples, maxSteps:
+    config.askMaxSteps, queryTimeoutMs: config.statementTimeoutMs, now, onError})` and calls `askData({question,
+    database: config.platformSource, user: {sub: userUuid, email}, history, signal: extra.signal})`.
+  - It returns the `AskResult` as `structuredContent` plus JSON text.
+  - `AskError` becomes an `isError` result with the service's message, with secrets redacted. Any other error goes
+    through `failureResult`.
+  - Annotations are `readOnlyHint: false, destructiveHint: false, openWorldHint: true`, as tool-catalog requires
+    (ask_data writes team memory).
+  - Output cap (`askDataResult`): if the result is over `MCP_MAX_OUTPUT_BYTES`, every query's `rows` is emptied
+    (`moreRowsAvailable: true`) so the answer still gets through. If it is still too large, the result is an error.
+    This is my own reading; the spec doesn't decide it.
+- `src/mcp/server.ts`:
+  - `McpServerDeps.ask?` carries `{memory, examples, user, onError}`.
+  - `serveMcpRequest` fills it per request:
+    - examples: `createExampleQueries({audit: createEngineAuditBrowser(config.engine.httpUrl, session, secrets)})`;
+    - user: the request's memoised Lightdash user, so there is no extra Lightdash call;
+    - `onError`: logs a warn with only `where` and the error name.
+  - Without `ask` (unit tests calling `createMcpServer` directly) it uses an in-memory memory, no examples, and a user
+    that rejects.
+- `src/http/server.ts`: `ServerDeps.askMemoryStore` is new. `McpRequestContext.askMemory` is one server-wide
+  `createAskMemoryService({store: deps.askMemoryStore ?? new InMemoryAskMemoryStore(), now, onError})`, shared across
+  requests and users.
+- `src/index.ts` exports `ASK_DATA_TOOL`, `ASK_DATA_TOO_LARGE`, `askDataResult`, `parseAskDataArgs` and the types.
+- New unit file `src/tools/askData.test.ts` (5 cases: argument checks, result, row-dropping cap, too large).
+- Tested as a user: after `bash ./init.sh`, `../tmp/tool-ask-data/drive.test.ts` (run with `pnpm exec vitest run
+  --root ../tmp/tool-ask-data --disableConsoleIntercept drive.test.ts` from the package) started the built
+  `dist/index.js` against the fake Okta, Lightdash and engine, plus a `ScriptedLlm`. A real MCP client connected over
+  streamable HTTP with an Okta bearer token.
+  - `tools/list` shows ask_data with `question` and `history`.
+  - ask_data (describe_tables → run_sql → submit_answer) returned answered, "42", `evidenceQueries` [1], and query 1
+    ok with columns [n] and 1 row.
+  - The model's tools were the 7 portal tools, and the catalog mentioned orders.
+  - The engine saw `platform_tables()`, `platform_columns($1,$2)` and `platform_query($1)`, with the wrapped model SQL
+    only as the param. Every token had `agent: true`, source `mcp`, and description "AI Ask (claude-sonnet-5-5; rows
+    shared with model): <question>".
+  - Empty, 1001-character and blank questions each gave an error. A follow-up with history made 2 model calls, and
+    the earlier question was in the messages.
+- Results:
+  - Feature check: 5/5.
+  - Also passing, run one at a time: ai-not-configured 2/2, structured-logs 3/3, plan-advice 5/5,
+    unknown-user-no-tools 5/5, ask-data-memory 4/4, ask-data-example-queries 2/2, ask-data-abstain 4/4,
+    ask-data-unverified-figures 3/3, and unit `src/mcp/server.test.ts` 5/5.
+  - `pnpm typecheck` is clean.
+- **For the next sessions:**
+  - The checks for mcp-ask-data-abstain, -unverified-figures, -memory, -example-queries and mcp-ai-not-configured
+    already pass with this wiring. Those sessions may only need to verify them and record it.
+  - No real Anthropic client exists yet. PROGRESS "Public API" says to build one from `ANTHROPIC_API_KEY` when
+    `deps.llm` is absent; no feature on the list covers it. Today, a server with a key but no `deps.llm` reports
+    "not configured".
+  - MCP progress notifications are not sent; `onProgress` is unused.
+- 2026-11-08T19:03:16Z supervisor: mcp-tool-ask-data passed the gate in round 1
