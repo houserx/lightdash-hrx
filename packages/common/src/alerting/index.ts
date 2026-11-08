@@ -8,3 +8,4 @@ export * from './evaluatorIdentity';
 export * from './routingMatchers';
 export * from './routingTree';
 export * from './routingGrouping';
+export * from './templateEngine';
