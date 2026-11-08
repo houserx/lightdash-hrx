@@ -1749,3 +1749,32 @@ token verification for a *valid* token, which feature 39 then hardens.
   close when the engine process exits. There is no reaper, so up to 10 idle connections can stay
   open until the next acquire prunes them.
 - 2026-11-08T21:39:54Z supervisor: eng-platform-pools passed the gate in round 1
+- 2026-11-08 eng-audit-failed-query-recorded (round 1): Audited Queries whose run fails are now
+  audited too. audit.rs: `Execution.row_count` is replaced by `outcome: Result<usize, &str>`.
+  `record()` writes status "success" with rowCount, or status "error" with rowCount null and
+  errorMessage set. The integrity hash covers status and rowCount as before, so it is hashed
+  with "error" and null. pg.rs `Sql::run`: the execute result is no longer `?`-ed before the
+  audit write. A failed run writes its record, then returns the original error, so the client
+  still sees e.g. 22012. New `error_message()` gives the same message text `query_error` sends
+  (the SqlStateError message, else the DataFusion text). For a platform read that is
+  `platform source "platform": division by zero`.
+  Contract assumptions (CONTRACTS §6 says nothing about failed runs): (1) if the audit write of
+  a failed run fails, the client gets 58000 "audit write failed" instead of the query's error,
+  as it would for a success (fail closed, cause in the engine log). (2) A statement_timeout
+  (57014) and max_rows overflow (54000) are failed runs and are audited. A statement dropped
+  mid-run (CancelRequest, disconnect) never reaches the write, so it is not audited. (3)
+  Refusals before execution (missing claim, missing description, read guard 42501, plan
+  errors) are still not audited, as the existing tests require.
+  Tested as a user: `../tmp/platform-audit-error/run.sh <out>` (throwaway cluster, a store mock
+  that saves each PutItem, engine, pgclient `platform` bin, and verify.mjs running the portal's
+  computeIntegrityHash from ../tmp/integrity/fixture.mjs). The boom query fails 22012 through
+  both extended and simple protocol, and each failure writes an item with status error,
+  rowCount null, the division-by-zero errorMessage and a matching hash. The 3-row query gives
+  status success, rowCount 3 and a matching hash. Check passes. These also pass: identity
+  _restricted_denied, _audited_query_description_required, _restricted_loki_selectors,
+  _restricted_cloudwatch_log_groups; platform _query_enforcement, _statement_timeout,
+  _cancel_on_disconnect, _max_rows, _explain; audit _fail_closed, _dynamodb_item,
+  _integrity_hash; audit unit tests (new failed-execution case). Build has no warnings.
+  Trap: clippy and rustfmt are not installed on this machine's stable toolchain (rustup
+  component missing), so neither was run this round.
+- 2026-11-08T21:45:41Z supervisor: eng-audit-failed-query-recorded passed the gate in round 1

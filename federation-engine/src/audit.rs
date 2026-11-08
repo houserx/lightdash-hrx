@@ -30,7 +30,8 @@ pub struct Execution<'a> {
     pub sql: &'a str,
     /// The audited sources the statement read (the portal's `database`).
     pub sources: &'a [String],
-    pub row_count: usize,
+    /// The rows returned, or the error the client got (the portal's `errorMessage`).
+    pub outcome: Result<usize, &'a str>,
     pub duration: Duration,
 }
 
@@ -54,7 +55,7 @@ impl AuditWriter {
         }
     }
 
-    /// Writes the record of a successful Audited Query. The error text is for the engine's log
+    /// Writes the record of an Audited Query, successful or not. The error text is for the engine's log
     /// only; clients get "audit write failed".
     pub async fn write(&self, execution: &Execution<'_>) -> Result<(), String> {
         let created_at = chrono::Utc::now()
@@ -158,7 +159,8 @@ impl AuditWriter {
     }
 }
 
-/// The portal's `Execution` for a successful read, in the portal's key order. `linearTicketId`
+/// The portal's `Execution` for a read, in the portal's key order: status `success` with its
+/// `rowCount`, or status `error` with its `errorMessage` and a null `rowCount`. `linearTicketId`
 /// is left out without a ticket (the `byTicket` index is sparse); `savedScriptId` is never set.
 pub fn record(
     e: &Execution<'_>,
@@ -167,6 +169,10 @@ pub fn record(
     integrity_key: Option<&str>,
 ) -> Vec<(&'static str, Value)> {
     let id_ = e.identity;
+    let (status, row_count, error_message) = match e.outcome {
+        Ok(rows) => ("success", json!(rows), Value::Null),
+        Err(message) => ("error", Value::Null, json!(message)),
+    };
     let mut fields: Vec<(&'static str, Value)> = vec![
         ("id", json!(id)),
         ("sql", json!(e.sql)),
@@ -180,13 +186,13 @@ pub fn record(
     fields.extend([
         ("executedByEmail", json!(id_.email)),
         ("executedBySub", json!(id_.sub)),
-        ("status", json!("success")),
-        ("rowCount", json!(e.row_count)),
+        ("status", json!(status)),
+        ("rowCount", row_count),
         (
             "durationMs",
             json!(u64::try_from(e.duration.as_millis()).unwrap_or(u64::MAX)),
         ),
-        ("errorMessage", Value::Null),
+        ("errorMessage", error_message),
         ("preview", json!(false)),
         ("action", json!(id_.action())),
         ("integrityHash", Value::Null),
@@ -312,7 +318,7 @@ mod tests {
             identity: &id,
             sql: "SELECT \"x\"\n -- ü",
             sources: &sources,
-            row_count: 2,
+            outcome: Ok(2),
             duration: Duration::from_millis(1234),
         };
         let created = "2026-11-08T10:00:00.123Z";
@@ -344,6 +350,30 @@ mod tests {
         let canonical = canonical.replace("\"ENG-1\"", "null");
         assert_eq!(
             r.iter().find(|(k, _)| *k == "integrityHash").unwrap().1,
+            json!(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))
+        );
+    }
+
+    #[test]
+    fn failed_executions_have_status_error_and_a_null_row_count() {
+        let id = identity(None);
+        let sources = vec!["platform".to_string()];
+        let e = Execution {
+            identity: &id,
+            sql: "SELECT 1",
+            sources: &sources,
+            outcome: Err("division by zero"),
+            duration: Duration::from_millis(5),
+        };
+        let created = "2026-11-08T10:00:00.123Z";
+        let r = record(&e, "id-1", created, None);
+        let get = |k: &str| r.iter().find(|(n, _)| *n == k).unwrap().1.clone();
+        assert_eq!(get("status"), json!("error"));
+        assert_eq!(get("rowCount"), Value::Null);
+        assert_eq!(get("errorMessage"), json!("division by zero"));
+        let canonical = r#"{"sql":"SELECT 1","mode":"read","description":"why","database":"platform","linearTicketId":null,"executedBySub":"u-1","status":"error","rowCount":null,"preview":false,"action":"query","createdAt":"2026-11-08T10:00:00.123Z"}"#;
+        assert_eq!(
+            get("integrityHash"),
             json!(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))
         );
     }

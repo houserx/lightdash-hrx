@@ -363,7 +363,11 @@ impl Sql {
     /// Platform Database sources in `audited`) is checked again against the identity the
     /// connection has now, and its audit record is written after it ran and before any row is
     /// returned: if the write fails, the query fails with 58000 and returns nothing (CONTRACTS
-    /// §6). `sql` is the statement as the client sent it.
+    /// §6). A run that fails is audited too, with status `error` and the message the client gets;
+    /// if that write fails as well, the client gets 58000 instead of the query's error. A
+    /// `statement_timeout` (57014) is such a failed run; a statement cancelled mid-run (a cancel
+    /// request, the client going away) is not audited. `sql` is the statement as the client sent
+    /// it.
     async fn run(
         &self,
         plan: LogicalPlan,
@@ -388,16 +392,24 @@ impl Sql {
             return Err(audit_write_failed("no identity or no [audit] store".to_string()));
         };
         let started = Instant::now();
-        let (schema, batches) = self.execute(plan, settings).await?;
+        let result = self.execute(plan, settings).await;
+        let message;
+        let outcome = match &result {
+            Ok((_, batches)) => Ok(batches.iter().map(RecordBatch::num_rows).sum()),
+            Err(e) => {
+                message = error_message(e);
+                Err(message.as_str())
+            }
+        };
         let execution = Execution {
             identity: &identity,
             sql,
             sources: &sources,
-            row_count: batches.iter().map(RecordBatch::num_rows).sum(),
+            outcome,
             duration: started.elapsed(),
         };
         writer.write(&execution).await.map_err(audit_write_failed)?;
-        Ok((schema, batches))
+        result
     }
 
     /// Runs a plan to completion in a connection's settings. With a `statement_timeout` set,
@@ -1113,6 +1125,16 @@ impl<T: postgres_types::ToSql + pgwire::types::ToSqlText> PutValue for T {
     ) -> PgWireResult<()> {
         encoder.encode_field_with_type_and_format(self, ty, format, options)
     }
+}
+
+/// The message of the ErrorResponse a DataFusion error becomes (see [`query_error`]).
+fn error_message(e: &DataFusionError) -> String {
+    if let DataFusionError::External(inner) = e.find_root()
+        && let Some(e) = inner.downcast_ref::<SqlStateError>()
+    {
+        return e.message.clone();
+    }
+    e.to_string()
 }
 
 /// Maps a DataFusion error to an ErrorResponse with a SQLSTATE.
