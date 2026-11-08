@@ -2002,3 +2002,36 @@ token verification for a *valid* token, which feature 39 then hardens.
   already at HEAD. The code is laid out wider than default rustfmt and there is no rustfmt.toml.
   I didn't reformat anything. Clippy is clean.
 - 2026-11-08T22:23:01Z supervisor: eng-write-confirmations-verify-endpoint passed the gate in round 1
+- eng-audit-browser-by-month (functional): the new module `src/audit_browser.rs` handles
+  `GET /v1/audit`. `server::http_router` merges it as its own Router with state
+  `Arc<AuditBrowser>`. The browser holds its own `AuditWriter` built from `[audit]`, so it does not
+  share WriteMode's. The order of checks is: bearer identity via `identity::verify`, else 401
+  (`write::bearer` is now `pub(crate)`); `attrs.platform_read`, else 403 naming it; `month`, else 400.
+  The 401 and 403 checks run before the store is touched. The month must be `YYYY-MM` with 01-12,
+  else 400. `AuditWriter::query_page` (audit.rs) is a generic GSI page: `#pk = :pk`,
+  ScanIndexForward false, Limit 25, ExclusiveStartKey. It returns items and LastEvaluatedKey as
+  plain JSON, unmarshalled the DocumentClient way. `nextCursor` is
+  base64(JSON {month, key: LastEvaluatedKey}), or null on the last page. A cursor that does not
+  decode, or whose `month` differs from the request's, is 400. A space in the cursor is read as `+`.
+  A failed Query is 502 "audit store query failed" (cause in the engine log). Without `[audit]`
+  the answer is 503.
+  Not built yet (left to eng-audit-browser-by-ticket-and-user): `ticket`/`user` (precedence ticket >
+  user > month, byTicket/byUser, cursor = base64(JSON(LastEvaluatedKey))) and the no-parameter
+  last-30-days browse. For now, a request without `month` is 400 "month=YYYY-MM is required". The
+  next session should dispatch in `audit_browser::browse` and reuse `query_page`.
+  Tested as a user: `../tmp/audit-browser/run.sh <out>` (ports 59681-59685). It runs the engine
+  against `store.py`, a Query-only DynamoDB stand-in seeded with 30 October and 3 September 2026
+  items. With curl:
+  - month=2026-10 gave 200 with 25 items, from seeded 29 (10-30) down to seeded 5, all October,
+    newest first. nextCursor decoded to {month 2026-10, key {id, createdAtMonth, createdAt}}.
+  - With that cursor: 5 items, seeded 4 down to seeded 0, nextCursor null. No overlap; the union
+    of both pages is 30 ids.
+  - month=2026-09 gave its 3 items.
+  - month=2026-13 gave 400.
+  - The October cursor sent with month=2026-09 gave 400.
+  - No bearer gave 401; a token without platform_read gave 403.
+  - The store saw only byMonth Queries (Limit 25, ScanIndexForward false).
+  The check passes, and so do audit::eng_audit_browser_authorization and
+  write::eng_write_confirmations_verify_endpoint. Clippy -D warnings (tmp/rustup 1.99.1) is clean;
+  the new file is rustfmt-clean.
+- 2026-11-08T22:27:38Z supervisor: eng-audit-browser-by-month passed the gate in round 1

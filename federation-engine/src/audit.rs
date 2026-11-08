@@ -10,6 +10,7 @@
 //! The put is append-only (`attribute_not_exists(id)`). Both writes happen after the query ran
 //! and before any row is sent: if either fails, the client gets SQLSTATE 58000 and no rows.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use aws_config::Region;
@@ -138,6 +139,51 @@ impl AuditWriter {
                 )
             })?;
         Ok(id)
+    }
+
+    /// One page of the `executions` table's GSI `index`, the partition where `key_attr` equals
+    /// `key_value`, newest first (`createdAt` descending), at most `limit` items, continuing
+    /// after `start` (a `LastEvaluatedKey`). Items and the next key come back as plain JSON, as
+    /// the portal's DocumentClient sees them.
+    pub async fn query_page(
+        &self,
+        index: &str,
+        key_attr: &str,
+        key_value: &str,
+        limit: i32,
+        start: Option<&serde_json::Map<String, Value>>,
+    ) -> Result<(Vec<Value>, Option<Value>), String> {
+        let start = start
+            .map(|key| {
+                key.iter()
+                    .map(|(k, v)| Ok((k.clone(), key_attribute(v)?)))
+                    .collect::<Result<HashMap<_, _>, String>>()
+            })
+            .transpose()?;
+        let out = self
+            .dynamodb()
+            .await
+            .query()
+            .table_name(&self.settings.dynamodb_table)
+            .index_name(index)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", key_attr)
+            .expression_attribute_values(":pk", AttributeValue::S(key_value.to_string()))
+            .scan_index_forward(false)
+            .limit(limit)
+            .set_exclusive_start_key(start)
+            .send()
+            .await
+            .map_err(|e| {
+                format!(
+                    "DynamoDB Query on {} index {index}: {}",
+                    self.settings.dynamodb_table,
+                    aws_sdk_dynamodb::error::DisplayErrorContext(e)
+                )
+            })?;
+        let items = out.items().iter().map(plain_item).collect();
+        let next = out.last_evaluated_key().map(plain_item);
+        Ok((items, next))
     }
 
     /// The shared AWS config: the default credential chain in `[audit] region` (else the
@@ -315,6 +361,42 @@ fn attribute(v: &Value) -> AttributeValue {
         Value::Number(n) => AttributeValue::N(n.to_string()),
         Value::String(s) => AttributeValue::S(s.clone()),
         other => AttributeValue::S(other.to_string()),
+    }
+}
+
+/// A DynamoDB item as plain JSON, as the portal's DocumentClient unmarshals it.
+fn plain_item(item: &HashMap<String, AttributeValue>) -> Value {
+    Value::Object(
+        item.iter()
+            .map(|(k, v)| (k.clone(), plain_attribute(v)))
+            .collect(),
+    )
+}
+
+fn plain_attribute(v: &AttributeValue) -> Value {
+    match v {
+        AttributeValue::S(s) => json!(s),
+        AttributeValue::N(n) => n
+            .parse::<i64>()
+            .ok()
+            .map(Value::from)
+            .or_else(|| n.parse::<f64>().ok().and_then(serde_json::Number::from_f64).map(Value::Number))
+            .unwrap_or_else(|| json!(n)),
+        AttributeValue::Bool(b) => json!(b),
+        AttributeValue::L(l) => Value::Array(l.iter().map(plain_attribute).collect()),
+        AttributeValue::M(m) => plain_item(m),
+        AttributeValue::Ss(s) => json!(s),
+        AttributeValue::Ns(n) => json!(n),
+        _ => Value::Null,
+    }
+}
+
+/// A key attribute from a cursor: keys hold only strings (and numbers, for completeness).
+fn key_attribute(v: &Value) -> Result<AttributeValue, String> {
+    match v {
+        Value::String(s) => Ok(AttributeValue::S(s.clone())),
+        Value::Number(n) => Ok(AttributeValue::N(n.to_string())),
+        other => Err(format!("a key attribute cannot be {other}")),
     }
 }
 

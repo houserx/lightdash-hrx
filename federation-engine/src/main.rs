@@ -5,6 +5,7 @@
 //! sources.
 
 mod audit;
+mod audit_browser;
 mod aws;
 mod cloudwatch;
 mod cloudwatch_logs;

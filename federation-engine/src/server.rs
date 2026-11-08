@@ -12,6 +12,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::Interest;
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::audit_browser::AuditBrowser;
 use crate::pg::{PgHandlers, SOURCE_CONNECT_TIMEOUT};
 use crate::write::WriteMode;
 
@@ -159,7 +160,8 @@ async fn hung_up(watcher: &TcpStream) {
 
 /// The HTTP side port (CONTRACTS §1.3). `/healthz` does not probe sources yet (eng-healthz).
 /// `POST /v1/write` is Write Mode (§4.2). `POST /v1/write/confirmations/verify` exists only with
-/// `test_mode = true`; otherwise it is 404 like any unknown path.
+/// `test_mode = true`; otherwise it is 404 like any unknown path. `GET /v1/audit` is the audit
+/// browser.
 fn http_router(config: &Config) -> Router {
     let write = Arc::new(WriteMode::new(config, SOURCE_CONNECT_TIMEOUT));
     let mut router = Router::new()
@@ -171,5 +173,9 @@ fn http_router(config: &Config) -> Router {
             post(crate::write::handle_verify),
         );
     }
-    router.with_state(write)
+    let audit = Arc::new(AuditBrowser::new(config, SOURCE_CONNECT_TIMEOUT));
+    let browser = Router::new()
+        .route("/v1/audit", get(crate::audit_browser::handle))
+        .with_state(audit);
+    router.with_state(write).merge(browser)
 }

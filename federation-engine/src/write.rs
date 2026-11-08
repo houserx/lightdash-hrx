@@ -390,7 +390,7 @@ fn verify(write: &WriteMode, headers: &HeaderMap, body: &[u8]) -> Result<bool, F
 }
 
 /// The token in `Authorization: Bearer <token>`.
-fn bearer(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let (scheme, token) = value.trim().split_once(' ')?;
     scheme
