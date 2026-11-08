@@ -71,4 +71,29 @@ describe('WriteModePanel', () => {
             ).not.toBeInTheDocument(),
         );
     });
+
+    it('shows a refused commit and asks for COMMIT again', async () => {
+        const write = vi.fn(async () => {
+            throw new Error('Commit is not allowed from an AI agent context');
+        });
+        renderPanel('DELETE FROM locks WHERE id = 1', {
+            createConfirmation: confirmation,
+            write,
+        });
+        describeAs('Release a lock');
+        const confirm = screen.getByLabelText('Type COMMIT to confirm');
+        fireEvent.change(confirm, { target: { value: 'COMMIT' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Commit' }));
+        expect(
+            await screen.findByText(
+                'Commit is not allowed from an AI agent context',
+            ),
+        ).toBeInTheDocument();
+        expect(write).toHaveBeenCalledWith(
+            expect.objectContaining({ mode: 'commit' }),
+        );
+        expect(confirm).toHaveValue('');
+        expect(screen.getByRole('button', { name: 'Commit' })).toBeDisabled();
+        expect(screen.getByRole('button', { name: 'Preview' })).toBeEnabled();
+    });
 });

@@ -15,7 +15,11 @@ import {
     Text,
     TextInput,
 } from '@mantine/core';
-import { IconAlertCircle, IconEye } from '@tabler/icons-react';
+import {
+    IconAlertCircle,
+    IconDatabaseEdit,
+    IconEye,
+} from '@tabler/icons-react';
 import { useState, type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
 
@@ -33,6 +37,9 @@ export type WriteModePanelProps = {
     statement: string;
     api: WriteModeApi;
 };
+
+/** What the user must type, exactly, before Commit is enabled. */
+const COMMIT_CONFIRMATION = 'COMMIT';
 
 type WriteState =
     | { status: 'idle' }
@@ -104,6 +111,9 @@ const WriteResultView: FC<{ result: WriteResult }> = ({ result }) => (
             </Badge>
             <Text size="sm">Rows affected: {result.rows_affected}</Text>
         </Group>
+        <Text size="xs" c="dimmed">
+            Audit id: <Code>{result.audit_id}</Code>
+        </Text>
         {result.preview && (
             <Text size="xs" c="dimmed">
                 Preview ran the statement in a transaction that was rolled back;
@@ -115,14 +125,17 @@ const WriteResultView: FC<{ result: WriteResult }> = ({ result }) => (
 );
 
 /**
- * Write Mode for one Platform Database statement. Preview needs a Description (a Linear ticket
- * is optional); it fetches a fresh confirmation token for the statement, runs it in a
- * transaction the engine always rolls back, and shows the rows affected and returned rows.
+ * Write Mode for one Platform Database statement. Preview and Commit both need a Description (a
+ * Linear ticket is optional), and each fetches its own fresh confirmation token for the
+ * statement. Preview runs it in a transaction the engine always rolls back; Commit also needs
+ * COMMIT typed exactly, and the typed confirmation is cleared once a commit is sent, so every
+ * commit is confirmed again. The result shows the rows affected, returned rows and audit id.
  * Engine refusals are shown as they were sent.
  */
 export const WriteModePanel: FC<WriteModePanelProps> = ({ statement, api }) => {
     const [description, setDescription] = useState('');
     const [ticket, setTicket] = useState('');
+    const [commitConfirmation, setCommitConfirmation] = useState('');
     const [state, setState] = useState<WriteState>({ status: 'idle' });
 
     const trimmedDescription = description.trim();
@@ -136,15 +149,17 @@ export const WriteModePanel: FC<WriteModePanelProps> = ({ statement, api }) => {
             : undefined;
     const canPreview =
         statement.trim() !== '' && trimmedDescription !== '' && !isRunning;
+    const canCommit = canPreview && commitConfirmation === COMMIT_CONFIRMATION;
 
-    const handlePreview = async () => {
+    const runWrite = async (mode: ApiWriteRequest['mode']) => {
+        if (mode === 'commit') setCommitConfirmation('');
         setState({ status: 'running' });
         try {
             const { confirmationToken } =
                 await api.createConfirmation(statement);
             const result = await api.write({
                 statement,
-                mode: 'preview',
+                mode,
                 confirmationToken,
                 description: trimmedDescription,
                 ...(trimmedTicket && { ticket: trimmedTicket }),
@@ -154,7 +169,12 @@ export const WriteModePanel: FC<WriteModePanelProps> = ({ statement, api }) => {
             setState({
                 status: 'failed',
                 statement,
-                error: errorMessage(error, 'The preview failed'),
+                error: errorMessage(
+                    error,
+                    mode === 'commit'
+                        ? 'The commit failed'
+                        : 'The preview failed',
+                ),
             });
         }
     };
@@ -192,16 +212,36 @@ export const WriteModePanel: FC<WriteModePanelProps> = ({ statement, api }) => {
                         }
                     />
                 </Group>
-                <Group justify="flex-end">
+                <Group justify="flex-end" align="flex-end">
+                    <TextInput
+                        size="xs"
+                        label="Type COMMIT to confirm"
+                        placeholder={COMMIT_CONFIRMATION}
+                        autoComplete="off"
+                        value={commitConfirmation}
+                        onChange={(event) =>
+                            setCommitConfirmation(event.currentTarget.value)
+                        }
+                    />
                     <Button
                         size="xs"
                         variant="default"
                         leftSection={<MantineIcon icon={IconEye} />}
                         disabled={!canPreview}
                         loading={isRunning}
-                        onClick={handlePreview}
+                        onClick={() => runWrite('preview')}
                     >
                         Preview
+                    </Button>
+                    <Button
+                        size="xs"
+                        color="red"
+                        leftSection={<MantineIcon icon={IconDatabaseEdit} />}
+                        disabled={!canCommit}
+                        loading={isRunning}
+                        onClick={() => runWrite('commit')}
+                    >
+                        Commit
                     </Button>
                 </Group>
                 {shown?.status === 'failed' && (

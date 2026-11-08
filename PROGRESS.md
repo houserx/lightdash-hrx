@@ -1771,3 +1771,19 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     InvestigateWorkspace 12/12, write-mode-toggle 2/2. Frontend typecheck, oxlint and oxfmt
     are clean.
 - 2026-11-08T22:09:31Z supervisor: ldq-write-mode-preview passed the gate in round 1
+- ldq-write-mode-commit (round 1):
+  - `WriteModePanel` now has a "Type COMMIT to confirm" field and a red Commit button next to
+    Preview. Commit is enabled only when Preview could run (the statement and the description
+    are non-blank and nothing is running) and the field holds exactly `COMMIT`, case-sensitive.
+    Preview and Commit share one `runWrite(mode)` flow, and each call fetches its own fresh
+    confirmation token from `api.createConfirmation(statement)`.
+  - Decision: the typed COMMIT is cleared as soon as a commit is sent, whether it then
+    succeeds or is refused, so every commit attempt has to be confirmed again.
+  - The result view now shows "Audit id: <id>" for both previews and commits, and "Committed"
+    when the engine returns preview false. A refused commit uses the existing "Write refused"
+    alert, falling back to "The commit failed".
+  - Tested: no Docker or browser tool, so I rendered the real panel in jsdom. Feature check 3/3.
+    WriteModePanel.test.tsx 3/3; the new test covers a refused commit: the error is shown, the
+    confirmation is cleared and Commit is disabled again. write-mode-preview 2/2 and
+    write-mode-toggle 2/2. Frontend typecheck, oxlint and oxfmt are clean.
+- 2026-11-08T22:11:54Z supervisor: ldq-write-mode-commit passed the gate in round 1
