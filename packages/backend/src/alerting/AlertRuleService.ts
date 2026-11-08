@@ -16,6 +16,8 @@ import {
     NotFoundError,
     ParameterError,
     parsePrometheusDuration,
+    type AlertHistoryFilters,
+    type AlertProjectHistoryEntry,
     type AlertRule,
     type AlertRuleDefinition,
     type AlertRuleListFilters,
@@ -310,6 +312,53 @@ export const parseAlertRuleListFilters = (
     return filters;
 };
 
+export const ALERT_HISTORY_DEFAULT_LIMIT = 100;
+export const ALERT_HISTORY_MAX_LIMIT = 1000;
+
+export type AlertHistoryQuery = AlertHistoryFilters & { limit: number };
+
+/**
+ * Reads the project history's query string: `rule=<uuid>`,
+ * `since=<ISO 8601 time>` and `limit=<1..1000>` (default 100), each at most
+ * once. Other parameters are ignored.
+ */
+export const parseAlertHistoryQuery = (
+    query: Record<string, unknown>,
+): AlertHistoryQuery => {
+    const ruleUuid = singleQueryValue('rule', query.rule);
+    if (ruleUuid !== undefined && !UUID_PATTERN.test(ruleUuid)) {
+        throw new ParameterError('rule must be a uuid');
+    }
+    const sinceValue = singleQueryValue('since', query.since);
+    const since = sinceValue === undefined ? undefined : new Date(sinceValue);
+    if (
+        since !== undefined &&
+        (!/^\d{4}-\d{2}-\d{2}T/.test(sinceValue ?? '') ||
+            Number.isNaN(since.getTime()))
+    ) {
+        throw new ParameterError('since must be an ISO 8601 time');
+    }
+    const limitValue = singleQueryValue('limit', query.limit);
+    const limit =
+        limitValue === undefined
+            ? ALERT_HISTORY_DEFAULT_LIMIT
+            : Number(limitValue);
+    if (
+        !/^\d+$/.test(limitValue ?? '1') ||
+        limit < 1 ||
+        limit > ALERT_HISTORY_MAX_LIMIT
+    ) {
+        throw new ParameterError(
+            `limit must be a whole number from 1 to ${ALERT_HISTORY_MAX_LIMIT}`,
+        );
+    }
+    return {
+        ...(ruleUuid !== undefined && { ruleUuid }),
+        ...(since !== undefined && { since }),
+        limit,
+    };
+};
+
 const matchesFilters = (
     rule: AlertRuleSummary,
     { state, labels, spaceUuid }: AlertRuleListFilters,
@@ -463,6 +512,27 @@ export class AlertRuleService {
         await this.assertAbility(user, 'view', projectUuid);
         const rule = await this.getRuleOrThrow(projectUuid, ruleUuid);
         return this.deps.alertStateHistoryModel.listForRule(rule.uuid);
+    }
+
+    /**
+     * The project's state history, newest first, for the telemetry MCP
+     * server: optionally one rule's only, and only entries at or after
+     * `since`. An unknown rule is a 404.
+     */
+    async listProjectHistory(
+        user: SessionUser,
+        projectUuid: string,
+        { limit, ...filters }: AlertHistoryQuery,
+    ): Promise<AlertProjectHistoryEntry[]> {
+        await this.assertAbility(user, 'view', projectUuid);
+        if (filters.ruleUuid !== undefined) {
+            await this.getRuleOrThrow(projectUuid, filters.ruleUuid);
+        }
+        return this.deps.alertStateHistoryModel.listForProject(
+            projectUuid,
+            filters,
+            limit,
+        );
     }
 
     private async nextFreeSlug(

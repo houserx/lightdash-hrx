@@ -1,8 +1,11 @@
 import {
+    type AlertHistoryFilters,
     type AlertInstanceState,
+    type AlertProjectHistoryEntry,
     type AlertStateHistoryEntry,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
+import { AlertRulesTableName } from './AlertRuleModel';
 import { type AlertSeriesTransition } from './evaluateAlertSeries';
 
 // Table from migration 20261108120000_create_alerting_tables.
@@ -24,6 +27,51 @@ type DbAlertStateHistory = {
     value: number | null;
     reason: string | null;
     at: Date;
+};
+
+const HISTORY_COLUMNS = [
+    'alert_state_history_uuid',
+    'alert_rule_uuid',
+    'fingerprint',
+    'labels',
+    'previous_state',
+    'state',
+    'value',
+    'reason',
+    'at',
+] as const;
+
+const NEWEST_FIRST: Array<{
+    column: string;
+    order: 'asc' | 'desc';
+    nulls?: 'first' | 'last';
+}> = [
+    { column: 'at', order: 'desc' },
+    // Rule-level entries (no fingerprint) first within a slot.
+    { column: 'fingerprint', order: 'asc', nulls: 'first' },
+];
+
+const toHistoryEntry = (row: DbAlertStateHistory): AlertStateHistoryEntry => {
+    if (row.fingerprint === null || row.state === EvaluationSkippedState) {
+        return {
+            type: 'evaluation_skipped',
+            uuid: row.alert_state_history_uuid,
+            ruleUuid: row.alert_rule_uuid,
+            reason: row.reason ?? 'unknown',
+            at: row.at.toISOString(),
+        };
+    }
+    return {
+        type: 'transition',
+        uuid: row.alert_state_history_uuid,
+        ruleUuid: row.alert_rule_uuid,
+        fingerprint: row.fingerprint,
+        labels: row.labels,
+        previousState: row.previous_state ?? 'normal',
+        state: row.state,
+        value: row.value === null ? null : Number(row.value),
+        at: row.at.toISOString(),
+    };
 };
 
 /**
@@ -92,46 +140,53 @@ export class AlertStateHistoryModel {
     async listForRule(ruleUuid: string): Promise<AlertStateHistoryEntry[]> {
         const rows = await this.database(AlertStateHistoryTableName)
             .where('alert_rule_uuid', ruleUuid)
-            .orderBy([
-                { column: 'at', order: 'desc' },
-                // Rule-level entries (no fingerprint) first within a slot.
-                { column: 'fingerprint', order: 'asc', nulls: 'first' },
-            ])
-            .select<DbAlertStateHistory[]>(
-                'alert_state_history_uuid',
-                'alert_rule_uuid',
-                'fingerprint',
-                'labels',
-                'previous_state',
-                'state',
-                'value',
-                'reason',
-                'at',
+            .orderBy(NEWEST_FIRST)
+            .select<DbAlertStateHistory[]>(HISTORY_COLUMNS);
+        return rows.map(toHistoryEntry);
+    }
+
+    /**
+     * The project's history, newest first, at most `limit` entries:
+     * optionally only one rule's, and only entries at or after `since`.
+     */
+    async listForProject(
+        projectUuid: string,
+        { ruleUuid, since }: AlertHistoryFilters,
+        limit: number,
+    ): Promise<AlertProjectHistoryEntry[]> {
+        const query = this.database(AlertStateHistoryTableName)
+            .innerJoin(
+                AlertRulesTableName,
+                `${AlertRulesTableName}.alert_rule_uuid`,
+                `${AlertStateHistoryTableName}.alert_rule_uuid`,
+            )
+            .where(`${AlertStateHistoryTableName}.project_uuid`, projectUuid);
+        if (ruleUuid !== undefined) {
+            void query.where(
+                `${AlertStateHistoryTableName}.alert_rule_uuid`,
+                ruleUuid,
             );
-        return rows.map((row): AlertStateHistoryEntry => {
-            if (
-                row.fingerprint === null ||
-                row.state === EvaluationSkippedState
-            ) {
-                return {
-                    type: 'evaluation_skipped',
-                    uuid: row.alert_state_history_uuid,
-                    ruleUuid: row.alert_rule_uuid,
-                    reason: row.reason ?? 'unknown',
-                    at: row.at.toISOString(),
-                };
-            }
-            return {
-                type: 'transition',
-                uuid: row.alert_state_history_uuid,
-                ruleUuid: row.alert_rule_uuid,
-                fingerprint: row.fingerprint,
-                labels: row.labels,
-                previousState: row.previous_state ?? 'normal',
-                state: row.state,
-                value: row.value === null ? null : Number(row.value),
-                at: row.at.toISOString(),
-            };
-        });
+        }
+        if (since !== undefined) {
+            void query.where(`${AlertStateHistoryTableName}.at`, '>=', since);
+        }
+        const rows = await query
+            .orderBy(
+                NEWEST_FIRST.map((order) => ({
+                    ...order,
+                    column: `${AlertStateHistoryTableName}.${order.column}`,
+                })),
+            )
+            .limit(limit)
+            .select<Array<DbAlertStateHistory & { rule_name: string }>>(
+                ...HISTORY_COLUMNS.map(
+                    (column) => `${AlertStateHistoryTableName}.${column}`,
+                ),
+                `${AlertRulesTableName}.name as rule_name`,
+            );
+        return rows.map((row) => ({
+            ...toHistoryEntry(row),
+            ruleName: row.rule_name,
+        }));
     }
 }

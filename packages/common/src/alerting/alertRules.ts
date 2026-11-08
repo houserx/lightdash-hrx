@@ -163,6 +163,23 @@ export type AlertStateHistoryEntry =
     | AlertStateTransition
     | AlertEvaluationSkipped;
 
+/**
+ * An entry of a project's state history (GET .../alerting/history), newest
+ * first, with the name of its rule.
+ */
+export type AlertProjectHistoryEntry = AlertStateHistoryEntry & {
+    ruleName: string;
+};
+
+/**
+ * Filters of GET .../alerting/history (`?rule=<uuid>&since=<ISO time>`):
+ * entries of that rule only, and entries at or after `since`.
+ */
+export type AlertHistoryFilters = {
+    ruleUuid?: string;
+    since?: Date;
+};
+
 /** One series of a rule preview ("Test rule"). */
 export type AlertRulePreviewSeries = {
     /** The series' labels plus the rule's labels and `alertname`. */

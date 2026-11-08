@@ -17,6 +17,7 @@ import {
     type AlertNotificationService,
 } from './AlertNotificationService';
 import {
+    parseAlertHistoryQuery,
     parseAlertRuleListFilters,
     type AlertRuleService,
 } from './AlertRuleService';
@@ -280,6 +281,17 @@ export const createAlertingApiRouter = (
         `${base}/state`,
         route((user, req) =>
             services.alertRules.listState(user, req.params.projectUuid),
+        ),
+    );
+
+    router.get(
+        `${base}/history`,
+        route((user, req) =>
+            services.alertRules.listProjectHistory(
+                user,
+                req.params.projectUuid,
+                parseAlertHistoryQuery(req.query),
+            ),
         ),
     );
 

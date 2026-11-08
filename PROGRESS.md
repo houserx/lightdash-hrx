@@ -822,3 +822,22 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - Instances are not sorted (rule list order, then DB order). `error` and `nodata` series are not listed, because the feature says "firing and pending". With errorState/noDataState=alerting they are `firing` and so are listed.
     - The endpoint has no filters, and shadow and paused rules' instances are listed like any other. Nothing in the spec asks otherwise.
 - 2026-11-08T22:10:00Z supervisor: alert-ai-state-api passed the gate in round 1
+- alert-ai-history-api (round 1) — 2026-11-08
+  - Changed:
+    - Route: `GET ${ALERTING_PROJECT_API_PATH}/history` in `alerting/router.ts`. Query: `rule=<uuid>`, `since=<ISO 8601 time>` (inclusive, `at >= since`) and `limit=<1..1000>` (default 100). The query is parsed by `parseAlertHistoryQuery` in `AlertRuleService.ts`, and bad values give 400.
+    - Service: `AlertRuleService.listProjectHistory`. It checks `view AlertRule` (outsider 403, no session 401, unknown project 404). An unknown `rule` gives 404, the same as the per-rule endpoint.
+    - Model: `AlertStateHistoryModel.listForProject` joins `alert_rules` to get the rule's name. It uses the same newest-first order and row mapping as `listForRule`. Those were moved into module-level `HISTORY_COLUMNS`, `NEWEST_FIRST` and `toHistoryEntry`; `listForRule` behaves the same.
+    - Common: `AlertProjectHistoryEntry` (= `AlertStateHistoryEntry & {ruleName}`) and `AlertHistoryFilters`. Results are a plain array under `results`. It includes `evaluation_skipped` entries as well as `transition` entries, the same as the per-rule history.
+  - Contract assumptions:
+    - CONTRACTS §7 only names the `alert_history` MCP tool. The `limit` parameter (default 100, max 1000, the same as the notification log) is my addition, so that an MCP call can't pull a project's whole history.
+    - `since` must start with `YYYY-MM-DDT`, and a date-only value is refused.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - Regression checks: evaluation.accept.ts alert-eval-state-history and scheduling.accept.ts alert-eval-overrun pass. AlertRuleService.test.ts passes 9/9. Backend tsc, oxlint and oxfmt are clean on the changed files.
+    - As a user: a scratch walk (packages/backend/tmp/walk, removed afterwards) went through the harness's real HTTP router on the throwaway Postgres.
+      - An empty project returned `[]`.
+      - The rule flipped at 09:00, 09:10, 09:11, 09:15 and 09:20. `?rule=&since=09:12` returned exactly 09:20 firing->resolved and 09:15 normal->firing, newest first, with ruleName, labels and value.
+      - Dropping `rule` also showed the Other rule's 09:16 entry, interleaved by time.
+      - `limit=1` returned only the newest entry.
+      - Bad since, bad rule or limit=0 gave 400. An unknown rule gave 404. Outsider got 403, no session got 401, and an unknown project got 404.
+- 2026-11-08T22:14:39Z supervisor: alert-ai-history-api passed the gate in round 1
