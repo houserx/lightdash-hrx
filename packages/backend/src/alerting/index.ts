@@ -8,6 +8,11 @@ import { type Knex } from 'knex';
 import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
 import { AlertHealthService } from './AlertHealthService';
 import { AlertHeartbeatModel } from './AlertHeartbeatModel';
+import {
+    createAlertingTaskHandlers,
+    enqueueAlertingTick,
+    type AlertingTaskHandlers,
+} from './alertingTaskHandlers';
 import { AlertInstanceModel } from './AlertInstanceModel';
 import { AlertNotificationModel } from './AlertNotificationModel';
 import { AlertNotificationService } from './AlertNotificationService';
@@ -68,6 +73,10 @@ export type AlertingModule = {
     evaluator: AlertEvaluator;
     scheduler: AlertScheduler;
     notifier: AlertNotifier;
+    /** The graphile-worker handlers for `alertingTick` and `alertRuleEvaluate`. */
+    taskHandlers: AlertingTaskHandlers;
+    /** Queues an `alertingTick` to run now; workers call it on start. */
+    seedTick(): Promise<void>;
     close(): Promise<void>;
 };
 
@@ -96,6 +105,14 @@ export const createAlertingModule = (
         retry: deps.retry,
         siteUrl: deps.siteUrl,
     });
+    const scheduler = new AlertScheduler({
+        alertScheduleModel,
+        jobQueue: deps.jobQueue,
+        clock: deps.clock,
+        notifier,
+        alertHeartbeatModel,
+        heartbeat: deps.heartbeat,
+    });
     return {
         alertHealth: new AlertHealthService({
             alertHeartbeatModel,
@@ -121,15 +138,15 @@ export const createAlertingModule = (
             clock: deps.clock,
         }),
         evaluator,
-        scheduler: new AlertScheduler({
-            alertScheduleModel,
+        scheduler,
+        notifier,
+        taskHandlers: createAlertingTaskHandlers({
+            evaluator,
+            scheduler,
             jobQueue: deps.jobQueue,
             clock: deps.clock,
-            notifier,
-            alertHeartbeatModel,
-            heartbeat: deps.heartbeat,
         }),
-        notifier,
+        seedTick: () => enqueueAlertingTick(deps.jobQueue, deps.clock.now()),
         // The database belongs to the caller; nothing of ours to release yet.
         close: async () => {},
     };

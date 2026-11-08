@@ -768,3 +768,36 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - POST to the health path: 404. Project `/state` without a session: still 401.
   - Next: alert-worker-wiring mounts `createAlertingRouter` in the app. The health route comes with it, but the app's own auth middleware must not shadow `/api/v1/alerting/health`.
 - 2026-11-08T21:51:31Z supervisor: alert-health passed the gate in round 1
+- alert-worker-wiring (round 1) — 2026-11-08
+  - Changed:
+    - New `alerting/alertingTaskHandlers.ts`, exposed as `module.taskHandlers` and `module.seedTick()` in `alerting/index.ts`:
+      - `alertingTick` runs `scheduler.tick()`, then always queues the next tick at `clock.now() + 15s` with job key `alerting-tick` (`ALERTING_TICK_JOB_KEY`). A failed cycle is logged and not thrown: the next tick is the retry, and health shows it as stale. Only a failure to queue the next tick throws, so graphile retries the job.
+      - `alertRuleEvaluate` calls `evaluator.evaluateRule(ruleUuid, {scheduledAt})` and rejects an invalid `scheduledAt`.
+      - `seedTick()` queues a tick at now under the same key.
+    - `scheduler/SchedulerWorker.ts`:
+      - Optional `alertingModule` arg, plus `setAlertingModule()` for factories that don't pass it. The EE factory is protected, so App and SchedulerApp call the setter before `run()`.
+      - `getFullTaskList()` spreads in both handlers when a module is set; with no module there are no handlers. The EE worker spreads `super.getFullTaskList()`, so it gets them too. `types.ts` keeps the alerting handlers optional.
+      - `run()` seeds the first tick after graphile utils are ready, when `alertingTick` is in the enabled tasks. A seed failure is logged, never thrown.
+    - New `src/createProductionAlertingModule.ts` (at the src root, not `alerting/`: the acceptance test looks for `createAlertingModule(` outside `alerting/`). It builds the module from Lightdash's own clients:
+      - Warehouse: `WarehouseClientFactory.withWarehouseClient`, required by the `lightdash/no-direct-warehouse-client` lint rule. It uses a `resolved` ref with the project's saved credentials (`ProjectModel.getWarehouseCredentialsForProject`) and a system actor: surface `schedule`, `person: null`, `queryContext: QueryExecutionContext.ALERT`. One scoped connection per `runQuery`.
+      - Email: new public `EmailClient.sendPrerenderedEmail({to, subject, text, html?})`. It throws a non-retryable `NotificationSendError` when SMTP isn't set up.
+      - Slack: `SlackClient.postMessage`. `SlackInstallationNotFoundError` and `MissingConfigError` become a non-retryable "Slack app is not installed".
+      - Job queue: graphile `addJob` with `jobKey`, `runAt` and `maxAttempts: 3`.
+      - Env: `ALERTING_HEARTBEAT_URL` and `ALERTING_HEARTBEAT_METHOD` (GET/POST, case-insensitive, default POST). An invalid value throws at startup. Secrets come from `ALERTING_SECRET_<NAME>`: non-alphanumerics become `_`, then upper-cased.
+      - Notification retry: 3 attempts from 1s. Clock: wall clock.
+    - `App.ts`: builds the module lazily, mounts `createAlertingRouter(...)` after the session/JWT/account middlewares and just before `/api/v1` `apiV1Router`, and hands the module to the scheduler worker; `stop()` closes it. `SchedulerApp.ts` builds the module the same way for its worker. The router's only `use` calls are scoped to the alerting base path and the health path, so the app's other routes fall through.
+    - Unit files: `alerting/alertingTaskHandlers.test.ts` (5 tests) and `createProductionAlertingModule.test.ts` (10 tests).
+  - Contract assumptions:
+    - The evaluator queries with the project's shared credentials as a person-less system actor. Projects that require personal credentials fail evaluation and follow errorState. The federation line still has to mint the `system:alert-evaluator` identity, and the `AlertRuleQueryContext` is not passed to the factory yet.
+    - Retry and attempt counts are constants, not config.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped). The full scheduling.accept.ts passes 7/7.
+    - New unit files: 5/5 and 10/10. SchedulerWorker.test.ts: 12/12. SchedulerWorker.quiesce.test.ts: 7/7.
+    - Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk (packages/backend/tmp/walk, removed afterwards) on the throwaway Postgres used real graphile-worker `run()` with the alerting entries of `SchedulerWorker.getFullTaskList()`, the production graphile job queue and the env heartbeat (GET). The fake warehouse returned db-1=95.
+      - Before any tick, health was `never_run`, and a worker with no module had no `alertingTick`.
+      - After `seedTick()`, graphile ran the tick, which queued `alertRuleEvaluate`; graphile ran that, and db-1 was `firing`.
+      - The heartbeat got one GET /hb, health was `ok` with lag 0, and exactly one job `alertingTick`/`alerting-tick` was queued 15s after the seed.
+      - About 18s in, graphile had run the second tick on its own: 2 heartbeat rows, and the next tick queued at +30s. There was still one warehouse call, because the 1m slot was not re-evaluated.
+  - Not verified: booting the full App/SchedulerApp. That needs full config (S3 and others) not available locally. The mount position and the middlewares were checked by reading the code: the JWT, session-account and unverified-session middlewares all pass sessionless requests through.
+- 2026-11-08T22:06:34Z supervisor: alert-worker-wiring passed the gate in round 1
