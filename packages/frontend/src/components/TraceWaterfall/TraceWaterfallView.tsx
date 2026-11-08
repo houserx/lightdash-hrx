@@ -10,6 +10,7 @@ import {
     ScrollArea,
     Stack,
     Text,
+    UnstyledButton,
 } from '@mantine/core';
 import {
     IconAlertTriangle,
@@ -19,6 +20,7 @@ import {
 import clsx from 'clsx';
 import { useCallback, useMemo, useState, type FC } from 'react';
 import MantineIcon from '../common/MantineIcon';
+import { SpanDetailDrawer } from './SpanDetailDrawer';
 import {
     formatDurationMs,
     isErrorStatus,
@@ -133,8 +135,16 @@ const SpanRow: FC<
     SpanRowItem & {
         traceDurationMs: number;
         onToggle: (spanId: string) => void;
+        onSelect: (span: TraceWaterfallSpan) => void;
     }
-> = ({ span, hasChildren, isCollapsed, traceDurationMs, onToggle }) => {
+> = ({
+    span,
+    hasChildren,
+    isCollapsed,
+    traceDurationMs,
+    onToggle,
+    onSelect,
+}) => {
     const isError = isErrorStatus(span.status);
     const duration = formatDurationMs(span.durationMs);
     return (
@@ -182,9 +192,15 @@ const SpanRow: FC<
                         aria-label="Error"
                     />
                 )}
-                <Text fz="xs" fw={500} truncate className={classes.name}>
-                    {span.name}
-                </Text>
+                <UnstyledButton
+                    aria-label={`Show details of ${span.name}`}
+                    className={classes.nameButton}
+                    onClick={() => onSelect(span)}
+                >
+                    <Text fz="xs" fw={500} truncate className={classes.name}>
+                        {span.name}
+                    </Text>
+                </UnstyledButton>
                 <Text fz="xs" c="dimmed" truncate className={classes.service}>
                     {span.service}
                 </Text>
@@ -218,7 +234,8 @@ const SpanRow: FC<
  * trace's duration. Bars take their service's colour, and a legend above
  * names each service in it. Spans whose status is an error are marked in red.
  * A span with children has a Collapse / Expand button that hides or shows
- * its whole subtree.
+ * its whole subtree. Clicking a span's name opens a drawer with its
+ * details and every attribute.
  */
 export const TraceWaterfallView: FC<Props> = ({ model }) => {
     const trace = model.traces[0];
@@ -232,6 +249,13 @@ export const TraceWaterfallView: FC<Props> = ({ model }) => {
             return next;
         });
     }, []);
+    const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
+    const selectSpan = useCallback(
+        (span: TraceWaterfallSpan) => setSelectedSpanId(span.spanId),
+        [],
+    );
+    const selectedSpan =
+        trace?.spans.find((span) => span.spanId === selectedSpanId) ?? null;
     const rows = useMemo(
         () => (trace ? visibleRows(trace.spans, collapsed) : []),
         [trace, collapsed],
@@ -256,9 +280,14 @@ export const TraceWaterfallView: FC<Props> = ({ model }) => {
                         {...row}
                         traceDurationMs={trace.durationMs}
                         onToggle={toggle}
+                        onSelect={selectSpan}
                     />
                 ))}
             </ScrollArea>
+            <SpanDetailDrawer
+                span={selectedSpan}
+                onClose={() => setSelectedSpanId(null)}
+            />
         </Stack>
     );
 };

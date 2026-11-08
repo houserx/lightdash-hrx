@@ -122,3 +122,22 @@
     text-align: right;
     white-space: nowrap;
 }
+
+/* Span detail drawer: labels in one column, long attribute values wrap. */
+.detailLabel {
+    flex: 0 0 110px;
+}
+
+.attributeValue {
+    word-break: break-word;
+}
+
+/* The span name opens the detail drawer. */
+.nameButton {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.nameButton:hover .name {
+    text-decoration: underline;
+}

@@ -742,3 +742,25 @@ should add a dated line here per feature.
   expand orders.list → a e b c d. After `bash ./init.sh` the check passes 3/3; `trace-waterfall-view` 5/5 and
   `trace-waterfall-service-colours` 2/2 still pass; frontend `tsc --noEmit` clean; oxlint and oxfmt clean.
 - 2026-11-08T19:38:11Z supervisor: viz-trace-waterfall-collapse passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-span-drawer (session)
+
+- **What.** New `components/TraceWaterfall/SpanDetailDrawer.tsx`: a right-side Mantine `Drawer` (role dialog,
+  `data-testid="trace-span-drawer"` on its body) titled with the span name, listing service, status (red when an
+  error), Duration (= `reportedDurationMs`), "Drawn duration" (= bar `durationMs`, only when clamped), start offset,
+  span id, parent span id (when not a root), trace id, and an attributes table (`trace-span-attributes`; strings
+  as-is, other values as JSON, "No attributes" when empty). Yellow alert when `isClamped` ("...clamped because of
+  clock skew"), grey alert when `isOrphan`. `TraceWaterfallView.tsx`: the span name is now an `UnstyledButton`
+  (aria-label "Show details of <name>") that selects the span; the view keeps `selectedSpanId` and looks the span up
+  in the current trace (closes itself if the span vanishes). CSS: `.detailLabel`, `.attributeValue`, `.nameButton`.
+- **Decisions.** Only the name opens the drawer (not the bar or whole row), so the collapse chevron never opens it.
+  The drawer's duration is the reported one; the clamped bar length is a separate row. Keep the clamp note as the
+  single element mentioning "clamped"/"clock skew" and no other "50 ms"-like text, or the acceptance `getByText`
+  calls become ambiguous.
+- **Tested as a user.** No app mounts the view yet, so I drove it with user-event from a throwaway vitest file
+  (deleted) on BASIC_TRACE + a clamped `late` span + an orphan: collapse/expand chevron opened no drawer; clicking
+  "GET /orders" showed gateway, ok, 200 ms, id a, trace-a, http.method GET, http.route /orders; Escape closed it;
+  "payments.authorize" showed the clock-skew note, Duration 50 ms, Drawn duration 10 ms; Enter on the orphan's name
+  button showed the orphan note and parent id zz. After `bash ./init.sh` the check passes 3/3; view 5/5, collapse
+  3/3, service-colours 2/2 still pass; frontend `tsc --noEmit` clean; oxlint and oxfmt clean.
+- 2026-11-08T19:42:00Z supervisor: viz-trace-waterfall-span-drawer passed the gate in round 1
