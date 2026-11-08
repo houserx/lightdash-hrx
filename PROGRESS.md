@@ -1965,3 +1965,16 @@ token verification for a *valid* token, which feature 39 then hardens.
   status error with the message and rowCount NULL, plus 2 read audits, and every hash matched.
   Check passes.
 - 2026-11-08T22:16:39Z supervisor: eng-write-statement-failure passed the gate in round 1
+- eng-write-audit-records (security): no code change needed. eng-write-preview had already built it:
+  write::run writes one audit item per executed Write Mode request (mode write, preview flag,
+  sql, database platform, body description and ticket as linearTicketId, rowCount, action from the
+  identity: query for people, ai_ask for agents) and returns its id as audit_id. If the DynamoDB
+  PutItem (or S3 put) fails the answer is 500 {"error": "audit write failed", "sqlstate": "58000"}.
+  Tested as a user: `../tmp/write-audit/run.sh <out>` (write-commit rig on ports 59661-59665; its
+  store.py saves PutItems and S3 objects and refuses both while <out>/store/fail exists). With curl,
+  `UPDATE widgets SET note = 'audited' WHERE id IN (20, 21)` as person preview, person commit and
+  lightdash-agent preview each gave 200 rows_affected 2. The store held 3 items whose ids matched the
+  three audit_ids: mode write, preview true/false/true, the sql, ENG-4242, rowCount 2, status success,
+  action query/query/ai_ask, every hash matched, plus 3 S3 objects. With the store refusing, a
+  preview gave 500 sqlstate 58000 "audit write failed". Check passes.
+- 2026-11-08T22:18:24Z supervisor: eng-write-audit-records passed the gate in round 1
