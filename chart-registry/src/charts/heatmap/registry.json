@@ -1,0 +1,171 @@
+{
+    "name": "Heatmap",
+    "description": "Draws a time by bucket grid for latency histograms, one cell per time and bucket coloured by value, with buckets in numeric order and +Inf last.",
+    "version": "1.0.0",
+    "publishedAt": "2026-11-08T00:00:00.000Z",
+    "changelog": "Initial HouseRx release.",
+    "tags": ["houserx", "distribution", "latency"],
+    "icon": "chart-grid-dots",
+    "vizSchema": {
+        "fields": [
+            {
+                "name": "time",
+                "label": "Time",
+                "type": "dimension",
+                "required": true,
+                "description": "The time each row's histogram was sampled at (one column per distinct time)."
+            },
+            {
+                "name": "bucket",
+                "label": "Bucket",
+                "type": "dimension",
+                "required": true,
+                "description": "The histogram bucket upper bound, such as a Prometheus le label (0.1, 0.5, 1, +Inf). Sorted numerically, +Inf last."
+            },
+            {
+                "name": "value",
+                "label": "Value",
+                "type": "metric",
+                "required": true,
+                "description": "The count or rate in that bucket at that time; sets the cell colour. Repeated time and bucket pairs add up."
+            }
+        ],
+        "configOptions": [
+            {
+                "name": "colorScale",
+                "label": "Colour scale",
+                "type": "gradient",
+                "default": {
+                    "colors": ["#FCE2C9", "#FF9830", "#C4162A"],
+                    "min": "auto",
+                    "max": "auto"
+                }
+            }
+        ],
+        "colorPalette": null
+    },
+    "preview": {
+        "rows": [
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "bucket": "0.1",
+                "value": 12
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "bucket": "0.5",
+                "value": 30
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "bucket": "1",
+                "value": 9
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "bucket": "+Inf",
+                "value": 2
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "bucket": "0.1",
+                "value": 13
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "bucket": "0.5",
+                "value": 33
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "bucket": "1",
+                "value": 10
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "bucket": "+Inf",
+                "value": 3
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "bucket": "0.1",
+                "value": 14
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "bucket": "0.5",
+                "value": 36
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "bucket": "1",
+                "value": 11
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "bucket": "+Inf",
+                "value": 4
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "bucket": "0.1",
+                "value": 15
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "bucket": "0.5",
+                "value": 39
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "bucket": "1",
+                "value": 12
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "bucket": "+Inf",
+                "value": 5
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "bucket": "0.1",
+                "value": 16
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "bucket": "0.5",
+                "value": 42
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "bucket": "1",
+                "value": 13
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "bucket": "+Inf",
+                "value": 6
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "bucket": "0.1",
+                "value": 17
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "bucket": "0.5",
+                "value": 45
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "bucket": "1",
+                "value": 14
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "bucket": "+Inf",
+                "value": 7
+            }
+        ]
+    }
+}

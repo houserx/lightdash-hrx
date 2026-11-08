@@ -962,3 +962,25 @@ should add a dated line here per feature.
   `LIGHTDASH_CHART_REGISTRY_ALLOW_INSECURE=true` (http + loopback). `ALLOW_PRIVATE_HOSTS` alone still requires https.
 - Scratch driver left in `../tmp/drive-registry/` (outside the repo; deleting it was refused by the sandbox).
 - 2026-11-08T20:18:15Z supervisor: viz-registry-client-install passed the gate in round 1
+
+## viz-registry-heatmap (round 1)
+- **What.** New entry `chart-registry/src/charts/heatmap/` (build script unchanged). `heatmap.ts` has the pure model:
+  `buildHeatmap` (one cell per distinct (time, bucket); rows missing time/bucket/numeric value are skipped; repeated
+  pairs add up), `compareBuckets` (numeric `le` order, `+Inf` last, non-numeric labels after by name), `compareTimes`
+  (chronological), `interpolateColor` (linear RGB across `#RRGGBB` stops). `index.ts` draws SVG rects
+  `heatmap-cell` with `data-time` (the raw time string; epoch millis/Date become ISO), `data-bucket`, `data-value`,
+  `data-color`; `heatmap-y-label` per bucket in sorted order (lowest at the bottom, +Inf on top, as Grafana);
+  `heatmap-x-label` HH:MM UTC, thinned to ~8; "No data" (`heatmap-empty`) when no cell.
+- **Schema.** Fields `time` (dimension), `bucket` (dimension), `value` (metric). One config option `colorScale`
+  (type `gradient`, default `#FCE2C9 -> #FF9830 -> #C4162A`, min/max `auto` = data min/max; equal min/max paints the
+  top colour). `colorPalette: null` (the heatmap does not use the series palette).
+- **Decision.** Bucket values are drawn as given, not de-accumulated: Prometheus `_bucket` series are cumulative, so the
+  query should send per-bucket counts/rates (the acceptance data is not cumulative either). Preview rows are synthetic
+  per-bucket counts for 6 times x 4 buckets.
+- **Tested as a user.** Built the registry (`heatmap@1.0.0, histogram@1.0.0`), read `index.json` (fields
+  time/dimension, bucket/dimension, value/metric), untarred dist.tar and ran its bundle in jsdom as the host would,
+  with Lightdash-style field ids in `fieldMapping` and string numerics, buckets shuffled `1,+Inf,0.1,0.5`: 16 cells,
+  y labels 0.1, 0.5, 1, +Inf bottom to top, x labels 12:00-12:03, colours ramp with value, `viz-rendered` ack sent.
+  Check `heatmap.test.ts` 5/5 after `bash ./init.sh`; regressions build 17/17, histogram 3/3, client-install 4/4;
+  `tsc --noEmit` and oxfmt clean. Scratch driver in `../tmp/drive-heatmap/` (outside the repo).
+- 2026-11-08T20:22:06Z supervisor: viz-registry-heatmap passed the gate in round 1
