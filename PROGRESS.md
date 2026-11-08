@@ -2381,3 +2381,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   was not built (no Docker or registry access by design), so the first real `docker build` should
   be watched: base image tags, and whether aws-lc-sys builds on the target arch.
 - 2026-11-08T23:14:56Z supervisor: eng-dockerfile passed the gate in round 1
+- eng-readme (docs): added federation-engine/README.md. Docs only, no code change. Sections:
+  what the engine is (its ports and HTTP routes), the SQL functions, "Building and running it"
+  (cargo build --release, --check-config, --config, exit codes 0/1/2, JSON logs on stderr,
+  SIGTERM drain, the container notes from eng-dockerfile, tests), "Configuration" (a ```toml
+  block that sets every key the config crate accepts, top level, users, all 7 source kinds and
+  [audit], with defaults and comments), and "Security model" (identity tokens, Restricted
+  Telemetry, Platform Database, 42501, audit, 58000 fail-closed, Write Mode, secrets and logs).
+  Every claim was checked against the code (engine-config lib.rs, identity.rs, write.rs, main.rs,
+  log.rs) and the A1-A30 assumptions. A trap I fixed in my own draft: in Write Mode, Preview
+  and commit **both** need a Lightdash-minted confirmation token. The engine never issues one.
+  Tested as a user: I extracted the README's toml block into ../tmp/readme/cfg.toml.
+  `engine --check-config` reported it valid (8 sources, 1 users, audit on), exit 0. With the env
+  vars unset, it listed the 5 missing vars by name, exit 1. A bad argument gave exit 2. I served
+  a minimal config: /healthz answered 503 naming the dead source, /metrics served exposition,
+  SIGTERM exited 0, and stderr held JSON lines with timestamp, level and message. The check
+  passes, and docs::eng_dockerfile still passes.
+  Keep the README in sync when config keys change. The config crate rejects unknown keys, so a
+  key added there should be added to the toml block too.
+- 2026-11-08T23:17:44Z supervisor: eng-readme passed the gate in round 1
