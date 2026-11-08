@@ -818,3 +818,14 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     listed interval and with null, and an absolute week with 1h. It refused 2m, 'off', 1d and 15s.
     common tsc, oxlint and oxfmt are clean.
 - 2026-11-08T19:09:25Z supervisor: ldq-dashboard-time-range-model passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-migration (session):
+  - New migration `packages/backend/src/database/migrations/20261108120000_add_dashboard_versions_time_range.ts`
+    adds a nullable `jsonb` column `dashboard_versions.time_range`. The down migration drops it. It follows
+    the migrations AGENTS.md rules: no imports from common, and `SET LOCAL lock_timeout = '60s'` in both
+    directions. There is no backfill and no default, so existing versions stay NULL (no time range).
+  - Not done here (belongs to ldq-dashboard-time-range-persisted): DbDashboardVersion in
+    `entities/dashboards.ts`, the DashboardModel reads and writes, the Dashboard type field, and API validation
+    with `isValidDashboardTimeRange`. The column holds the common `DashboardTimeRange` shape.
+  - Tested: init, then the feature check (1/1). It runs every non-ee migration on a throwaway Postgres and
+    reads information_schema: data_type jsonb, is_nullable YES. oxfmt and oxlint are clean on the file.
+- 2026-11-08T19:11:58Z supervisor: ldq-dashboard-time-range-migration passed the gate in round 1
