@@ -1,0 +1,170 @@
+{
+    "name": "State timeline",
+    "description": "Shows each series' status over time as coloured runs: one row per series, one segment per run of the same state, with Grafana value mappings for each state's text and colour.",
+    "version": "1.0.0",
+    "publishedAt": "2026-11-08T00:00:00.000Z",
+    "changelog": "Initial HouseRx release.",
+    "tags": ["houserx", "status", "timeline"],
+    "icon": "timeline",
+    "vizSchema": {
+        "fields": [
+            {
+                "name": "time",
+                "label": "Time",
+                "type": "dimension",
+                "required": true,
+                "description": "When each state was sampled. A state lasts until the series' next sample; the last one lasts one sample interval."
+            },
+            {
+                "name": "series",
+                "label": "Series",
+                "type": "dimension",
+                "required": true,
+                "description": "What the state belongs to, such as a service or host. One row per series, in the order they first appear."
+            },
+            {
+                "name": "state",
+                "label": "State",
+                "type": "dimension",
+                "required": true,
+                "description": "The state at that time, such as up or down. Consecutive samples with the same state merge into one segment; an empty state leaves a gap."
+            }
+        ],
+        "configOptions": [
+            {
+                "name": "valueMappings",
+                "label": "Value mappings",
+                "type": "text",
+                "default": ""
+            }
+        ],
+        "colorPalette": {}
+    },
+    "preview": {
+        "rows": [
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "checkout",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "payments",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "search",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "checkout",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "payments",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "search",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "series": "checkout",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "series": "payments",
+                "state": "down"
+            },
+            {
+                "time": "2026-11-08T12:10:00.000Z",
+                "series": "search",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "series": "checkout",
+                "state": "degraded"
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "series": "payments",
+                "state": "down"
+            },
+            {
+                "time": "2026-11-08T12:15:00.000Z",
+                "series": "search",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "series": "checkout",
+                "state": "degraded"
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "series": "payments",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:20:00.000Z",
+                "series": "search",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "series": "checkout",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "series": "payments",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:25:00.000Z",
+                "series": "search",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:30:00.000Z",
+                "series": "checkout",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:30:00.000Z",
+                "series": "payments",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:30:00.000Z",
+                "series": "search",
+                "state": "degraded"
+            },
+            {
+                "time": "2026-11-08T12:35:00.000Z",
+                "series": "checkout",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:35:00.000Z",
+                "series": "payments",
+                "state": "up"
+            },
+            {
+                "time": "2026-11-08T12:35:00.000Z",
+                "series": "search",
+                "state": "up"
+            }
+        ],
+        "optionValues": {
+            "valueMappings": "[{\"type\": \"value\", \"options\": {\"up\": {\"text\": \"Healthy\", \"color\": \"green\", \"index\": 0}, \"degraded\": {\"text\": \"Degraded\", \"color\": \"orange\", \"index\": 1}, \"down\": {\"text\": \"Outage\", \"color\": \"red\", \"index\": 2}}}]"
+        }
+    }
+}

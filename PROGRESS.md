@@ -984,3 +984,36 @@ should add a dated line here per feature.
   Check `heatmap.test.ts` 5/5 after `bash ./init.sh`; regressions build 17/17, histogram 3/3, client-install 4/4;
   `tsc --noEmit` and oxfmt clean. Scratch driver in `../tmp/drive-heatmap/` (outside the repo).
 - 2026-11-08T20:22:06Z supervisor: viz-registry-heatmap passed the gate in round 1
+
+## viz-registry-state-timeline (round 1)
+- **What.** New entry `chart-registry/src/charts/state-timeline/` (build script unchanged). `stateTimeline.ts` has the
+  pure model `buildStateTimeline`: rows without time or series are skipped; series keep first-appearance order; within
+  a series points are read in time order and consecutive equal states (compared as trimmed text) merge into one
+  segment that lasts until the next point; the last point lasts until domain end = latest time + smallest gap between
+  distinct times (one sample interval). A null/blank state ends the run before it and leaves a gap (Grafana's null
+  handling). `index.ts` draws SVG `g[data-testid=state-timeline-row][data-series]` with series label and
+  `rect[data-testid=state-timeline-segment]` carrying `data-state` (state text), `data-text` (mapped text),
+  `data-start`/`data-end` (ISO), `data-color`; mapped text drawn inside a segment when it fits; x labels at sample
+  times (HH:MM UTC, HH:MM:SS for sub-minute samples, thinned to one per 80px); an HTML legend
+  (`state-timeline-legend-item`) per state; "No data" (`state-timeline-empty`).
+- **Schema.** Fields `time`, `series`, `state` (all dimension, required). One option `valueMappings` (type `text`,
+  default `""`): Grafana's mappings array as JSON text; blank/malformed gives no mappings. `colorPalette: {}`: states
+  with no mapping colour take palette colours by first appearance. Preview: 3 synthetic services x 8 times with
+  `optionValues.valueMappings` (up/degraded/down -> Healthy/Degraded/Outage, green/orange/red).
+- **Shared helper for later entries.** `chart-registry/src/shared/valueMappings.ts`: `parseValueMappings(option)` and
+  `mapValue(raw, mappings)`. It imports `applyValueMappings` straight from
+  `packages/common/src/eng1799/grafanaValueMappings.ts` (relative path; only a type import from savedCharts, so the
+  bundle stays ~7.4 KB). stat-sparkline and status-grid should reuse it. Trap: legend/caption styles are inline on
+  purpose; editing `src/shared/style.css` changes every entry's dist.tar and so needs a version bump for each.
+- **Gap.** source.tar only holds `src/...` (build.ts filters inputs to `src/`), so the common value-mapping files
+  bundled from `packages/common` are not in source.tar; the source is not standalone-buildable. Revisit if source.tar
+  must rebuild on its own (copy the helper in, or widen the build's source filter).
+- **Tested as a user.** Built the registry (`heatmap@1.0.0, histogram@1.0.0, state-timeline@1.0.0`), read
+  `index.json` (fields time/series/state, option valueMappings text), untarred dist.tar and ran its bundle in jsdom as
+  the host does, with Lightdash-style field ids, epoch-millis times, numeric 0/1 states, rows shuffled newest first:
+  rows node-b (one segment 1) and node-a (1 | 0 | 1) with palette colours and axis 12:00-12:05; with a value mapping
+  0->Outage/red, 1->Healthy/green the segments read Healthy/Outage in #73BF69/#F2495C and the legend shows them;
+  malformed JSON falls back to unmapped; a null state leaves a gap; no rows shows "No data"; `viz-rendered` ack sent.
+  Check `state-timeline.test.ts` 3/3 after `bash ./init.sh`; regressions build 24/24, heatmap 5/5, histogram 3/3,
+  client-install 4/4; `tsc --noEmit` and oxfmt clean. Scratch driver in `../tmp/drive-state-timeline/` (outside repo).
+- 2026-11-08T20:26:49Z supervisor: viz-registry-state-timeline passed the gate in round 1
