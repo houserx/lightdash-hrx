@@ -666,3 +666,26 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     Frontend typecheck, oxlint and oxfmt are clean. Not driven in a live browser (no browser
     tool, and the full app needs backend + DB).
 - 2026-11-08T18:43:25Z supervisor: ldq-postgres-form-federation-switch passed the gate in round 1
+- 2026-11-08 ldq-federation-access-route (session):
+  - New `GET /api/v2/projects/{projectUuid}/federation/access` (controllers/v2/FederationController.ts,
+    operationId `getFederationAccess`) returns `{status:'ok', results:{isFederation, attrs}}`,
+    where attrs holds the four ldq claims. New `services/FederationService/FederationService.ts`
+    with `getAccess(account, projectUuid)`: it reads the project via
+    `projectModel.getWithSensitiveFields`, checks `view Project` (403 otherwise), and reads
+    `userAttributesModel.getAttributeValuesForOrgMember` for `account.user.userUuid`. The
+    mapping reuses `identityAttrsFromUserAttributes` (only "true" is true). Only booleans
+    leave the service, never the project or its credentials.
+  - ServiceRepository has `getFederationService()` (manifest key `federationService`). Its deps
+    are `{projectModel, userAttributesModel}`, the two routeHarness pins. Later
+    write/audit features will need more deps (engine HTTP, identity minting). Add them
+    as optional constructor args or build them from those two, because
+    routeHarness.buildFederationService passes only these two.
+  - common `types/federation.ts` gains `FederationAttrs`, `FederationAccess` and
+    `ApiFederationAccessResponse`. Backend `IdentityAttrs` is now an alias of `FederationAttrs`.
+  - Tested: init, then the feature check (3/3) and identity-token-attrs (3/3, a regression
+    check for the alias). A scratch vitest (deleted) drove the real TSOA routes through
+    routeHarness. A user with platform_read ['false','true'] got it as true, and the body did
+    not contain the password or secret. A user without project view got 403. A real
+    ServiceRepository built a FederationService. Backend and common tsc, oxlint and oxfmt
+    are clean. Not run against a live server and DB (no Docker or credentials).
+- 2026-11-08T18:48:49Z supervisor: ldq-federation-access-route passed the gate in round 1

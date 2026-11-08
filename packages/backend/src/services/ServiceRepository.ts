@@ -58,6 +58,7 @@ import { DownloadFileService } from './DownloadFileService/DownloadFileService';
 import { EmailWhitelabelService } from './EmailWhitelabelService/EmailWhitelabelService';
 import { FavoritesService } from './FavoritesService/FavoritesService';
 import { FeatureFlagService } from './FeatureFlag/FeatureFlagService';
+import { FederationService } from './FederationService/FederationService';
 import { FunnelService } from './FunnelService/FunnelService';
 import { GdriveService } from './GdriveService/GdriveService';
 import { GithubAppService } from './GithubAppService/GithubAppService';
@@ -201,6 +202,7 @@ interface ServiceManifest {
     coderService: CoderService;
     contentAsCodeWritebackService: ContentAsCodeWritebackService;
     featureFlagService: FeatureFlagService;
+    federationService: FederationService;
     funnelService: FunnelService;
     spotlightService: SpotlightService;
     lightdashAnalyticsService: LightdashAnalyticsService;
@@ -1667,6 +1669,17 @@ export class ServiceRepository
                     userModel: this.models.getUserModel(),
                     organizationSettingsModel:
                         this.models.getOrganizationSettingsModel(),
+                }),
+        );
+    }
+
+    public getFederationService(): FederationService {
+        return this.getService(
+            'federationService',
+            () =>
+                new FederationService({
+                    projectModel: this.models.getProjectModel(),
+                    userAttributesModel: this.models.getUserAttributesModel(),
                 }),
         );
     }

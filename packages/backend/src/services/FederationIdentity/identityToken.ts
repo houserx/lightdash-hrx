@@ -6,6 +6,7 @@
  * base64url is unpadded. The payload keys are always written in the contract's order, so the
  * same claims, clock and nonce give the same token byte for byte.
  */
+import type { FederationAttrs } from '@lightdash/common';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const IDENTITY_TOKEN_VERSION = 1;
@@ -31,12 +32,7 @@ export const isIdentityAuditSource = (
     typeof value === 'string' &&
     (IDENTITY_AUDIT_SOURCES as readonly string[]).includes(value);
 
-export type IdentityAttrs = {
-    telemetry_restricted: boolean;
-    platform_read: boolean;
-    platform_write: boolean;
-    platform_explain: boolean;
-};
+export type IdentityAttrs = FederationAttrs;
 
 /**
  * CONTRACTS §3: attrs come from the Lightdash user attributes with the same names. Only the

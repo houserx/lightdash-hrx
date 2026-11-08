@@ -43,3 +43,25 @@ export const isFederationProject = (
         | undefined
         | null,
 ): boolean => isFederationCredentials(project?.warehouseConnection);
+
+/**
+ * The ldq claims a user can hold (CONTRACTS §3 `attrs`). Each comes from the Lightdash user
+ * attribute of the same name; only the value "true" is true.
+ */
+export type FederationAttrs = {
+    telemetry_restricted: boolean;
+    platform_read: boolean;
+    platform_write: boolean;
+    platform_explain: boolean;
+};
+
+/** What the app may know about a project's federation access. Never carries a secret. */
+export type FederationAccess = {
+    isFederation: boolean;
+    attrs: FederationAttrs;
+};
+
+export type ApiFederationAccessResponse = {
+    status: 'ok';
+    results: FederationAccess;
+};

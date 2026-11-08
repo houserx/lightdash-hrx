@@ -72515,6 +72515,57 @@
                 "required": ["source"],
                 "type": "object"
             },
+            "FederationAttrs": {
+                "properties": {
+                    "platform_explain": {
+                        "type": "boolean"
+                    },
+                    "platform_write": {
+                        "type": "boolean"
+                    },
+                    "platform_read": {
+                        "type": "boolean"
+                    },
+                    "telemetry_restricted": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "platform_explain",
+                    "platform_write",
+                    "platform_read",
+                    "telemetry_restricted"
+                ],
+                "type": "object",
+                "description": "The ldq claims a user can hold (CONTRACTS §3 `attrs`). Each comes from the Lightdash user\nattribute of the same name; only the value \"true\" is true."
+            },
+            "FederationAccess": {
+                "properties": {
+                    "attrs": {
+                        "$ref": "#/components/schemas/FederationAttrs"
+                    },
+                    "isFederation": {
+                        "type": "boolean"
+                    }
+                },
+                "required": ["attrs", "isFederation"],
+                "type": "object",
+                "description": "What the app may know about a project's federation access. Never carries a secret."
+            },
+            "ApiFederationAccessResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/FederationAccess"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
             "FeatureFlag": {
                 "properties": {
                     "enabled": {
@@ -118163,6 +118214,47 @@
                         }
                     }
                 }
+            }
+        },
+        "/api/v2/projects/{projectUuid}/federation/access": {
+            "get": {
+                "operationId": "getFederationAccess",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiFederationAccessResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Whether the project is a Federation Engine project, and which ldq claims\n(telemetry_restricted, platform_read, platform_write, platform_explain) the current\nuser holds through their user attributes.",
+                "summary": "Get federation access",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ]
             }
         },
         "/api/v2/feature-flag": {
