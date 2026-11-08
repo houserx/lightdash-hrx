@@ -994,3 +994,35 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 2/2. 24 acceptance files pass: the earlier 23 plus this one. `sql-injection-safety` now
   fails only on its search_traces case. `tool-catalog` still fails until every contract tool exists.
 - 2026-11-08T17:21:04Z supervisor: mcp-tool-query-cloudwatch-logs passed the gate in round 1
+
+## mcp-tool-search-traces (2026-11-08)
+
+- New `src/tools/searchTraces.ts`. It is registered in `src/mcp/server.ts` after `query_cloudwatch_logs`, and
+  `src/index.ts` exports `SEARCH_TRACES_TOOL`, `TRACEQL_DEFAULT_LIMIT`, `TRACEQL_MAX_LIMIT`, `buildTraceqlQuery` and
+  `SearchTracesArgs`.
+  - Inputs: `query`, `start`, `end`, an optional `limit` (zod `int().min(1).max(1000)`), and an optional `source` that
+    must name a `tempo` kind source.
+  - SQL: `SELECT * FROM traceql($1, $2, $3[, $4[, $5]])`, following CONTRACTS §1.1. The limit is sent as the string
+    `'10'` and so on. With no limit and no source, it is left to the engine default (20). With a source but no limit,
+    the contract default `'20'` fills the positional gap. The result goes through `successResult(table, config.maxOutputBytes)`.
+  - Refused before any engine connection: a limit outside 1..1000 or not a whole number (the SDK zod gives -32602 with
+    `isError`, and `buildTraceqlQuery` checks again for direct callers), an empty query, a wrong-kind or unknown
+    source, and bad ranges.
+  - Contract assumptions: §1.1 gives `limit int = 20` but no upper bound. The 1..1000 range comes from the feature steps
+    and the acceptance test, and it applies to this tool only. The engine may have its own cap. TraceQL syntax is not
+    checked here; the engine and Tempo judge it.
+- Unit tests: `src/tools/searchTraces.test.ts`. 187 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/traces-ut/run.mts`. Run it from the repo root as
+  `node_modules/.bin/tsx <abs path> $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` with an RS256 token,
+  the fake Lightdash and the fake engine, with a `tempo-production` source added to MCP_SOURCES.
+  - tools/list shows search_traces as readOnly, with query, start and end required.
+  - A hostile TraceQL query with limit 10 sent one extended-protocol `traceql($1, $2, $3, $4)`, with the query as `$1`
+    and `'10'` as `$4`. The SQL had no input text. It returned trace_id, root_service, root_name, start, duration_ms and
+    span_count.
+  - With no limit, it sent `$1..$3`. With only a source, it sent `$5` with `'20'` as `$4`.
+  - These gave `isError` with 0 engine queries: limit 1001, 100000, 0, 2.5 and "10", a blank query, a missing query, a
+    loki source, an unknown source, and end before start. SIGTERM exits 0.
+  - Note: int8 `span_count` comes back as a JSON string ("42"), the same as other int8 columns in earlier tools.
+- Results: the check passes 2/2. 26 acceptance files pass: the earlier 24, this one, and `sql-injection-safety`, which
+  now passes fully. `tool-catalog` still fails until every contract tool exists. `get_trace` is the next feature.
+- 2026-11-08T17:24:21Z supervisor: mcp-tool-search-traces passed the gate in round 1

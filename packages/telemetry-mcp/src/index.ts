@@ -54,6 +54,8 @@ export { QUERY_CLOUDWATCH_TOOL, buildCloudwatchQuery, checkMetricDataQuery } fro
 export type { QueryCloudwatchArgs } from './tools/queryCloudwatch.js';
 export { QUERY_CLOUDWATCH_LOGS_TOOL, buildCloudwatchLogsQuery, joinLogGroups } from './tools/queryCloudwatchLogs.js';
 export type { QueryCloudwatchLogsArgs } from './tools/queryCloudwatchLogs.js';
+export { SEARCH_TRACES_TOOL, TRACEQL_DEFAULT_LIMIT, TRACEQL_MAX_LIMIT, buildTraceqlQuery } from './tools/searchTraces.js';
+export type { SearchTracesArgs } from './tools/searchTraces.js';
 export type { QueryPromqlArgs } from './tools/queryPromql.js';
 export { ToolInputError, capTableBytes, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
 export type { TableResult } from './tools/telemetryArgs.js';

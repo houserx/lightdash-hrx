@@ -26,6 +26,7 @@ import { registerQueryCloudwatch } from '../tools/queryCloudwatch.js';
 import { registerQueryCloudwatchLogs } from '../tools/queryCloudwatchLogs.js';
 import { registerQueryLogql } from '../tools/queryLogql.js';
 import { registerQueryPromql } from '../tools/queryPromql.js';
+import { registerSearchTraces } from '../tools/searchTraces.js';
 import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js';
 
 /** `serverInfo.name` announced to MCP clients. */
@@ -55,6 +56,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerQueryLogql(server, config, engine, now);
     registerQueryCloudwatch(server, config, engine, now);
     registerQueryCloudwatchLogs(server, config, engine, now);
+    registerSearchTraces(server, config, engine, now);
     return server;
 }
 
