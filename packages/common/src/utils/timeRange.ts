@@ -1,7 +1,8 @@
 // Dashboard Time Range resolution (docs/eng-1799/CONTRACTS.md §2).
 // Relative ranges such as `now-6h` resolve to absolute ISO-8601 UTC timestamps,
 // rounded down to the refresh interval, or to 10s when refresh is off, so that
-// cache keys change exactly when the data should.
+// cache keys change exactly when the data should. Absolute ISO-8601 timestamps
+// pass through unrounded, normalised to UTC.
 import { ParameterError } from '../types/errors';
 
 export type TimeRangeInput = {
@@ -34,6 +35,10 @@ const UNIT_MS = {
 
 const DURATION_PATTERN = /^(\d+)([smhdw])$/;
 const RELATIVE_PATTERN = /^now(?:-(\d+)([smhdw]))?$/;
+// Full ISO-8601 date-time with an explicit offset (Z or ±hh:mm), so the instant
+// never depends on the server's local time zone.
+const ABSOLUTE_PATTERN =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
 
 /** Parses a duration such as `30s`, `5m` or `2w` into milliseconds. */
 export const parseTimeRangeDuration = (duration: string): number => {
@@ -63,11 +68,34 @@ const roundingMs = (refreshInterval: string | null | undefined): number => {
     return parseTimeRangeDuration(refreshInterval);
 };
 
+/** True when the expression is an ISO-8601 date-time with an explicit offset. */
+export const isAbsoluteTimeExpression = (expression: string): boolean => {
+    const match = ABSOLUTE_PATTERN.exec(expression.trim());
+    if (!match) return false;
+    const [year, month, day, hour, minute, second] = match
+        .slice(1, 7)
+        .map((part) => Number(part ?? 0));
+    // Date.parse rolls impossible dates over (Feb 30 -> Mar 2), so check the calendar.
+    const calendar = new Date(Date.UTC(year, month - 1, day));
+    return (
+        calendar.getUTCFullYear() === year &&
+        calendar.getUTCMonth() === month - 1 &&
+        calendar.getUTCDate() === day &&
+        hour < 24 &&
+        minute < 60 &&
+        second < 60 &&
+        !Number.isNaN(Date.parse(expression.trim()))
+    );
+};
+
 const resolveExpression = (
     expression: string,
     nowMs: number,
     bucketMs: number,
 ): number => {
+    if (isAbsoluteTimeExpression(expression)) {
+        return Date.parse(expression.trim());
+    }
     const match = RELATIVE_PATTERN.exec(expression.trim());
     if (!match) {
         throw new ParameterError(
@@ -84,7 +112,8 @@ const resolveExpression = (
 /**
  * Resolves a Dashboard Time Range to absolute ISO-8601 UTC timestamps.
  * Relative expressions (`now`, `now-6h`; units s, m, h, d, w) are rounded down
- * to the refresh interval, or to 10s when there is none.
+ * to the refresh interval, or to 10s when there is none. Absolute ISO-8601
+ * timestamps with an explicit offset are kept exactly (no rounding).
  */
 export const resolveTimeRange = (
     range: TimeRangeInput,

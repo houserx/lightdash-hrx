@@ -705,3 +705,20 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     gave a 6h window ending on a 10s boundary with refresh off and on a 5m boundary with '5m'.
     'yesterday' and a reversed range threw ParameterError. common tsc, oxlint and oxfmt are clean.
 - 2026-11-08T18:51:52Z supervisor: ldq-time-relative-resolution passed the gate in round 1
+- 2026-11-08 ldq-time-absolute-range (session):
+  - `packages/common/src/utils/timeRange.ts`: `resolveExpression` now accepts absolute ISO-8601
+    date-times and returns them unrounded. They come back normalised to UTC (`toISOString`, ms
+    precision). New export `isAbsoluteTimeExpression`. The existing start-after-end check covers
+    absolute and mixed ranges.
+  - Contract assumptions (CONTRACTS §2 only says "ISO-8601 UTC timestamp"): an absolute input
+    must be a full date-time with an explicit offset (`Z`, `±hh:mm` or `±hhmm`). Non-UTC offsets
+    are converted to UTC. Date-only or offset-less strings are refused (ParameterError
+    "Cannot parse"), so the server's local time zone never matters. Impossible calendar values
+    (Feb 30, hour 24) are refused instead of rolling over the way Date.parse does. Years 0000-0099
+    are refused too (a Date.UTC quirk), which shouldn't matter in practice. Precision past
+    milliseconds is truncated by JS Date.
+  - Tested: init, then the feature check (3/3) and time-relative (5/5, regression). A scratch tsx
+    script (deleted) gave these results: +02:00 input converted to Z, from==to accepted,
+    Feb 30 / 24:00 / no-offset / date-only refused, and `now-1h` → a 2026-01-01 end refused as
+    start after end. common tsc, oxlint and oxfmt are clean.
+- 2026-11-08T18:54:43Z supervisor: ldq-time-absolute-range passed the gate in round 1
