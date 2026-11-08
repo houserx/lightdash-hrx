@@ -308,6 +308,13 @@ export const createAlertingApiRouter = (
         ),
     );
 
+    router.get(
+        `${base}/as-code`,
+        route((user, req) =>
+            services.alertingAsCode.download(user, req.params.projectUuid),
+        ),
+    );
+
     router.post(
         `${base}/as-code`,
         route((user, req) =>

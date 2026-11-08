@@ -165,6 +165,7 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
 5. **API style.** The alerting HTTP API is a plain express router (route mount), not TSOA controllers, to stay rebase-friendly and testable without the full app. The MCP line consumes `GET /api/v2/projects/{uuid}/alerting/state` and `/history` with the shapes above.
 6. **Grafana `$values.<ref>`** in ported annotations maps to `$value` (one query, one reducer per rule).
 7. **Routing bugs (ADR 0003)** — `team=Support`, unlabelled pg_cron `team=engineering`, `slack-sec` — are fixed in the as-code tree during migration and listed as expected differences for the Shadow Run; their target channels are a human decision not made here.
+8. **Rules in no space as code.** An Alert Rule's space is optional (`spaceUuid: null`, the API default), but the alert_rule schema required `spaceSlug`, so a UI rule with no space could not be downloaded as a valid document. `spaceSlug` is now optional in `alert-rule-as-code-1.0.json` and `AlertRuleAsCode`: left out, the rule is in no space (the same as "fields left out take the Alert Rule defaults"). No test or contract required it; added by alert-as-code-download.
 
 ## Feature log
 
@@ -938,3 +939,17 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - Nothing stores the uploaded document as sent. A download can rebuild it from the columns: the rule's space slug comes from `space_uuid`, contact points are stored verbatim, and the tree GET is already document-shaped.
     - The rule documents in the test spell out every field, so emitting all fields round-trips them. If "exactly as uploaded" must hold for documents that leave out defaults, the upload has to store the source document, which needs a migration.
 - 2026-11-08T22:40:51Z supervisor: alert-as-code-upload passed the gate in round 1
+- alert-as-code-download (round 1) — 2026-11-08
+  - Built `GET /api/v2/projects/{uuid}/alerting/as-code` → `{documents}` (common type `AlertingAsCodeDownload`). It returns contact points, then the tree (only once one is saved), then rules, each in list order.
+    - It needs view on AlertRule, ContactPoint and NotificationRoute. A viewer gets 200, an outsider 403 and anonymous 401.
+    - `AlertingAsCodeService.download` builds the documents from the columns. Contact points come from stored integrations (secrets are only `secretRef`s). The tree is the saved document minus `managed`. A rule spells out every field, and its `spaceSlug` comes from `AlertRuleModel.findProjectSpaceSlugsByUuid`, which includes trashed spaces (re-uploading one gives the existing "no space" 400).
+  - Decision (Contract assumption 8): `spaceSlug` is optional. Upload maps a missing value to no space, and download leaves it out for a rule with no space. The acceptance test's UI rule has no space and needs this. A unit test for it is in `asCode.test.ts`.
+  - "Exactly as uploaded" holds for documents that spell out every field, as the test's documents do. A document that leaves out defaults downloads with them filled in. Its meaning is the same, and re-uploading it is `unchanged`, but the text is not identical. Making the text identical needs the source document stored (a migration). Key order inside jsonb (integrations, tree) is Postgres's, not the uploader's.
+  - Re-uploading a download makes UI-made resources managed (`updated`, with the version kept). That is the upload's documented takeover rule.
+  - Tested:
+    - After init, the check passes. The whole shadow-ascode-ai.accept.ts passes 7/7, rules.accept.ts 4/4, common ascode-shadow.accept.ts 7/7 and asCode.test.ts 9/9. Backend and common tsc, oxlint and oxfmt are clean on the changed files.
+    - As a user: a scratch vitest walk over real HTTP through the harness (copies of run.sh and the config in src/alerting/__walk__, removed afterwards).
+      - An empty project gave `{documents: []}`.
+      - I uploaded a contact point, a tree, a minimal rule in `platform` and a rule with no `spaceSlug`, then created "UI rule" through the API. The download gave 5 documents, each `validateAlertingAsCode`-valid, with no inline secret, and the rules with no space had no `spaceSlug`.
+      - Re-uploading the download gave 200: everything was `unchanged` except ui-rule, which was `updated` (taken over), with all 3 rules at v1. A second download was byte-identical to the first.
+- 2026-11-08T22:47:47Z supervisor: alert-as-code-download passed the gate in round 1

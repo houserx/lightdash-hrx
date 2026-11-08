@@ -47,6 +47,14 @@ describe('validateAlertingAsCode', () => {
             });
     });
 
+    it('accepts a rule in no space (no spaceSlug) but not a bad slug', () => {
+        const { spaceSlug: _s, ...noSpace } = rule;
+        expect(validateAlertingAsCode(noSpace).valid).toBe(true);
+        expect(
+            validateAlertingAsCode({ ...rule, spaceSlug: 'Not A Slug' }).valid,
+        ).toBe(false);
+    });
+
     it('names missing and blank fields', () => {
         const { description: _d, ...noDescription } = rule;
         expect(validateAlertingAsCode(noDescription).errors).toEqual([

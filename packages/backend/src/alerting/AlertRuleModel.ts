@@ -221,6 +221,30 @@ export class AlertRuleModel {
         return new Map(rows.map((row) => [row.slug, row.space_uuid]));
     }
 
+    /**
+     * Slugs of the project's spaces with these uuids, keyed by uuid; unknown
+     * uuids are left out.
+     */
+    async findProjectSpaceSlugsByUuid(
+        projectUuid: string,
+        spaceUuids: string[],
+    ): Promise<Map<string, string>> {
+        if (spaceUuids.length === 0) return new Map();
+        const rows = await this.database(SpaceTableName)
+            .innerJoin(
+                ProjectTableName,
+                `${ProjectTableName}.project_id`,
+                `${SpaceTableName}.project_id`,
+            )
+            .where(`${ProjectTableName}.project_uuid`, projectUuid)
+            .whereIn(`${SpaceTableName}.space_uuid`, spaceUuids)
+            .select<{ slug: string; space_uuid: string }[]>(
+                `${SpaceTableName}.slug`,
+                `${SpaceTableName}.space_uuid`,
+            );
+        return new Map(rows.map((row) => [row.space_uuid, row.slug]));
+    }
+
     async find(
         projectUuid: string,
         ruleUuid: string,

@@ -48,7 +48,8 @@ export type AlertRuleAsCode = {
     slug: string;
     name: string;
     description: string;
-    spaceSlug: string;
+    /** The rule's space; left out, the rule is in no space. */
+    spaceSlug?: string;
     labels?: Record<string, string>;
     annotations?: Record<string, string>;
     query: string;
@@ -123,6 +124,15 @@ export type AlertingAsCodeDocument =
 
 /** What an upload did to the resource of one document. */
 export type AlertingAsCodeChange = 'created' | 'updated' | 'unchanged';
+
+/**
+ * `GET .../alerting/as-code` result: every Alert Rule and Contact Point of
+ * the project and its Notification Route tree (if saved), as documents an
+ * upload accepts unchanged. Secrets appear only as `secretRef`s.
+ */
+export type AlertingAsCodeDownload = {
+    documents: AlertingAsCodeDocument[];
+};
 
 /**
  * `POST .../alerting/as-code` result: one entry per uploaded document, in

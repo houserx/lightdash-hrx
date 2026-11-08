@@ -1,17 +1,22 @@
 import {
     ALERT_RULE_DEFAULTS,
     ALERTING_AS_CODE_TYPES,
+    ALERTING_AS_CODE_VERSION,
     ConflictError,
     getNotificationRouteContactPoints,
     ParameterError,
     validateAlertingAsCode,
+    type AlertingAsCodeDocument,
+    type AlertingAsCodeDownload,
     type AlertingAsCodeType,
     type AlertingAsCodeUploadResult,
+    type AlertRule,
     type AlertRuleAsCode,
     type AlertRuleDefinition,
     type ContactPointAsCode,
     type NotificationRoutesAsCode,
     type NotificationRouteTree,
+    type SavedNotificationRouteTree,
     type SessionUser,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
@@ -66,11 +71,12 @@ const invalidUpload = (errors: string[]): ParameterError =>
 
 /**
  * A rule document as the rule it defines: the Alert Rule defaults for every
- * field it leaves out, and its folder resolved from `spaceSlug`.
+ * field it leaves out, and its folder resolved from `spaceSlug` (null when
+ * it has none).
  */
 const toRuleDefinition = (
     document: AlertRuleAsCode,
-    spaceUuid: string,
+    spaceUuid: string | null,
 ): AlertRuleDefinition =>
     getAlertRuleDefinition({
         ...ALERT_RULE_DEFAULTS,
@@ -80,8 +86,43 @@ const toRuleDefinition = (
         spaceUuid,
     });
 
+const toRoutesDocument = ({
+    managed: _managed,
+    ...document
+}: SavedNotificationRouteTree): NotificationRoutesAsCode => document;
+
 /**
- * Alerting as code: uploads of alert_rule, contact_point and
+ * A rule as its document, every field spelled out. `spaceSlug` is left out
+ * for a rule in no space.
+ */
+const toRuleDocument = (
+    rule: AlertRule,
+    spaceSlug: string | undefined,
+): AlertRuleAsCode => ({
+    version: ALERTING_AS_CODE_VERSION,
+    type: 'alert_rule',
+    slug: rule.slug,
+    name: rule.name,
+    description: rule.description,
+    ...(spaceSlug === undefined ? {} : { spaceSlug }),
+    labels: rule.labels,
+    annotations: rule.annotations,
+    query: rule.query,
+    valueColumn: rule.valueColumn,
+    reducer: rule.reducer,
+    condition: rule.condition,
+    for: rule.for,
+    keepFiringFor: rule.keepFiringFor,
+    interval: rule.interval,
+    timeRange: rule.timeRange,
+    noDataState: rule.noDataState,
+    errorState: rule.errorState,
+    paused: rule.paused,
+    shadow: rule.shadow,
+});
+
+/**
+ * Alerting as code: downloads and uploads of alert_rule, contact_point and
  * notification_routes documents. Every uploaded resource becomes managed.
  */
 export class AlertingAsCodeService {
@@ -149,7 +190,15 @@ export class AlertingAsCodeService {
         const spaces =
             await this.deps.alertRuleModel.findProjectSpaceUuidsBySlug(
                 projectUuid,
-                [...new Set(ruleDocuments.map((e) => e.document.spaceSlug))],
+                [
+                    ...new Set(
+                        ruleDocuments
+                            .map((e) => e.document.spaceSlug)
+                            .filter(
+                                (slug): slug is string => slug !== undefined,
+                            ),
+                    ),
+                ],
             );
         valid.forEach(({ index, document }) => {
             const label = documentLabel(index, document);
@@ -180,7 +229,10 @@ export class AlertingAsCodeService {
                         tree: parseNotificationRouteTree(tree),
                     };
                 } else {
-                    const spaceUuid = spaces.get(typed.spaceSlug);
+                    const spaceUuid =
+                        typed.spaceSlug === undefined
+                            ? null
+                            : spaces.get(typed.spaceSlug);
                     if (spaceUuid === undefined) {
                         throw new ParameterError(
                             `spaceSlug: no space "${typed.spaceSlug}" in this project`,
@@ -201,6 +253,63 @@ export class AlertingAsCodeService {
         });
         if (errors.length > 0) throw invalidUpload(errors);
         return parsed;
+    }
+
+    /**
+     * Every Alert Rule and Contact Point of the project and its Notification
+     * Route tree (when one is saved), as documents that upload back
+     * unchanged. Needs view on all three; secrets are only `secretRef`s.
+     */
+    async download(
+        user: SessionUser,
+        projectUuid: string,
+    ): Promise<AlertingAsCodeDownload> {
+        for (const type of ALERTING_AS_CODE_TYPES) {
+            // eslint-disable-next-line no-await-in-loop
+            await this.assertAbility(
+                user,
+                'view',
+                SUBJECT_BY_TYPE[type],
+                projectUuid,
+            );
+        }
+        const [contactPoints, tree, rules] = await Promise.all([
+            this.deps.contactPointModel.list(projectUuid),
+            this.deps.notificationRouteModel.find(projectUuid),
+            this.deps.alertRuleModel.list(projectUuid),
+        ]);
+        const spaceSlugs =
+            await this.deps.alertRuleModel.findProjectSpaceSlugsByUuid(
+                projectUuid,
+                [
+                    ...new Set(
+                        rules
+                            .map((rule) => rule.spaceUuid)
+                            .filter((uuid): uuid is string => uuid !== null),
+                    ),
+                ],
+            );
+        const documents: AlertingAsCodeDocument[] = [
+            ...contactPoints.map(
+                (contactPoint): ContactPointAsCode => ({
+                    version: ALERTING_AS_CODE_VERSION,
+                    type: 'contact_point',
+                    slug: contactPoint.slug,
+                    name: contactPoint.name,
+                    integrations: contactPoint.integrations,
+                }),
+            ),
+            ...(tree ? [toRoutesDocument(tree)] : []),
+            ...rules.map((rule) =>
+                toRuleDocument(
+                    rule,
+                    rule.spaceUuid === null
+                        ? undefined
+                        : spaceSlugs.get(rule.spaceUuid),
+                ),
+            ),
+        ];
+        return { documents };
     }
 
     /**

@@ -10,7 +10,6 @@
         "slug",
         "name",
         "description",
-        "spaceSlug",
         "query",
         "condition"
     ],
@@ -37,7 +36,7 @@
         },
         "spaceSlug": {
             "$ref": "#/$defs/Slug",
-            "description": "Slug of the space the rule belongs to"
+            "description": "Slug of the space the rule belongs to; left out, the rule is in no space"
         },
         "labels": {
             "type": "object",
