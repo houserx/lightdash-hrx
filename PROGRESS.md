@@ -354,3 +354,4 @@ should add a dated line here per feature.
   ids were reported valid. With `spanIdFieldId: [a, b]` it failed with "Expected type 'string' (line 19)".
 - **Note.** Unknown config keys are not rejected (no `additionalProperties: false`), the same as other chart configs.
 - 2026-11-08T18:33:42Z supervisor: viz-trace-waterfall-as-code passed the gate in round 1
+- 2026-11-08T18:35:23Z supervisor: viz-chart-type-wiring halted: worker viz.feature.viz-chart-type-wiring.r1 stopped: STOP file present
