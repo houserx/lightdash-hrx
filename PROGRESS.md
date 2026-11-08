@@ -1938,3 +1938,17 @@ token verification for a *valid* token, which feature 39 then hardens.
   NULL. A commit by the system identity then gave 200 and the note was 'agent'. The store held 3
   ai_ask preview audits, 1 assertion commit audit and 3 read audits, every hash matched. Check passes.
 - 2026-11-08T22:13:04Z supervisor: eng-write-agent-commit-refused passed the gate in round 1
+- eng-guard-write-mode (security): no code change needed. eng-write-preview had already built it:
+  write::run's check 7 calls `engine_guard::guard(statement, Mode::Write)` after the agent-commit
+  check and before the confirmation token. The guard's Rejection.status (400 for empty/blank SQL,
+  422 otherwise) becomes the HTTP status and its message becomes `error`. A rejected statement
+  doesn't spend the token and writes no audit item.
+  Tested as a user: `../tmp/write-guard/run.sh <out>` (write-commit rig on ports 59641-59645). With
+  curl, I posted previews of all 19 rejected cases from the acceptance test (dblink variants, U&"...",
+  query_to_xml*/ts_stat/ts_rewrite, DROP/ALTER/TRUNCATE/GRANT/CREATE/VACUUM, a stacked UPDATE; DROP,
+  BEGIN). Each gave 422 with the portal's message. "   " and "" gave 400 "SQL statement is
+  required.". Previews of INSERT, UPDATE, DELETE and a DELETE CTE gave 200 preview true. Before and
+  after, platform_query showed widgets at 20 rows, 0 notes and score sum 315, so nothing changed.
+  The store held 4 write audits (the allowed previews) plus 2 read audits, and every hash matched.
+  Check passes.
+- 2026-11-08T22:15:03Z supervisor: eng-guard-write-mode passed the gate in round 1
