@@ -1519,3 +1519,18 @@ token verification for a *valid* token, which feature 39 then hardens.
   identity::eng_audited_query_description_required, audit::eng_audit_dynamodb_item and the
   `platform::`/`identity::`/`audit::`/`transaction::`/`session::`/`pg::` unit tests.
 - 2026-11-08T20:51:04Z supervisor: eng-platform-query-basic passed the gate in round 1
+- 2026-11-08 eng-platform-query-enforcement (round 1): no code change needed. eng-platform-query-basic
+  already enforces it: `PlatformQuery::call_with_args` calls `Access::require(.., Claim::PlatformRead)`
+  before the describe round trip, and `Identity::check` refuses a missing/invalid/expired identity
+  or one without `attrs.platform_read` with 42501 naming platform_read, then one without a
+  description with 42501 'audited query requires a description'. Agents with platform_read may
+  read (audited as ai_ask, per `Identity::action`). An expired token is accepted by SET but leaves
+  the session with no identity, so it reads as "needs platform_read".
+  Tested as a user: `../tmp/platform-enforce/run.sh <out>` (throwaway cluster, audit store mock,
+  engine; pgclient's `platform` bin, one session per token) ran the same platform_query through
+  extended and simple protocol for: no identity, only telemetry_restricted, only platform_explain,
+  platform_read without description, expired reader -> each 42501 (platform_read, or the
+  description message for the no-description one). Postgres's statement log and the store's
+  call log did not grow during any of them. Reader with description and an MCP agent with
+  platform_read -> 1 row each, one dynamo + one S3 put per query. The check passed after init.
+- 2026-11-08T20:53:03Z supervisor: eng-platform-query-enforcement passed the gate in round 1
