@@ -405,3 +405,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     (839 pass) and PostgresWarehouseClient.test.ts (35 pass). Root `prettier --check` finds no config
     and flags even unchanged HEAD files for quote style. Ignore that.
 - 2026-11-08T17:44:13Z supervisor: ldq-federation-warehouse-client passed the gate in round 1
+- 2026-11-08 ldq-federation-catalog (session):
+  - `FederationWarehouseClient` now overrides `supportsMatviews()` to return `false` without
+    querying. The inherited `getAllTables`, `getFields` and `getCatalog` then send only their
+    `information_schema.tables`/`.columns` part: no `pg_matviews`/`pg_class`/`pg_attribute`
+    UNION, and no `SELECT version()` lookup. That covers CONTRACTS §4.1: "information_schema
+    only" and "version() gating turned off". Effect: materialized views are not listed for the
+    engine, which has none anyway.
+  - `listDatabases()` is overridden to return only the configured `dbname` (isDefault, not
+    truncated). The base version reads `pg_database`, and any other database would be opened
+    with a plain `PostgresWarehouseClient` (the trap from the previous entry). With one database,
+    `getTablesForDatabase` always uses `this`. Contract assumption: the engine serves a single
+    database (the same assumption as WarehouseClientFactory's compile-group exclusion).
+  - Tested: init, then the feature check (1/1). It runs a real throwaway Postgres with statement
+    logging and asserts that the tables, fields and catalog come back with `information_schema`
+    and nothing matching pg_catalog relations. Also ran federation-client-factory (3/3),
+    PostgresWarehouseClient.test.ts (35/35) and the warehouses `tsc --noEmit`. Called the built
+    `dist` `listDatabases` on a federation client: it returns only `operations`.
+  - Not built here: `SET hrx.identity` (ldq-federation-identity-set). The check passes a second
+    `{ getIdentityToken }` argument to `warehouseClientFromCredentials`, and it is currently
+    ignored.
+- 2026-11-08T17:49:24Z supervisor: ldq-federation-catalog passed the gate in round 1
