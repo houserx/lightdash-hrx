@@ -833,3 +833,30 @@ token verification for a *valid* token, which feature 39 then hardens.
   `pgwire::eng_pg_statement_timeout` passes. All pgwire/promql/config/harness checks in the
   passing list still pass; the failures are the unbuilt tls/cancel/disconnect features.
 - 2026-11-08T18:39:58Z supervisor: eng-pg-statement-timeout passed the gate in round 1
+- 2026-11-08 eng-pg-cancel-request (worker, round 1): no new code paths, only wiring of what
+  pgwire 0.42 already ships. `PgHandlers::new` (src/pg.rs) makes one shared
+  `pgwire::api::ConnectionManager`. It hands it to the SASL startup handler
+  (`with_connection_manager`), which registers each login under its BackendKeyData. The default
+  generator gives pids 100000, 100001, ... in login order and a random i32 secret (protocol 3.0).
+  `cancel_handler()` returns `DefaultCancelHandler` over the same manager. A matching
+  CancelRequest fires the connection's oneshot. pgwire races that oneshot against `do_query` in
+  both protocols, so the query future is dropped, the in-flight reqwest to the source is
+  abandoned, and the client gets 57014 "canceling statement due to user request". A wrong pid or
+  secret matches nothing and is silently ignored, as Postgres does. A cancel that arrives while
+  idle does not leak into the next query, because `start_query` installs a fresh oneshot each time.
+  - For eng-pg-disconnect-cleanup: cancel does not cover a hang-up. Dropping the connection
+    task should drop `do_query` too, but check it against the source, especially mid-portal in
+    the extended protocol.
+  - For eng-pg-tls: pgwire handles a CancelRequest sent before or inside TLS, and the cancel
+    handler is the same either way.
+  Tested as a user: `../tmp/pgclient/src/bin/cancel.rs` (the timeout.rs mock on 59100 with
+  query=slow = 20 s, config `../tmp/promql/timeout.toml`) spawns `target/debug/engine` and uses
+  tokio-postgres. promql('slow') was cancelled 700 ms in with `CancelToken::cancel_query`: 57014
+  within 1 ms of the cancel, in both the extended and simple protocols. Each time the mock logged
+  "engine dropped the request" at the same moment, and SELECT 1 still worked on that session
+  afterwards. Round 3 sent five raw CancelRequests with the right pid (100002) and wrong secrets,
+  plus one with an unknown pid. After 1.5 s the query was still running and the mock still
+  waiting. The right key then gave 57014 at once and the source request dropped. The check
+  `pgwire::eng_pg_cancel_request` passes. The statement_timeout, startup_auth, extended_query
+  and cursor_batches checks still pass.
+- 2026-11-08T18:43:31Z supervisor: eng-pg-cancel-request passed the gate in round 1

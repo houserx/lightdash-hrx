@@ -37,6 +37,7 @@ use pgwire::api::auth::sasl::scram::{ScramAuth, gen_salted_password};
 use pgwire::api::auth::{
     AuthSource, DefaultServerParameterProvider, LoginInfo, Password, StartupHandler,
 };
+use pgwire::api::cancel::{CancelHandler, DefaultCancelHandler};
 use pgwire::api::portal::{Format, Portal};
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{
@@ -45,7 +46,7 @@ use pgwire::api::results::{
 };
 use pgwire::api::stmt::{QueryParser, StoredStatement};
 use pgwire::api::store::PortalStore;
-use pgwire::api::{ClientInfo, ClientPortalStore, PgWireServerHandlers, Type};
+use pgwire::api::{ClientInfo, ClientPortalStore, ConnectionManager, PgWireServerHandlers, Type};
 use pgwire::error::{ErrorInfo, PgWireError, PgWireResult};
 use pgwire::messages::PgWireBackendMessage;
 use pgwire::messages::data::DataRow;
@@ -121,6 +122,7 @@ fn random_bytes() -> Vec<u8> {
 pub struct PgHandlers {
     startup: Arc<SASLAuthStartupHandler<DefaultServerParameterProvider>>,
     query: Arc<QueryHandler>,
+    cancel: Arc<DefaultCancelHandler>,
 }
 
 impl PgHandlers {
@@ -140,9 +142,20 @@ impl PgHandlers {
         let mut params = DefaultServerParameterProvider::default();
         params.server_version = SERVER_VERSION.to_string();
         params.is_superuser = false;
+        // Cancellation (CONTRACTS §1): each login gets a random backend pid and secret key in
+        // BackendKeyData and is registered here. A CancelRequest whose (pid, secret) matches
+        // fires that connection's cancel receiver, which pgwire races against `do_query`; the
+        // query is dropped (abandoning any in-flight source request) and fails with 57014.
+        // A wrong pid or secret matches nothing and is ignored, as in Postgres.
+        let connections = Arc::new(ConnectionManager::new());
         Ok(PgHandlers {
-            startup: Arc::new(SASLAuthStartupHandler::new(Arc::new(params)).with_scram(scram)),
+            startup: Arc::new(
+                SASLAuthStartupHandler::new(Arc::new(params))
+                    .with_scram(scram)
+                    .with_connection_manager(connections.clone()),
+            ),
             query: Arc::new(QueryHandler { sql: Arc::new(sql) }),
+            cancel: Arc::new(DefaultCancelHandler::new(connections)),
         })
     }
 }
@@ -158,6 +171,10 @@ impl PgWireServerHandlers for PgHandlers {
 
     fn extended_query_handler(&self) -> Arc<impl ExtendedQueryHandler> {
         self.query.clone()
+    }
+
+    fn cancel_handler(&self) -> Arc<impl CancelHandler> {
+        self.cancel.clone()
     }
 }
 
