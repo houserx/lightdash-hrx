@@ -10,6 +10,9 @@ export const CHART_TYPES_WITHOUT_IMAGE_EXPORT = [
     ChartType.MAP,
     // Sandboxed iframe — the echarts capture path can't reach it.
     ChartType.DATA_APP_VIZ,
+    // DOM renderers, not ECharts — nothing for the image capture to read.
+    ChartType.LOG_STREAM,
+    ChartType.TRACE_WATERFALL,
 ];
 
 export const CHART_TYPES_WITHOUT_DATA_EXPORT: ChartType[] = Object.values(

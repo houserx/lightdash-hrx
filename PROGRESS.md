@@ -355,3 +355,25 @@ should add a dated line here per feature.
 - **Note.** Unknown config keys are not rejected (no `additionalProperties: false`), the same as other chart configs.
 - 2026-11-08T18:33:42Z supervisor: viz-trace-waterfall-as-code passed the gate in round 1
 - 2026-11-08T18:35:23Z supervisor: viz-chart-type-wiring halted: worker viz.feature.viz-chart-type-wiring.r1 stopped: STOP file present
+
+### 2026-11-08 viz-chart-type-wiring (session)
+
+- **What.** Three frontend helpers that used a `default:` branch now handle the new types. `getResourceTypeName`
+  returns 'Log stream' and 'Trace waterfall'. `getChartIcon` returns `IconListDetails` for log stream and
+  `IconTimeline` for trace waterfall. `CHART_TYPES_WITHOUT_IMAGE_EXPORT` now lists `LOG_STREAM` and `TRACE_WATERFALL`,
+  because both are DOM renderers and the ECharts image capture has nothing to read.
+- **Audit.** All five typechecks were already green before this change: `viz-chart-type-members` had wired every
+  exhaustive switch (`assertUnreachable`). The remaining non-ee `SANKEY`/`DATA_APP_VIZ` references are equality
+  checks, not switches over the type.
+- **Tested as a user.** A full app needs a backend and DB, and pgvector isn't available locally. Instead I rendered the
+  real `ResourceViewList` in a throwaway vitest file (since deleted) with two synthetic charts. The rows read
+  "Log stream • …" and "Trace waterfall • …", and their SVGs match IconListDetails and IconTimeline: distinct, and not
+  the bar-chart fallback. In a throwaway copy of the `ChartDownloadMenu` test harness, log stream and trace waterfall
+  render no export button and no image option. Cartesian still shows both. Then I ran the check after
+  `bash ./init.sh`: 3/3 pass, and all five typechecks pass. The related ChartDownload/ResourceView unit tests pass
+  (69/69), and oxfmt and oxlint are clean.
+- **Next.** Because the new types are also in `CHART_TYPES_WITHOUT_DATA_EXPORT` (everything except table),
+  `ChartDownloadMenu` returns null for them, so no export menu shows at all. `viz-log-stream-csv-export` must change
+  that gate (for example, a log-stream branch like the `DATA_APP_VIZ` one) to offer CSV. The ee AI-copilot callers of
+  `CHART_TYPES_WITHOUT_IMAGE_EXPORT` and `getChartIcon` pick up the new entries automatically, with no ee edit.
+- 2026-11-08T18:41:04Z supervisor: viz-chart-type-wiring passed the gate in round 1
