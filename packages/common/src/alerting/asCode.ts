@@ -121,6 +121,22 @@ export type AlertingAsCodeDocument =
     | ContactPointAsCode
     | NotificationRoutesAsCode;
 
+/** What an upload did to the resource of one document. */
+export type AlertingAsCodeChange = 'created' | 'updated' | 'unchanged';
+
+/**
+ * `POST .../alerting/as-code` result: one entry per uploaded document, in
+ * upload order. `slug` is null for the notification_routes document.
+ */
+export type AlertingAsCodeUploadResult = {
+    documents: {
+        type: AlertingAsCodeType;
+        slug: string | null;
+        uuid: string | null;
+        change: AlertingAsCodeChange;
+    }[];
+};
+
 export type AlertingAsCodeValidationResult = {
     valid: boolean;
     errors: string[];

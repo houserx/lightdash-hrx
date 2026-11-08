@@ -14,8 +14,11 @@ export type NotificationRouteTree = Omit<
     'version' | 'type'
 >;
 
-/** `GET /notification-routes`: the tree, or null before the first save. */
-export type SavedNotificationRouteTree = NotificationRouteTree & {
+/**
+ * `GET /notification-routes`: the tree, or null before the first save, as
+ * its notification_routes as-code document (with `version` and `type`).
+ */
+export type SavedNotificationRouteTree = NotificationRoutesAsCode & {
     /** Uploaded as code; changed only through git. */
     managed: boolean;
 };

@@ -8,6 +8,7 @@ import { type Knex } from 'knex';
 import { AlertEvaluator, type AlertWarehouseClients } from './AlertEvaluator';
 import { AlertHealthService } from './AlertHealthService';
 import { AlertHeartbeatModel } from './AlertHeartbeatModel';
+import { AlertingAsCodeService } from './AlertingAsCodeService';
 import {
     createAlertingTaskHandlers,
     enqueueAlertingTick,
@@ -66,6 +67,7 @@ export type AlertingModuleDeps = {
 
 export type AlertingModule = {
     alertHealth: AlertHealthService;
+    alertingAsCode: AlertingAsCodeService;
     alertRules: AlertRuleService;
     alertNotifications: AlertNotificationService;
     contactPoints: ContactPointService;
@@ -84,6 +86,7 @@ export const createAlertingModule = (
     deps: AlertingModuleDeps,
 ): AlertingModule => {
     const alertRuleModel = new AlertRuleModel(deps.database);
+    const contactPointModel = new ContactPointModel(deps.database);
     const notificationRouteModel = new NotificationRouteModel(deps.database);
     const alertScheduleModel = new AlertScheduleModel(deps.database);
     const alertNotificationModel = new AlertNotificationModel(deps.database);
@@ -118,6 +121,13 @@ export const createAlertingModule = (
             alertHeartbeatModel,
             clock: deps.clock,
         }),
+        alertingAsCode: new AlertingAsCodeService({
+            database: deps.database,
+            alertRuleModel,
+            contactPointModel,
+            notificationRouteModel,
+            clock: deps.clock,
+        }),
         alertRules: new AlertRuleService({
             alertRuleModel,
             alertStateHistoryModel: new AlertStateHistoryModel(deps.database),
@@ -128,7 +138,7 @@ export const createAlertingModule = (
             alertNotificationModel,
         }),
         contactPoints: new ContactPointService({
-            contactPointModel: new ContactPointModel(deps.database),
+            contactPointModel,
             notificationRouteModel,
             testNotifier: notifier,
             clock: deps.clock,
@@ -156,6 +166,7 @@ export const createAlertingModule = (
 export const createAlertingRouter = (module: AlertingModule): Router =>
     createAlertingApiRouter({
         alertHealth: module.alertHealth,
+        alertingAsCode: module.alertingAsCode,
         alertRules: module.alertRules,
         alertNotifications: module.alertNotifications,
         contactPoints: module.contactPoints,

@@ -46,19 +46,18 @@ const zeroTimerErrors = (route: NotificationRoute, path: string): string[] => [
  * JSON schema (so the API and uploads accept the same trees), plus the
  * matcher regexes and timers. Contact Points are checked on save.
  */
-const parseTree = (body: unknown): NotificationRouteTree => {
+export const parseNotificationRouteTree = (
+    body: unknown,
+): NotificationRouteTree => {
     if (!isPlainObject(body)) {
         throw new ParameterError(
             'The Notification Route tree must be a JSON object',
         );
     }
-    // `managed` comes back from GET; it's ignored so a read tree can be
-    // saved as is. `version` and `type` belong to as-code documents only.
+    // GET returns the tree as its as-code document plus `managed`, so a
+    // read tree can be saved as is: `managed` is ignored, and `version` and
+    // `type` may be given but must be the document's (the schema checks).
     const { managed: _managed, ...tree } = body;
-    const documentKeys = ['version', 'type'].filter((key) => key in tree);
-    if (documentKeys.length > 0) {
-        throw invalid(documentKeys.map((key) => `${key}: is not allowed`));
-    }
     const document = {
         version: ALERTING_AS_CODE_VERSION,
         type: 'notification_routes',
@@ -116,7 +115,7 @@ export class NotificationRouteService {
         body: unknown,
     ): Promise<SavedNotificationRouteTree> {
         await this.assertAbility(user, 'manage', projectUuid);
-        const tree = parseTree(body);
+        const tree = parseNotificationRouteTree(body);
         await this.deps.notificationRouteModel.save({
             projectUuid,
             tree,

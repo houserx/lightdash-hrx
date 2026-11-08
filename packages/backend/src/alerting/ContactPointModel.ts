@@ -1,4 +1,5 @@
 import {
+    type AlertingAsCodeChange,
     type ContactPoint,
     type ContactPointIntegration,
 } from '@lightdash/common';
@@ -6,6 +7,7 @@ import { type Knex } from 'knex';
 import {
     findProjectOrganizationUuid,
     slugPrefixPattern,
+    stableStringify,
 } from './alertingAccess';
 
 // Table from migration 20261108120000_create_alerting_tables.
@@ -102,6 +104,68 @@ export class ContactPointModel {
             })
             .returning<{ contact_point_uuid: string }[]>('contact_point_uuid');
         return contactPointUuid;
+    }
+
+    /**
+     * As-code upload, inside the caller's transaction: creates the Contact
+     * Point with this slug or overwrites its name and integrations, and
+     * marks it managed either way.
+     */
+    async upsertManaged(
+        trx: Knex.Transaction,
+        args: {
+            projectUuid: string;
+            slug: string;
+            name: string;
+            integrations: ContactPointIntegration[];
+            userUuid: string;
+            now: Date;
+        },
+    ): Promise<{ contactPointUuid: string; change: AlertingAsCodeChange }> {
+        const row = await trx(ContactPointsTableName)
+            .where({ project_uuid: args.projectUuid, slug: args.slug })
+            .forUpdate()
+            .first<DbContactPoint | undefined>();
+        if (!row) {
+            const [{ contact_point_uuid: contactPointUuid }] = await trx(
+                ContactPointsTableName,
+            )
+                .insert({
+                    project_uuid: args.projectUuid,
+                    slug: args.slug,
+                    name: args.name,
+                    integrations: JSON.stringify(args.integrations),
+                    managed: true,
+                    created_by_user_uuid: args.userUuid,
+                    updated_by_user_uuid: args.userUuid,
+                    created_at: args.now,
+                    updated_at: args.now,
+                })
+                .returning<{ contact_point_uuid: string }[]>(
+                    'contact_point_uuid',
+                );
+            return { contactPointUuid, change: 'created' };
+        }
+        const unchanged =
+            row.managed &&
+            row.name === args.name &&
+            stableStringify(row.integrations) ===
+                stableStringify(args.integrations);
+        if (!unchanged) {
+            await trx(ContactPointsTableName)
+                .where('contact_point_uuid', row.contact_point_uuid)
+                .update({
+                    name: args.name,
+                    integrations: JSON.stringify(args.integrations),
+                    managed: true,
+                    updated_by_user_uuid: args.userUuid,
+                    updated_at: args.now,
+                });
+        }
+        return {
+            contactPointUuid: row.contact_point_uuid,
+            change: unchanged ? 'unchanged' : 'updated',
+        };
     }
 
     /**

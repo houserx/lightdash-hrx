@@ -108,6 +108,16 @@ export const nextFreeSlug = (base: string, taken: Iterable<string>): string => {
     return `${base}-${suffix}`;
 };
 
+/** JSON with object keys sorted, so jsonb's key order doesn't count. */
+export const stableStringify = (value: unknown): string =>
+    JSON.stringify(value, (_key, v: unknown) =>
+        v !== null && typeof v === 'object' && !Array.isArray(v)
+            ? Object.fromEntries(
+                  Object.entries(v).sort(([a], [b]) => a.localeCompare(b)),
+              )
+            : v,
+    );
+
 /** LIKE pattern matching every slug that starts with `prefix`. */
 export const slugPrefixPattern = (prefix: string): string =>
     `${prefix.replace(/[\\%_]/g, '\\$&')}%`;

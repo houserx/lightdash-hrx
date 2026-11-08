@@ -98,7 +98,7 @@ const isStringMap = (value: unknown): value is Record<string, string> =>
 /**
  * Checks the shape of a rule body: known fields with the right JSON types,
  * and non-blank name, description and query. Value rules (durations,
- * reducers, operators, states, folder) are checked by `validateDefinition`.
+ * reducers, operators, states, folder) are checked by `validateAlertRuleDefinition`.
  */
 const parseRuleBody = (
     body: unknown,
@@ -225,7 +225,9 @@ const validateCondition = (condition: Record<string, unknown>) => {
  * the folder is a space of the project needs the database; see
  * `assertFolder`.
  */
-const validateDefinition = (definition: AlertRuleDefinition) => {
+export const validateAlertRuleDefinition = (
+    definition: AlertRuleDefinition,
+) => {
     if (
         definition.spaceUuid !== null &&
         !UUID_PATTERN.test(definition.spaceUuid)
@@ -574,7 +576,7 @@ export class AlertRuleService {
             annotations: {},
             ...fields,
         });
-        validateDefinition(definition);
+        validateAlertRuleDefinition(definition);
         await this.assertFolder(projectUuid, definition.spaceUuid);
         return { requestedSlug, definition };
     }
@@ -678,7 +680,7 @@ export class AlertRuleService {
                     );
                 }
                 const next = getAlertRuleDefinition({ ...current, ...change });
-                validateDefinition(next);
+                validateAlertRuleDefinition(next);
                 return next;
             },
         });

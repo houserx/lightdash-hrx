@@ -1,6 +1,7 @@
 import {
     type AlertCondition,
     type AlertErrorState,
+    type AlertingAsCodeChange,
     type AlertInstanceState,
     type AlertNoDataState,
     type AlertReducer,
@@ -15,6 +16,7 @@ import { SpaceTableName } from '../database/entities/spaces';
 import {
     findProjectOrganizationUuid,
     slugPrefixPattern,
+    stableStringify,
 } from './alertingAccess';
 
 // Tables from migration 20261108120000_create_alerting_tables.
@@ -155,16 +157,6 @@ export const getAlertRuleDefinition = (
     shadow: rule.shadow,
 });
 
-/** JSON with object keys sorted, so jsonb's key order doesn't count. */
-const stableStringify = (value: unknown): string =>
-    JSON.stringify(value, (_key, v: unknown) =>
-        v !== null && typeof v === 'object' && !Array.isArray(v)
-            ? Object.fromEntries(
-                  Object.entries(v).sort(([a], [b]) => a.localeCompare(b)),
-              )
-            : v,
-    );
-
 export class AlertRuleModel {
     constructor(private readonly database: Knex) {}
 
@@ -202,6 +194,31 @@ export class AlertRuleModel {
                 `${SpaceTableName}.space_uuid`,
             );
         return row !== undefined;
+    }
+
+    /**
+     * Uuids of the project's spaces (not in the trash) with these slugs,
+     * keyed by slug; unknown slugs are left out.
+     */
+    async findProjectSpaceUuidsBySlug(
+        projectUuid: string,
+        slugs: string[],
+    ): Promise<Map<string, string>> {
+        if (slugs.length === 0) return new Map();
+        const rows = await this.database(SpaceTableName)
+            .innerJoin(
+                ProjectTableName,
+                `${ProjectTableName}.project_id`,
+                `${SpaceTableName}.project_id`,
+            )
+            .where(`${ProjectTableName}.project_uuid`, projectUuid)
+            .whereIn(`${SpaceTableName}.slug`, slugs)
+            .whereNull(`${SpaceTableName}.deleted_at`)
+            .select<{ slug: string; space_uuid: string }[]>(
+                `${SpaceTableName}.slug`,
+                `${SpaceTableName}.space_uuid`,
+            );
+        return new Map(rows.map((row) => [row.slug, row.space_uuid]));
     }
 
     async find(
@@ -248,33 +265,133 @@ export class AlertRuleModel {
         userUuid: string;
         now: Date;
     }): Promise<string> {
-        return this.database.transaction(async (trx) => {
-            const [{ alert_rule_uuid: ruleUuid }] = await trx(
-                AlertRulesTableName,
-            )
-                .insert({
-                    ...toDbDefinition(args.definition),
-                    // jsonb columns: knex would send objects as-is otherwise.
-                    condition: JSON.stringify(args.definition.condition),
-                    labels: JSON.stringify(args.definition.labels),
-                    annotations: JSON.stringify(args.definition.annotations),
-                    project_uuid: args.projectUuid,
-                    slug: args.slug,
-                    created_by_user_uuid: args.userUuid,
-                    updated_by_user_uuid: args.userUuid,
-                    created_at: args.now,
-                    updated_at: args.now,
-                })
-                .returning<{ alert_rule_uuid: string }[]>('alert_rule_uuid');
-            await trx(AlertRuleVersionsTableName).insert({
-                alert_rule_uuid: ruleUuid,
-                version: 1,
-                definition: JSON.stringify(args.definition),
+        return this.database.transaction((trx) =>
+            this.insertRule(trx, { ...args, managed: false }),
+        );
+    }
+
+    /** Inserts the rule and its version 1. */
+    private async insertRule(
+        trx: Knex,
+        args: {
+            projectUuid: string;
+            slug: string;
+            definition: AlertRuleDefinition;
+            managed: boolean;
+            userUuid: string;
+            now: Date;
+        },
+    ): Promise<string> {
+        const [{ alert_rule_uuid: ruleUuid }] = await trx(AlertRulesTableName)
+            .insert({
+                ...toDbDefinition(args.definition),
+                // jsonb columns: knex would send objects as-is otherwise.
+                condition: JSON.stringify(args.definition.condition),
+                labels: JSON.stringify(args.definition.labels),
+                annotations: JSON.stringify(args.definition.annotations),
+                project_uuid: args.projectUuid,
+                slug: args.slug,
+                managed: args.managed,
                 created_by_user_uuid: args.userUuid,
+                updated_by_user_uuid: args.userUuid,
                 created_at: args.now,
-            });
-            return ruleUuid;
+                updated_at: args.now,
+            })
+            .returning<{ alert_rule_uuid: string }[]>('alert_rule_uuid');
+        await trx(AlertRuleVersionsTableName).insert({
+            alert_rule_uuid: ruleUuid,
+            version: 1,
+            definition: JSON.stringify(args.definition),
+            created_by_user_uuid: args.userUuid,
+            created_at: args.now,
         });
+        return ruleUuid;
+    }
+
+    /** Saves `next` over the rule's definition as version `version`. */
+    private async writeVersion(
+        trx: Knex,
+        args: {
+            ruleUuid: string;
+            version: number;
+            next: AlertRuleDefinition;
+            userUuid: string;
+            now: Date;
+        },
+    ): Promise<void> {
+        await trx(AlertRulesTableName)
+            .where('alert_rule_uuid', args.ruleUuid)
+            .update({
+                ...toDbDefinition(args.next),
+                condition: JSON.stringify(args.next.condition),
+                labels: JSON.stringify(args.next.labels),
+                annotations: JSON.stringify(args.next.annotations),
+                updated_by_user_uuid: args.userUuid,
+                updated_at: args.now,
+            });
+        await trx(AlertRuleVersionsTableName).insert({
+            alert_rule_uuid: args.ruleUuid,
+            version: args.version,
+            definition: JSON.stringify(args.next),
+            created_by_user_uuid: args.userUuid,
+            created_at: args.now,
+        });
+    }
+
+    /**
+     * As-code upload, inside the caller's transaction: creates the rule with
+     * this slug, or saves `definition` over it as the next version (only if
+     * the definition changed), and marks it managed either way.
+     */
+    async upsertManaged(
+        trx: Knex.Transaction,
+        args: {
+            projectUuid: string;
+            slug: string;
+            definition: AlertRuleDefinition;
+            userUuid: string;
+            now: Date;
+        },
+    ): Promise<{ ruleUuid: string; change: AlertingAsCodeChange }> {
+        const row = await this.selectRules(trx)
+            .where(`${AlertRulesTableName}.project_uuid`, args.projectUuid)
+            .andWhere(`${AlertRulesTableName}.slug`, args.slug)
+            .forUpdate()
+            .first();
+        if (!row) {
+            const ruleUuid = await this.insertRule(trx, {
+                ...args,
+                managed: true,
+            });
+            return { ruleUuid, change: 'created' };
+        }
+        const current = toAlertRule(row);
+        const definitionChanged =
+            stableStringify(args.definition) !==
+            stableStringify(getAlertRuleDefinition(current));
+        if (definitionChanged) {
+            await this.writeVersion(trx, {
+                ruleUuid: current.uuid,
+                version: current.version + 1,
+                next: args.definition,
+                userUuid: args.userUuid,
+                now: args.now,
+            });
+        }
+        if (!current.managed) {
+            await trx(AlertRulesTableName)
+                .where('alert_rule_uuid', current.uuid)
+                .update({
+                    managed: true,
+                    updated_by_user_uuid: args.userUuid,
+                    updated_at: args.now,
+                });
+        }
+        return {
+            ruleUuid: current.uuid,
+            change:
+                definitionChanged || !current.managed ? 'updated' : 'unchanged',
+        };
     }
 
     /**
@@ -307,22 +424,12 @@ export class AlertRuleModel {
             ) {
                 return { changed: false };
             }
-            await trx(AlertRulesTableName)
-                .where('alert_rule_uuid', args.ruleUuid)
-                .update({
-                    ...toDbDefinition(next),
-                    condition: JSON.stringify(next.condition),
-                    labels: JSON.stringify(next.labels),
-                    annotations: JSON.stringify(next.annotations),
-                    updated_by_user_uuid: args.userUuid,
-                    updated_at: args.now,
-                });
-            await trx(AlertRuleVersionsTableName).insert({
-                alert_rule_uuid: args.ruleUuid,
+            await this.writeVersion(trx, {
+                ruleUuid: args.ruleUuid,
                 version: current.version + 1,
-                definition: JSON.stringify(next),
-                created_by_user_uuid: args.userUuid,
-                created_at: args.now,
+                next,
+                userUuid: args.userUuid,
+                now: args.now,
             });
             return { changed: true };
         });

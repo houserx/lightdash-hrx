@@ -12,6 +12,7 @@ import express, {
 } from 'express';
 import Logger from '../logging/logger';
 import { type AlertHealthService } from './AlertHealthService';
+import { type AlertingAsCodeService } from './AlertingAsCodeService';
 import {
     parseAlertNotificationListQuery,
     type AlertNotificationService,
@@ -31,6 +32,7 @@ export const ALERTING_HEALTH_API_PATH = '/api/v1/alerting/health';
 
 type AlertingRouterServices = {
     alertHealth: AlertHealthService;
+    alertingAsCode: AlertingAsCodeService;
     alertRules: AlertRuleService;
     alertNotifications: AlertNotificationService;
     contactPoints: ContactPointService;
@@ -302,6 +304,17 @@ export const createAlertingApiRouter = (
                 user,
                 req.params.projectUuid,
                 parseAlertNotificationListQuery(req.query),
+            ),
+        ),
+    );
+
+    router.post(
+        `${base}/as-code`,
+        route((user, req) =>
+            services.alertingAsCode.upload(
+                user,
+                req.params.projectUuid,
+                req.body,
             ),
         ),
     );

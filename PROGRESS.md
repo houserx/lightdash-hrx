@@ -902,3 +902,39 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - Trap: in a walk, fire rules in time order. Moving the harness clock backwards after a later send leaves the group not due, so the earlier alert never gets logged.
   - Next: as-code features. Nothing here changes the as-code paths.
 - 2026-11-08T22:30:04Z supervisor: alert-shadow-report passed the gate in round 1
+- alert-as-code-upload (round 1) — 2026-11-08
+  - Changed:
+    - New `POST /api/v2/projects/{uuid}/alerting/as-code` with body `{documents: [...]}`, handled by `AlertingAsCodeService.upload` in the new file `packages/backend/src/alerting/AlertingAsCodeService.ts`. It is on `AlertingModule.alertingAsCode` and wired in `index.ts` and `router.ts`.
+    - The result is common's `AlertingAsCodeUploadResult`: `{documents: [{type, slug|null, uuid|null, change: created|updated|unchanged}]}` in upload order.
+    - Permissions are checked first. The caller needs `manage` on each uploaded type (alert_rule → AlertRule, contact_point → ContactPoint, notification_routes → NotificationRoute), or `view AlertRule` when no type can be read. So an outsider gets 403 whatever they send, and an editor gets 403 for contact points but 200 for rules.
+    - Then every document is checked and all problems go into one 400: `Invalid alerting documents: documents[i] (type slug): …`, also listed in `error.data.errors`. The checks are:
+      - `validateAlertingAsCode` (inline secret names secretRef; blank description).
+      - `spaceSlug` must match `spaces.slug` of a non-deleted space in the project.
+      - The rule values go through `validateAlertRuleDefinition`, the old `validateDefinition` now exported from AlertRuleService. For example the 30s minimum interval.
+      - The tree goes through `parseNotificationRouteTree`, the old `parseTree` now exported, for zero timers.
+      - A slug may appear only once per type, and only one notification_routes document is allowed.
+    - Writes are all-or-nothing in one transaction, in the order contact points, then tree, then rules. The tree's Contact Point slugs are checked inside the transaction, so they may come from the same upload.
+    - New model methods take the caller's trx: `ContactPointModel.upsertManaged`, `NotificationRouteModel.saveManaged` (shares the `write` step with `save`), `AlertRuleModel.upsertManaged` (shares `insertRule`/`writeVersion` with create/update) and `AlertRuleModel.findProjectSpaceUuidsBySlug`.
+    - A rule only gets a new version when its definition changes. An identical re-upload is `unchanged` and keeps the version. Fields a rule document leaves out take `ALERT_RULE_DEFAULTS`, so the document is the whole truth.
+    - A unique violation from a concurrent upload becomes a 409. `stableStringify` moved to `alertingAccess.ts`.
+  - Contract change (the test asks for it): `GET`/`PUT /notification-routes` now return the tree as its as-code document plus `managed`, that is `{version: 1, type: 'notification_routes', ...tree, managed}`. Common `SavedNotificationRouteTree` is now `NotificationRoutesAsCode & {managed}`.
+    - PUT now accepts `version`/`type` (it used to give 400) so that a GET result still saves unchanged. Other values fail the schema with a 400.
+    - The stored `tree` jsonb is unchanged (no version/type in it). A no-op PUT no longer touches `updated_at`.
+  - Decisions (gaps, read narrowly):
+    - Upload only upserts. Resources missing from an upload are not deleted or un-managed.
+    - A UI-made resource with the same slug is taken over and becomes managed.
+    - An empty `documents` list is a 200 no-op for viewers and up.
+    - `spaceSlug` is the space's own `slug` column (unique per project), not content-as-code's ltree path.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped). In the whole shadow-ascode-ai.accept.ts only alert-as-code-download fails (next feature), and alert-managed-readonly already passes.
+    - contact-points.accept.ts 3/3, rules.accept.ts 4/4, notifications.accept.ts 8/8, AlertRuleService.test.ts 9/9, AlertNotifier.test.ts 15/15. Backend tsc, oxlint and oxfmt are clean in backend and common.
+    - As a user: a scratch vitest walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk, the walk in src/alerting/__walk__, both removed afterwards).
+      - Before the upload, GET→PUT of the tree gave 200.
+      - Uploading 2 contact points, the tree and a rule gave 200: incident-io (made earlier in the UI) was `updated`, the rest were `created`. All of them were managed, and the rule was in Platform at v1.
+      - The same upload again was all `unchanged`. A new threshold gave the same uuid at v2, with versions [2,1].
+      - Inline Slack URL, empty description, unknown space, a 10s interval in a mixed good+bad batch, a tree naming `ghost`, a duplicate slug and a missing `documents` each gave 400 with the messages above, and nothing was written.
+      - Editor got 403 for a contact point and 200 for a rule. Outsider got 403 with `{}`, bad docs or good docs. Anonymous got 401. An admin PATCH of the managed rule gave 403. No secret value was in `contact_points`.
+  - Next (alert-as-code-download):
+    - Nothing stores the uploaded document as sent. A download can rebuild it from the columns: the rule's space slug comes from `space_uuid`, contact points are stored verbatim, and the tree GET is already document-shaped.
+    - The rule documents in the test spell out every field, so emitting all fields round-trips them. If "exactly as uploaded" must hold for documents that leave out defaults, the upload has to store the source document, which needs a migration.
+- 2026-11-08T22:40:51Z supervisor: alert-as-code-upload passed the gate in round 1
