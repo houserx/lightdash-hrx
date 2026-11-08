@@ -464,3 +464,25 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     1 s after exp ("expired"), 61 s before iat ("issued in the future"), and with a wrong
     secret or a tampered token ("bad signature").
 - 2026-11-08T17:55:12Z supervisor: ldq-identity-token-verify passed the gate in round 1
+- 2026-11-08 ldq-identity-token-user-attrs (session):
+  - Added `identityAttrsFromUserAttributes(map)` to `services/FederationIdentity/identityToken.ts`.
+    An attr is true only if one of its values is exactly "true" ("yes", "True" and missing are
+    false). Values can come from several groups, so ['false','true'] counts as true; the
+    acceptance test requires this.
+  - New `services/FederationIdentity/FederationIdentityService.ts`. The constructor takes
+    `{ userAttributesModel, clock? }`. `mintForUser({ secret, user: {userUuid, email,
+    organizationUuid}, projectUuid, audit })` calls
+    `userAttributesModel.getAttributeValuesForOrgMember({ organizationUuid, userUuid })` and
+    mints with iss 'lightdash', sub = userUuid, the clock's time and the default 300 s TTL.
+  - Not built here: `agent` (ldq-identity-token-agent), audit source validation (the audit
+    test expects source 'dashboard' to reject; ldq-identity-token-audit-block),
+    `createTokenProvider` (ldq-identity-token-provider), and registration in
+    ServiceRepository/the query path. The service is a plain class, not a BaseService, because
+    the acceptance tests construct it with only these two arguments.
+  - Tested: init, then the feature check (3/3), identity-token-byte-exact and verify (12/12
+    together), backend `tsc --noEmit` and oxfmt. As a user: a scratch vitest (deleted
+    afterwards) used migratedDatabase with the real UserAttributesModel. The admin created the
+    `platform_read` attribute with the user value 'true' and `platform_write` with 'yes'. Minting
+    for that user on a project gave a validly signed token with platform_read true,
+    platform_write false and the other attrs false, and exp-iat=300.
+- 2026-11-08T17:58:57Z supervisor: ldq-identity-token-user-attrs passed the gate in round 1

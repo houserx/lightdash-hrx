@@ -28,6 +28,24 @@ export type IdentityAttrs = {
     platform_explain: boolean;
 };
 
+/**
+ * CONTRACTS §3: attrs come from the Lightdash user attributes with the same names. Only the
+ * exact value "true" is true; anything else ("yes", "True", missing) is false. A user can hold
+ * several values for one attribute (through groups); one "true" among them is enough.
+ */
+export const identityAttrsFromUserAttributes = (
+    userAttributes: Record<string, string[] | undefined>,
+): IdentityAttrs => {
+    const isTrue = (name: keyof IdentityAttrs) =>
+        (userAttributes[name] ?? []).includes('true');
+    return {
+        telemetry_restricted: isTrue('telemetry_restricted'),
+        platform_read: isTrue('platform_read'),
+        platform_write: isTrue('platform_write'),
+        platform_explain: isTrue('platform_explain'),
+    };
+};
+
 export type IdentityAudit = {
     description: string | null;
     ticket: string | null;
