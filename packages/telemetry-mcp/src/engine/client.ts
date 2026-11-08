@@ -1,0 +1,155 @@
+/**
+ * Federation Engine client over pg-wire (CONTRACTS §1).
+ *
+ * One new connection per query: connect, send `SET hrx.identity = '<§3 token>'` and `SET statement_timeout = <ms>`,
+ * run the statement with bind parameters (pg's extended protocol, so user input never travels inside the SQL text),
+ * then close the connection whatever happened. Nothing is pooled, so no session state can leak from one tool call to
+ * the next, and every query carries a freshly minted identity token (new `iat`, new nonce).
+ *
+ * Engine messages are passed through `redactSecrets` (the identity token sent, the engine password, the configured
+ * secrets and anything token-shaped), and `errors.ts` turns their SQLSTATEs into tool error text. Only §1.1 table
+ * functions and `information_schema` may be queried, never `pg_*`.
+ */
+import pg from 'pg';
+import Cursor from 'pg-cursor';
+import type { Config } from '../config.js';
+import type { IdentityAuditInput } from '../identity/token.js';
+import { redactSecrets } from './errors.js';
+
+/** Gives up connecting after this long, so an unreachable engine fails the tool call instead of hanging it. */
+export const ENGINE_CONNECT_TIMEOUT_MS = 10_000;
+
+/** §3 tokens are unpadded base64url plus one `.`, so they can be quoted in a `SET` literal without escaping. */
+const IDENTITY_TOKEN_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+
+export interface EngineResult {
+    columns: string[];
+    rows: Record<string, unknown>[];
+    /** True when `maxRows` was given and the engine had more rows than that; `rows` then holds exactly `maxRows`. */
+    truncated: boolean;
+}
+
+export interface EngineQueryOptions {
+    /** The audit block of the identity token (Audited Queries need a description). Default: no audit. */
+    audit?: IdentityAuditInput | null;
+    /**
+     * Return at most this many rows (`MCP_MAX_ROWS`). The statement runs as a portal and only `maxRows + 1` rows are
+     * fetched (Execute with `max_rows`), so a large result is never pulled in full. Default: every row.
+     */
+    maxRows?: number;
+}
+
+export interface EngineClient {
+    query(sql: string, params?: readonly unknown[], options?: EngineQueryOptions): Promise<EngineResult>;
+}
+
+/** Who the queries run as. `identityToken` is called once per query and must mint a fresh §3 token. */
+export interface EngineSession {
+    identityToken(audit: IdentityAuditInput | null): Promise<string>;
+    statementTimeoutMs: number;
+}
+
+/** A failed engine statement. `code` is the SQLSTATE when the engine sent one. */
+export class EngineError extends Error {
+    readonly code: string | undefined;
+
+    constructor(message: string, code: string | undefined, options?: { cause?: unknown }) {
+        super(message, options);
+        this.name = 'EngineError';
+        this.code = code;
+    }
+}
+
+function sqlState(err: unknown): string | undefined {
+    const code = (err as { code?: unknown } | null)?.code;
+    return typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code) ? code : undefined;
+}
+
+/** The two session `SET`s sent before every query, in order. */
+export function sessionStatements(identityToken: string, statementTimeoutMs: number): string[] {
+    if (!IDENTITY_TOKEN_SHAPE.test(identityToken)) throw new Error('identity token is not a §3 token');
+    if (!Number.isSafeInteger(statementTimeoutMs) || statementTimeoutMs < 1) {
+        throw new Error('statement timeout must be a positive integer');
+    }
+    return [`SET hrx.identity = '${identityToken}'`, `SET statement_timeout = ${statementTimeoutMs}`];
+}
+
+/** One portal fetch of `maxRows + 1` rows: the extra row only tells whether the result was cut. */
+async function readCapped(
+    client: pg.Client,
+    sql: string,
+    params: readonly unknown[],
+    maxRows: number,
+): Promise<EngineResult> {
+    if (!Number.isSafeInteger(maxRows) || maxRows < 1) throw new Error('maxRows must be a positive integer');
+    const cursor = client.query(new Cursor<Record<string, unknown>>(sql, [...params]));
+    const { rows, fields } = await new Promise<{ rows: Record<string, unknown>[]; fields: pg.FieldDef[] }>(
+        (resolve, reject) => {
+            cursor.read(maxRows + 1, (err, rows, result) => {
+                if (err) reject(err);
+                else resolve({ rows, fields: result.fields });
+            });
+        },
+    );
+    // Closing the portal tells the engine to stop; the connection is ended right after anyway.
+    await cursor.close().catch(() => undefined);
+    return { columns: fields.map((f) => f.name), rows: rows.slice(0, maxRows), truncated: rows.length > maxRows };
+}
+
+/**
+ * `secrets` are other values that must never appear in an error message (for example the identity secret); the
+ * engine password and each query's identity token are always redacted.
+ */
+export function createEngineClient(
+    engine: Config['engine'],
+    session: EngineSession,
+    secrets: readonly (string | undefined)[] = [],
+): EngineClient {
+    return {
+        async query(sql, params = [], options = {}) {
+            // Minted before connecting: a user who cannot be identified never opens a connection. The error is the
+            // identity layer's own fixed sentence (no token, claim or secret in it).
+            let identityToken: string;
+            let setStatements: string[];
+            try {
+                identityToken = await session.identityToken(options.audit ?? null);
+                setStatements = sessionStatements(identityToken, session.statementTimeoutMs);
+            } catch (err) {
+                throw new EngineError(err instanceof Error ? err.message : 'could not identify the caller', undefined, {
+                    cause: err,
+                });
+            }
+            const client = new pg.Client({
+                host: engine.pgHost,
+                port: engine.pgPort,
+                user: engine.pgUser,
+                password: engine.pgPassword,
+                database: engine.pgDatabase,
+                connectionTimeoutMillis: ENGINE_CONNECT_TIMEOUT_MS,
+            });
+            // An idle-connection error after the query must not crash the process; the query result already decided.
+            client.on('error', () => undefined);
+            try {
+                await client.connect();
+                // Simple-protocol SETs on the same connection, before the query.
+                for (const statement of setStatements) await client.query(statement);
+                if (options.maxRows === undefined) {
+                    const result = await client.query({ text: sql, values: [...params] });
+                    return { columns: result.fields.map((f) => f.name), rows: result.rows, truncated: false };
+                }
+                return await readCapped(client, sql, params, options.maxRows);
+            } catch (err) {
+                const code = sqlState(err);
+                // The driver's message can name the host or user; keep only the engine's own message, and never let it
+                // carry a token or secret back to the caller.
+                const message =
+                    code && err instanceof Error
+                        ? redactSecrets(err.message, [identityToken, engine.pgPassword, ...secrets])
+                        : 'could not reach the Federation Engine';
+                throw new EngineError(message, code, { cause: err });
+            } finally {
+                await client.end().catch(() => undefined);
+            }
+        },
+    };
+}
