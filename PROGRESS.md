@@ -953,3 +953,15 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - I uploaded a contact point, a tree, a minimal rule in `platform` and a rule with no `spaceSlug`, then created "UI rule" through the API. The download gave 5 documents, each `validateAlertingAsCode`-valid, with no inline secret, and the rules with no space had no `spaceSlug`.
       - Re-uploading the download gave 200: everything was `unchanged` except ui-rule, which was `updated` (taken over), with all 3 rules at v1. A second download was byte-identical to the first.
 - 2026-11-08T22:47:47Z supervisor: alert-as-code-download passed the gate in round 1
+- alert-managed-readonly (round 1) — 2026-11-08
+  - No code change was needed. The guards came with the CRUD features: `AlertRuleService` refuses PATCH (inside `apply`) and DELETE, `ContactPointService` refuses PATCH (inside `apply`) and DELETE (before the "tree uses it" 409), and `NotificationRouteService` refuses PUT (inside `check`). Each throws `ForbiddenError` 403 with "... is managed in git ...", for every role including admin. Only `POST /as-code` changes managed resources.
+  - I audited every mutating alerting route in `router.ts`. Create, preview, the contact point test send, as-code and shadow-report don't edit an existing resource, so they have no guard. The test send to a managed contact point is allowed (200).
+  - Known ordering: a PATCH body that fails parsing (for example an unknown field) gives 400 before the managed 403. Nothing is written either way. A managed tree PUT with an invalid body gives 403, because the managed check runs first.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - As a user: a scratch vitest walk over real HTTP through the harness (copies of run.sh and the config in src/alerting/__walk__, removed afterwards).
+      - Uploading 2 contact points, a tree and a rule gave 200, all `created`, and the rule was managed at v1.
+      - As admin, then as developer: PATCH paused, DELETE of the rule, PATCH and DELETE of the contact point, and PUT of the tree each gave 403 with the managed message. Afterwards the rule was still unpaused at v1, and the tree and contact points were unchanged.
+      - Uploading the rule with `paused: true` was `updated`, and the rule was paused at v2 and still managed. Upload also renamed the contact point and changed the tree root.
+      - A UI-made rule could be PATCHed by an editor and DELETEd by an admin (200).
+- 2026-11-08T22:50:14Z supervisor: alert-managed-readonly passed the gate in round 1
