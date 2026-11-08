@@ -1325,3 +1325,24 @@ should add a dated line here per feature.
   `bash ./init.sh`. VisualizationProvider.consumers.test is 4/4. Frontend tsc, oxfmt and oxlint are clean.
 - **Next.** No thresholds-specific trap. To see the result drawn, use the earlier SSR drive scripts in `../tmp/drive-threshold-*`.
 - 2026-11-08T21:16:11Z supervisor: viz-thresholds-config-panel passed the gate in round 1
+
+## viz-table-value-mappings-config (round 1)
+- **What changed.** `ColumnProperties` in `packages/common/src/types/savedCharts.ts` gains one optional property,
+  `valueMappings?: GrafanaValueMapping[]` (the existing type in `eng1799/grafanaValueMappings.ts`). Regenerated with
+  `pnpm -F backend generate-api:build` and `pnpm -F common generate:chart-as-code-schema`. The schema now has
+  `$defs.ColumnProperties.properties.valueMappings` and `$defs.GrafanaValueMapping` (anyOf value/range/regex/special,
+  each with a `type` enum), `GrafanaValueMappingResult`, `GrafanaSpecialValueMatch` and
+  `Record_string.GrafanaValueMappingResult_`. The download path (`CoderService`) passes `chartConfig` through unchanged,
+  so no backend code changed.
+- **Trap.** tsoa reads `@lightdash/common` from its built **dist**. Run `bash ./init.sh` (which rebuilds common) *before*
+  `generate-api`, or the regeneration silently produces no diff. tsoa also flips the order of the unrelated
+  `caseSensitiveFilters` enum (`true/false/not_applicable`) in swagger.json and routes.ts between runs. I restored those
+  hunks so the diff only holds this feature.
+- **Tested as a user.** I wrote a table chart YAML the way `lightdash download` lays it out (`charts/table.yml`, in
+  `../tmp/table-vm/`) and ran the real CLI linter (`tsx src/index.ts lint -p <dir>` from `packages/cli`). A column with
+  value, range and special mappings: "All Lightdash Code files are valid". The same file with `type: bogus`:
+  "Validation failed for 1 file", pointing at the bogus line. Check: the schema is in sync and the acceptance test passes 4/4
+  after `bash ./init.sh`. Common and backend `tsc --noEmit` are clean, and oxfmt is clean on the changed files.
+- **Next.** viz-table-value-mappings: the table renderer reads `columns[field].valueMappings` and applies them with the
+  existing `applyValueMappings` in `eng1799/grafanaValueMappings.ts` (text plus colour).
+- 2026-11-08T21:20:24Z supervisor: viz-table-value-mappings-config passed the gate in round 1

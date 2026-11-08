@@ -5065,8 +5065,154 @@
                 "enum": ["table"],
                 "type": "string"
             },
+            "GrafanaValueMappingResult": {
+                "properties": {
+                    "index": {
+                        "type": "number",
+                        "format": "double"
+                    },
+                    "icon": {
+                        "type": "string"
+                    },
+                    "color": {
+                        "type": "string"
+                    },
+                    "text": {
+                        "type": "string"
+                    }
+                },
+                "type": "object",
+                "description": "Grafana value mappings, as stored in a panel's\n`fieldConfig.defaults.mappings`. Each result carries an `index`: the row\norder in Grafana's mapping editor, which is the order mappings are tried."
+            },
+            "Record_string.GrafanaValueMappingResult_": {
+                "properties": {},
+                "additionalProperties": {
+                    "$ref": "#/components/schemas/GrafanaValueMappingResult"
+                },
+                "type": "object",
+                "description": "Construct a type with a set of properties K of type T"
+            },
+            "GrafanaValueToTextMapping": {
+                "properties": {
+                    "options": {
+                        "$ref": "#/components/schemas/Record_string.GrafanaValueMappingResult_"
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["value"],
+                        "nullable": false
+                    }
+                },
+                "required": ["options", "type"],
+                "type": "object"
+            },
+            "GrafanaRangeToTextMapping": {
+                "properties": {
+                    "options": {
+                        "properties": {
+                            "result": {
+                                "$ref": "#/components/schemas/GrafanaValueMappingResult"
+                            },
+                            "to": {
+                                "type": "number",
+                                "format": "double",
+                                "nullable": true,
+                                "description": "Inclusive upper bound; null or missing means open."
+                            },
+                            "from": {
+                                "type": "number",
+                                "format": "double",
+                                "nullable": true,
+                                "description": "Inclusive lower bound; null or missing means open."
+                            }
+                        },
+                        "required": ["result"],
+                        "type": "object"
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["range"],
+                        "nullable": false
+                    }
+                },
+                "required": ["options", "type"],
+                "type": "object"
+            },
+            "GrafanaRegexToTextMapping": {
+                "properties": {
+                    "options": {
+                        "properties": {
+                            "result": {
+                                "$ref": "#/components/schemas/GrafanaValueMappingResult"
+                            },
+                            "pattern": {
+                                "type": "string"
+                            }
+                        },
+                        "required": ["result", "pattern"],
+                        "type": "object"
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["regex"],
+                        "nullable": false
+                    }
+                },
+                "required": ["options", "type"],
+                "type": "object"
+            },
+            "GrafanaSpecialValueMatch": {
+                "type": "string",
+                "enum": ["null", "nan", "null+nan", "true", "false", "empty"]
+            },
+            "GrafanaSpecialValueMapping": {
+                "properties": {
+                    "options": {
+                        "properties": {
+                            "result": {
+                                "$ref": "#/components/schemas/GrafanaValueMappingResult"
+                            },
+                            "match": {
+                                "$ref": "#/components/schemas/GrafanaSpecialValueMatch"
+                            }
+                        },
+                        "required": ["result", "match"],
+                        "type": "object"
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["special"],
+                        "nullable": false
+                    }
+                },
+                "required": ["options", "type"],
+                "type": "object"
+            },
+            "GrafanaValueMapping": {
+                "anyOf": [
+                    {
+                        "$ref": "#/components/schemas/GrafanaValueToTextMapping"
+                    },
+                    {
+                        "$ref": "#/components/schemas/GrafanaRangeToTextMapping"
+                    },
+                    {
+                        "$ref": "#/components/schemas/GrafanaRegexToTextMapping"
+                    },
+                    {
+                        "$ref": "#/components/schemas/GrafanaSpecialValueMapping"
+                    }
+                ]
+            },
             "ColumnProperties": {
                 "properties": {
+                    "valueMappings": {
+                        "items": {
+                            "$ref": "#/components/schemas/GrafanaValueMapping"
+                        },
+                        "type": "array",
+                        "description": "Grafana value mappings that replace the cell's text and colour"
+                    },
                     "width": {
                         "type": "number",
                         "format": "double"

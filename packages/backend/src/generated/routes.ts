@@ -5063,11 +5063,166 @@ const models: TsoaRoute.Models = {
         enums: ['table'],
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaValueMappingResult: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                index: { dataType: 'double' },
+                icon: { dataType: 'string' },
+                color: { dataType: 'string' },
+                text: { dataType: 'string' },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'Record_string.GrafanaValueMappingResult_': {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {},
+            additionalProperties: { ref: 'GrafanaValueMappingResult' },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaValueToTextMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    ref: 'Record_string.GrafanaValueMappingResult_',
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['value'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaRangeToTextMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    dataType: 'nestedObjectLiteral',
+                    nestedProperties: {
+                        result: {
+                            ref: 'GrafanaValueMappingResult',
+                            required: true,
+                        },
+                        to: {
+                            dataType: 'union',
+                            subSchemas: [
+                                { dataType: 'double' },
+                                { dataType: 'enum', enums: [null] },
+                            ],
+                        },
+                        from: {
+                            dataType: 'union',
+                            subSchemas: [
+                                { dataType: 'double' },
+                                { dataType: 'enum', enums: [null] },
+                            ],
+                        },
+                    },
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['range'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaRegexToTextMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    dataType: 'nestedObjectLiteral',
+                    nestedProperties: {
+                        result: {
+                            ref: 'GrafanaValueMappingResult',
+                            required: true,
+                        },
+                        pattern: { dataType: 'string', required: true },
+                    },
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['regex'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaSpecialValueMatch: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { dataType: 'enum', enums: ['null'] },
+                { dataType: 'enum', enums: ['nan'] },
+                { dataType: 'enum', enums: ['null+nan'] },
+                { dataType: 'enum', enums: ['true'] },
+                { dataType: 'enum', enums: ['false'] },
+                { dataType: 'enum', enums: ['empty'] },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaSpecialValueMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                options: {
+                    dataType: 'nestedObjectLiteral',
+                    nestedProperties: {
+                        result: {
+                            ref: 'GrafanaValueMappingResult',
+                            required: true,
+                        },
+                        match: {
+                            ref: 'GrafanaSpecialValueMatch',
+                            required: true,
+                        },
+                    },
+                    required: true,
+                },
+                type: { dataType: 'enum', enums: ['special'], required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    GrafanaValueMapping: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { ref: 'GrafanaValueToTextMapping' },
+                { ref: 'GrafanaRangeToTextMapping' },
+                { ref: 'GrafanaRegexToTextMapping' },
+                { ref: 'GrafanaSpecialValueMapping' },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     ColumnProperties: {
         dataType: 'refAlias',
         type: {
             dataType: 'nestedObjectLiteral',
             nestedProperties: {
+                valueMappings: {
+                    dataType: 'array',
+                    array: { dataType: 'refAlias', ref: 'GrafanaValueMapping' },
+                },
                 width: { dataType: 'double' },
                 negativeColor: { dataType: 'string' },
                 color: { dataType: 'string' },

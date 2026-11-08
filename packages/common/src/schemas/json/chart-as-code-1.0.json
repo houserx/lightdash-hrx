@@ -1114,6 +1114,13 @@
                     "description": "Color for negative bars in diverging bar display (hex code). Falls back to `color` when unset.",
                     "type": "string"
                 },
+                "valueMappings": {
+                    "description": "Grafana value mappings that replace the cell's text and colour",
+                    "items": {
+                        "$ref": "#/$defs/GrafanaValueMapping"
+                    },
+                    "type": "array"
+                },
                 "visible": {
                     "description": "Whether the column is visible",
                     "type": "boolean"
@@ -2560,6 +2567,83 @@
             "required": ["color", "max", "min"],
             "type": "object"
         },
+        "GrafanaRangeToTextMapping": {
+            "properties": {
+                "options": {
+                    "properties": {
+                        "from": {
+                            "description": "Inclusive lower bound; null or missing means open.",
+                            "format": "double",
+                            "type": ["number", "null"]
+                        },
+                        "result": {
+                            "$ref": "#/$defs/GrafanaValueMappingResult"
+                        },
+                        "to": {
+                            "description": "Inclusive upper bound; null or missing means open.",
+                            "format": "double",
+                            "type": ["number", "null"]
+                        }
+                    },
+                    "required": ["result"],
+                    "type": "object"
+                },
+                "type": {
+                    "enum": ["range"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
+        "GrafanaRegexToTextMapping": {
+            "properties": {
+                "options": {
+                    "properties": {
+                        "pattern": {
+                            "type": "string"
+                        },
+                        "result": {
+                            "$ref": "#/$defs/GrafanaValueMappingResult"
+                        }
+                    },
+                    "required": ["result", "pattern"],
+                    "type": "object"
+                },
+                "type": {
+                    "enum": ["regex"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
+        "GrafanaSpecialValueMapping": {
+            "properties": {
+                "options": {
+                    "properties": {
+                        "match": {
+                            "$ref": "#/$defs/GrafanaSpecialValueMatch"
+                        },
+                        "result": {
+                            "$ref": "#/$defs/GrafanaValueMappingResult"
+                        }
+                    },
+                    "required": ["result", "match"],
+                    "type": "object"
+                },
+                "type": {
+                    "enum": ["special"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
+        "GrafanaSpecialValueMatch": {
+            "enum": ["null", "nan", "null+nan", "true", "false", "empty"],
+            "type": "string"
+        },
         "GrafanaThresholdStep": {
             "description": "Grafana threshold steps, as stored in a panel's\n`fieldConfig.defaults.thresholds`. The first step is the base step and\nhas `value: null` (Grafana's -Infinity); each later step starts at its\nvalue. In `percentage` mode step values are percentages of the min..max\nrange instead of absolute values.",
             "properties": {
@@ -2572,6 +2656,54 @@
                 }
             },
             "required": ["color", "value"],
+            "type": "object"
+        },
+        "GrafanaValueMapping": {
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/GrafanaValueToTextMapping"
+                },
+                {
+                    "$ref": "#/$defs/GrafanaRangeToTextMapping"
+                },
+                {
+                    "$ref": "#/$defs/GrafanaRegexToTextMapping"
+                },
+                {
+                    "$ref": "#/$defs/GrafanaSpecialValueMapping"
+                }
+            ]
+        },
+        "GrafanaValueMappingResult": {
+            "description": "Grafana value mappings, as stored in a panel's\n`fieldConfig.defaults.mappings`. Each result carries an `index`: the row\norder in Grafana's mapping editor, which is the order mappings are tried.",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "index": {
+                    "format": "double",
+                    "type": "number"
+                },
+                "text": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "GrafanaValueToTextMapping": {
+            "properties": {
+                "options": {
+                    "$ref": "#/$defs/Record_string.GrafanaValueMappingResult_"
+                },
+                "type": {
+                    "enum": ["value"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
             "type": "object"
         },
         "GroupValueMatchType": {
@@ -3890,6 +4022,14 @@
         "Record_string.FieldId_": {
             "additionalProperties": {
                 "type": "string"
+            },
+            "description": "Construct a type with a set of properties K of type T",
+            "properties": {},
+            "type": "object"
+        },
+        "Record_string.GrafanaValueMappingResult_": {
+            "additionalProperties": {
+                "$ref": "#/$defs/GrafanaValueMappingResult"
             },
             "description": "Construct a type with a set of properties K of type T",
             "properties": {},

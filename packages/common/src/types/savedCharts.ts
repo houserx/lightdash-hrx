@@ -1,5 +1,6 @@
 import { type DataAppVizOptionValue } from '../ee/apps/dataAppVizConfigOptions';
 import { type CartesianThresholds } from '../eng1799/grafanaThresholds';
+import { type GrafanaValueMapping } from '../eng1799/grafanaValueMappings';
 import { type LogStreamChart } from '../eng1799/logStream';
 import { type TraceWaterfallChart } from '../eng1799/traceWaterfall';
 import assertUnreachable from '../utils/assertUnreachable';
@@ -430,6 +431,8 @@ export type ColumnProperties = {
     /** Color for negative bars in diverging bar display (hex code). Falls back to `color` when unset. */
     negativeColor?: string;
     width?: number;
+    /** Grafana value mappings that replace the cell's text and colour */
+    valueMappings?: GrafanaValueMapping[];
 };
 
 export type RowLimit = {
