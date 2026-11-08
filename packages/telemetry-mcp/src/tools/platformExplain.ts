@@ -8,21 +8,28 @@
  * `audit.description`; the caller's `description` is sent when given, otherwise a generated one (Contract
  * assumption 6).
  *
- * The result is `{ plan, advice, adviceError? }`. Plan advice is a later feature: until an advisor is attached,
- * `advise: false` returns `advice: null`, and `advise: true` (the default) returns `advice: null` with an
- * `adviceError`. Advice never fails the tool.
+ * The result is `{ plan, advice, adviceError? }`. With `advise: true` (the default) the plan goes to the ported portal
+ * plan advisor (`src/ask/plan-advisor.service.ts`) through the injected `LlmClient`, and `advice` is its
+ * `{ summary, suggestions, indexes, model }`. Advice never fails the tool: with no `LlmClient`, a failed model call
+ * or advice too large to return, `advice` is null and `adviceError` says why. `advise: false` returns `advice: null`
+ * and calls no model.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { Config } from '../config.js';
+import type { LlmClient } from '../ask/llm.js';
+import { createPlanAdvisor, type PlanAdvice } from '../ask/plan-advisor.service.js';
 import type { EngineClient, EngineResult } from '../engine/client.js';
+import { redactSecrets } from '../engine/errors.js';
+import { configSecrets } from '../log.js';
 import { ToolInputError, errorResult, failureResult } from './telemetryArgs.js';
 
 export const PLATFORM_EXPLAIN_TOOL = 'platform_explain';
 export const PLATFORM_EXPLAIN_SQL = 'SELECT * FROM platform_explain($1)';
 export const GENERATED_EXPLAIN_DESCRIPTION = 'MCP platform_explain: estimate-only plan of one Platform Database query';
 export const ADVICE_NOT_CONFIGURED = 'Plan advice is not configured on this server';
+export const ADVICE_TOO_LARGE = 'Plan advice was dropped: the plan with advice is larger than MCP_MAX_OUTPUT_BYTES';
 
 export interface PlatformExplainArgs {
     sql?: unknown;
@@ -41,7 +48,7 @@ export interface PlatformExplainQuery {
 export interface PlatformExplainResult {
     [key: string]: unknown;
     plan: unknown;
-    advice: null;
+    advice: PlanAdvice | null;
     adviceError?: string;
 }
 
@@ -79,16 +86,49 @@ export function planOf(result: EngineResult): unknown {
     }
 }
 
-/** The tool result, or an error when the plan alone is larger than `MCP_MAX_OUTPUT_BYTES`. */
+/**
+ * The advice for one plan, or `advice: null` with the reason. Never throws: a missing client or a failed model call
+ * becomes `adviceError`, with every configured secret and token-shaped string redacted.
+ */
+export async function adviseOnPlan(
+    llm: LlmClient | undefined,
+    sql: string,
+    plan: unknown,
+    secrets: readonly (string | undefined)[],
+): Promise<Pick<PlatformExplainResult, 'advice' | 'adviceError'>> {
+    if (!llm) return { advice: null, adviceError: ADVICE_NOT_CONFIGURED };
+    try {
+        return { advice: await createPlanAdvisor({ llm }).advisePlan({ sql, plan, analyze: false }) };
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'AI suggestion request failed';
+        return { advice: null, adviceError: redactSecrets(message, secrets) };
+    }
+}
+
+/**
+ * The tool result. Advice that pushes the result past `MCP_MAX_OUTPUT_BYTES` is dropped (`advice: null` with
+ * `adviceError`); a plan that alone is larger is an error.
+ */
 export function platformExplainResult(structured: PlatformExplainResult, maxBytes: number): CallToolResult {
-    const text = JSON.stringify(structured);
+    let out = structured;
+    let text = JSON.stringify(out);
+    if (Buffer.byteLength(text, 'utf8') > maxBytes && out.advice !== null) {
+        out = { plan: out.plan, advice: null, adviceError: ADVICE_TOO_LARGE };
+        text = JSON.stringify(out);
+    }
     if (Buffer.byteLength(text, 'utf8') > maxBytes) {
         return errorResult('The plan is too large to return (MCP_MAX_OUTPUT_BYTES); plan a smaller query');
     }
-    return { content: [{ type: 'text', text }], structuredContent: structured };
+    return { content: [{ type: 'text', text }], structuredContent: out };
 }
 
-export function registerPlatformExplain(server: McpServer, config: Config, engine: EngineClient): void {
+/** `llm` is the model client for plan advice; without one, advice is null with a not-configured `adviceError`. */
+export function registerPlatformExplain(
+    server: McpServer,
+    config: Config,
+    engine: EngineClient,
+    llm?: LlmClient,
+): void {
     server.registerTool(
         PLATFORM_EXPLAIN_TOOL,
         {
@@ -126,8 +166,10 @@ export function registerPlatformExplain(server: McpServer, config: Config, engin
                     maxRows: 1,
                     audit: { description: query.description },
                 });
-                const structured: PlatformExplainResult = { plan: planOf(result), advice: null };
-                if (query.advise) structured.adviceError = ADVICE_NOT_CONFIGURED;
+                const plan = planOf(result);
+                const structured: PlatformExplainResult = query.advise
+                    ? { plan, ...(await adviseOnPlan(llm, query.params[0], plan, configSecrets(config))) }
+                    : { plan, advice: null };
                 return platformExplainResult(structured, config.maxOutputBytes);
             } catch (err) {
                 return failureResult(err, 'The Platform Database explain');

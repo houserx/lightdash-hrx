@@ -1370,3 +1370,40 @@ docs/eng-1799/telemetry-mcp.md
   ai-not-configured, ask-memory and the other ports, write_preview, docs, dockerfile, readme, tool-catalog,
   no-commit-tool).
 - 2026-11-08T18:27:56Z supervisor: mcp-plan-advisor-port passed the gate in round 1
+
+### mcp-plan-advice (session 2026-11-08)
+
+- `platform_explain` now asks the ported plan advisor for advice. When `advise` is true (the default),
+  `adviseOnPlan(llm, sql, plan, secrets)` in `src/tools/platformExplain.ts` calls
+  `createPlanAdvisor({ llm }).advisePlan({ sql, plan, analyze: false })`. `advice` comes back as
+  `{ summary, suggestions, indexes, model }`, with parsing (JSON, prose-wrapped JSON, severity normalising, plain-text
+  fallback) and the "(estimates only)" prompt coming verbatim from the port. `advise: false` calls no model.
+- Advice never fails the tool:
+  - with no client, `advice: null` and `adviceError` is `ADVICE_NOT_CONFIGURED` ("Plan advice is not configured on
+    this server"), so ai-not-configured's /not configured/ check already passes for platform_explain;
+  - a thrown model call gives `advice: null` and `adviceError: "AI suggestion request failed: <msg>"`, run through
+    `redactSecrets` with `configSecrets(config)`;
+  - new: when plan + advice is over `MCP_MAX_OUTPUT_BYTES`, the advice is dropped (`ADVICE_TOO_LARGE`) and the plan
+    still returns. A plan that is too large on its own is still an error.
+- Wiring: `deps.llm` (the `LlmClient`) runs `ServerDeps.llm` → `McpRequestContext.llm` → `McpServerDeps.llm` →
+  `registerPlatformExplain(server, config, engine, llm)`. ask_data should pick up `deps.llm` from `createMcpServer` the
+  same way.
+- **Gap for a later feature (not built here):** nothing builds a real `LlmClient` from `ANTHROPIC_API_KEY` yet. No
+  feature in the list explicitly owns it. In production, with only the key set, advice says "not configured".
+  mcp-tool-ask-data (or whichever feature first needs a live model) should add a `fetch` Messages client and build it
+  in `startServer` when `deps.llm` is absent and `config.anthropicApiKey` is set. Acceptance tests never set the key
+  in `baseEnv`, so they would make no network calls.
+- Unit tests: 5 new cases in `src/tools/platformExplain.test.ts` (advice and prompt, no client, redacted failure,
+  advice that fits, advice dropped for size). Typechecked under strict with a temporary tsconfig in `../tmp/plan-advice`.
+- Tested as a user: drove the real HTTP MCP server through the acceptance harness with a `ScriptedLlm`
+  (`../tmp/plan-advice/drive.test.ts`). Results:
+  - JSON advice parsed, and the unknown severity "critical" became low/general;
+  - the prompt held the SQL, the Seq Scan plan and "estimates only";
+  - prose-wrapped JSON gave summary "wrapped";
+  - plain text became the summary;
+  - a throwing model returned the plan with advice null and "AI suggestion request failed: boom 529";
+  - `advise: false` made no model call.
+  The feature check passes after `bash ./init.sh`. Unit tests: 292 passing.
+- Results: acceptance has 35 files passing and 18 failing. All 18 failures are unbuilt features. ai-not-configured
+  fails only on its ask_data case.
+- 2026-11-08T18:34:08Z supervisor: mcp-plan-advice passed the gate in round 1

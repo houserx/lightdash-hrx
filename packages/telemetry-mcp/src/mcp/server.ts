@@ -16,6 +16,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { JWTPayload } from 'jose';
+import type { LlmClient } from '../ask/llm.js';
 import type { VerifiedAccessToken } from '../auth/okta.js';
 import { UserMappingError, type MappedUser, type UserResolver } from '../auth/userMapping.js';
 import type { Config } from '../config.js';
@@ -51,6 +52,8 @@ export interface McpServerDeps {
     alerting?: AlertingClient;
     /** The server clock (epoch ms); relative time arguments such as `now-1h` resolve against it. */
     now: () => number;
+    /** The model client for AI features (plan advice); absent means AI is not configured. */
+    llm?: LlmClient;
 }
 
 /**
@@ -61,11 +64,13 @@ export interface McpRequestContext {
     users: UserResolver;
     now: () => number;
     logger: Logger;
+    /** The model client for AI features; absent means AI is not configured. */
+    llm?: LlmClient;
 }
 
 /** Builds the MCP server for one request, with every tool registered. */
 export function createMcpServer(config: Config, deps: McpServerDeps): McpServer {
-    const { engine, now } = deps;
+    const { engine, now, llm } = deps;
     const alerting = deps.alerting ?? createAlertingClient(config.lightdash);
     // Registering a tool declares the tools capability and installs the tools/list and tools/call handlers.
     const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
@@ -80,7 +85,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     registerAlertHistory(server, config, alerting, now);
     registerPlatformSchema(server, config, engine);
     registerPlatformQuery(server, config, engine);
-    registerPlatformExplain(server, config, engine);
+    registerPlatformExplain(server, config, engine, llm);
     return server;
 }
 
@@ -153,7 +158,7 @@ export async function serveMcpRequest(
                 config.identitySecret,
                 config.lightdash.apiToken,
                 config.anthropicApiKey,
-            ]), now: context.now });
+            ]), now: context.now, llm: context.llm });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     logToolCalls(transport, parsedBody, context.logger, sub, context.now);

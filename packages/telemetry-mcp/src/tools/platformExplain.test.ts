@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { LlmClient, LlmResponse } from '../ask/llm.js';
 import {
+    ADVICE_NOT_CONFIGURED,
+    ADVICE_TOO_LARGE,
     GENERATED_EXPLAIN_DESCRIPTION,
     PLATFORM_EXPLAIN_SQL,
+    adviseOnPlan,
     buildPlatformExplainQuery,
     planOf,
     platformExplainResult,
@@ -68,5 +72,55 @@ describe('platformExplainResult', () => {
         const r = platformExplainResult({ plan: PLAN, advice: null }, 20);
         expect(r.isError).toBe(true);
         expect(r.structuredContent).toBeUndefined();
+    });
+});
+
+const reply = (text: string): LlmResponse => ({
+    content: [{ type: 'text', text }],
+    usage: { input_tokens: 1, output_tokens: 1 },
+});
+const llmOf = (impl: LlmClient['createMessage']): LlmClient => ({ createMessage: vi.fn(impl) });
+
+describe('adviseOnPlan', () => {
+    it('returns the parsed advice and sends the SQL, the plan and "estimates only"', async () => {
+        const llm = llmOf(async () => reply('{"summary":"Seq scan","suggestions":[],"indexes":[]}'));
+        const r = await adviseOnPlan(llm, SQL, PLAN, []);
+        expect(r.adviceError).toBeUndefined();
+        expect(r.advice).toMatchObject({ summary: 'Seq scan', suggestions: [], indexes: [] });
+        expect(r.advice?.model).toBeTruthy();
+        const sent = JSON.stringify(vi.mocked(llm.createMessage).mock.calls[0]![0]);
+        expect(sent).toContain('orders');
+        expect(sent).toContain('Seq Scan');
+        expect(sent).toContain('estimates only');
+    });
+
+    it('returns advice null with the not-configured reason, and calls nothing, without a client', async () => {
+        expect(await adviseOnPlan(undefined, SQL, PLAN, [])).toEqual({ advice: null, adviceError: ADVICE_NOT_CONFIGURED });
+    });
+
+    it('returns advice null with the model error, secrets and tokens redacted, when the call fails', async () => {
+        const llm = llmOf(async () => {
+            throw new Error('upstream overloaded for sk-ant-secret and eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig');
+        });
+        const r = await adviseOnPlan(llm, SQL, PLAN, ['sk-ant-secret']);
+        expect(r.advice).toBeNull();
+        expect(r.adviceError).toMatch(/^AI suggestion request failed: upstream overloaded/);
+        expect(r.adviceError).not.toContain('sk-ant-secret');
+        expect(r.adviceError).not.toContain('eyJ');
+    });
+});
+
+describe('platformExplainResult with advice', () => {
+    const advice = { summary: 'x'.repeat(500), suggestions: [], indexes: [], model: 'm' };
+
+    it('keeps advice that fits', () => {
+        const r = platformExplainResult({ plan: PLAN, advice }, 10_000);
+        expect(r.structuredContent).toEqual({ plan: PLAN, advice });
+    });
+
+    it('drops advice that would pass the output cap, keeping the plan', () => {
+        const r = platformExplainResult({ plan: PLAN, advice }, 300);
+        expect(r.isError).toBeUndefined();
+        expect(r.structuredContent).toEqual({ plan: PLAN, advice: null, adviceError: ADVICE_TOO_LARGE });
     });
 });
