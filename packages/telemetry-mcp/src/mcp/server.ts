@@ -22,6 +22,7 @@ import type { Config } from '../config.js';
 import { createEngineClient, type EngineClient } from '../engine/client.js';
 import { createIdentitySession } from '../engine/session.js';
 import { registerListSources } from '../tools/listSources.js';
+import { registerQueryLogql } from '../tools/queryLogql.js';
 import { registerQueryPromql } from '../tools/queryPromql.js';
 import { MAX_MCP_BODY_BYTES, carriesMethod, readMcpBody } from './requestBody.js';
 
@@ -49,6 +50,7 @@ export function createMcpServer(config: Config, deps: McpServerDeps): McpServer 
     const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION });
     registerListSources(server, config, engine);
     registerQueryPromql(server, config, engine, now);
+    registerQueryLogql(server, config, engine, now);
     return server;
 }
 

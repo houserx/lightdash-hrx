@@ -859,3 +859,38 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 2/2. 19 acceptance files pass: the earlier 18 plus this one. The 34 failing files belong
   to unbuilt features. `output-size-cap` fails because `query_logql` doesn't exist yet.
 - 2026-11-08T16:55:18Z supervisor: mcp-row-cap passed the gate in round 1
+
+## mcp-tool-query-logql (2026-11-08)
+
+- New `src/tools/queryLogql.ts`, registered in `src/mcp/server.ts` and exported from `src/index.ts`
+  (`QUERY_LOGQL_TOOL`, `buildLogqlQuery`, `QueryLogqlArgs`).
+  - Without `step`, it runs `logql(query, start, end[, limit, direction, source])`. With `step`, it runs
+    `logql_metric(query, start, end, step[, source])` (§1.1). Every value is a bind parameter, and `limit` is sent as
+    its decimal string.
+  - It reuses `parseRange`, `parseDuration`, `sourceParams` (kind `loki`), `failureResult(err, 'The LogQL query')` and
+    `{ maxRows: config.maxRows }`.
+- Contract reading (Contract assumptions):
+  - §1.1's `limit` and `direction` are positional. Optional arguments are sent up to the last one the caller gave, and
+    any gap is filled with the contract defaults, 1000 and `backward`. For example, a `source` with no limit or
+    direction sends `1000, 'backward', source`. Arguments after the last given one are left for the engine to default.
+  - `limit` must be an integer from 1 to 2147483647, because it is a Postgres int. `direction` must be `forward` or
+    `backward`. The zod schema rejects other values, and the SDK 1.31 returns those as `isError` tool results
+    (-32602 text), not as thrown errors. `buildLogqlQuery` checks the same rules again.
+  - Combining `limit` or `direction` with `step` is refused, because `logql_metric` takes neither argument.
+- Restricted Telemetry is enforced by the engine. The tool does no restricted-selector checks of its own.
+  `restricted-telemetry.test.ts` now passes, because the engine fake's 42501 maps through `failureResult`.
+- Unit tests are in `src/tools/queryLogql.test.ts`. 143 unit tests pass, and typecheck is clean.
+- Tested as a user with `../tmp/logql-ut/run.mts`. Run it from the repo root as `node_modules/.bin/tsx <abs path>
+  $PWD/packages/telemetry-mcp`. It runs the real `dist/main.js` with an RS256 token, the fake Lightdash and the fake
+  engine, with `MCP_MAX_ROWS=50`.
+  - A log query with limit 50 and direction forward ran `logql($1..$5)` with params [query, start, end, '50',
+    'forward'] and returned the columns timestamp, line, labels and stream.
+  - A query with `now-1h` and a source got the defaults filled in.
+  - A query with `step=5m` ran `logql_metric($1..$4)` and returned timestamp, value, labels and series.
+  - A bad direction, a limit of -1, 'ten' or 0, step combined with limit, and a prometheus source each gave
+    `isError`. None of them sent an engine query. SIGTERM exits 0.
+- Results: the check passes 3/3. 21 acceptance files pass. That is the earlier 19, plus this feature's file and
+  restricted-telemetry.
+  - `output-size-cap` still fails. It needs `MCP_MAX_OUTPUT_BYTES`, which is its own feature.
+  - In `sql-injection-safety`, the logql cases pass. Its cloudwatch and traces cases are unbuilt.
+- 2026-11-08T17:01:06Z supervisor: mcp-tool-query-logql passed the gate in round 1

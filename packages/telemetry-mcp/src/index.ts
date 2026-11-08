@@ -48,6 +48,8 @@ export { createCachedUserResolver } from './auth/userCache.js';
 export { LIST_SOURCES_TOOL, OPS_MARTS_CATALOG, listOpsMarts, listSources } from './tools/listSources.js';
 export type { ListSourcesResult } from './tools/listSources.js';
 export { QUERY_PROMQL_TOOL, buildPromqlQuery } from './tools/queryPromql.js';
+export { QUERY_LOGQL_TOOL, buildLogqlQuery } from './tools/queryLogql.js';
+export type { QueryLogqlArgs } from './tools/queryLogql.js';
 export type { QueryPromqlArgs } from './tools/queryPromql.js';
 export { ToolInputError, durationMs, parseDuration, parseInstant, tableResult } from './tools/telemetryArgs.js';
 export type { TableResult } from './tools/telemetryArgs.js';
