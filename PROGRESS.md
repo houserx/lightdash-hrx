@@ -1011,3 +1011,21 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - A contact-points/leaky.yml with a Slack webhook URL inline gave exit 1. The message named the full path of leaky.yml and `secretRef`, and the URL did not appear. The only request was the health check, with no POST.
       - After changing the url to `{ secretRef: slack-webhook }`, exit was 0 with one POST to /alerting/as-code.
 - 2026-11-08T23:09:03Z supervisor: alert-cli-upload-validation passed the gate in round 1
+- alert-cli-shadow-report (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/cli/src/handlers/alertingShadowReport.ts` and a `lightdash alerting shadow-report` command in `index.ts`. `alerting` is a new parent command, so later alerting CLI commands can go under it.
+      - Options: `--project` (falls back to the selected project via `selectProject`), `--since` (required, ISO), `--grafana-history` (required, JSON), `--expected-differences` (optional YAML list, where empty means []), `--json`, `--fail-on-unexpected` and `--verbose`.
+      - It reads and parses both files before any request, so a bad file sends nothing. Then it calls checkLightdashVersion and POSTs `{since, grafanaHistory, expectedDifferences}` to `/api/v2/projects/{uuid}/alerting/shadow-report`. The server validates the entries.
+      - Only the report goes to stdout (`--json` gives pretty JSON, otherwise a Matched / Missing / Extra listing with rule names and expected/UNEXPECTED markers). Logs and errors go to stderr, so `--json` output can be piped.
+      - `--fail-on-unexpected` sets `process.exitCode = 1` when `unexpectedCount > 0`. The index successHandler keeps the exit code.
+    - Common: added `ShadowRunReport` to the `ApiResults` union in `types/api.ts`. Run `init` after this, because the CLI reads common's dist.
+    - `alertingShadowReport.test.ts` has 6 tests for the readers and the formatter.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped), and the alert-cli-upload check still passes. The unit file passes 6/6. CLI tsc, common tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock server and the real CLI via tsx, in repo tmp/ and removed afterwards.
+      - `--json` printed pure JSON on stdout. The requests were health, then one POST whose body held the history and the expected list from the YAML.
+      - The human output listed pg_cron, the expected "Security group changed" with its reason, and the UNEXPECTED "ALB Unhealthy Hosts".
+      - `--fail-on-unexpected` gave exit 1 with 1 unexpected difference and exit 0 with none.
+      - `--since yesterday` and a missing history file each gave exit 1 with a clear message and no request.
+  - Note: the matched line prints Grafana's time from `ShadowRunMatch.at`. The acceptance mock sends `grafanaAt`, which is not in the contract type, so the CLI ignores it.
+- 2026-11-08T23:13:40Z supervisor: alert-cli-shadow-report passed the gate in round 1

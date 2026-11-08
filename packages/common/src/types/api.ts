@@ -2,6 +2,7 @@ import {
     type AlertingAsCodeDownload,
     type AlertingAsCodeUploadResult,
 } from '../alerting/asCode';
+import { type ShadowRunReport } from '../alerting/shadowRun';
 import { type ExploreWarningReport } from '../compiler/compilationReport';
 // Note: EE types removed from direct import to avoid circular module resolution
 // They are still available via the re-export below: export * from './ee';
@@ -1426,6 +1427,7 @@ type ApiResults =
     | ApiQueryCostEstimateResponse['results']
     | AlertingAsCodeDownload
     | AlertingAsCodeUploadResult
+    | ShadowRunReport
     | ReleaseHighlightsResult
     | AgentConnectionApprovalReviewResponse['results']
     | AgentConnectionApprovalDecisionResponse['results']
