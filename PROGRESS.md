@@ -446,3 +446,31 @@ docs/eng-1799/telemetry-mcp.md
 - Trap: a token signed by the retired key is refused as soon as Okta drops that key from the JWKS. Okta keeps old keys
   published for a while during rotation, so in-flight tokens normally still verify.
 - 2026-11-08T16:02:17Z supervisor: mcp-okta-jwks-rotation passed the gate in round 1
+
+### mcp-streamable-http-transport (2026-11-08)
+
+- The acceptance test needs `tools/list` to return **at least one tool**, and an `McpServer` with no tools answers
+  -32601. So this feature registers the first real tool, a **partial `list_sources`**. Decision: it returns only the
+  configured Telemetry Sources (`{ sources: [{name, kind, default, restricted}] }` from `MCP_SOURCES`). It does not
+  contact the engine and has no `opsMarts` key yet. **`mcp-tool-list-sources` must add `opsMarts`** (an
+  `information_schema.tables` query for catalog `ops_marts`, through the engine session) and the text/structured
+  output to match. Don't return a fake empty `opsMarts`.
+- `src/tools/listSources.ts`: `registerListSources(server, config)` (description in glossary terms,
+  `readOnlyHint: true`, no input arguments, so the SDK emits `{type:"object"}`), plus a pure `listSources(config)`.
+  Pattern for later tools: one file per tool under `src/tools/`, registered in `createMcpServer`.
+- `src/mcp/server.ts`: `createMcpServer(config)` builds the per-request server and registers the tools.
+  `serveMcpRequest(config, auth, req, res)` now takes the config (`src/http/server.ts` passes it). It is still
+  stateless (fresh server and transport per POST), so concurrent clients need no shared state. `auth` is still unused;
+  user mapping hangs off it.
+- Note: `McpServer` advertises `tools.listChanged: true` once a tool is registered, whatever capabilities you pass in.
+  That is harmless in stateless mode. For `mcp-unknown-user-no-tools` (an empty list, not -32601), either register
+  nothing and set a `tools/list` handler on `server.server`, or skip the tools.
+- Unit tests: `src/mcp/server.test.ts` (InMemoryTransport: serverInfo, tools capability, ping, list_sources listing
+  and call). `src/index.ts` exports `createMcpServer`, `MCP_SERVER_VERSION`, `LIST_SOURCES_TOOL`, `listSources`.
+- Tested as a user: a node script in `../tmp/transport-ut` started `dist/main.js` against a local JWKS server and
+  connected the SDK `StreamableHTTPClientTransport` with an RS256 bearer. 0 JWKS fetches at startup. serverInfo
+  `telemetry-mcp`; ping `{}`; tools/list `[list_sources (object schema, readOnlyHint)]`; tools/call returned the two
+  configured sources with their flags. Two more clients connected in parallel and saw the same tool names. A POST
+  without a token got 401 + challenge. 1 JWKS fetch in total; SIGTERM exit 0. The 8 acceptance files so far
+  (37 tests), unit tests (35) and typecheck all pass.
+- 2026-11-08T16:05:51Z supervisor: mcp-streamable-http-transport passed the gate in round 1

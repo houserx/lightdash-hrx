@@ -62,7 +62,7 @@ async function handleMcp(
         sendUnauthorized(config, res, { error: 'invalid_token', description });
         return;
     }
-    await serveMcpRequest(verified, req, res);
+    await serveMcpRequest(config, verified, req, res);
 }
 
 async function handle(

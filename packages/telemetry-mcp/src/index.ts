@@ -22,6 +22,8 @@ export {
     createOktaVerifier,
 } from './auth/okta.js';
 export type { AccessTokenVerifier, VerifiedAccessToken } from './auth/okta.js';
-export { MCP_SERVER_NAME } from './mcp/server.js';
+export { MCP_SERVER_NAME, MCP_SERVER_VERSION, createMcpServer } from './mcp/server.js';
+export { LIST_SOURCES_TOOL, listSources } from './tools/listSources.js';
+export type { ListSourcesResult } from './tools/listSources.js';
 export { bearerChallenge, extractBearer, resourceMetadataUrl } from './http/bearerChallenge.js';
 export type { BearerError, BearerExtraction } from './http/bearerChallenge.js';
