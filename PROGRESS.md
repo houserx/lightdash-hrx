@@ -569,3 +569,24 @@ should add a dated line here per feature.
   inside `LogStreamView` (in display order), not `model.lines`. The toolbar is the natural place for the Download CSV
   button.
 - 2026-11-08T19:09:27Z supervisor: viz-log-stream-filter passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-csv-export (session)
+
+- **What.** New `packages/frontend/src/components/LogStream/logStreamCsv.ts`: `logLinesToCsv(lines)` writes
+  `timestamp,level,line,labels` plus one row per line in the given order, RFC 4180 quoting (a field holding `,`, `"`, CR
+  or LF is quoted, quotes doubled), CRLF row ends; labels are `JSON.stringify(line.labels)` (`{}` when none).
+  `downloadLogLinesCsv(lines, fileName = 'log-stream.csv')` saves it through a Blob + temporary `<a download>` with a
+  UTF-8 BOM (Excel). `LogStreamView`'s toolbar is now a `Group`: filter box (`flex={1}`) plus a "Download CSV" button
+  (default variant, download icon) that exports the **filtered** `lines` in display order. Disabled when no line is
+  shown.
+- **Decisions.** Timestamp column is the ISO time (`toISOString()`) when the line has a valid time, else the data's
+  `formattedTimestamp` (the on-screen column prefers the formatted text; the file prefers a machine-readable value).
+  Level column is the normalised level (`warning`, `critical`, ...), not the raw source value. No spreadsheet formula
+  escaping (a leading `=`/`+`/`-`/`@` is written as is) to keep the log text exact; revisit if security review asks.
+  The file name is fixed (`log-stream.csv`); a chart-name-based name can come when the view is mounted in a chart.
+- **Tested as a user.** No app mounts the view yet, so I drove `FIVE_LOGS` plus a synthetic line with a newline, comma
+  and quotes in a throwaway vitest file (deleted) with userEvent: Download CSV → 7 rows newest first, the tricky line
+  quoted correctly, labels as JSON → typed `timeout` → Download CSV → header + the 2 matching rows → typed `nope` →
+  button disabled. After `bash ./init.sh` the check passes 2/2; filter, view, wrap-lines, expand-row still pass.
+  Frontend tsc, `pnpm run linter`, oxfmt clean.
+- 2026-11-08T19:12:51Z supervisor: viz-log-stream-csv-export passed the gate in round 1

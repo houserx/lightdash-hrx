@@ -4,6 +4,7 @@ import {
 } from '@lightdash/visualization';
 import {
     Box,
+    Button,
     Center,
     CloseButton,
     Group,
@@ -12,6 +13,7 @@ import {
     Text,
     TextInput,
 } from '@mantine/core';
+import { IconDownload } from '@tabler/icons-react';
 import {
     measureElement,
     observeElementRect,
@@ -27,6 +29,8 @@ import {
     type FC,
     type KeyboardEvent,
 } from 'react';
+import MantineIcon from '../common/MantineIcon';
+import { downloadLogLinesCsv } from './logStreamCsv';
 import classes from './LogStreamView.module.css';
 
 type Props = {
@@ -37,7 +41,7 @@ type Props = {
 };
 
 const FOOTER_HEIGHT = 28;
-/** The filter box above the lines; keep in step with `.toolbar` in the CSS module. */
+/** The filter box and Download CSV button above the lines; keep in step with `.toolbar` in the CSS module. */
 const TOOLBAR_HEIGHT = 36;
 /** A collapsed, unwrapped row is one line of text; keep in step with `.header` in the CSS module. Wrapped rows are measured. */
 const ROW_HEIGHT = 24;
@@ -214,7 +218,8 @@ const LogStreamRow: FC<RowProps> = ({
  * With "wrap lines" on, long lines wrap and their rows grow to fit (the
  * virtualiser measures them); off, each line stays on one row, cut short.
  * The filter box narrows the loaded lines to those whose text contains it
- * (ignoring case) and the footer counts how many match.
+ * (ignoring case) and the footer counts how many match. Download CSV saves
+ * the lines shown (after the filter, in display order) as a CSV file.
  */
 export const LogStreamView: FC<Props> = ({ model, height }) => {
     const total = model.lines.length;
@@ -277,10 +282,15 @@ export const LogStreamView: FC<Props> = ({ model, height }) => {
 
     return (
         <Stack gap={0} h={height} className={classes.root}>
-            <Box h={TOOLBAR_HEIGHT} className={classes.toolbar}>
+            <Group
+                h={TOOLBAR_HEIGHT}
+                gap="xs"
+                wrap="nowrap"
+                className={classes.toolbar}
+            >
                 <TextInput
                     size="xs"
-                    w="100%"
+                    flex={1}
                     placeholder="Filter lines"
                     aria-label="Filter lines"
                     value={filter}
@@ -295,7 +305,16 @@ export const LogStreamView: FC<Props> = ({ model, height }) => {
                         )
                     }
                 />
-            </Box>
+                <Button
+                    variant="default"
+                    size="xs"
+                    leftSection={<MantineIcon icon={IconDownload} />}
+                    disabled={shown === 0}
+                    onClick={() => downloadLogLinesCsv(lines)}
+                >
+                    Download CSV
+                </Button>
+            </Group>
             {total === 0 || shown === 0 ? (
                 <Center flex={1}>
                     <Text c="dimmed" fz="sm">
