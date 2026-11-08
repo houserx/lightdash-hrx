@@ -18,6 +18,7 @@ import {
     type AlertRule,
     type AlertRuleDefinition,
     type AlertRuleSummary,
+    type AlertRuleVersion,
     type AlertRuleWithInstances,
     type CreateAlertRule,
     type SessionUser,
@@ -351,6 +352,16 @@ export class AlertRuleService {
         const rule = await this.getRuleOrThrow(projectUuid, ruleUuid);
         const [withInstances] = await this.withInstances([rule]);
         return withInstances;
+    }
+
+    async listVersions(
+        user: SessionUser,
+        projectUuid: string,
+        ruleUuid: string,
+    ): Promise<AlertRuleVersion[]> {
+        await this.assertAbility(user, 'view', projectUuid);
+        const rule = await this.getRuleOrThrow(projectUuid, ruleUuid);
+        return this.deps.alertRuleModel.listVersions(rule.uuid);
     }
 
     private async nextFreeSlug(

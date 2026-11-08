@@ -7,6 +7,7 @@ import {
     type AlertRule,
     type AlertRuleDefinition,
     type AlertRuleInstance,
+    type AlertRuleVersion,
 } from '@lightdash/common';
 import { type Knex } from 'knex';
 import { ProjectTableName } from '../database/entities/projects';
@@ -46,6 +47,13 @@ type DbAlertRule = {
 };
 
 type DbAlertRuleWithVersion = DbAlertRule & { version: number };
+
+type DbAlertRuleVersion = {
+    version: number;
+    definition: AlertRuleDefinition;
+    created_by_user_uuid: string | null;
+    created_at: Date;
+};
 
 type DbAlertInstance = {
     alert_rule_uuid: string;
@@ -324,6 +332,25 @@ export class AlertRuleModel {
             });
             return { changed: true };
         });
+    }
+
+    /** Every saved version of the rule, newest first. */
+    async listVersions(ruleUuid: string): Promise<AlertRuleVersion[]> {
+        const rows = await this.database(AlertRuleVersionsTableName)
+            .where('alert_rule_uuid', ruleUuid)
+            .orderBy('version', 'desc')
+            .select<DbAlertRuleVersion[]>(
+                'version',
+                'definition',
+                'created_by_user_uuid',
+                'created_at',
+            );
+        return rows.map((row) => ({
+            version: Number(row.version),
+            rule: getAlertRuleDefinition(row.definition),
+            createdByUserUuid: row.created_by_user_uuid,
+            createdAt: row.created_at.toISOString(),
+        }));
     }
 
     /** Deletes the rule; its versions, series and history cascade. */

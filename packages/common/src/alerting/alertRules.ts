@@ -70,6 +70,14 @@ export type AlertRule = AlertRuleDefinition & {
     updatedByUserUuid: string | null;
 };
 
+/** One saved version of a rule: its definition as it was, and who saved it. */
+export type AlertRuleVersion = {
+    version: number;
+    rule: AlertRuleDefinition;
+    createdByUserUuid: string | null;
+    createdAt: string;
+};
+
 /** A rule's aggregate state; a rule never evaluated is `normal`. */
 export type AlertRuleState = Exclude<AlertInstanceState, 'resolved'>;
 

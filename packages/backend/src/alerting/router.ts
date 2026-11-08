@@ -119,6 +119,16 @@ export const createAlertingApiRouter = (
             ),
         ),
     );
+    router.get(
+        `${base}/rules/:ruleUuid/versions`,
+        route((user, req) =>
+            services.alertRules.listVersions(
+                user,
+                req.params.projectUuid,
+                req.params.ruleUuid,
+            ),
+        ),
+    );
     router.patch(
         `${base}/rules/:ruleUuid`,
         route((user, req) =>
