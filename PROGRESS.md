@@ -945,3 +945,20 @@ should add a dated line here per feature.
   `@lightdash/common` helpers into an entry pulls its whole import graph into the IIFE - prefer importing the
   specific `src/eng1799/*` module files (or copy small helpers into `src/shared/`) and check bundle size.
 - 2026-11-08T20:15:29Z supervisor: viz-registry-build passed the gate in round 1
+
+## viz-registry-client-install (round 1)
+- **What.** No code change needed: viz-registry-build already produced a registry the real client reads. This session
+  verified it end to end. Check `client-install.test.ts` 4/4 after `bash ./init.sh`.
+- **Tested as a user.** Served `chart-registry/dist` from a local HTTP server and set `LIGHTDASH_CHART_REGISTRY_URL`
+  (+ `LIGHTDASH_CHART_REGISTRY_ALLOW_INSECURE=true` for http/loopback) and `LIGHTDASH_CHART_REGISTRY_CHANNEL`
+  stable/next. Read them through the backend's real `parseConfig()`, built `ChartRegistryClient` exactly as
+  `ee/index.ts` does, and ran the client calls `listRegistryChartTypes`/`installRegistryChartType` make before S3:
+  `getIndex` (GET /index.json, or /index-next.json on next) listed `histogram@1.0.0` tagged houserx; `getVersionEntry`
+  -> entry.json; `downloadArtifact` source.tar (17408 B) and dist.tar (7168 B), with recomputed sha256 equal to the
+  entry digests; dist.tar passes `assertValidDistTar`. Same result on both channels.
+- **Not done / for later.** The browser library UI and the full install (S3 copy + DB rows) were not driven: they need
+  Postgres, an S3/MinIO store, the `ChartTypeRegistry` flag and a login, and this line has no Docker. The image
+  check (`getAsset`) is vacuous until a chart ships `screenshot-*.png` (previews feature). A local registry needs
+  `LIGHTDASH_CHART_REGISTRY_ALLOW_INSECURE=true` (http + loopback). `ALLOW_PRIVATE_HOSTS` alone still requires https.
+- Scratch driver left in `../tmp/drive-registry/` (outside the repo; deleting it was refused by the sandbox).
+- 2026-11-08T20:18:15Z supervisor: viz-registry-client-install passed the gate in round 1
