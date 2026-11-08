@@ -1,0 +1,136 @@
+{
+    "name": "Status grid",
+    "description": "Draws one coloured cell per series for health overview boards: each cell shows the series' latest value, coloured by Grafana thresholds and with Grafana value mappings for its text and colour, laid out in the chosen number of columns.",
+    "version": "1.0.0",
+    "publishedAt": "2026-11-08T00:00:00.000Z",
+    "changelog": "Initial HouseRx release.",
+    "tags": ["houserx", "status", "health"],
+    "icon": "layout-grid",
+    "vizSchema": {
+        "fields": [
+            {
+                "name": "series",
+                "label": "Series",
+                "type": "dimension",
+                "required": true,
+                "description": "What each cell stands for, such as a service or host. One cell per series, in the order they first appear."
+            },
+            {
+                "name": "value",
+                "label": "Value",
+                "type": "metric",
+                "required": true,
+                "description": "The status of the series. Each cell shows its series' latest non-empty value; a series with none shows No data."
+            },
+            {
+                "name": "time",
+                "label": "Time",
+                "type": "dimension",
+                "required": false,
+                "description": "When each value was sampled. The latest value is the one with the greatest time; without it, the last one in row order."
+            }
+        ],
+        "configOptions": [
+            {
+                "name": "thresholds",
+                "label": "Thresholds (Grafana steps JSON)",
+                "type": "text",
+                "default": ""
+            },
+            {
+                "name": "valueMappings",
+                "label": "Value mappings (Grafana mappings JSON)",
+                "type": "text",
+                "default": ""
+            },
+            {
+                "name": "columns",
+                "label": "Columns",
+                "type": "number",
+                "default": 4,
+                "min": 1,
+                "max": 24
+            },
+            {
+                "name": "unit",
+                "label": "Unit",
+                "type": "text",
+                "default": ""
+            },
+            {
+                "name": "decimals",
+                "label": "Decimals (-1 for auto)",
+                "type": "number",
+                "default": -1,
+                "min": -1,
+                "max": 20
+            }
+        ],
+        "colorPalette": {}
+    },
+    "preview": {
+        "rows": [
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "checkout",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "payments",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "search",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "inventory",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "shipping",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:00:00.000Z",
+                "series": "auth",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "checkout",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "payments",
+                "value": 0
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "search",
+                "value": 1
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "inventory",
+                "value": 0.5
+            },
+            {
+                "time": "2026-11-08T12:05:00.000Z",
+                "series": "shipping",
+                "value": 1
+            },
+            { "time": "2026-11-08T12:05:00.000Z", "series": "auth", "value": 1 }
+        ],
+        "optionValues": {
+            "thresholds": "{\"mode\": \"absolute\", \"steps\": [{\"value\": null, \"color\": \"red\"}, {\"value\": 0.5, \"color\": \"orange\"}, {\"value\": 1, \"color\": \"green\"}]}",
+            "valueMappings": "[{\"type\": \"value\", \"options\": {\"0\": {\"text\": \"Down\", \"index\": 0}, \"0.5\": {\"text\": \"Degraded\", \"index\": 1}, \"1\": {\"text\": \"Up\", \"index\": 2}}}]",
+            "columns": 3
+        }
+    }
+}

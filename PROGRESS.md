@@ -1198,3 +1198,29 @@ should add a dated line here per feature.
 - **Next.** viz-registry-status-grid is the last missing entry. previews.test.ts still fails on status-grid until
   that entry exists.
 - 2026-11-08T20:50:51Z supervisor: viz-registry-histogram passed the gate in round 1
+
+## viz-registry-status-grid (round 1)
+- **What changed.** New entry `chart-registry/src/charts/status-grid/` (status-grid@1.0.0, icon `layout-grid`).
+  Fields: `series` (dimension, required), `value` (metric, required), `time` (dimension, optional). Options:
+  `thresholds` and `valueMappings` (Grafana JSON text, as on stat), `columns` (number, default 4, 1..24), `unit`,
+  `decimals`. `statusGrid.ts` holds the pure model (`buildStatusGrid`, `columnsOption`). There is one cell per series,
+  in the order the series first appear. A cell's value is the series' latest non-empty value (Grafana's "Last *"):
+  greatest time when `time` is bound, otherwise the last value in row order. A series whose values are all empty
+  still gets a cell. Its value is null, so a `null` special mapping applies, else the cell shows "No data" in grey
+  `#8E8E8E`. Text and colour: a mapping's text and colour win. Otherwise a number is formatted with the unit and
+  coloured by the thresholds (a percentage step is read against the min..max of the cells' values). Unmapped text
+  shows as it is, in grey. DOM: `status-grid` (CSS grid, `data-columns`) > `status-grid-cell` (`data-series`,
+  `data-color`, `data-text`, `data-value`/`data-empty`, background = colour, text in white or near-black by
+  luminance) > `status-grid-series` + `status-grid-value`. No series at all gives `status-grid-empty` "No data".
+- **Decisions (no spec beyond the test).** The latest value skips nulls, the way Grafana's default reducer does.
+  The extra options `unit`, `decimals` and `time` are added for parity with stat.
+- **Tested as a user.** Built the registry, untarred dist.tar and ran the bundle in jsdom the way the host does,
+  with Lightdash-style field ids and rows out of time order. UP/DOWN mappings with red/green-at-1 thresholds and 3
+  columns: api UP green, db DOWN red (string '0' mapped too), queue UP (a later null was skipped), cache N/A blue
+  (null special). Without mappings and with percentunit: 100%/0%/No data grey. Without `time` bound, row order
+  decides. Percentage thresholds and string states also checked. No rows gives "No data". The preview gives 6
+  cells in 3 columns: Up/Down/Degraded(orange). The `viz-rendered` ack was sent every time. Check
+  `status-grid.test.ts` 3/3 after `bash ./init.sh`. Regressions: previews 7/7 (now fully green), build 45/45.
+  Typecheck and oxfmt are clean. The scratch driver is in `../tmp/drive-status-grid/`.
+- **Next.** viz-registry-complete: all six entries are now in the index, and previews.test.ts passes.
+- 2026-11-08T20:54:35Z supervisor: viz-registry-status-grid passed the gate in round 1
