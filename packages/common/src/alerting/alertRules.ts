@@ -127,11 +127,26 @@ export type AlertStateTransition = {
 };
 
 /**
- * An entry of a rule's state history (GET .../rules/{uuid}/history), newest
- * first. Rule-level entries (such as skipped evaluations) join this union
- * when they are written.
+ * A scheduled evaluation of a rule that did not run. `overrun`: the rule's
+ * previous evaluation was still running when this slot came due.
  */
-export type AlertStateHistoryEntry = AlertStateTransition;
+export type AlertEvaluationSkipped = {
+    type: 'evaluation_skipped';
+    uuid: string;
+    ruleUuid: string;
+    reason: string;
+    /** The slot that was skipped (ISO). */
+    at: string;
+};
+
+/**
+ * An entry of a rule's state history (GET .../rules/{uuid}/history), newest
+ * first: series transitions and rule-level entries such as skipped
+ * evaluations.
+ */
+export type AlertStateHistoryEntry =
+    | AlertStateTransition
+    | AlertEvaluationSkipped;
 
 /** One series of a rule preview ("Test rule"). */
 export type AlertRulePreviewSeries = {

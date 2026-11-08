@@ -2,6 +2,7 @@ import {
     buildAlertEvaluatorQueryContext,
     evaluateAlertCondition,
     getErrorMessage,
+    parsePrometheusDuration,
     resolveAlertQueryParameters,
     substituteAlertQueryParameters,
     type AlertQueryRow,
@@ -21,6 +22,13 @@ import {
     type AlertSeriesEvaluation,
 } from './evaluateAlertSeries';
 
+/**
+ * How long an evaluation may run before it is taken to have died with its
+ * worker and stops blocking newer slots: two of the rule's intervals, and
+ * never less than this.
+ */
+const MIN_STALE_EVALUATION_MS = 10 * 60 * 1000;
+
 export type AlertEvaluationOutcome = {
     status: 'evaluated' | 'skipped';
     reason?: string;
@@ -39,9 +47,10 @@ type AlertEvaluatorArgs = {
     alertInstanceModel: AlertInstanceModel;
     alertScheduleModel: Pick<
         AlertScheduleModel,
-        'claimEvaluationSlot' | 'releaseEvaluationSlot'
+        'claimEvaluationSlot' | 'finishEvaluationSlot' | 'releaseEvaluationSlot'
     >;
     warehouseClients: AlertWarehouseClients;
+    clock: { now(): Date };
 };
 
 /**
@@ -53,8 +62,10 @@ type AlertEvaluatorArgs = {
  * running their query. With several workers each scheduled slot is
  * evaluated once: a worker claims the slot on the rule's row before it runs
  * the query, and a worker that finds the slot (or a later one) already
- * claimed skips with reason `duplicate`. `previewRule` runs an unsaved rule once and stores
- * nothing.
+ * claimed skips with reason `duplicate`. A newer slot that comes due while
+ * an earlier one is still being evaluated skips with reason `overrun`, and
+ * the skip is written to the rule's history. `previewRule` runs an unsaved
+ * rule once and stores nothing.
  */
 export class AlertEvaluator {
     private readonly alertRuleModel: AlertRuleModel;
@@ -65,11 +76,14 @@ export class AlertEvaluator {
 
     private readonly warehouseClients: AlertWarehouseClients;
 
+    private readonly clock: AlertEvaluatorArgs['clock'];
+
     constructor(args: AlertEvaluatorArgs) {
         this.alertRuleModel = args.alertRuleModel;
         this.alertInstanceModel = args.alertInstanceModel;
         this.alertScheduleModel = args.alertScheduleModel;
         this.warehouseClients = args.warehouseClients;
+        this.clock = args.clock;
     }
 
     async evaluateRule(
@@ -83,14 +97,20 @@ export class AlertEvaluator {
         // are until it is unpaused.
         if (rule.paused) return { status: 'skipped', reason: 'paused' };
 
-        // Another worker is evaluating, or has evaluated, this slot or a
-        // later one.
-        const { claimed, previous } =
-            await this.alertScheduleModel.claimEvaluationSlot(
-                rule.uuid,
-                scheduledAt,
-            );
-        if (!claimed) return { status: 'skipped', reason: 'duplicate' };
+        // Skips when another worker is evaluating, or has evaluated, this
+        // slot or a later one (`duplicate`), or is still evaluating an
+        // earlier one (`overrun`).
+        const now = this.clock.now();
+        const staleAfterMs = Math.max(
+            MIN_STALE_EVALUATION_MS,
+            2 * parsePrometheusDuration(rule.interval),
+        );
+        const claim = await this.alertScheduleModel.claimEvaluationSlot(
+            rule.uuid,
+            scheduledAt,
+            { now, staleBefore: new Date(now.getTime() - staleAfterMs) },
+        );
+        if (!claim.claimed) return { status: 'skipped', reason: claim.reason };
         try {
             await this.evaluateClaimedRule(rule, scheduledAt);
         } catch (error) {
@@ -98,10 +118,14 @@ export class AlertEvaluator {
             await this.alertScheduleModel.releaseEvaluationSlot(
                 rule.uuid,
                 scheduledAt,
-                previous,
+                claim.previous,
             );
             throw error;
         }
+        await this.alertScheduleModel.finishEvaluationSlot(
+            rule.uuid,
+            scheduledAt,
+        );
         return { status: 'evaluated' };
     }
 

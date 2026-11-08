@@ -1,5 +1,6 @@
 import { type Knex } from 'knex';
 import { AlertRulesTableName } from './AlertRuleModel';
+import { AlertStateHistoryModel } from './AlertStateHistoryModel';
 
 /** What the scheduler needs to know about an unpaused rule. */
 export type SchedulableAlertRule = {
@@ -21,8 +22,9 @@ type DbSchedulableAlertRule = {
 
 /**
  * Interval slots of Alert Rules: the last slot enqueued
- * (`alert_rules.last_scheduled_at`) and the last slot claimed for
- * evaluation (`alert_rules.last_evaluation_slot`).
+ * (`alert_rules.last_scheduled_at`), the last slot claimed for evaluation
+ * (`alert_rules.last_evaluation_slot`) and whether that evaluation is still
+ * running (`alert_rules.evaluation_started_at`).
  */
 export class AlertScheduleModel {
     constructor(private readonly database: Knex) {}
@@ -78,39 +80,85 @@ export class AlertScheduleModel {
     }
 
     /**
-     * Claims `slot` for evaluation (`alert_rules.last_evaluation_slot`):
-     * `claimed` is true when this caller moved the rule's last evaluation
-     * slot forward to it, false when that slot (or a later one) was already
-     * claimed by some worker or the rule is gone. The rule's row is locked
-     * for the check, so concurrent claims of one slot serialize and only one
-     * wins. `previous` is the slot the claim replaced, for `releaseEvaluationSlot`.
+     * Claims `slot` for evaluation (`alert_rules.last_evaluation_slot`) and
+     * marks the rule as being evaluated (`alert_rules.evaluation_started_at`
+     * = `now`). The rule's row is locked for the check, so concurrent claims
+     * serialize and only one wins. The claim is refused with reason:
+     * - `duplicate` when that slot (or a later one) was already claimed by
+     *   some worker, or the rule is gone;
+     * - `overrun` when an evaluation of an earlier slot is still running
+     *   (it started after `staleBefore`). The skip is written to the rule's
+     *   history in the same transaction.
+     * An evaluation that started at or before `staleBefore` is taken to have
+     * died with its worker and no longer blocks newer slots.
+     * `previous` is the slot the claim replaced, for `releaseEvaluationSlot`.
      */
     async claimEvaluationSlot(
         ruleUuid: string,
         slot: Date,
-    ): Promise<{ claimed: boolean; previous: Date | null }> {
+        { now, staleBefore }: { now: Date; staleBefore: Date },
+    ): Promise<
+        | { claimed: true; previous: Date | null }
+        | { claimed: false; reason: 'duplicate' | 'overrun' }
+    > {
         return this.database.transaction(async (trx) => {
             const row = await trx(AlertRulesTableName)
                 .where('alert_rule_uuid', ruleUuid)
                 .forUpdate()
-                .first<{ last_evaluation_slot: Date | null } | undefined>(
+                .first<
+                    | {
+                          project_uuid: string;
+                          last_evaluation_slot: Date | null;
+                          evaluation_started_at: Date | null;
+                      }
+                    | undefined
+                >(
+                    'project_uuid',
                     'last_evaluation_slot',
+                    'evaluation_started_at',
                 );
-            if (!row) return { claimed: false, previous: null };
+            if (!row) return { claimed: false, reason: 'duplicate' };
             const previous = row.last_evaluation_slot;
             if (previous && previous.getTime() >= slot.getTime()) {
-                return { claimed: false, previous };
+                return { claimed: false, reason: 'duplicate' };
+            }
+            if (
+                row.evaluation_started_at &&
+                row.evaluation_started_at.getTime() > staleBefore.getTime()
+            ) {
+                await AlertStateHistoryModel.insertEvaluationSkipped(trx, {
+                    projectUuid: row.project_uuid,
+                    ruleUuid,
+                    at: slot,
+                    reason: 'overrun',
+                });
+                return { claimed: false, reason: 'overrun' };
             }
             await trx(AlertRulesTableName)
                 .where('alert_rule_uuid', ruleUuid)
-                .update({ last_evaluation_slot: slot });
+                .update({
+                    last_evaluation_slot: slot,
+                    evaluation_started_at: now,
+                });
             return { claimed: true, previous };
         });
     }
 
     /**
+     * Marks the evaluation of a claimed slot as ended, so newer slots run.
+     * A no-op if another worker has since claimed a later slot.
+     */
+    async finishEvaluationSlot(ruleUuid: string, slot: Date): Promise<void> {
+        await this.database(AlertRulesTableName)
+            .where('alert_rule_uuid', ruleUuid)
+            .andWhere('last_evaluation_slot', slot)
+            .update({ evaluation_started_at: null });
+    }
+
+    /**
      * Gives back a claim whose evaluation failed, so a retry of the slot
-     * runs again. A no-op if another worker has since claimed a later slot.
+     * runs again, and marks the evaluation as ended. A no-op if another
+     * worker has since claimed a later slot.
      */
     async releaseEvaluationSlot(
         ruleUuid: string,
@@ -120,7 +168,10 @@ export class AlertScheduleModel {
         await this.database(AlertRulesTableName)
             .where('alert_rule_uuid', ruleUuid)
             .andWhere('last_evaluation_slot', slot)
-            .update({ last_evaluation_slot: previous });
+            .update({
+                last_evaluation_slot: previous,
+                evaluation_started_at: null,
+            });
     }
 
     async transaction<T>(fn: (trx: Knex.Transaction) => Promise<T>) {

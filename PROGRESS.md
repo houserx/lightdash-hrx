@@ -437,3 +437,25 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - 09:02 with a failing query → threw. A retry of 09:02 → evaluated.
       - The instance ended firing. `last_evaluation_slot` = 09:02 and `updated_at` was unchanged.
 - 2026-11-08T20:15:17Z supervisor: alert-eval-concurrency passed the gate in round 1
+- alert-eval-overrun (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108150000_add_alert_rules_evaluation_started_at.ts` adds a nullable `alert_rules.evaluation_started_at timestamptz`. It is set to `clock.now()` when a worker claims a slot and cleared when that evaluation ends. It is not in the rule API.
+    - `AlertScheduleModel.claimEvaluationSlot(ruleUuid, slot, {now, staleBefore})` now returns `{claimed: true, previous}` or `{claimed: false, reason: 'duplicate' | 'overrun'}`. Inside the row lock it checks for a duplicate first (this slot or a later one already claimed). It then checks for an overrun: `evaluation_started_at` is set and later than `staleBefore`. An overrun inserts the `evaluation_skipped` history row in the same transaction. A new `finishEvaluationSlot` clears the marker after a successful evaluation. `releaseEvaluationSlot` (on a throw) clears it too.
+    - `AlertStateHistoryModel.insertEvaluationSkipped` writes a rule-level row: `fingerprint` null, `state` `'evaluation_skipped'` (the column is NOT NULL and has no check constraint), the reason in `reason`, and `at` = the skipped slot. `listForRule` no longer filters out null fingerprints. It maps those rows to `{type: 'evaluation_skipped', uuid, ruleUuid, reason, at}` and sorts them before transitions within a slot.
+    - common: there is a new `AlertEvaluationSkipped` type, and `AlertStateHistoryEntry` is now `AlertStateTransition | AlertEvaluationSkipped`.
+    - `AlertEvaluator` takes `clock` (wired from `deps.clock` in index.ts).
+  - Decisions (the spec doesn't decide these):
+    - An in-flight evaluation counts as stale once it has run for `max(10m, 2 × interval)` (`MIN_STALE_EVALUATION_MS`). After that it no longer blocks newer slots, which recovers from a worker that crashed mid-evaluation. Until then, each newer tick after a crash is skipped as an overrun.
+    - Only overrun skips write history. Paused and duplicate skips still write none.
+    - An overrun skip doesn't claim its slot, and it doesn't throw, so the job is not retried.
+  - Known gap for a later session: a stale evaluation that finally returns still saves its (older) result. It can overwrite instances written by a newer slot meanwhile. Seen in the walk: the T+4 evaluation finished after T+15. A fix would guard `alertInstanceModel.save` on `last_evaluation_slot = slot`. The concurrency feature had the same property, so I left it alone.
+  - Tested:
+    - The check passes (1 passed, 6 skipped). Regressions pass: scheduling concurrency + scheduler-due (2), rules (4), db-migrations (1). evaluation.accept.ts: 8 pass. The 3 failures are the unbuilt nodata, error and annotation-templates features, the same as before.
+    - Backend and common tsc are clean, as are oxlint (backend src/alerting + migration) and oxfmt.
+    - As a user: a scratch walk through the harness (tmp/walk + src/alerting/__walk__, both removed). The setup was a T0 evaluation hung on the warehouse. The results:
+      - T+1 from a second module → skipped/overrun. T+2 from a third → skipped/overrun. A T0 retry → skipped/duplicate, still 1 warehouse call.
+      - After release, T0 → evaluated and T+3 → evaluated.
+      - With T+4 hung: T+13 → overrun and T+15 → evaluated (stale after 10m).
+      - A failing T+16 threw. T+17 → evaluated, because the throw cleared the marker.
+      - GET /rules/{uuid}/history as viewer listed evaluation_skipped/overrun at 09:13, 09:02 and 09:01, plus the firing transition at 09:00.
+- 2026-11-08T20:22:19Z supervisor: alert-eval-overrun passed the gate in round 1

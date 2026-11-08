@@ -69,6 +69,7 @@ export const createAlertingModule = (
         alertInstanceModel: new AlertInstanceModel(deps.database),
         alertScheduleModel,
         warehouseClients: deps.warehouseClients,
+        clock: deps.clock,
     });
     return {
         alertRules: new AlertRuleService({
