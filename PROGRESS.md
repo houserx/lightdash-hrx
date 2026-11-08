@@ -2363,3 +2363,21 @@ token verification for a *valid* token, which feature 39 then hardens.
   the sandbox ("Operation not permitted").
   The check passed 3 times, once at load average 8.4.
 - 2026-11-08T23:13:34Z supervisor: eng-perf-promql-large-range passed the gate in round 1
+- eng-dockerfile (operations): added federation-engine/Dockerfile and federation-engine/.dockerignore
+  (excludes target/). Written, never built: no Docker on this line.
+  Builder stage: `rust:1.99-bookworm` (the same rustc as the local toolchain; edition 2024 needs
+  >= 1.85), installs cmake + clang for aws-lc-sys, copies Cargo.toml, Cargo.lock, crates/, src/
+  and tests/, then runs `cargo build --release --locked --bin engine`. tests/ is copied only
+  because the manifest declares the [[test]] acceptance target, and cargo wants its path to exist.
+  Final stage: `gcr.io/distroless/cc-debian12:nonroot`. It has glibc matching bookworm, plus CA
+  certificates, which aws-smithy's rustls-native-certs reads. It copies /usr/local/bin/engine
+  from the builder and runs as `USER nonroot:nonroot` (65532). It has `EXPOSE 5433 8088`,
+  ENTRYPOINT `/usr/local/bin/engine`, and CMD `--config /etc/federation-engine/federation-engine.toml`.
+  The build context is federation-engine/ (`docker build federation-engine`).
+  Follow-up for eng-readme and deploy: inside the container, the config's listen_pg/listen_http
+  must bind 0.0.0.0, not 127.0.0.1. The config file is mounted read-only. Secrets come from the
+  env vars it names.
+  Tested: I read the Dockerfile against the feature steps. `docs::eng_dockerfile` passes. The image
+  was not built (no Docker or registry access by design), so the first real `docker build` should
+  be watched: base image tags, and whether aws-lc-sys builds on the target arch.
+- 2026-11-08T23:14:56Z supervisor: eng-dockerfile passed the gate in round 1
