@@ -9,6 +9,7 @@ import {
     useVirtualizer,
     type Virtualizer,
 } from '@tanstack/react-virtual';
+import clsx from 'clsx';
 import {
     useCallback,
     useRef,
@@ -26,7 +27,7 @@ type Props = {
 };
 
 const FOOTER_HEIGHT = 28;
-/** A collapsed row is one line of text (no wrapping); keep in step with `.header` in the CSS module. */
+/** A collapsed, unwrapped row is one line of text; keep in step with `.header` in the CSS module. Wrapped rows are measured. */
 const ROW_HEIGHT = 24;
 /** One label in an expanded row's details; keep in step with `.details` in the CSS module. */
 const LABEL_HEIGHT = 20;
@@ -94,6 +95,7 @@ type RowProps = {
     start: number;
     expanded: boolean;
     showLabels: boolean;
+    wrapLines: boolean;
     onToggle: (id: string) => void;
     measureRef: (node: Element | null) => void;
 };
@@ -104,6 +106,7 @@ const LogStreamRow: FC<RowProps> = ({
     start,
     expanded,
     showLabels,
+    wrapLines,
     onToggle,
     measureRef,
 }) => {
@@ -124,7 +127,7 @@ const LogStreamRow: FC<RowProps> = ({
             style={{ '--log-row-start': `${start}px` }}
         >
             <Group
-                className={classes.header}
+                className={clsx(classes.header, wrapLines && classes.wrapped)}
                 gap="sm"
                 wrap="nowrap"
                 align="flex-start"
@@ -163,9 +166,13 @@ const LogStreamRow: FC<RowProps> = ({
                 )}
                 <Text
                     data-testid="log-stream-line"
-                    className={classes.line}
+                    className={clsx(classes.line, wrapLines && classes.wrapped)}
                     ff="monospace"
                     fz="xs"
+                    // The wrap mode is per chart, so it rides on the element itself
+                    // (the CSS module only adds overflow-wrap for wrapped lines).
+                    // oxlint-disable-next-line lightdash-ui/no-inline-style-prop
+                    style={{ whiteSpace: wrapLines ? 'pre-wrap' : 'pre' }}
                 >
                     {line.line}
                 </Text>
@@ -180,6 +187,8 @@ const LogStreamRow: FC<RowProps> = ({
  * Only the rows in view (plus overscan) are in the page. Clicking a row
  * toggles its details: every label as key and value. With the chart's
  * "show labels" on, each row also shows its labels inline as `key=value`.
+ * With "wrap lines" on, long lines wrap and their rows grow to fit (the
+ * virtualiser measures them); off, each line stays on one row, cut short.
  */
 export const LogStreamView: FC<Props> = ({ model, height }) => {
     const total = model.lines.length;
@@ -256,6 +265,7 @@ export const LogStreamView: FC<Props> = ({ model, height }) => {
                                     start={item.start}
                                     expanded={expandedIds.has(line.id)}
                                     showLabels={model.showLabels}
+                                    wrapLines={model.wrapLines}
                                     onToggle={toggleRow}
                                     measureRef={virtualizer.measureElement}
                                 />

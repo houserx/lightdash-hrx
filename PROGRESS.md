@@ -528,3 +528,23 @@ should add a dated line here per feature.
 - **For the next sessions.** `log-stream-wrap-lines`: when wrapping, consider letting `.inlineLabels` wrap too or keep
   it capped; it is a flex child of `.header`, which currently has a fixed height.
 - 2026-11-08T19:02:52Z supervisor: viz-log-stream-show-labels passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-wrap-lines (session)
+
+- **What.** In `packages/frontend/src/components/LogStream/LogStreamView.tsx` the view passes `model.wrapLines` to each
+  row. The `log-stream-line` `Text` gets an inline `white-space`: `pre-wrap` when wrapping, `pre` when not (the
+  acceptance check reads `line.style.whiteSpace`, and CSS modules are not applied in jsdom, so it has to be inline; one
+  `oxlint-disable-next-line lightdash-ui/no-inline-style-prop` with a reason, as in SimpleTreemap/UserActivity). When
+  wrapping, a `.wrapped` modifier class goes on `.header` (`height: auto; min-height: 23px`) and on `.line`
+  (`overflow-wrap: anywhere`, so long unbroken tokens wrap too). Off is the default and unchanged: one 24 px row.
+- **Row heights.** `estimatedRowHeight` still returns `ROW_HEIGHT` for wrapped rows; in a browser the virtualiser's
+  `measureElement` (ResizeObserver) measures the taller rows. Inline labels stay capped/ellipsed (`.inlineLabels`)
+  when wrapping, a deliberate choice to keep the labels column tidy.
+- **Steps 1–3 (toggle).** No config panel exists yet; `viz-log-stream-config-panel` adds the "Wrap lines" toggle and only
+  has to set `wrapLines` on the chart config (`@lightdash/visualization`, default false).
+- **Tested as a user.** No app mounts the view yet, so I rendered `FIVE_LOGS` with each line extended by ~600 chars in a
+  throwaway vitest file (deleted) and re-rendered off → on → off: all 5 lines were `pre` with plain `.header`, then
+  `pre-wrap` with `.wrapped` on header and line, then `pre` again. After `bash ./init.sh` the check passes 2/2;
+  log-stream-view (3/3), virtualised (1/1), level-bar (2/2), expand-row (1/1), show-labels (2/2) still pass. Frontend
+  tsc, oxlint (`pnpm run linter`) and oxfmt clean.
+- 2026-11-08T19:06:27Z supervisor: viz-log-stream-wrap-lines passed the gate in round 1

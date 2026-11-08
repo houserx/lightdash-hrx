@@ -21,6 +21,12 @@
     cursor: pointer;
 }
 
+/* "Wrap lines": the header grows with the wrapped line, never below one row. */
+.header.wrapped {
+    height: auto;
+    min-height: 23px;
+}
+
 .header:hover {
     background-color: var(--mantine-color-default-hover);
 }
@@ -90,6 +96,11 @@
     overflow: hidden;
     min-width: 0;
     white-space: pre;
+}
+
+/* white-space is set inline (pre / pre-wrap); this lets long unbroken tokens wrap too. */
+.line.wrapped {
+    overflow-wrap: anywhere;
 }
 
 .footer {
