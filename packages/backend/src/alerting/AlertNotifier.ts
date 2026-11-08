@@ -44,7 +44,61 @@ type AlertNotifierDeps = {
     notificationRouteModel: NotificationRouteTreeSource;
     secrets: { resolve(name: string): Promise<string | undefined> };
     clock: { now(): Date };
+    retry: NotificationRetryPolicy;
     siteUrl: string;
+};
+
+/** Exponential backoff for one send: `initialDelayMs`, then doubling. */
+export type NotificationRetryPolicy = {
+    maxAttempts: number;
+    initialDelayMs: number;
+};
+
+/**
+ * A send failure that says whether trying again could help. Any other error
+ * (connection refused, timeout) is treated as retryable.
+ */
+export class NotificationSendError extends Error {
+    constructor(
+        message: string,
+        readonly retryable: boolean,
+    ) {
+        super(message);
+        this.name = 'NotificationSendError';
+    }
+}
+
+const isRetryable = (error: unknown) =>
+    !(error instanceof NotificationSendError) || error.retryable;
+
+/**
+ * Runs `send` until it succeeds, fails with a non-retryable error, or has
+ * been tried `maxAttempts` times, waiting `initialDelayMs * 2^(n-1)` (real
+ * time) before retry n. Returns the attempts made and the last error.
+ */
+export const sendWithRetry = async (
+    send: () => Promise<void>,
+    policy: NotificationRetryPolicy,
+    sleep: (ms: number) => Promise<void> = (ms) =>
+        new Promise((resolve) => {
+            setTimeout(resolve, ms);
+        }),
+): Promise<{ attempts: number; error: string | null }> => {
+    const maxAttempts = Math.max(1, Math.floor(policy.maxAttempts));
+    for (let attempt = 1; ; attempt += 1) {
+        try {
+            // Attempts are sequential by design.
+            // eslint-disable-next-line no-await-in-loop
+            await send();
+            return { attempts: attempt, error: null };
+        } catch (e) {
+            if (attempt >= maxAttempts || !isRetryable(e)) {
+                return { attempts: attempt, error: getErrorMessage(e) };
+            }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(Math.max(0, policy.initialDelayMs) * 2 ** (attempt - 1));
+    }
 };
 
 /** A firing alert, or a resolved one (which has `endsAt`). */
@@ -354,13 +408,13 @@ export class AlertNotifier {
                 fingerprint: alert.fingerprint,
             })),
         });
-        let error: string | null = null;
-        try {
-            await this.postWebhook(integration, payload);
-        } catch (e) {
-            error = getErrorMessage(e);
+        const { attempts, error } = await sendWithRetry(
+            () => this.postWebhook(integration, payload),
+            this.deps.retry,
+        );
+        if (error !== null) {
             Logger.warn(
-                `Alerting notification to contact point ${contactPoint.uuid} failed: ${error}`,
+                `Alerting notification to contact point ${contactPoint.uuid} failed after ${attempts} attempt(s): ${error}`,
             );
         }
         await this.deps.alertNotificationModel.insertNotification({
@@ -370,7 +424,7 @@ export class AlertNotifier {
             integrationType: integration.type,
             groupKey: group.groupKey,
             status: error === null ? 'sent' : 'failed',
-            attempts: 1,
+            attempts,
             alerts: alerts.map((alert) => ({
                 ruleUuid: alert.ruleUuid,
                 fingerprint: alert.fingerprint,
@@ -393,7 +447,10 @@ export class AlertNotifier {
             const { secretRef } = integration.authorization;
             const secret = await this.deps.secrets.resolve(secretRef);
             if (secret === undefined) {
-                throw new Error(`Secret "${secretRef}" could not be resolved`);
+                throw new NotificationSendError(
+                    `Secret "${secretRef}" could not be resolved`,
+                    false,
+                );
             }
             headers.authorization = `Bearer ${secret}`;
         }
@@ -406,8 +463,11 @@ export class AlertNotifier {
         // Drain the body so the connection is released.
         await response.arrayBuffer().catch(() => undefined);
         if (!response.ok) {
-            throw new Error(
+            throw new NotificationSendError(
                 `Webhook responded with HTTP ${response.status} ${response.statusText}`.trim(),
+                // 4xx means the request itself is wrong; sending it again
+                // won't help.
+                response.status < 400 || response.status >= 500,
             );
         }
     }

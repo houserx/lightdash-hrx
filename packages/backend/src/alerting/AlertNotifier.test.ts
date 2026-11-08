@@ -6,6 +6,8 @@ import {
     alertStatus,
     groupAlerts,
     isNotificationGroupDue,
+    NotificationSendError,
+    sendWithRetry,
 } from './AlertNotifier';
 
 const T0 = new Date('2026-11-08T09:00:00.000Z');
@@ -181,5 +183,79 @@ describe('groupAlerts', () => {
             ['ops', ['resolved', 'firing']],
             ['pager', ['firing']],
         ]);
+    });
+});
+
+describe('sendWithRetry', () => {
+    const policy = { maxAttempts: 3, initialDelayMs: 5 };
+    const run = async (outcomes: (Error | null)[]) => {
+        const delays: number[] = [];
+        let calls = 0;
+        const result = await sendWithRetry(
+            async () => {
+                const outcome = outcomes[Math.min(calls, outcomes.length - 1)];
+                calls += 1;
+                if (outcome) throw outcome;
+            },
+            policy,
+            async (ms) => {
+                delays.push(ms);
+            },
+        );
+        return { ...result, calls, delays };
+    };
+    const http = (status: number) =>
+        new NotificationSendError(`HTTP ${status}`, status >= 500);
+
+    it('succeeds on the first attempt without waiting', async () => {
+        expect(await run([null])).toEqual({
+            attempts: 1,
+            error: null,
+            calls: 1,
+            delays: [],
+        });
+    });
+
+    it('retries retryable failures with exponential backoff', async () => {
+        expect(await run([http(500), http(503), null])).toEqual({
+            attempts: 3,
+            error: null,
+            calls: 3,
+            delays: [5, 10],
+        });
+    });
+
+    it('gives up after maxAttempts with the last error', async () => {
+        expect(await run([http(500), http(502)])).toEqual({
+            attempts: 3,
+            error: 'HTTP 502',
+            calls: 3,
+            delays: [5, 10],
+        });
+    });
+
+    it('treats unknown errors (network) as retryable', async () => {
+        const result = await run([new TypeError('fetch failed'), null]);
+        expect(result).toMatchObject({ attempts: 2, error: null });
+    });
+
+    it('does not retry a non-retryable failure', async () => {
+        expect(await run([http(400), null])).toEqual({
+            attempts: 1,
+            error: 'HTTP 400',
+            calls: 1,
+            delays: [],
+        });
+    });
+
+    it('always makes at least one attempt', async () => {
+        const result = await sendWithRetry(
+            async () => {
+                throw http(500);
+            },
+            { maxAttempts: 0, initialDelayMs: 5 },
+            async () => {},
+        );
+        expect(result).toEqual({ attempts: 1, error: 'HTTP 500' });
     });
 });

@@ -590,3 +590,20 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - With `groupBy: []` both rules share a group: two entries with `ruleUuids` of both rules; the 09:02 one is `firing` (one resolved + one firing), and both show under `?rule=B`.
   - Next session (alert-contact-retries): `insertNotification` already writes `status`, `attempts` and `error`; the notifier hardcodes `attempts: 1`. alert-shadow-no-notify should insert `status: 'shadow'` rows; the list already types and returns them (`NotificationLogEntry.status` needs `'shadow'` added).
 - 2026-11-08T20:55:12Z supervisor: alert-notifications-log passed the gate in round 1
+- alert-contact-retries (round 1) — 2026-11-08
+  - Changed:
+    - backend `AlertNotifier.ts`: new exported `sendWithRetry(send, {maxAttempts, initialDelayMs}, sleep?)` and `NotificationSendError(message, retryable)`. The webhook send goes through `sendWithRetry`, and the log row gets the real `attempts`, the final `status` and the last `error`. `AlertNotifier` deps gained `retry`; `createAlertingModule` passes `deps.retry` through.
+    - Unit tests: 6 new `sendWithRetry` cases in `AlertNotifier.test.ts` (13 total).
+  - Contract assumptions (CONTRACTS: "5xx/network retried up to maxAttempts with backoff, 4xx not. Every attempt outcome lands in alert_notifications"):
+    - One `alert_notifications` row per send (per integration), not one per attempt. It has the final outcome, `attempts` and the last error. The acceptance test reads exactly one entry with `attempts: 3`.
+    - Backoff before retry n is `initialDelayMs * 2^(n-1)` in real time (CONTRACTS: "real timers only for retry backoff"). No jitter, no cap. `maxAttempts < 1` still makes one attempt.
+    - Retryable: HTTP 5xx and any error that is not a `NotificationSendError` (connection refused, DNS, the 10s timeout). Not retried: every 4xx, including 429 (the contract says "4xx not"), and an unresolvable secret (a config error).
+    - Retries run inline in `flush()` after the group is claimed. A slow endpoint holds up that flush by at most maxAttempts × 10s plus backoff.
+  - Tested:
+    - The check passes after init (2 passed, 6 skipped). The whole notifications.accept.ts passes 8/8. The unit file passes 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (run.sh and config copied to `tmp/walk`, then removed), with retry `{3, 100ms}`. In each case a webhook contact point `ops` took everything with groupWait 0s, a rule fired, the notifier flushed, and the viewer read `GET /notifications?rule=`.
+      - 500, 503, 200 → 3 POSTs, flush ≈316ms (100+200 backoff), one entry `sent`, attempts 3, error null, sentAt set.
+      - Always 500 → 3 POSTs, one entry `failed`, attempts 3, error "Webhook responded with HTTP 500 Internal Server Error".
+      - 400 → 1 POST, `failed`, attempts 1, no wait. 429 → same. 200 → `sent`, attempts 1.
+  - Next session: other integrations (slack/incident.io/email) should throw `NotificationSendError(msg, retryable)` for their own permanent failures (e.g. Slack app not installed → `false`) and wrap their send in `sendWithRetry(..., this.deps.retry)`.
+- 2026-11-08T20:58:59Z supervisor: alert-contact-retries passed the gate in round 1

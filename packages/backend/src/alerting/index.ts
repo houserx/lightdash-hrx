@@ -107,6 +107,7 @@ export const createAlertingModule = (
             notificationRouteModel,
             secrets: deps.secrets,
             clock: deps.clock,
+            retry: deps.retry,
             siteUrl: deps.siteUrl,
         }),
         // The database belongs to the caller; nothing of ours to release yet.
