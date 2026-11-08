@@ -722,3 +722,23 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     Feb 30 / 24:00 / no-offset / date-only refused, and `now-1h` → a 2026-01-01 end refused as
     start after end. common tsc, oxlint and oxfmt are clean.
 - 2026-11-08T18:54:43Z supervisor: ldq-time-absolute-range passed the gate in round 1
+- 2026-11-08 ldq-time-interval-parameter (session):
+  - `packages/common/src/utils/timeRange.ts` gains `getReservedTimeParameterValues(range, {now?,
+    refreshInterval?, maxDataPoints?})` → `{__from, __to, __interval, __range}`, plus
+    `getTimeIntervalMs(rangeMs, maxDataPoints=1000)`, `formatPrometheusDuration(ms)`,
+    `TIME_INTERVAL_STEPS_MS`, `MIN_TIME_INTERVAL_MS` (15s) and `DEFAULT_MAX_DATA_POINTS` (1000).
+    __interval = range / maxDataPoints, rounded up to the first CONTRACTS §2 step that is >= it
+    (1s..1d), floored at 15s. Bad maxDataPoints (not a positive integer) → ParameterError.
+  - Contract assumptions: past the largest step (range/points > 1d) __interval rounds up to whole
+    days (e.g. '2d'); the contract's step list stops at 1d. `formatPrometheusDuration` uses units
+    d/h/m/s (plus ms for sub-second remainders), largest whole units combined (`1h30m`), no weeks or
+    years, because time-range-duration.test.ts expects now-7d → '7d'.
+  - __range was needed by this feature's test ('6h'), so it is already implemented; the
+    ldq-time-range-parameter check (time-range-duration.test.ts) already passes 3/3. The next
+    session only needs to confirm it. ldq-time-reserved-parameters still needs the registry
+    wiring (getReservedParameterNames, resolveReservedParameterValues, mergeReservedValues).
+  - Tested: init, then the feature check (4/4) and time-relative (5/5), time-absolute (3/3),
+    time-range-duration (3/3). A scratch tsx script (deleted) on the real clock gave 5m→15s,
+    6h→30s, 24h→5m/'1d', 7d→15m, 30d→1h, 90d→3h; maxDataPoints 0 threw ParameterError.
+    common tsc, oxlint and oxfmt are clean.
+- 2026-11-08T18:57:26Z supervisor: ldq-time-interval-parameter passed the gate in round 1

@@ -136,3 +136,106 @@ export const resolveTimeRange = (
         to: new Date(toMs).toISOString(),
     };
 };
+
+/** Default number of data points `__interval` divides the range into. */
+export const DEFAULT_MAX_DATA_POINTS = 1000;
+
+/** Smallest `__interval` ever returned. */
+export const MIN_TIME_INTERVAL_MS = 15_000;
+
+/** Nice steps `__interval` rounds up to (CONTRACTS §2). */
+export const TIME_INTERVAL_STEPS_MS: readonly number[] = [
+    1_000,
+    5_000,
+    15_000,
+    30_000,
+    60_000,
+    5 * 60_000,
+    15 * 60_000,
+    30 * 60_000,
+    3_600_000,
+    3 * 3_600_000,
+    6 * 3_600_000,
+    12 * 3_600_000,
+    86_400_000,
+];
+
+const FORMAT_UNITS: ReadonlyArray<[string, number]> = [
+    ['d', UNIT_MS.d],
+    ['h', UNIT_MS.h],
+    ['m', UNIT_MS.m],
+    ['s', UNIT_MS.s],
+    ['ms', 1],
+];
+
+/**
+ * Formats milliseconds as a Prometheus duration string using the largest whole
+ * units, combined when needed: 90 minutes is `1h30m`, a day is `1d`, zero is `0s`.
+ */
+export const formatPrometheusDuration = (durationMs: number): string => {
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+        throw new ParameterError(`Invalid duration ${durationMs}ms`);
+    }
+    let remaining = Math.floor(durationMs);
+    if (remaining === 0) return '0s';
+    let formatted = '';
+    FORMAT_UNITS.forEach(([unit, unitMs]) => {
+        const count = Math.floor(remaining / unitMs);
+        if (count > 0) {
+            formatted += `${count}${unit}`;
+            remaining -= count * unitMs;
+        }
+    });
+    return formatted;
+};
+
+/**
+ * `__interval` in milliseconds: the range divided by the max data points,
+ * rounded up to the next nice step, never below 15s. Ranges needing more than
+ * the largest step (1d) round up to a whole number of days.
+ */
+export const getTimeIntervalMs = (
+    rangeMs: number,
+    maxDataPoints: number = DEFAULT_MAX_DATA_POINTS,
+): number => {
+    if (!Number.isInteger(maxDataPoints) || maxDataPoints <= 0) {
+        throw new ParameterError(
+            `Max data points must be a positive integer, got ${maxDataPoints}`,
+        );
+    }
+    const rawMs = Math.max(rangeMs / maxDataPoints, MIN_TIME_INTERVAL_MS);
+    const step = TIME_INTERVAL_STEPS_MS.find((stepMs) => stepMs >= rawMs);
+    return step ?? Math.ceil(rawMs / UNIT_MS.d) * UNIT_MS.d;
+};
+
+export type ReservedTimeParameterValues = {
+    __from: string;
+    __to: string;
+    __interval: string;
+    __range: string;
+};
+
+export type ReservedTimeParameterOptions = ResolveTimeRangeOptions & {
+    /** Data points `__interval` divides the range into. Defaults to 1000. */
+    maxDataPoints?: number;
+};
+
+/**
+ * Resolves a Dashboard Time Range to the reserved time parameters
+ * `__from`, `__to`, `__interval` and `__range` (CONTRACTS §2).
+ */
+export const getReservedTimeParameterValues = (
+    range: TimeRangeInput,
+    options: ReservedTimeParameterOptions = {},
+): ReservedTimeParameterValues => {
+    const { from, to } = resolveTimeRange(range, options);
+    const rangeMs = Date.parse(to) - Date.parse(from);
+    return {
+        __from: from,
+        __to: to,
+        __interval: formatPrometheusDuration(
+            getTimeIntervalMs(rangeMs, options.maxDataPoints),
+        ),
+        __range: formatPrometheusDuration(rangeMs),
+    };
+};
