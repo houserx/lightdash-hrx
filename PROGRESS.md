@@ -292,3 +292,19 @@ should add a dated line here per feature.
 - **Tooling notes.** Format with `oxfmt` (`pnpm -F <pkg> exec oxfmt --check <files>`), not prettier. Running eslint/npx
   hits the Node devEngines mismatch, so use `pnpm -F <pkg> run linter <files>` (oxlint).
 - 2026-11-08T18:19:19Z supervisor: viz-chart-type-members passed the gate in round 1
+
+### 2026-11-08 viz-chart-types-migration (session)
+
+- **What.** New core migration `packages/backend/src/database/migrations/20261108120000_add_log_stream_and_trace_waterfall_chart_types.ts`.
+  `up` inserts `log_stream` and `trace_waterfall` into `chart_types` (the FK target of `saved_queries_versions.chart_type`).
+  `down` deletes `saved_queries_versions` rows of those types first, then the two `chart_types` rows. This copies the
+  `sankey`/`data_app_viz` chart-type migrations. The type strings are frozen local constants, with no `@lightdash/common`
+  import (migrations/AGENTS.md).
+- **Tested.** `bash ./init.sh`, then the check (4/4). It starts a throwaway Postgres, runs the real `up`, inserts a
+  `saved_queries_versions` row of each new type (FK accepted), and runs `down` (types and their chart versions removed,
+  `sankey` untouched). The full `migrate:latest` chain can't run locally because it needs pgvector, so the check's
+  hand-built `chart_types` + `saved_queries_versions` is the closest end-to-end run. oxfmt and oxlint are clean. The
+  release-safety analyzer (`scripts/release-safety-migrations.ts` `analyzeMigrationSource`) gives the same result as for
+  `20260624120004_add_data_app_viz_chart_type.ts` (complete, no heaviness), so no declaration is needed.
+- **Next.** Charts of both types can now be saved through the API. No other changes.
+- 2026-11-08T18:22:15Z supervisor: viz-chart-types-migration passed the gate in round 1
