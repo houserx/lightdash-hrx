@@ -2347,3 +2347,19 @@ token verification for a *valid* token, which feature 39 then hardens.
   is clean, and log.rs is fmt-clean. `cargo fmt --check` drift is unchanged (64 hunks, none in
   log.rs or main.rs).
 - 2026-11-08T23:11:04Z supervisor: eng-json-logs passed the gate in round 1
+- eng-perf-promql-large-range (performance): no code change was needed. The check passed on the
+  untouched tree at session start (3.2 s for the whole test, including the warm-up and the mock).
+  Two things already meet the budget. First, `[profile.dev.package."*"] opt-level = 2` in
+  federation-engine/Cargo.toml, so DataFusion, arrow, pgwire and serde_json run optimised in the
+  debug build. Second, promql.rs `Rows` serialises a series' labels JSON and series name once and
+  reuses them for every sample of that series. Keep both: dropping the dependency opt-level, or
+  re-serialising labels per row, is what would break this budget.
+  Tested as a user: `../tmp/perf-user/run.sh` (python mock on 59900 answering 1,000 series x 360
+  points, the same values as the check; engine on 59901/59902 with max_rows = 500000). It sends
+  the query from two clients. `../tmp/pgclient` bin `perf` uses tokio-postgres extended protocol,
+  like the check: a warm-up, then 3 timed runs of 0.81 to 0.83 s, each with 360,000 rows and
+  sum(value) = 32399910000, the exact expected sum. `perfclient.py` uses the simple protocol
+  and takes 1.2 to 1.9 s, mostly in Python decoding, which varies with load. psql is blocked by
+  the sandbox ("Operation not permitted").
+  The check passed 3 times, once at load average 8.4.
+- 2026-11-08T23:13:34Z supervisor: eng-perf-promql-large-range passed the gate in round 1
