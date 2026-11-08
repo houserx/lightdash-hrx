@@ -130,8 +130,10 @@ impl PgHandlers {
             .build()
             .map_err(|e| format!("cannot build the HTTP client for sources: {e}"))?;
         let sql = Sql::new();
+        let promql = Promql::new(config, http);
         sql.ctx
-            .register_udtf("promql", Arc::new(Promql::new(config, http)));
+            .register_udtf("promql_instant", Arc::new(promql.clone().instant()));
+        sql.ctx.register_udtf("promql", Arc::new(promql));
         let mut scram = ScramAuth::new(Arc::new(Logins::new(&config.users)));
         scram.set_iterations(SCRAM_ITERATIONS);
         let mut params = DefaultServerParameterProvider::default();

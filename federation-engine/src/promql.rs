@@ -1,5 +1,6 @@
-//! `promql(query, start, end, step[, source])` (CONTRACTS §1.1): a Prometheus `query_range` as a
-//! table of `timestamp timestamptz, value float8, labels json, series text`, one row per sample.
+//! `promql(query, start, end, step[, source])` and `promql_instant(query, at[, source])`
+//! (CONTRACTS §1.1): a Prometheus `query_range` or instant `query` as a table of
+//! `timestamp timestamptz, value float8, labels json, series text`, one row per sample.
 //!
 //! The arguments are constants evaluated when the statement is planned, so a bad argument fails
 //! before anything is sent. The query goes to the source unchanged when the table is scanned
@@ -35,7 +36,8 @@ pub const JSON_EXTENSION: &str = "arrow.json";
 /// The zone result timestamps carry (sent as timestamptz).
 const UTC: &str = "+00:00";
 
-const SIGNATURE: &str = "promql(query, start, end, step[, source])";
+const RANGE_SIGNATURE: &str = "promql(query, start, end, step[, source])";
+const INSTANT_SIGNATURE: &str = "promql_instant(query, at[, source])";
 
 /// The result columns shared by the PromQL-shaped functions.
 pub fn sample_schema() -> SchemaRef {
@@ -52,8 +54,9 @@ pub fn sample_schema() -> SchemaRef {
     ]))
 }
 
-/// The configured Prometheus sources and the HTTP client that queries them.
-#[derive(Debug)]
+/// The configured Prometheus sources and the HTTP client that queries them, as `promql` (a
+/// range query) or, after [`Promql::instant`], as `promql_instant`.
+#[derive(Debug, Clone)]
 pub struct Promql {
     /// Base URL by source name, for every `prometheus` source.
     urls: HashMap<String, String>,
@@ -63,6 +66,7 @@ pub struct Promql {
     restricted: Vec<String>,
     default: Option<String>,
     http: reqwest::Client,
+    instant: bool,
 }
 
 impl Promql {
@@ -94,6 +98,23 @@ impl Promql {
                 .default_source(SourceKind::Prometheus)
                 .map(|s| s.name.clone()),
             http,
+            instant: false,
+        }
+    }
+
+    /// The same sources as `promql_instant(query, at[, source])`.
+    pub fn instant(self) -> Promql {
+        Promql {
+            instant: true,
+            ..self
+        }
+    }
+
+    fn signature(&self) -> &'static str {
+        if self.instant {
+            INSTANT_SIGNATURE
+        } else {
+            RANGE_SIGNATURE
         }
     }
 
@@ -137,47 +158,61 @@ impl TableFunctionImpl for Promql {
         &self,
         args: TableFunctionArgs,
     ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        let sig = self.signature();
         let exprs = args.exprs();
-        if !(4..=5).contains(&exprs.len()) {
+        let required = if self.instant { 2 } else { 4 };
+        if !(required..=required + 1).contains(&exprs.len()) {
             return Err(sqlstate(
                 "42883",
-                format!("{SIGNATURE} takes 4 or 5 arguments, not {}", exprs.len()),
+                format!(
+                    "{sig} takes {required} or {} arguments, not {}",
+                    required + 1,
+                    exprs.len()
+                ),
             ));
         }
         let session = args.session();
-        let query = text_argument(constant(&exprs[0], session)?, "query")?;
-        let start = time_argument(constant(&exprs[1], session)?, "start")?;
-        let end = time_argument(constant(&exprs[2], session)?, "end")?;
-        let step = text_argument(constant(&exprs[3], session)?, "step")?;
-        let step = parse_duration(&step).ok_or_else(|| {
-            sqlstate(
-                "22023",
-                format!(
-                    "invalid step \"{step}\": expected a positive duration such as 30s, 5m or 1h"
-                ),
-            )
-        })?;
-        let source = match exprs.get(4) {
-            Some(e) => Some(text_argument(constant(e, session)?, "source")?),
-            None => None,
-        };
-        let (source, url) = self.source(source)?;
-        Ok(Arc::new(RangeQuery {
-            http: self.http.clone(),
-            source,
-            url,
-            form: vec![
+        let arg = |i: usize| constant(&exprs[i], session, sig);
+        let query = text_argument(arg(0)?, "query", sig)?;
+        let form = if self.instant {
+            let at = time_argument(arg(1)?, "at", sig)?;
+            vec![("query", query), ("time", seconds_text(at))]
+        } else {
+            let start = time_argument(arg(1)?, "start", sig)?;
+            let end = time_argument(arg(2)?, "end", sig)?;
+            let step = text_argument(arg(3)?, "step", sig)?;
+            let step = parse_duration(&step).ok_or_else(|| {
+                sqlstate(
+                    "22023",
+                    format!(
+                        "invalid step \"{step}\": expected a positive duration such as 30s, 5m or 1h"
+                    ),
+                )
+            })?;
+            vec![
                 ("query", query),
                 ("start", seconds_text(start)),
                 ("end", seconds_text(end)),
                 ("step", seconds_text(step)),
-            ],
+            ]
+        };
+        let source = match exprs.get(required) {
+            Some(_) => Some(text_argument(arg(required)?, "source", sig)?),
+            None => None,
+        };
+        let (source, url) = self.source(source)?;
+        Ok(Arc::new(PromqlQuery {
+            http: self.http.clone(),
+            source,
+            url,
+            instant: self.instant,
+            form,
         }))
     }
 }
 
 /// Evaluates a table-function argument, which must be a constant expression.
-fn constant(expr: &Expr, session: &dyn Session) -> Result<ScalarValue, DataFusionError> {
+fn constant(expr: &Expr, session: &dyn Session, sig: &str) -> Result<ScalarValue, DataFusionError> {
     let start = session
         .execution_props()
         .query_execution_start_time
@@ -190,30 +225,30 @@ fn constant(expr: &Expr, session: &dyn Session) -> Result<ScalarValue, DataFusio
         Expr::Literal(value, _) => Ok(value),
         _ => Err(sqlstate(
             "0A000",
-            format!("{SIGNATURE}: arguments must be constants, not {expr}"),
+            format!("{sig}: arguments must be constants, not {expr}"),
         )),
     }
 }
 
 /// A non-NULL text argument.
-fn text_argument(value: ScalarValue, name: &str) -> Result<String, DataFusionError> {
+fn text_argument(value: ScalarValue, name: &str, sig: &str) -> Result<String, DataFusionError> {
     match value {
         ScalarValue::Utf8(Some(s))
         | ScalarValue::LargeUtf8(Some(s))
         | ScalarValue::Utf8View(Some(s)) => Ok(s),
-        v if v.is_null() => Err(sqlstate("22004", format!("{SIGNATURE}: {name} is NULL"))),
+        v if v.is_null() => Err(sqlstate("22004", format!("{sig}: {name} is NULL"))),
         v => Err(sqlstate(
             "42804",
-            format!("{SIGNATURE}: {name} must be text, not {}", v.data_type()),
+            format!("{sig}: {name} must be text, not {}", v.data_type()),
         )),
     }
 }
 
 /// A time argument (timestamptz, a timestamp read as UTC, or an ISO-8601 string) as µs since
 /// the Unix epoch.
-fn time_argument(value: ScalarValue, name: &str) -> Result<i64, DataFusionError> {
+fn time_argument(value: ScalarValue, name: &str, sig: &str) -> Result<i64, DataFusionError> {
     if value.is_null() {
-        return Err(sqlstate("22004", format!("{SIGNATURE}: {name} is NULL")));
+        return Err(sqlstate("22004", format!("{sig}: {name} is NULL")));
     }
     let shown = value.to_string();
     let target = DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into()));
@@ -227,9 +262,7 @@ fn time_argument(value: ScalarValue, name: &str) -> Result<i64, DataFusionError>
         Some(ScalarValue::TimestampMicrosecond(Some(us), _)) => Ok(us),
         _ => Err(sqlstate(
             "22007",
-            format!(
-                "{SIGNATURE}: invalid {name} \"{shown}\": expected an ISO-8601 time or timestamptz"
-            ),
+            format!("{sig}: invalid {name} \"{shown}\": expected an ISO-8601 time or timestamptz"),
         )),
     }
 }
@@ -282,21 +315,24 @@ fn seconds_text(us: i64) -> String {
         .to_string()
 }
 
-/// One `promql()` call: the request to send and where.
+/// One `promql()` or `promql_instant()` call: the request to send and where.
 #[derive(Debug)]
-struct RangeQuery {
+struct PromqlQuery {
     http: reqwest::Client,
     source: String,
     url: String,
+    /// `/api/v1/query` rather than `/api/v1/query_range`.
+    instant: bool,
     form: Vec<(&'static str, String)>,
 }
 
-impl RangeQuery {
+impl PromqlQuery {
     async fn fetch(&self) -> Result<Value, DataFusionError> {
         let source = &self.source;
+        let path = if self.instant { "query" } else { "query_range" };
         let response = self
             .http
-            .post(format!("{}/api/v1/query_range", self.url))
+            .post(format!("{}/api/v1/{path}", self.url))
             .form(&self.form)
             .send()
             .await
@@ -336,44 +372,120 @@ fn prometheus_data(source: &str, status: u16, body: &[u8]) -> Result<Value, Data
     Ok(answer["data"].take())
 }
 
-/// The rows of a `query_range` answer's `data`, which must be a matrix.
-fn matrix_batch(source: &str, data: &Value) -> Result<RecordBatch, DataFusionError> {
+/// The rows of a Prometheus answer's `data`. A range query must answer a matrix; an instant
+/// query may answer a vector, a scalar (one row, labels `{}`), a string (one row, value NULL,
+/// labels `{}`, series = the string; a contract assumption) or a matrix (e.g. `up[5m]`).
+fn result_batch(source: &str, data: &Value, instant: bool) -> Result<RecordBatch, DataFusionError> {
     let fail =
         |what: &str| DataFusionError::Execution(format!("prometheus source \"{source}\": {what}"));
-    if data["resultType"] != "matrix" {
-        return Err(fail("query_range did not answer a matrix"));
+    let mut rows = Rows::default();
+    let result = &data["result"];
+    match data["resultType"].as_str() {
+        Some("matrix") => {
+            for s in result
+                .as_array()
+                .ok_or_else(|| fail("the matrix has no result list"))?
+            {
+                let metric = s["metric"]
+                    .as_object()
+                    .ok_or_else(|| fail("a series has no metric labels"))?;
+                let samples = s["values"]
+                    .as_array()
+                    .ok_or_else(|| fail("a series has no values"))?;
+                for sample in samples {
+                    let (t, v) =
+                        parse_sample(sample).ok_or_else(|| fail("a sample is malformed"))?;
+                    rows.push(t, Some(v), metric, None);
+                }
+            }
+        }
+        _ if !instant => return Err(fail("query_range did not answer a matrix")),
+        Some("vector") => {
+            for s in result
+                .as_array()
+                .ok_or_else(|| fail("the vector has no result list"))?
+            {
+                let metric = s["metric"]
+                    .as_object()
+                    .ok_or_else(|| fail("a series has no metric labels"))?;
+                let (t, v) =
+                    parse_sample(&s["value"]).ok_or_else(|| fail("a sample is malformed"))?;
+                rows.push(t, Some(v), metric, None);
+            }
+        }
+        Some("scalar") => {
+            let (t, v) = parse_sample(result).ok_or_else(|| fail("the scalar is malformed"))?;
+            rows.push(t, Some(v), &serde_json::Map::new(), None);
+        }
+        Some("string") => {
+            let t = result.get(0).and_then(Value::as_f64);
+            let text = result.get(1).and_then(Value::as_str);
+            let (Some(t), Some(text)) = (t, text) else {
+                return Err(fail("the string is malformed"));
+            };
+            rows.push(micros(t), None, &serde_json::Map::new(), Some(text));
+        }
+        _ => return Err(fail("the answer has an unknown resultType")),
     }
-    let series = data["result"]
-        .as_array()
-        .ok_or_else(|| fail("the matrix has no result list"))?;
-    let mut timestamps = TimestampMicrosecondBuilder::new().with_timezone(UTC);
-    let mut values = Float64Builder::new();
-    let mut labels = StringBuilder::new();
-    let mut names = StringBuilder::new();
-    for s in series {
-        let metric = s["metric"]
-            .as_object()
-            .ok_or_else(|| fail("a series has no metric labels"))?;
-        let json = serde_json::to_string(metric).map_err(|e| fail(&e.to_string()))?;
-        let name = series_name(metric);
-        let samples = s["values"]
-            .as_array()
-            .ok_or_else(|| fail("a series has no values"))?;
-        for sample in samples {
-            let (t, v) = parse_sample(sample).ok_or_else(|| fail("a sample is malformed"))?;
-            timestamps.append_value(t);
-            values.append_value(v);
-            labels.append_value(&json);
-            names.append_value(&name);
+    rows.finish()
+}
+
+/// Builds the columns of [`sample_schema`].
+struct Rows {
+    timestamps: TimestampMicrosecondBuilder,
+    values: Float64Builder,
+    labels: StringBuilder,
+    series: StringBuilder,
+    /// The last metric seen and its (labels json, series name), as a series' samples repeat it.
+    last: Option<(serde_json::Map<String, Value>, String, String)>,
+}
+
+impl Default for Rows {
+    fn default() -> Rows {
+        Rows {
+            timestamps: TimestampMicrosecondBuilder::new().with_timezone(UTC),
+            values: Float64Builder::new(),
+            labels: StringBuilder::new(),
+            series: StringBuilder::new(),
+            last: None,
         }
     }
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(timestamps.finish()),
-        Arc::new(values.finish()),
-        Arc::new(labels.finish()),
-        Arc::new(names.finish()),
-    ];
-    Ok(RecordBatch::try_new(sample_schema(), columns)?)
+}
+
+impl Rows {
+    /// One row. `series` overrides the name derived from the labels (a string answer).
+    fn push(
+        &mut self,
+        t: i64,
+        value: Option<f64>,
+        metric: &serde_json::Map<String, Value>,
+        series: Option<&str>,
+    ) {
+        if self.last.as_ref().is_none_or(|(m, _, _)| m != metric) {
+            let json = Value::Object(metric.clone()).to_string();
+            self.last = Some((metric.clone(), json, series_name(metric)));
+        }
+        let (_, json, name) = self.last.as_ref().expect("set above");
+        self.timestamps.append_value(t);
+        self.values.append_option(value);
+        self.labels.append_value(json);
+        self.series.append_value(series.unwrap_or(name));
+    }
+
+    fn finish(mut self) -> Result<RecordBatch, DataFusionError> {
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(self.timestamps.finish()),
+            Arc::new(self.values.finish()),
+            Arc::new(self.labels.finish()),
+            Arc::new(self.series.finish()),
+        ];
+        Ok(RecordBatch::try_new(sample_schema(), columns)?)
+    }
+}
+
+/// Unix seconds as µs.
+fn micros(t: f64) -> i64 {
+    (t * 1e6).round() as i64
 }
 
 /// `[<unix seconds>, "<value>"]` as (µs, value). Values may be `NaN`, `+Inf` or `-Inf`.
@@ -386,7 +498,7 @@ fn parse_sample(sample: &Value) -> Option<(i64, f64)> {
         "-Inf" => f64::NEG_INFINITY,
         v => v.parse().ok()?,
     };
-    Some(((t * 1e6).round() as i64, v))
+    Some((micros(t), v))
 }
 
 /// The canonical series name `{k="v",...}`: keys sorted, values escaped as Prometheus prints
@@ -432,7 +544,7 @@ fn quote(s: &str) -> String {
 }
 
 #[async_trait]
-impl TableProvider for RangeQuery {
+impl TableProvider for PromqlQuery {
     fn schema(&self) -> SchemaRef {
         sample_schema()
     }
@@ -449,7 +561,7 @@ impl TableProvider for RangeQuery {
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
         let data = self.fetch().await?;
-        let batch = matrix_batch(&self.source, &data)?;
+        let batch = result_batch(&self.source, &data, self.instant)?;
         Ok(MemorySourceConfig::try_new_exec(
             &[vec![batch]],
             sample_schema(),
@@ -502,7 +614,7 @@ mod tests {
              "values": [[1762560000, "1"], [1762560030.5, "NaN"], [1762560060, "+Inf"]]},
             {"metric": {}, "values": [[1762560000, "-Inf"]]},
         ]});
-        let batch = matrix_batch("p", &data).unwrap();
+        let batch = result_batch("p", &data, false).unwrap();
         assert_eq!(batch.num_rows(), 4);
         let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
         assert_eq!(t.value(1), 1_762_560_030_500_000);
@@ -519,9 +631,48 @@ mod tests {
         assert_eq!(series.value(3), "{}");
         assert_eq!(batch.column(2).null_count(), 0);
 
-        let empty = matrix_batch("p", &json!({"resultType": "matrix", "result": []})).unwrap();
-        assert_eq!(empty.num_rows(), 0);
-        assert!(matrix_batch("p", &json!({"resultType": "vector", "result": []})).is_err());
+        let empty = json!({"resultType": "matrix", "result": []});
+        assert_eq!(result_batch("p", &empty, false).unwrap().num_rows(), 0);
+        let vector = json!({"resultType": "vector", "result": []});
+        assert!(result_batch("p", &vector, false).is_err());
+    }
+
+    #[test]
+    fn instant_answers_of_every_type_become_rows() {
+        let vector = json!({"resultType": "vector", "result": [
+            {"metric": {"job": "api"}, "value": [1762560600, "3"]},
+            {"metric": {"job": "worker"}, "value": [1762560600, "0.25"]},
+        ]});
+        let batch = result_batch("p", &vector, true).unwrap();
+        assert_eq!(batch.num_rows(), 2);
+        let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
+        assert_eq!(t.value(0), 1_762_560_600_000_000);
+        assert_eq!(batch.column(1).as_primitive::<Float64Type>().value(1), 0.25);
+        assert_eq!(
+            batch.column(3).as_string::<i32>().value(1),
+            r#"{job="worker"}"#
+        );
+
+        let scalar = json!({"resultType": "scalar", "result": [1762560600, "42"]});
+        let batch = result_batch("p", &scalar, true).unwrap();
+        assert_eq!(batch.num_rows(), 1);
+        assert_eq!(batch.column(1).as_primitive::<Float64Type>().value(0), 42.0);
+        assert_eq!(batch.column(2).as_string::<i32>().value(0), "{}");
+        assert_eq!(batch.column(3).as_string::<i32>().value(0), "{}");
+
+        let string = json!({"resultType": "string", "result": [1762560600, "hello"]});
+        let batch = result_batch("p", &string, true).unwrap();
+        assert_eq!(batch.num_rows(), 1);
+        assert!(batch.column(1).is_null(0));
+        assert_eq!(batch.column(2).as_string::<i32>().value(0), "{}");
+        assert_eq!(batch.column(3).as_string::<i32>().value(0), "hello");
+
+        let matrix = json!({"resultType": "matrix", "result": [
+            {"metric": {}, "values": [[1762560000, "1"], [1762560030, "2"]]},
+        ]});
+        assert_eq!(result_batch("p", &matrix, true).unwrap().num_rows(), 2);
+        let odd = json!({"resultType": "histogram", "result": []});
+        assert!(result_batch("p", &odd, true).is_err());
     }
 
     #[test]

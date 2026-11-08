@@ -661,3 +661,28 @@ token verification for a *valid* token, which feature 39 then hardens.
   already pass. `eng_promql_source_selection` fails only because `promql_instant` doesn't exist
   yet. max_rows (54000), statement_timeout and the `/healthz` source probes are not done.
 - 2026-11-08T17:53:42Z supervisor: eng-promql-range passed the gate in round 1
+- 2026-11-08 eng-promql-instant (worker, round 1): `promql_instant(query, at[, source])` runs
+  Prometheus `POST {url}/api/v1/query` (form `query` unchanged, `time` as decimal Unix seconds)
+  and returns the same four columns as `promql`.
+  - `src/promql.rs`: `Promql` gained an `instant` flag (`Promql::new(..).instant()`); pg.rs
+    registers both UDTFs from one `Promql` (cloned, sharing the reqwest client). Source
+    selection, restricted fail-closed, constant/time/text argument checks and upstream error
+    mapping are shared. Errors name the right signature. `RangeQuery` was renamed `PromqlQuery`;
+    `matrix_batch` became `result_batch(source, data, instant)` with a small `Rows` builder.
+    A range query still requires a matrix.
+  - Instant result mapping: vector → one row per sample; scalar → one row, labels `{}`, series
+    `{}`; string → one row, value NULL, labels `{}`, series = the string (contract assumption,
+    encoded by the acceptance test; the timestamp is the string's own time); matrix (e.g.
+    `up[5m]`) → one row per sample as in `promql`. Any other resultType is an XX000 error.
+  Tested as a user: `../tmp/pgclient/src/bin/promql_instant.rs` (mock Prometheus on
+  127.0.0.1:59090, config `../tmp/promql/prom.toml`) spawns `target/debug/engine` and runs the
+  feature's SQL over tokio-postgres. Prepare describes 1184/701/114/25. `promql_instant('up',
+  '2026-11-08T00:10:00Z')` returns 2 rows (`2026-11-08 00:10:00+00 | 3.0 | {"job":"api"} |
+  {job="api"}`, and worker 0.25); Prometheus got `POST /api/v1/query` with `query=up&time=1794096600`.
+  The scalar answer gave one row `42.0 | {} | {}`; the string answer gave one row `NULL | {} | hello`.
+  `promql_instant('up')` gets 42883. The check `promql::eng_promql_instant` passes, as do the
+  earlier passing checks, and `promql::eng_promql_source_selection` now passes too. Unit tests
+  (1 new), `cargo fmt --check` and clippy `--workspace --all-targets -D warnings` are clean.
+  Still failing (not built yet): pg tls/cancel/disconnect/statement_timeout, max_rows,
+  pushdown_and_sql, label/series_name functions.
+- 2026-11-08T18:01:07Z supervisor: eng-promql-instant passed the gate in round 1
