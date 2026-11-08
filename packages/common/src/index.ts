@@ -151,6 +151,7 @@ export * from './types/contentSlug';
 export * from './types/contentReviewRequests';
 export * from './types/contentVerification';
 export * from './types/dashboard';
+export * from './types/dashboardTimeRange';
 export * from './types/directAccess';
 export * from './types/emailWhitelabel';
 export * from './types/dataTimezonePreview';

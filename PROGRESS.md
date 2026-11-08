@@ -796,3 +796,25 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     identical SQL and keys. The next minute gave timestamps one minute later and a new key.
     Refresh off, back-to-back runs, gave identical SQL. No missing references.
 - 2026-11-08T19:06:19Z supervisor: ldq-time-cache-key-buckets passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-model (session):
+  - New `packages/common/src/types/dashboardTimeRange.ts`, exported from the common index. It has
+    `DASHBOARD_REFRESH_INTERVALS` (10s, 30s, 1m, 5m, 15m, 30m, 1h), the types
+    `DashboardRefreshInterval`, `DashboardTileTimeDimension` ({ fieldId, tableName }) and
+    `DashboardTimeRange` ({ from, to, refreshInterval: interval | null, tileTimeDimensions keyed by
+    tile uuid }), plus the guards `isDashboardRefreshInterval` and `isValidDashboardTimeRange`.
+    Unit tests are in `dashboardTimeRange.test.ts`.
+  - Decisions (narrowest reading of the acceptance test): refresh off is `null`, not the string
+    'off'. 'off' is still accepted by `resolveTimeRange` options but is refused in the persisted
+    shape. `refreshInterval` and `tileTimeDimensions` are required keys (use `null`/`{}`).
+    Bounds must be relative (`now`, `now-<n><s|m|h|d|w>`) or ISO-8601 with an explicit offset.
+    from > to is refused only when both bounds are the same kind. A mixed relative/absolute
+    range's order depends on the clock, so `resolveTimeRange` refuses it at resolve time instead.
+  - Not done here: no Dashboard type field, no persistence, no API validation. Those belong to
+    ldq-dashboard-time-range-migration/-persisted. Call `isValidDashboardTimeRange` there to refuse
+    bad input with a ParameterError. The as-code JSON schema enum
+    (ldq-dashboard-time-range-as-code) should match DASHBOARD_REFRESH_INTERVALS.
+  - Tested: init, then the feature check (3/3), time-relative (5/5) and the new unit file (19/19).
+    A scratch tsx script (deleted) imported the common index. It accepted now-24h with each
+    listed interval and with null, and an absolute week with 1h. It refused 2m, 'off', 1d and 15s.
+    common tsc, oxlint and oxfmt are clean.
+- 2026-11-08T19:09:25Z supervisor: ldq-dashboard-time-range-model passed the gate in round 1
