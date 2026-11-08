@@ -6,6 +6,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datafusion::arrow::array::timezone::Tz;
 use datafusion::arrow::array::{Array, ArrayRef, AsArray};
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{
@@ -19,7 +20,8 @@ use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion::error::DataFusionError;
 use datafusion::execution::context::SQLOptions;
 use datafusion::logical_expr::{Cast, Expr, LogicalPlan, TryCast};
-use datafusion::prelude::SessionContext;
+use datafusion::prelude::{SessionConfig, SessionContext};
+use chrono::{DateTime, NaiveDateTime, Offset, TimeZone, Timelike};
 use engine_config::User;
 use futures::{Sink, stream};
 use pgwire::api::auth::sasl::SASLAuthStartupHandler;
@@ -46,6 +48,9 @@ const SCRAM_ITERATIONS: usize = 4096;
 
 /// Major.minor reported in the `server_version` startup parameter.
 const SERVER_VERSION: &str = "16.0";
+
+/// The session time zone: DataFusion's zone for `TIMESTAMP WITH TIME ZONE` and `now()`.
+const SESSION_TIME_ZONE: &str = "+00:00";
 
 /// The configured pg-wire logins as SCRAM secrets, salted once per process.
 ///
@@ -103,9 +108,7 @@ impl PgHandlers {
         PgHandlers {
             startup: Arc::new(SASLAuthStartupHandler::new(Arc::new(params)).with_scram(scram)),
             query: Arc::new(QueryHandler {
-                sql: Arc::new(Sql {
-                    ctx: SessionContext::new(),
-                }),
+                sql: Arc::new(Sql::new()),
             }),
         }
     }
@@ -132,6 +135,16 @@ pub struct Sql {
 }
 
 impl Sql {
+    /// Sessions run in UTC, so `TIMESTAMP WITH TIME ZONE` values carry a zone (and are sent as
+    /// timestamptz) rather than being planned as zone-less timestamps.
+    fn new() -> Sql {
+        let mut config = SessionConfig::new();
+        config.options_mut().execution.time_zone = Some(SESSION_TIME_ZONE.to_string());
+        Sql {
+            ctx: SessionContext::new_with_config(config),
+        }
+    }
+
     async fn plan(&self, sql: &str) -> Result<LogicalPlan, DataFusionError> {
         let plan = self.ctx.state().create_logical_plan(sql).await?;
         SQLOptions::new()
@@ -534,17 +547,25 @@ fn encode_rows(
     let mut encoder = DataRowEncoder::new(fields.clone());
     let mut rows = Vec::new();
     for batch in batches {
-        // Binary columns are first cast to the Arrow type their Postgres type is read from.
+        // Columns are first cast to the Arrow type their Postgres type is read from.
         let columns = batch
             .columns()
             .iter()
             .zip(fields.iter())
-            .map(|(c, f)| match f.format() {
-                FieldFormat::Binary => binary_source_type(f.datatype(), c.data_type())
-                    .map_or_else(|| Ok(c.clone()), |dt| cast(c, &dt)),
-                FieldFormat::Text => Ok(c.clone()),
+            .map(|(c, f)| {
+                wire_source_type(f.datatype(), c.data_type())
+                    .map_or_else(|| Ok(c.clone()), |dt| cast(c, &dt))
             })
             .collect::<Result<Vec<ArrayRef>, _>>()
+            .map_err(|e| query_error(e.into()))?;
+        // The zone of each timestamptz column, for its Postgres text form.
+        let zones = columns
+            .iter()
+            .map(|c| match c.data_type() {
+                DataType::Timestamp(_, Some(tz)) => tz.parse::<Tz>().map(Some),
+                _ => Ok(None),
+            })
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|e| query_error(e.into()))?;
         let formatters = columns
             .iter()
@@ -554,8 +575,12 @@ fn encode_rows(
         // Logical nulls: a `NullArray` (e.g. `SELECT NULL`) has no validity buffer.
         let nulls: Vec<_> = columns.iter().map(|c| c.logical_nulls()).collect();
         for row in 0..batch.num_rows() {
-            for (((col, formatter), nulls), field) in
-                columns.iter().zip(&formatters).zip(&nulls).zip(fields.iter())
+            for ((((col, formatter), nulls), field), zone) in columns
+                .iter()
+                .zip(&formatters)
+                .zip(&nulls)
+                .zip(fields.iter())
+                .zip(&zones)
             {
                 if nulls.as_ref().is_some_and(|n| n.is_null(row)) {
                     encoder.encode_field(&None::<String>)?;
@@ -587,6 +612,13 @@ fn encode_rows(
                         let micros = col.as_primitive::<TimestampMicrosecondType>().value(row);
                         put(&(micros - PG_EPOCH_MICROS), &Type::INT8)?
                     }
+                    (false, &Type::TIMESTAMP | &Type::TIMESTAMPTZ) => {
+                        let micros = col.as_primitive::<TimestampMicrosecondType>().value(row);
+                        match timestamp_text(micros, zone.as_ref()) {
+                            Some(text) => put(&text, &Type::TEXT)?,
+                            None => put(&formatter.value(row).to_string(), &Type::TEXT)?,
+                        }
+                    }
                     // Same wire layout as int4: days since 2000-01-01.
                     (true, &Type::DATE) => {
                         let days = col.as_primitive::<Date32Type>().value(row);
@@ -601,8 +633,38 @@ fn encode_rows(
     Ok(rows)
 }
 
-/// The Arrow type a binary-format column of this Postgres type is read from, if it must be cast.
-fn binary_source_type(ty: &Type, dt: &DataType) -> Option<DataType> {
+/// Postgres text output for a timestamp (`2026-01-02 03:04:05.5`) or, given its zone, a
+/// timestamptz (`2026-01-02 03:04:05.5+00`, `...+05:30`). `None` if out of chrono's range.
+fn timestamp_text(micros: i64, zone: Option<&Tz>) -> Option<String> {
+    let utc = DateTime::from_timestamp_micros(micros)?;
+    let Some(zone) = zone else {
+        return Some(naive_text(&utc.naive_utc()));
+    };
+    let local = zone.from_utc_datetime(&utc.naive_utc());
+    let offset = local.offset().fix().local_minus_utc();
+    let (sign, offset) = if offset < 0 { ('-', -offset) } else { ('+', offset) };
+    let mut text = format!("{}{sign}{:02}", naive_text(&local.naive_local()), offset / 3600);
+    if offset % 3600 != 0 {
+        text.push_str(&format!(":{:02}", offset / 60 % 60));
+    }
+    if offset % 60 != 0 {
+        text.push_str(&format!(":{:02}", offset % 60));
+    }
+    Some(text)
+}
+
+/// `YYYY-MM-DD HH:MM:SS` plus the microseconds, trailing zeros trimmed, as Postgres prints them.
+fn naive_text(t: &NaiveDateTime) -> String {
+    let mut text = t.format("%Y-%m-%d %H:%M:%S").to_string();
+    let micros = t.nanosecond() / 1000;
+    if micros != 0 {
+        text.push_str(format!(".{micros:06}").trim_end_matches('0'));
+    }
+    text
+}
+
+/// The Arrow type a column of this Postgres type is read from, if it must be cast.
+fn wire_source_type(ty: &Type, dt: &DataType) -> Option<DataType> {
     Some(match *ty {
         Type::INT2 => DataType::Int16,
         Type::INT4 => DataType::Int32,
@@ -690,9 +752,7 @@ mod tests {
     }
 
     fn sqlstate_of(sql: &str) -> String {
-        let sql_ = Sql {
-            ctx: SessionContext::new(),
-        };
+        let sql_ = Sql::new();
         let e = futures::executor::block_on(sql_.run(sql)).unwrap_err();
         match query_error(e) {
             PgWireError::UserError(info) => info.code.clone(),
@@ -751,9 +811,7 @@ mod tests {
     }
 
     fn prepared(sql: &str, declared: &[Option<Type>]) -> Prepared {
-        let sql_ = Sql {
-            ctx: SessionContext::new(),
-        };
+        let sql_ = Sql::new();
         let plan = futures::executor::block_on(sql_.plan(sql)).unwrap();
         prepare(plan, declared).unwrap()
     }
@@ -773,6 +831,26 @@ mod tests {
         // Declared but unused parameters still count.
         let p = prepared("SELECT 1", &[None, Some(Type::BOOL)]);
         assert_eq!(p.param_types, [Type::TEXT, Type::BOOL]);
+    }
+
+    #[test]
+    fn timestamps_use_postgres_text_style() {
+        // 2026-01-02 03:04:05 UTC.
+        let t = 1_767_323_045_000_000;
+        let zone = |z: &str| z.parse::<Tz>().unwrap();
+        assert_eq!(timestamp_text(t, None).unwrap(), "2026-01-02 03:04:05");
+        assert_eq!(
+            timestamp_text(t, Some(&zone("+00:00"))).unwrap(),
+            "2026-01-02 03:04:05+00"
+        );
+        assert_eq!(
+            timestamp_text(t + 500_000, Some(&zone("+05:30"))).unwrap(),
+            "2026-01-02 08:34:05.5+05:30"
+        );
+        assert_eq!(
+            timestamp_text(t + 123, Some(&zone("-08:00"))).unwrap(),
+            "2026-01-01 19:04:05.000123-08"
+        );
     }
 
     #[test]

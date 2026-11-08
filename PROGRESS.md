@@ -410,3 +410,31 @@ token verification for a *valid* token, which feature 39 then hardens.
   - `max_rows` in Execute is honoured by pgwire's portal (PortalSuspended); results are still fully
     collected in memory first.
 - 2026-11-08T16:26:55Z supervisor: eng-pg-extended-query passed the gate in round 1
+- 2026-11-08 eng-pg-type-oids (session 5): `TIMESTAMP WITH TIME ZONE` columns now come out as
+  timestamptz (OID 1184), and timestamps use Postgres text style. Only `src/pg.rs` and
+  `Cargo.toml` changed (`chrono = "0.4"` moved into the normal deps; it was already in Cargo.lock).
+  - Cause: DataFusion 55's `datafusion.execution.time_zone` defaults to `None`, so it planned
+    `TIMESTAMP WITH TIME ZONE` as a zone-less `Timestamp(ns, None)` → OID 1114. `Sql::new()` now
+    sets it to `SESSION_TIME_ZONE` = `"+00:00"` (this also puts `now()` in +00). The unit tests use
+    `Sql::new()` too.
+  - Text format: a timestamp(tz) column is cast to µs and printed by `timestamp_text`:
+    `2026-01-02 03:04:05.25` / `...+00` / `...+05:30`. Fractional seconds have their trailing zeros
+    trimmed and the offset is `+HH[:MM[:SS]]`, as Postgres prints them. Arrow's RFC 3339 formatter is
+    still the fallback if chrono can't represent the value. `binary_source_type` is now
+    `wire_source_type` and casts columns for both formats (casting to the same type is a no-op).
+  - int8/float8/text/bool OIDs and their binary encoding were already right after session 4.
+  Tested as a user: a throwaway tokio-postgres program `../tmp/pgclient/src/bin/oids.rs` spawns
+  `target/debug/engine --config <toml>` as a child process and kills it at the end. (The sandbox
+  refuses `engine &` from the shell.) prepare(the feature's SELECT) → OIDs 20/701/25/16/1184.
+  Binary row → 7, 1.5, "x", true, unix 1767323045. Simple query → `7`, `1.5`, `x`, `t`,
+  `2026-01-02 03:04:05+00`. `'...05.25'::timestamp` → `2026-01-02 03:04:05.25` (1114).
+  `'...05.25+05:30'::timestamptz` → `2026-01-01 21:34:05.25+00` (1184). `now()` → 1184, `+00`.
+  Check `pgwire::eng_pg_type_oids`, the four earlier checks, harness self-tests and the 7 `pg` unit
+  tests (1 new) pass. rustfmt/clippy are still not installed; I kept the style by hand.
+  For later sessions:
+  - The time zone is set once on the shared `SessionContext`. eng-pg-session-settings (`SET timezone`)
+    needs a per-connection zone. Either give each connection its own SessionContext/state, or keep
+    UTC planning and pass the session zone to `timestamp_text` when encoding (the formatter already
+    takes any arrow `Tz`, e.g. `America/New_York`).
+  - BC dates are not printed in Postgres's `... BC` style (chrono prints a negative year).
+- 2026-11-08T16:31:26Z supervisor: eng-pg-type-oids passed the gate in round 1
