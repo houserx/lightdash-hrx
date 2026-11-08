@@ -1,11 +1,19 @@
-import { WarehouseTypes } from '@lightdash/common';
+import {
+    FEDERATION_DEFAULT_DBNAME,
+    FEDERATION_DEFAULT_PORT,
+    FEDERATION_FLAVOR,
+    isFederationCredentials,
+    WarehouseTypes,
+} from '@lightdash/common';
 import {
     TextInput,
     Stack,
     Button,
     Anchor,
+    Input,
     Select,
     PasswordInput,
+    Switch,
     Text,
 } from '@mantine/core';
 import React, { type FC, type ReactNode } from 'react';
@@ -78,6 +86,45 @@ const PostgresForm: FC<{
             ? savedProject?.warehouseConnection?.sslmode
             : undefined);
 
+    const { port, dbname, flavor } = form.values.warehouse;
+    const isFederation = flavor === FEDERATION_FLAVOR;
+    // A saved federation connection keeps its secret when the field is left blank.
+    const requireSigningSecret = !isFederationCredentials(
+        savedProject?.warehouseConnection,
+    );
+
+    // Switching flavour swaps the connection defaults (CONTRACTS §4.1), but only
+    // where the field still holds the other flavour's default, so typed values stay.
+    const setFederation = (enabled: boolean) => {
+        const [fromPort, toPort, fromDbname, toDbname] = enabled
+            ? [
+                  PostgresDefaultValues.port,
+                  FEDERATION_DEFAULT_PORT,
+                  PostgresDefaultValues.dbname,
+                  FEDERATION_DEFAULT_DBNAME,
+              ]
+            : [
+                  FEDERATION_DEFAULT_PORT,
+                  PostgresDefaultValues.port,
+                  FEDERATION_DEFAULT_DBNAME,
+                  PostgresDefaultValues.dbname,
+              ];
+        form.setFieldValue(
+            'warehouse.flavor',
+            enabled ? FEDERATION_FLAVOR : 'postgres',
+        );
+        if (port === fromPort || port === undefined) {
+            form.setFieldValue('warehouse.port', toPort);
+        }
+        if (dbname === fromDbname || !dbname) {
+            form.setFieldValue('warehouse.dbname', toDbname);
+        }
+        if (!enabled) {
+            form.setFieldValue('warehouse.identitySigningSecret', undefined);
+            form.setFieldValue('warehouse.httpBaseUrl', undefined);
+        }
+    };
+
     const { mutate, isLoading } = useCreateSshKeyPair({
         onSuccess: (data) => {
             form.setFieldValue('warehouse.sshTunnelPublicKey', data.publicKey);
@@ -87,6 +134,21 @@ const PostgresForm: FC<{
     return (
         <>
             <Stack mt="xs">
+                <Stack gap={4}>
+                    <Switch
+                        name="warehouse.flavor"
+                        label="Federation Engine"
+                        checked={isFederation}
+                        onChange={(event) =>
+                            setFederation(event.currentTarget.checked)
+                        }
+                        disabled={disabled}
+                    />
+                    <Input.Description>
+                        Connect to the HouseRx Federation Engine, which speaks
+                        the Postgres wire protocol.
+                    </Input.Description>
+                </Stack>
                 <TextInput
                     label="Host"
                     description="This is the host where the database is running."
@@ -130,6 +192,32 @@ const PostgresForm: FC<{
                     {...form.getInputProps('warehouse.dbname')}
                     disabled={disabled}
                 />
+                {isFederation && (
+                    <>
+                        <PasswordInput
+                            label="Identity signing secret"
+                            description="The secret Lightdash signs identity tokens with. It must match the Federation Engine's secret."
+                            required={requireSigningSecret}
+                            name="warehouse.identitySigningSecret"
+                            placeholder={
+                                disabled || !requireSigningSecret
+                                    ? '**************'
+                                    : undefined
+                            }
+                            {...form.getInputProps(
+                                'warehouse.identitySigningSecret',
+                            )}
+                            disabled={disabled}
+                        />
+                        <TextInput
+                            label="Engine HTTP URL"
+                            description="The Federation Engine's HTTP base URL, for example http://federation-engine:8088."
+                            name="warehouse.httpBaseUrl"
+                            {...form.getInputProps('warehouse.httpBaseUrl')}
+                            disabled={disabled}
+                        />
+                    </>
+                )}
                 <FormSection isOpen={isOpen} name="advanced">
                     <Stack mt="xs">
                         {isProjectExtraConnection &&

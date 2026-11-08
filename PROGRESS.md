@@ -645,3 +645,24 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     Plain Postgres still built a DbtLocalCredentialsProjectAdapter. Native-git was tested
     only up to construction, because cloning would need the network.
 - 2026-11-08T18:39:54Z supervisor: ldq-federation-project-types passed the gate in round 1
+- 2026-11-08 ldq-postgres-form-federation-switch (session):
+  - `PostgresForm.tsx` (frontend ProjectConnection/WarehouseForms) now has a "Federation Engine"
+    Mantine `Switch` at the top of the form, bound to `warehouse.flavor`. When it is on, the form
+    shows "Identity signing secret" (a PasswordInput) and "Engine HTTP URL" (`httpBaseUrl`)
+    below DB name. Turning it on sets flavor 'federation' and port 5433 / dbname 'operations'.
+    Turning it off sets flavor 'postgres', restores 5432 / '', and clears the secret and URL.
+    The defaults are swapped only when the field still holds the other flavour's default (or
+    is empty), so values the user typed are kept. The constants come from
+    `@lightdash/common` (FEDERATION_DEFAULT_PORT/DBNAME/FLAVOR).
+  - Trap: use a plain Mantine `Switch`, not the repo's `BooleanSwitch`. BooleanSwitch renders
+    its label as `<Text>`, not a `<label>`, so `getByLabelText` cannot find it. Also, a Switch
+    `description` sits inside its `<label>` and breaks an exact label match, so the
+    description is a separate `Input.Description`.
+  - The secret is required unless the saved project is already a federation connection. That
+    matches the secret-stripping feature: a blank secret on save keeps the stored one.
+  - Tested: init, then the feature check (3/3). A scratch user-flow vitest (deleted) clicked
+    the switch by role: on gave 5433/operations and showed both fields. Off gave 5432/'',
+    hid the fields and cleared the secret. A typed DB name survived switching back on.
+    Frontend typecheck, oxlint and oxfmt are clean. Not driven in a live browser (no browser
+    tool, and the full app needs backend + DB).
+- 2026-11-08T18:43:25Z supervisor: ldq-postgres-form-federation-switch passed the gate in round 1
