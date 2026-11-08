@@ -1589,3 +1589,16 @@ token verification for a *valid* token, which feature 39 then hardens.
   For Write Mode (/v1/write): that path should be the only user of `write_url`. Keep platform_query,
   platform_tables/columns and platform_explain on the read pool.
 - 2026-11-08T21:07:53Z supervisor: eng-platform-read-only-role passed the gate in round 1
+- 2026-11-08 eng-platform-sql-over-results (round 1): no code change needed. platform_query is a
+  table function in the engine's SQL layer (eng-platform-query-basic), so JOIN, WHERE and GROUP BY
+  over its rows already run in the engine. Postgres only gets the inner SQL string.
+  Tested as a user: `../tmp/platform-sql/run.sh <out>` (throwaway cluster with the acceptance
+  harness's synthetic widgets seed, audit store mock, engine; pgclient's `platform` bin with a reader
+  token, extended then simple protocol). JOIN with VALUES -> widget-2/two, widget-4/four. GROUP BY
+  active -> (false, 100, 298.5), (true, 100, 300), typed bool/int8/float8. count(*) WHERE id > 190
+  -> 10. The Postgres log shows only the inner statements (`SELECT id, name FROM widgets WHERE id <= 5`
+  etc.), each executed once per query. The check passed after init.
+  Note for later: in the simple protocol the engine renders float8 300 as "300.0", but Postgres
+  renders it as "300". Extended/binary is unaffected. This existed before this feature; the
+  pg-compat line could align float text output with Postgres if a client compares text.
+- 2026-11-08T21:09:27Z supervisor: eng-platform-sql-over-results passed the gate in round 1
