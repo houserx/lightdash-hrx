@@ -1071,3 +1071,26 @@ token verification for a *valid* token, which feature 39 then hardens.
   (22P02, 42809, 42704, 42883) behave as before. Checks sources::eng_cloudwatch_expression and
   sources::eng_cloudwatch_metric_stat pass; 6 cloudwatch unit tests pass; no build warnings.
 - 2026-11-08T19:37:27Z supervisor: eng-cloudwatch-expression passed the gate in round 1
+- eng-cloudwatch-role-assumption (worker, round 1): `src/cloudwatch.rs`, plus `aws-types = "1.7"`
+  in Cargo.toml (already in Cargo.lock through aws-config). The plan-time 0A000 for `role_arn` is
+  gone. When a source has `role_arn`, the lazily built CloudWatch client gets
+  `aws_config::sts::AssumeRoleProvider` (session name `federation-engine`) as its credentials
+  provider. The provider is configured from the same `SdkConfig` (default chain, source region,
+  connect timeout), so STS is signed with the base credentials. The client's identity cache keeps
+  the temporary credentials and refreshes them before they expire.
+  - Trap: `sts_endpoint_url` set through `SdkConfigBuilder::set_endpoint_url` alone loses to the
+    env's `AWS_ENDPOINT_URL`/`AWS_ENDPOINT_URL_STS`. The generated STS `Builder::from(&SdkConfig)`
+    uses the SdkConfig endpoint only when its origin is programmatic, so the code also calls
+    `insert_origin("endpoint_url", Origin::shared_config())`. That is why `aws-types` is now a
+    direct dependency. The cloudwatch_logs role feature can reuse `assume_role` (move it to a
+    shared module when that feature lands).
+  Tested as a user: `../tmp/cloudwatch/run-role.sh` (mock.py now also answers STS AssumeRole in the
+  query protocol with fixed fake credentials and logs each request's access key and session token;
+  engine-role.toml adds role_arn and sts_endpoint_url to cw-a). Two cloudwatch() queries gave 3 rows
+  (10.5, 20.0, 30.25), then count 3. The mock saw one AssumeRole with the configured RoleArn and
+  RoleSessionName federation-engine, scoped `<env key>/…/us-east-2/sts`, with no token. It saw four
+  GetMetricData calls (2 queries × 2 pages), each scoped `<assumed key>/…/us-east-2/monitoring` and
+  carrying the assumed session token. AWS_ENDPOINT_URL pointed at a dead port the whole time.
+  Checks sources::eng_cloudwatch_role_assumption, eng_cloudwatch_metric_stat and
+  eng_cloudwatch_expression pass; 6 cloudwatch unit tests pass; no build warnings.
+- 2026-11-08T19:42:24Z supervisor: eng-cloudwatch-role-assumption passed the gate in round 1

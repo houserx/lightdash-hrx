@@ -2021,6 +2021,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-cloudwatch",
+ "aws-types",
  "axum",
  "base64 0.22.1",
  "chrono",

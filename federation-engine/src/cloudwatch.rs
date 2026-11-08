@@ -12,7 +12,9 @@
 //! Metrics Insights targets (`metricQueryType = 1`) are not supported yet (0A000).
 //!
 //! Requests are signed with SigV4 by the AWS SDK using the default credential chain, in the
-//! source's region, at the source's `endpoint_url` when one is set. `NextToken` pages are followed
+//! source's region, at the source's `endpoint_url` when one is set. With `role_arn`, the client
+//! signs with temporary credentials from STS `AssumeRole` (itself signed by the default chain, at
+//! `sts_endpoint_url` when one is set). `NextToken` pages are followed
 //! until CloudWatch has no more. As with `promql`, the arguments are constants checked when the
 //! statement is planned, and CloudWatch is asked when the table is scanned.
 
@@ -108,12 +110,6 @@ impl TableFunctionImpl for Cloudwatch {
         };
         let (name, max_rows) = self.sources.pick(source)?;
         let aws = self.settings[&name].clone();
-        if aws.role_arn.is_some() {
-            return Err(sqlstate(
-                "0A000",
-                format!("cloudwatch source \"{name}\": role_arn is not supported yet"),
-            ));
-        }
         let now = chrono::Utc::now().timestamp_micros();
         let target = Target::parse(&target, start, end, now)?;
         Ok(Arc::new(CloudwatchQuery {
@@ -399,6 +395,27 @@ fn aws_time(us: i64) -> DateTime {
     DateTime::from_secs_and_nanos(us.div_euclid(1_000_000), nanos)
 }
 
+/// Credentials for `role_arn`: STS `AssumeRole` in the source's region, signed by the base
+/// (default chain) credentials of `shared`, at `sts_endpoint_url` when one is set. The SDK client's
+/// identity cache keeps the temporary credentials and assumes the role again before they expire.
+async fn assume_role(
+    shared: &aws_config::SdkConfig,
+    role: &str,
+    aws: &AwsSettings,
+) -> aws_config::sts::AssumeRoleProvider {
+    let mut sts = shared.to_builder();
+    if let Some(url) = &aws.sts_endpoint_url {
+        // Programmatic origin, or the STS client prefers AWS_ENDPOINT_URL(_STS) from the env.
+        sts.set_endpoint_url(Some(url.clone()));
+        sts.insert_origin("endpoint_url", aws_types::origin::Origin::shared_config());
+    }
+    aws_config::sts::AssumeRoleProvider::builder(role)
+        .session_name("federation-engine")
+        .configure(&sts.build())
+        .build()
+        .await
+}
+
 /// An AWS timestamp as µs since the Unix epoch (truncated).
 fn micros(t: &DateTime) -> i64 {
     t.secs() * 1_000_000 + i64::from(t.subsec_nanos() / 1000)
@@ -432,6 +449,10 @@ impl CloudwatchQuery {
                 let mut config = aws_sdk_cloudwatch::config::Builder::from(&shared);
                 if let Some(url) = &self.aws.endpoint_url {
                     config = config.endpoint_url(url);
+                }
+                if let Some(role) = &self.aws.role_arn {
+                    let provider = assume_role(&shared, role, &self.aws).await;
+                    config = config.credentials_provider(provider);
                 }
                 aws_sdk_cloudwatch::Client::from_conf(config.build())
             })
