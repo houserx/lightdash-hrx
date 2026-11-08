@@ -665,7 +665,10 @@ const VisualizationProvider: FC<
             case ChartType.LOG_STREAM:
             case ChartType.TRACE_WATERFALL:
                 return (
-                    <VisualizationTelemetryConfig chartConfig={chartConfig}>
+                    <VisualizationTelemetryConfig
+                        chartConfig={chartConfig}
+                        onChartConfigChange={forwardChartConfig}
+                    >
                         {renderState}
                     </VisualizationTelemetryConfig>
                 );

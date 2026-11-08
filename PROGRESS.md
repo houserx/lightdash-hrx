@@ -810,3 +810,44 @@ should add a dated line here per feature.
 - **For the next sessions.** When mounting, map the explore's dimensions to `fields` and wire `onChange` to the chart
   config store, as for the log stream panel.
 - 2026-11-08T19:48:43Z supervisor: viz-trace-waterfall-config-panel passed the gate in round 1
+
+### 2026-11-08 viz-native-types-mounted (session)
+
+- **What.** The two native types are now drawn and edited by the app.
+  - New `components/TelemetryChart/index.tsx` (`TelemetryChart`): reads `useVisualizationConfig()` and
+    `useVisualizationInputs()`, calls `renderChart` from `@lightdash/visualization` with `{ rows: resultsData.rows,
+    fields: itemsMap }` and the colour palette, then draws `LogStreamView` (height from Mantine `useElementSize`, 400 px
+    before it is measured) or `TraceWaterfallView`. `empty` output shows a "No data available" SuboptimalState. It asks
+    for every page (`setFetchAll(true)`) like Sankey, shows `LoadingChart` while loading, and signals screenshot-ready.
+    `LightdashVisualization/index.tsx` mounts it for both types instead of the "can't be displayed yet" placeholder, so
+    the explorer and dashboard tiles (both go through `LightdashVisualization`) draw the same view.
+  - New `components/VisualizationConfigs/TelemetryConfig/TelemetryConfigTabs.tsx` (`ConfigTabs`): renders
+    `LogStreamConfigPanel` or `TraceWaterfallConfigPanel` with `fields` = the itemsMap as `{ id, label }`
+    (`getItemLabelWithoutTableName`) and `onChange` = the adapter's `setConfig`. `Explorer/VisualizationCard/
+    VisualizationConfig.tsx` returns it for both types (`NoConfigTabs` removed).
+  - `VisualizationTelemetryConfig.tsx` adapter: `chartConfig` is now `{ validConfig, setConfig }`; `setConfig` calls the
+    provider's `forwardChartConfig` (not `emitChartConfig`: the adapter keeps no local state, the owner's echoed prop is
+    the next config). New guards in `types.ts`: `isLogStreamVisualizationConfig`, `isTraceWaterfallVisualizationConfig`,
+    `isTelemetryVisualizationConfig`.
+  - Gallery: `useChartTypeOptions.tsx` lists "Log stream" (`IconListDetails`) and "Trace waterfall" (`IconTimeline`)
+    after "Big value", selecting via `resetCartesian(ChartType.X)`; the explorer seeds `{}` (DEFAULTS), so columns bind
+    by name. `ChartTypeGallery.test.tsx`'s `BUILT_IN_LABELS` got the two labels (that file uses `renderWithProviders`,
+    so it is red upstream anyway).
+- **Decision.** With an empty config the field pickers show "Detect automatically" (blank) even though the model has
+  auto-bound a column; showing the auto-detected column in the picker would need the resolved config exposed to the
+  panel. Left as is.
+- **Tested as a user.** No backend/DB locally, so a throwaway vitest harness (deleted) rendered the real
+  `VisualizationProvider` (owner state for chartConfig, app `MantineProvider`, QueryClient, MemoryRouter,
+  ChartColorMappingContextProvider; Monaco, web worker and server feature flag mocked) with a probe over
+  `useChartTypeOptions`, the real `VisualizationConfig` tab and `LightdashVisualization`, on synthetic logs results
+  (`FIVE_LOGS`). The gallery listed ...Big value | Log stream | Trace waterfall. Picking Log stream set
+  `{type:'log_stream',config:{}}` and drew the 5 lines newest first with "5 of 5 lines" and Download CSV; the config tab
+  showed the pickers and switches, and toggling Wrap lines saved `wrapLines: true`. Switching to spans results
+  (`BASIC_TRACE`) and picking Trace waterfall drew the legend gateway/auth/orders-api/postgres/redis, axis 0-200 ms and the
+  five spans, and the gallery marked it selected; picking Service field = Name saved `serviceFieldId: 'spans_name'` and
+  the legend changed to the span names. Two dashboard-style providers (`isDashboard`, no config owner, saved configs)
+  drew the same log stream and waterfall in `LightdashVisualization isDashboard`. After `bash ./init.sh` the check passes
+  (5/5 and all five typechecks); `useChartTypeOptions.test.tsx` 5/5; oxlint and oxfmt clean on the touched files.
+- **Trap.** In zsh, `F="a b"; oxlint $F` passes one argument (no word splitting) and oxlint reports "0 files"; use an
+  array. Vitest hides `console.log` from passing tests here; write harness output to a file in `../tmp` instead.
+- 2026-11-08T19:59:51Z supervisor: viz-native-types-mounted passed the gate in round 1

@@ -14,6 +14,7 @@ import { ConfigTabs as MapConfigTabs } from '../../VisualizationConfigs/MapConfi
 import { ConfigTabs as PieChartConfigTabs } from '../../VisualizationConfigs/PieChartConfig/PieChartConfigTabs';
 import { ConfigTabs as SankeyConfigTabs } from '../../VisualizationConfigs/SankeyConfig/SankeyConfigTabs';
 import { ConfigTabs as TableConfigTabs } from '../../VisualizationConfigs/TableConfigPanel/TableConfigTabs';
+import { ConfigTabs as TelemetryConfigTabs } from '../../VisualizationConfigs/TelemetryConfig/TelemetryConfigTabs';
 import { ConfigTabs as TreemapConfigTabs } from '../../VisualizationConfigs/TreemapConfig/TreemapConfigTabs';
 import classes from './VisualizationConfig.module.css';
 
@@ -35,8 +36,6 @@ const VegaEditorUnavailable: FC = () => (
         </Config.Section>
     </Config>
 );
-
-const NoConfigTabs: FC = () => null;
 
 type Props = {
     chartType: ChartType;
@@ -76,8 +75,7 @@ const VisualizationConfig: FC<Props> = ({ chartType }) => {
                 return DataAppVizConfigTabs;
             case ChartType.LOG_STREAM:
             case ChartType.TRACE_WATERFALL:
-                // Their config panels are not built yet
-                return NoConfigTabs;
+                return TelemetryConfigTabs;
             default:
                 return assertUnreachable(
                     chartType,

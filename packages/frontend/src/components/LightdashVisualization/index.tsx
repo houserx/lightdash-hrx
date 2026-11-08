@@ -25,6 +25,7 @@ import SimpleSankey from '../SimpleSankey';
 import SimpleStatistic from '../SimpleStatistic';
 import SimpleTable from '../SimpleTable';
 import SimpleTreemap from '../SimpleTreemap';
+import TelemetryChart from '../TelemetryChart';
 import classes from './LightdashVisualization.module.css';
 import {
     useVisualizationConfig,
@@ -300,9 +301,11 @@ const LightdashVisualization = memo(
                     break;
                 case ChartType.LOG_STREAM:
                 case ChartType.TRACE_WATERFALL:
-                    // Their views are not mounted yet
                     chartContent = (
-                        <SuboptimalState title="This chart type can't be displayed yet" />
+                        <TelemetryChart
+                            onScreenshotReady={onScreenshotReady}
+                            onScreenshotError={onScreenshotError}
+                        />
                     );
                     break;
                 default:
