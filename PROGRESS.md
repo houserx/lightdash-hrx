@@ -1715,3 +1715,20 @@ docs/eng-1799/telemetry-mcp.md
 - Note: when an MCP tool result is not an error, `isError` is omitted rather than set to false. The harness treats a
   missing `isError` as false.
 - 2026-11-08T19:04:38Z supervisor: mcp-ask-data-abstain passed the gate in round 1
+
+## mcp-ask-data-unverified-figures (2026-11-08)
+
+- No code changes. The ported answer verification inside the data-assistant loop, wired up by mcp-tool-ask-data,
+  already does everything this feature needs. This session checked it and recorded the result.
+- Tested as a user: after `bash ./init.sh`, `../tmp/ask-data-unverified-figures/drive.test.ts` (run with
+  `pnpm exec vitest run --root ../tmp/ask-data-unverified-figures --disableConsoleIntercept drive.test.ts` from the
+  package) started the built `dist/index.js` against the fake Okta, Lightdash and engine, plus a `ScriptedLlm`. A real
+  MCP client connected over streamable HTTP with an Okta bearer token.
+  - Query returned 42 and the model answered 97: there were 3 model calls. The third request said "Rejected: these
+    figures in your answer do not appear in your query results (or follow from simple arithmetic on them): 97 ...".
+    The corrected answer "42" came back answered at high confidence, with no caveats.
+  - Model insisted on 97 three times: 4 model calls. The result was answered at low confidence with the caveat
+    "Could not verify these figures against the query results: 97."
+  - "42 orders, so 84": answered at high confidence, with no caveats.
+- Feature check: 3/3.
+- 2026-11-08T19:05:52Z supervisor: mcp-ask-data-unverified-figures passed the gate in round 1
