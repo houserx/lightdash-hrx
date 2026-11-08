@@ -567,6 +567,50 @@ mod tests {
         }
     }
 
+    /// Only `allow` entries resolve, by exact (case-sensitive) dataset and table name, and
+    /// resolving anything else answers "no such table" without a BigQuery call (the API base URL
+    /// is unroutable, so a call would error instead of returning `None`).
+    #[tokio::test]
+    async fn only_allowlisted_tables_resolve() {
+        let config = Config::from_toml(
+            r#"
+listen_pg = "127.0.0.1:1"
+listen_http = "127.0.0.1:2"
+identity_secret_env = "SECRET"
+[[users]]
+name = "u"
+password_env = "PW"
+[[sources]]
+name = "ops-marts"
+kind = "bigquery"
+project = "p-1"
+allow = ["ops_marts.fills_hourly", "ops_marts.queue_depth"]
+api_base_url = "http://127.0.0.1:1"
+access_token_env = "TOKEN"
+"#,
+            |_| Some("0123456789abcdef0123456789abcdef".into()),
+        )
+        .expect("config");
+        let catalog = catalog(&config, reqwest::Client::new()).expect("ops_marts catalog");
+        assert_eq!(catalog.schema_names(), vec!["ops_marts".to_string()]);
+        for dataset in ["other_dataset", "OPS_MARTS", "Ops_Marts"] {
+            assert!(catalog.schema(dataset).is_none(), "{dataset}");
+        }
+        let schema = catalog.schema("ops_marts").expect("allowlisted dataset");
+        assert_eq!(schema.table_names(), vec!["fills_hourly", "queue_depth"]);
+        for table in [
+            "not_allowlisted",
+            "FILLS_HOURLY",
+            "Fills_Hourly",
+            "fills_hourly ",
+        ] {
+            assert!(!schema.table_exist(table), "{table}");
+            assert!(schema.table_type(table).await.unwrap().is_none(), "{table}");
+            assert!(schema.table(table).await.unwrap().is_none(), "{table}");
+        }
+        assert!(schema.table_exist("fills_hourly"));
+    }
+
     #[test]
     fn select_sql_quotes_names_and_sends_the_limit() {
         let t = mart_table();

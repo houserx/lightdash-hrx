@@ -2156,3 +2156,30 @@ token verification for a *valid* token, which feature 39 then hardens.
   rustfmt-clean.
   Next (eng-ops-marts-workload-identity): only `BigQuerySource::token` has to change.
 - 2026-11-08T22:45:14Z supervisor: eng-ops-marts-query passed the gate in round 1
+- eng-ops-marts-allowlist (security): no engine change was needed. The allowlist is enforced by the
+  structure that eng-ops-marts-catalog built. `ops_marts::catalog` builds a dataset -> table map
+  from the `allow` entries only. `OpsMarts::schema`, `Dataset::table`, `table_exist` and
+  `table_type` look names up there by exact, case-sensitive key. Any other name gives `None`
+  (DataFusion: 42P01) before `Marts::schema`/`tables.get` can run. The check already passed at HEAD.
+  Added the unit test `ops_marts::tests::only_allowlisted_tables_resolve`. It pins the rule:
+  other_dataset and OPS_MARTS give no schema; not_allowlisted, FILLS_HOURLY, Fills_Hourly and
+  "fills_hourly " give no table. The API base is unroutable, so a stray tables.get would error
+  instead of returning None.
+  Tested as a user: `python3 -I ../tmp/ops-marts-allowlist/run.py out` (ports 59731, 59732, 59735).
+  Its BigQuery stand-in *would* serve not_allowlisted, FILLS_HOURLY and any dataset, so a leak would
+  show up as rows rather than an error. Through `sqlat`:
+  - ops_marts.ops_marts.not_allowlisted, ops_marts.other_dataset.fills_hourly, "FILLS_HOURLY",
+    "Fills_Hourly" and a filtered not_allowlisted select all gave 42P01 "table ... not found".
+  - information_schema.tables for catalog ops_marts listed only fills_hourly and queue_depth,
+    plus the information_schema views.
+  - Counting not_allowlisted, FILLS_HOURLY or other_dataset in information_schema.tables gave 0,
+    and counting not_allowlisted in information_schema.columns gave 0.
+  - count(*) on fills_hourly gave 5.
+  - The stand-in saw 5 calls: tables.get for the 2 allowlisted tables (columns listing), then one
+    jobs.query and 2 getQueryResults pages for fills_hourly. None named not_allowlisted,
+    other_dataset or FILLS_HOURLY, and all carried the bearer.
+  The check passes. Clippy -D warnings (tmp/rustup 1.99.1) is clean, and ops_marts.rs is
+  rustfmt-clean.
+  Decision: table and dataset names are case-sensitive, exactly as written in `allow`. A
+  wrong-case name is 42P01, not folded to the allowlisted table.
+- 2026-11-08T22:48:08Z supervisor: eng-ops-marts-allowlist passed the gate in round 1
