@@ -1793,3 +1793,50 @@ token verification for a *valid* token, which feature 39 then hardens.
   Trap: the pgclient `platform` bin expects two SQL arguments. With one, it panics (index out of
   bounds) after printing the first result. That is harmless, but pass two.
 - 2026-11-08T21:48:03Z supervisor: eng-audit-action-mapping passed the gate in round 1
+- 2026-11-08 eng-write-preview (round 1): `POST /v1/write` exists, and Preview works. New
+  `src/write.rs` (WriteMode state + axum handler), routed in server.rs `http_router(&config)`.
+  It checks, in this order: bearer identity 401 -> Write Mode configured 503 -> JSON body with
+  a string statement 400 -> platform_write 403 -> non-blank description and mode
+  preview|commit 400 -> agent commit 403 ("agent") -> commit 501 (see trap) -> write guard
+  (portal status 400/422 and message) -> A6 confirmation token 403 -> already spent 409. The
+  token is spent (an in-memory map keyed by token signature, pruned at exp) before the
+  statement runs. Preview then takes one write-pool connection and runs BEGIN, prepare (which
+  refuses a second statement even if the guard missed one, and gives the column types),
+  simple_query, ROLLBACK. A clean connection goes back to the pool. On any error the
+  connection is closed, and a dropped request cancels the backend (CancelOnDrop). `returning`
+  is null when the statement has no result columns, else at most 100 rows as JSON objects.
+  bool and int are native; float is a number when finite; json/jsonb is parsed; everything
+  else, numeric included, is Postgres's text. `rows_affected` comes from CommandComplete.
+  Refactors: platform.rs `ReadPool` is now a generic `Pool` (name, url, size), with
+  `pg_error()` and `CancelOnDrop` pub(crate). The write pool has 4 connections. Identity
+  gains `platform_write` and `project`. `identity::signed_payload()` is shared by both token
+  kinds. audit.rs `Execution` gains mode/preview/description/ticket: reads pass the
+  identity's description and ticket, writes pass the body's. `AuditWriter::write` returns
+  the record id, which becomes `audit_id`.
+  Contract assumptions: (1) a request that passes every check is audited even when its
+  statement fails (422 with sqlstate and the Postgres message) or no write connection could
+  be had (503 with 08001/53300, audited as status error), as platform reads do. Refusals
+  before that are not audited. (2) A failed audit write returns 500 58000 and no result.
+  (3) The confirmation's statement_sha256 is over the statement as sent (untrimmed). The
+  guarded (trimmed) text is what runs, and `sql` in the record is as sent. (4) Write
+  statements have no statement_timeout yet (CONTRACTS §5.5 mentions one, but there is no
+  config key for writes).
+  Tested as a user: `../tmp/write-preview/run.sh <out>` (throwaway cluster with
+  engine_read/engine_write, a store mock, the engine with read and write URLs, curl, and the
+  pgclient `platform` bin as reader to look at the table). The preview of the UPDATE ...
+  RETURNING id, note gave 200, rows_affected 3, preview true, an audit_id and three rows
+  noted 'previewed', and the table still had NULL notes. SET note = current_user gave
+  engine_write. Also seen: DELETE without RETURNING gives returning null and rows_affected 5,
+  with the table still at 20 rows. A reused token gets 409, a token for another statement
+  403, no bearer 401, a reader 403 platform_write, an agent preview 200 and an agent commit
+  403, DROP 422 with the portal message, a duplicate key 422 with sqlstate 23505 (audited as
+  error), and no engine_write backend is left idle in a transaction. The audit items have
+  mode write, preview true, ENG-4242 and the body description, and every hash matches.
+  Check passes. These pass too: platform _pools, _read_only_role; audit _failed_query_recorded,
+  _integrity_hash, _fail_closed, _dynamodb_item, _action_mapping;
+  identity _token_verification; all 67 engine unit tests (new write:: tests). No warnings.
+  Trap for eng-write-commit: `mode: "commit"` returns 501 on purpose, before the guard and
+  before the token is spent. Look for the "eng-write-commit builds this" branch in
+  write::run. Replace it by running the statement with COMMIT instead of ROLLBACK (generalise
+  `preview_statement`). The verify endpoint (test_mode) is not routed yet.
+- 2026-11-08T21:57:49Z supervisor: eng-write-preview passed the gate in round 1

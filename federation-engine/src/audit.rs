@@ -30,9 +30,34 @@ pub struct Execution<'a> {
     pub sql: &'a str,
     /// The audited sources the statement read (the portal's `database`).
     pub sources: &'a [String],
-    /// The rows returned, or the error the client got (the portal's `errorMessage`).
+    /// The rows returned (for a write, the rows affected), or the error the client got (the
+    /// portal's `errorMessage`).
     pub outcome: Result<usize, &'a str>,
     pub duration: Duration,
+    /// `read` for an Audited Query, `write` for a Write Mode request.
+    pub mode: Mode,
+    /// A Write Mode Preview (run and rolled back).
+    pub preview: bool,
+    /// Why it ran: the identity's `audit.description` for a read, the request's for a write.
+    pub description: Option<&'a str>,
+    /// The Linear ticket: the identity's `audit.ticket` for a read, the request's for a write.
+    pub ticket: Option<&'a str>,
+}
+
+/// The portal's `mode` of an execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Read,
+    Write,
+}
+
+impl Mode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Mode::Read => "read",
+            Mode::Write => "write",
+        }
+    }
 }
 
 /// Writes audit records to the configured store.
@@ -55,9 +80,10 @@ impl AuditWriter {
         }
     }
 
-    /// Writes the record of an Audited Query, successful or not. The error text is for the engine's log
-    /// only; clients get "audit write failed".
-    pub async fn write(&self, execution: &Execution<'_>) -> Result<(), String> {
+    /// Writes the record of an Audited Query or Write Mode request, successful or not, and
+    /// returns its id. The error text is for the engine's log only; clients get "audit write
+    /// failed".
+    pub async fn write(&self, execution: &Execution<'_>) -> Result<String, String> {
         let created_at = chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
@@ -111,7 +137,7 @@ impl AuditWriter {
                     aws_sdk_s3::error::DisplayErrorContext(e)
                 )
             })?;
-        Ok(())
+        Ok(id)
     }
 
     /// The shared AWS config: the default credential chain in `[audit] region` (else the
@@ -159,7 +185,7 @@ impl AuditWriter {
     }
 }
 
-/// The portal's `Execution` for a read, in the portal's key order: status `success` with its
+/// The portal's `Execution`, in the portal's key order: status `success` with its
 /// `rowCount`, or status `error` with its `errorMessage` and a null `rowCount`. `linearTicketId`
 /// is left out without a ticket (the `byTicket` index is sparse); `savedScriptId` is never set.
 pub fn record(
@@ -176,11 +202,11 @@ pub fn record(
     let mut fields: Vec<(&'static str, Value)> = vec![
         ("id", json!(id)),
         ("sql", json!(e.sql)),
-        ("mode", json!("read")),
-        ("description", json!(id_.description)),
+        ("mode", json!(e.mode.as_str())),
+        ("description", json!(e.description)),
         ("database", json!(e.sources.join(","))),
     ];
-    if let Some(ticket) = &id_.ticket {
+    if let Some(ticket) = e.ticket {
         fields.push(("linearTicketId", json!(ticket)));
     }
     fields.extend([
@@ -193,7 +219,7 @@ pub fn record(
             json!(u64::try_from(e.duration.as_millis()).unwrap_or(u64::MAX)),
         ),
         ("errorMessage", error_message),
-        ("preview", json!(false)),
+        ("preview", json!(e.preview)),
         ("action", json!(id_.action())),
         ("integrityHash", Value::Null),
         ("createdAt", json!(created_at)),
@@ -305,6 +331,8 @@ mod tests {
             telemetry_restricted: true,
             platform_read: false,
             platform_explain: false,
+            platform_write: false,
+            project: None,
             description: Some("why".into()),
             ticket: ticket.map(str::to_string),
         }
@@ -320,6 +348,10 @@ mod tests {
             sources: &sources,
             outcome: Ok(2),
             duration: Duration::from_millis(1234),
+            mode: Mode::Read,
+            preview: false,
+            description: id.description.as_deref(),
+            ticket: id.ticket.as_deref(),
         };
         let created = "2026-11-08T10:00:00.123Z";
         let r = record(&e, "id-1", created, Some("k"));
@@ -345,7 +377,12 @@ mod tests {
         );
         // Without a ticket the field is left out, and hashed as null.
         let id = identity(None);
-        let r = record(&Execution { identity: &id, ..e }, "id-1", created, None);
+        let e = Execution {
+            identity: &id,
+            ticket: None,
+            ..e
+        };
+        let r = record(&e, "id-1", created, None);
         assert!(r.iter().all(|(k, _)| *k != "linearTicketId"));
         let canonical = canonical.replace("\"ENG-1\"", "null");
         assert_eq!(
@@ -364,6 +401,10 @@ mod tests {
             sources: &sources,
             outcome: Err("division by zero"),
             duration: Duration::from_millis(5),
+            mode: Mode::Read,
+            preview: false,
+            description: id.description.as_deref(),
+            ticket: None,
         };
         let created = "2026-11-08T10:00:00.123Z";
         let r = record(&e, "id-1", created, None);
@@ -372,6 +413,35 @@ mod tests {
         assert_eq!(get("rowCount"), Value::Null);
         assert_eq!(get("errorMessage"), json!("division by zero"));
         let canonical = r#"{"sql":"SELECT 1","mode":"read","description":"why","database":"platform","linearTicketId":null,"executedBySub":"u-1","status":"error","rowCount":null,"preview":false,"action":"query","createdAt":"2026-11-08T10:00:00.123Z"}"#;
+        assert_eq!(
+            get("integrityHash"),
+            json!(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))
+        );
+    }
+
+    #[test]
+    fn write_records_carry_mode_preview_and_the_request_description() {
+        let id = identity(None);
+        let sources = vec!["platform".to_string()];
+        let e = Execution {
+            identity: &id,
+            sql: "UPDATE w SET a = 1",
+            sources: &sources,
+            outcome: Ok(3),
+            duration: Duration::from_millis(7),
+            mode: Mode::Write,
+            preview: true,
+            description: Some("fix it"),
+            ticket: Some("ENG-2"),
+        };
+        let created = "2026-11-08T10:00:00.123Z";
+        let r = record(&e, "id-1", created, None);
+        let get = |k: &str| r.iter().find(|(n, _)| *n == k).unwrap().1.clone();
+        assert_eq!(get("mode"), json!("write"));
+        assert_eq!(get("preview"), json!(true));
+        assert_eq!(get("description"), json!("fix it"));
+        assert_eq!(get("linearTicketId"), json!("ENG-2"));
+        let canonical = r#"{"sql":"UPDATE w SET a = 1","mode":"write","description":"fix it","database":"platform","linearTicketId":"ENG-2","executedBySub":"u-1","status":"success","rowCount":3,"preview":true,"action":"query","createdAt":"2026-11-08T10:00:00.123Z"}"#;
         assert_eq!(
             get("integrityHash"),
             json!(format!("sha256:{}", hex::encode(Sha256::digest(canonical.as_bytes()))))

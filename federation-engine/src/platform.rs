@@ -25,7 +25,7 @@
 //! future is dropped, and dropping it sends Postgres a cancel request for the backend running it,
 //! so that backend stops too ([`CancelOnDrop`]).
 //!
-//! Connections come from a bounded pool per engine ([`ReadPool`]): at most
+//! Connections come from a bounded pool per engine ([`Pool`]): at most
 //! [`READ_POOL_SIZE`] connections as the read-only role, shared by every session. A read that
 //! finished cleanly gives its connection back after `DISCARD ALL` (so nothing one statement set,
 //! e.g. with `set_config`, reaches the next); a read that failed or was cancelled closes it.
@@ -63,33 +63,54 @@ use crate::session::{sqlstate, sqlstate_owned};
 
 const SIGNATURE: &str = "platform_query(sql)";
 
-/// At most this many Platform Database connections are open at once, across all sessions.
+/// At most this many Platform Database connections as the read-only role are open at once,
+/// across all sessions.
 const READ_POOL_SIZE: usize = 10;
 /// A pooled connection idle for longer than this is closed rather than reused.
-const READ_POOL_IDLE: Duration = Duration::from_secs(60);
+const POOL_IDLE: Duration = Duration::from_secs(60);
 
-/// The read-only role's connections, shared by all sessions and all the platform functions.
-/// Taking one waits for a free slot (at most the connect timeout, then 53300), reuses an idle
-/// connection when there is one, and otherwise opens a new one.
-struct ReadPool {
+/// One role's connections to the Platform Database, shared by all sessions and all the platform
+/// functions (the read pool), or by all Write Mode requests (the write pool). Taking one waits
+/// for a free slot (at most the connect timeout, then 53300), reuses an idle connection when
+/// there is one, and otherwise opens a new one.
+pub(crate) struct Pool {
+    /// The source's name, for messages.
+    name: String,
+    /// The role's connection URL. Secret: never logged or shown.
+    url: String,
+    /// The env var `url` came from (safe to show).
+    url_env: String,
+    size: usize,
     slots: Arc<Semaphore>,
     /// Open connections nobody is using, with when they were given back.
     idle: Mutex<Vec<(Client, Instant)>>,
     connect_timeout: Duration,
 }
 
-impl std::fmt::Debug for ReadPool {
+impl std::fmt::Debug for Pool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReadPool")
+        f.debug_struct("Pool")
+            .field("name", &self.name)
+            .field("url_env", &self.url_env)
             .field("free_slots", &self.slots.available_permits())
             .finish_non_exhaustive()
     }
 }
 
-impl ReadPool {
-    fn new(connect_timeout: Duration) -> ReadPool {
-        ReadPool {
-            slots: Arc::new(Semaphore::new(READ_POOL_SIZE)),
+impl Pool {
+    /// A pool of at most `size` connections for source `name` at `url` (from env var `url_env`).
+    pub(crate) fn new(
+        name: &str,
+        url: &engine_config::Secret,
+        size: usize,
+        connect_timeout: Duration,
+    ) -> Pool {
+        Pool {
+            name: name.to_string(),
+            url: url.expose().to_string(),
+            url_env: url.env_name().to_string(),
+            size,
+            slots: Arc::new(Semaphore::new(size)),
             idle: Mutex::new(vec![]),
             connect_timeout,
         }
@@ -99,16 +120,72 @@ impl ReadPool {
     /// others that are not.
     fn take_idle(&self) -> Option<Client> {
         let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
-        idle.retain(|(client, since)| !client.is_closed() && since.elapsed() < READ_POOL_IDLE);
+        idle.retain(|(client, since)| !client.is_closed() && since.elapsed() < POOL_IDLE);
         idle.pop().map(|(client, _)| client)
+    }
+
+    /// A connection from the pool: waits for a free slot, then reuses an idle connection or
+    /// opens a new one.
+    pub(crate) async fn acquire(self: &Arc<Pool>) -> Result<PooledClient, DataFusionError> {
+        let slot = tokio::time::timeout(self.connect_timeout, self.slots.clone().acquire_owned())
+            .await
+            .map_err(|_| {
+                sqlstate(
+                    "53300",
+                    format!(
+                        "platform source \"{}\": all {} connections stayed busy for {} s; try \
+                         again",
+                        self.name,
+                        self.size,
+                        self.connect_timeout.as_secs()
+                    ),
+                )
+            })?
+            .expect("a pool's semaphore is never closed");
+        let client = match self.take_idle() {
+            Some(client) => client,
+            None => self.connect().await?,
+        };
+        Ok(PooledClient {
+            client: Some(client),
+            pool: self.clone(),
+            _slot: slot,
+        })
+    }
+
+    /// A new connection as the pool's role. It closes when the client is dropped.
+    async fn connect(&self) -> Result<Client, DataFusionError> {
+        let name = &self.name;
+        let mut config: tokio_postgres::Config = self.url.parse().map_err(|_| {
+            sqlstate(
+                "08001",
+                format!(
+                    "platform source \"{name}\": {} is not a valid Postgres connection URL",
+                    self.url_env
+                ),
+            )
+        })?;
+        config
+            .connect_timeout(self.connect_timeout)
+            .application_name("hrx-federation-engine");
+        let (client, connection) = config.connect(NoTls).await.map_err(|e| {
+            sqlstate(
+                "08001",
+                format!("platform source \"{name}\" is unreachable: {}", cause(&e)),
+            )
+        })?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        Ok(client)
     }
 }
 
-/// A connection taken from the [`ReadPool`], holding its slot. Dropping it closes the connection
-/// and frees the slot; [`release`](PooledClient::release) gives a clean connection back instead.
-struct PooledClient {
+/// A connection taken from a [`Pool`], holding its slot. Dropping it closes the connection and
+/// frees the slot; [`release`](PooledClient::release) gives a clean connection back instead.
+pub(crate) struct PooledClient {
     client: Option<Client>,
-    pool: Arc<ReadPool>,
+    pool: Arc<Pool>,
     _slot: OwnedSemaphorePermit,
 }
 
@@ -124,8 +201,9 @@ impl Deref for PooledClient {
 
 impl PooledClient {
     /// Gives the connection back for reuse, once `DISCARD ALL` has reset its session state; if
-    /// the reset fails the connection is closed instead. Call it only after a read that finished.
-    async fn release(mut self) {
+    /// the reset fails the connection is closed instead. Call it only after a statement that
+    /// finished, outside any transaction.
+    pub(crate) async fn release(mut self) {
         let Some(client) = self.client.take() else {
             return;
         };
@@ -141,89 +219,40 @@ impl PooledClient {
 #[derive(Debug, Clone)]
 struct PlatformSource {
     name: String,
-    /// The read-only role's connection URL. Secret: never logged or shown.
-    read_url: String,
-    /// The env var `read_url` came from (safe to show).
-    read_url_env: String,
     /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
     max_rows: usize,
-    pool: Arc<ReadPool>,
+    /// The read-only role's connections.
+    pool: Arc<Pool>,
 }
 
 impl PlatformSource {
-    /// A connection as the read-only role from the pool: waits for a free slot, then reuses an
-    /// idle connection or opens a new one.
+    /// A connection as the read-only role from the read pool.
     async fn acquire(&self) -> Result<PooledClient, DataFusionError> {
-        let pool = &self.pool;
-        let slot = tokio::time::timeout(pool.connect_timeout, pool.slots.clone().acquire_owned())
-            .await
-            .map_err(|_| {
-                sqlstate(
-                    "53300",
-                    format!(
-                        "platform source \"{}\": all {READ_POOL_SIZE} connections stayed busy for \
-                         {} s; try again",
-                        self.name,
-                        pool.connect_timeout.as_secs()
-                    ),
-                )
-            })?
-            .expect("the read pool's semaphore is never closed");
-        let client = match pool.take_idle() {
-            Some(client) => client,
-            None => self.connect(pool.connect_timeout).await?,
-        };
-        Ok(PooledClient {
-            client: Some(client),
-            pool: pool.clone(),
-            _slot: slot,
-        })
-    }
-
-    /// A new connection as the read-only role. It closes when the client is dropped.
-    async fn connect(&self, timeout: Duration) -> Result<Client, DataFusionError> {
-        let name = &self.name;
-        let mut config: tokio_postgres::Config = self.read_url.parse().map_err(|_| {
-            sqlstate(
-                "08001",
-                format!(
-                    "platform source \"{name}\": {} is not a valid Postgres connection URL",
-                    self.read_url_env
-                ),
-            )
-        })?;
-        config
-            .connect_timeout(timeout)
-            .application_name("hrx-federation-engine");
-        let (client, connection) = config.connect(NoTls).await.map_err(|e| {
-            sqlstate(
-                "08001",
-                format!("platform source \"{name}\" is unreachable: {}", cause(&e)),
-            )
-        })?;
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        Ok(client)
+        self.pool.acquire().await
     }
 
     /// A failure the Platform Database reported, with its own SQLSTATE; any other failure is a
     /// lost connection (08006).
     fn error(&self, e: tokio_postgres::Error) -> DataFusionError {
-        match e.as_db_error() {
-            Some(db) => sqlstate_owned(
-                db.code().code().to_string(),
-                format!("platform source \"{}\": {}", self.name, db.message()),
+        pg_error(&self.name, e)
+    }
+}
+
+/// A failure the Platform Database (source `name`) reported, with its own SQLSTATE; any other
+/// failure is a lost connection (08006).
+pub(crate) fn pg_error(name: &str, e: tokio_postgres::Error) -> DataFusionError {
+    match e.as_db_error() {
+        Some(db) => sqlstate_owned(
+            db.code().code().to_string(),
+            format!("platform source \"{name}\": {}", db.message()),
+        ),
+        None => sqlstate(
+            "08006",
+            format!(
+                "platform source \"{name}\": the connection failed: {}",
+                cause(&e)
             ),
-            None => sqlstate(
-                "08006",
-                format!(
-                    "platform source \"{}\": the connection failed: {}",
-                    self.name,
-                    cause(&e)
-                ),
-            ),
-        }
+        ),
     }
 }
 
@@ -259,11 +288,9 @@ impl PlatformSource {
             Some(s) => match &s.settings {
                 SourceSettings::PlatformPostgres { read_url, .. } => Ok(PlatformSource {
                     name: s.name.clone(),
-                    read_url: read_url.expose().to_string(),
-                    read_url_env: read_url.env_name().to_string(),
                     max_rows: usize::try_from(s.max_rows.unwrap_or(config.max_rows))
                         .unwrap_or(usize::MAX),
-                    pool: Arc::new(ReadPool::new(connect_timeout)),
+                    pool: Arc::new(Pool::new(&s.name, read_url, READ_POOL_SIZE, connect_timeout)),
                 }),
                 _ => Err("the default platform_postgres source has no read URL".to_string()),
             },
@@ -658,11 +685,11 @@ impl PlatformTable {
 /// [`finished`](CancelOnDrop::finished). Dropping a `tokio_postgres::Client` alone leaves the
 /// backend running the statement to its end; the cancel request stops it (Postgres answers it
 /// with 57014 on that connection, which nobody reads any more).
-struct CancelOnDrop(Option<CancelToken>);
+pub(crate) struct CancelOnDrop(pub(crate) Option<CancelToken>);
 
 impl CancelOnDrop {
-    /// The read is done: nothing to cancel.
-    fn finished(&mut self) {
+    /// The statement is done: nothing to cancel.
+    pub(crate) fn finished(&mut self) {
         self.0 = None;
     }
 }

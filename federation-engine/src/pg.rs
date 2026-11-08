@@ -53,7 +53,7 @@ use pgwire::messages::data::DataRow;
 use pgwire::messages::response::TransactionStatus;
 use pgwire::types::format::FormatOptions as PgFormatOptions;
 
-use crate::audit::{AuditWriter, Execution};
+use crate::audit::{self, AuditWriter, Execution};
 use crate::cloudwatch::Cloudwatch;
 use crate::cloudwatch_logs::CloudwatchLogs;
 use crate::labels::{label_udf, series_name_udf};
@@ -81,7 +81,7 @@ const VERSION_STRING: &str = concat!(
 );
 
 /// How long a Telemetry Source has to accept a connection.
-const SOURCE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const SOURCE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The session time zone: DataFusion's zone for `TIMESTAMP WITH TIME ZONE` and `now()`.
 const SESSION_TIME_ZONE: &str = "+00:00";
@@ -407,6 +407,10 @@ impl Sql {
             sources: &sources,
             outcome,
             duration: started.elapsed(),
+            mode: audit::Mode::Read,
+            preview: false,
+            description: identity.description.as_deref(),
+            ticket: identity.ticket.as_deref(),
         };
         writer.write(&execution).await.map_err(audit_write_failed)?;
         result

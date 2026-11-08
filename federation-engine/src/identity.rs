@@ -45,6 +45,10 @@ pub struct Identity {
     pub platform_read: bool,
     /// `attrs.platform_explain`: may explain (never run) Platform Database statements.
     pub platform_explain: bool,
+    /// `attrs.platform_write`: may use Write Mode (`POST /v1/write`).
+    pub platform_write: bool,
+    /// The Lightdash project the token was minted for, when it is a non-blank string.
+    pub project: Option<String>,
     /// `audit.description`, when it is a non-blank string.
     pub description: Option<String>,
     /// `audit.ticket`, when it is a non-blank string.
@@ -167,13 +171,7 @@ pub struct AuditedRead {
 /// matches, `v` is 1, `exp` has not passed, `iat` is at most 60 s ahead, the lifetime is at most
 /// 300 s, and `sub` and `email` are strings.
 pub fn verify(token: &str, secret: &[u8], now: i64) -> Option<Identity> {
-    let (payload, signature) = token.trim().split_once('.')?;
-    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let signature = b64.decode(signature).ok()?;
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).ok()?;
-    mac.update(payload.as_bytes());
-    mac.verify_slice(&signature).ok()?;
-    let claims: Value = serde_json::from_slice(&b64.decode(payload).ok()?).ok()?;
+    let claims = signed_payload(token, secret)?;
     if claims.get("v").and_then(Value::as_i64) != Some(1) {
         return None;
     }
@@ -200,9 +198,25 @@ pub fn verify(token: &str, secret: &[u8], now: i64) -> Option<Identity> {
         telemetry_restricted: attr("telemetry_restricted"),
         platform_read: attr("platform_read"),
         platform_explain: attr("platform_explain"),
+        platform_write: attr("platform_write"),
+        project: text(claims.get("project")),
         description: text(audit.and_then(|a| a.get("description"))),
         ticket: text(audit.and_then(|a| a.get("ticket"))),
     })
+}
+
+/// The JSON payload of `<base64url(payload_json)>.<base64url(HMAC-SHA256(secret,
+/// base64url(payload_json)))>` (base64url without padding), when the signature matches. The
+/// envelope of identity tokens and of Write Mode confirmation tokens; the caller checks the
+/// claims.
+pub fn signed_payload(token: &str, secret: &[u8]) -> Option<Value> {
+    let (payload, signature) = token.trim().split_once('.')?;
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let signature = b64.decode(signature).ok()?;
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret).ok()?;
+    mac.update(payload.as_bytes());
+    mac.verify_slice(&signature).ok()?;
+    serde_json::from_slice(&b64.decode(payload).ok()?).ok()
 }
 
 /// What one statement may read, put into its DataFusion session config while it is planned.

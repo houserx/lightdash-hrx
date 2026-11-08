@@ -21,6 +21,7 @@ mod sources;
 mod trace;
 mod traceql;
 mod transaction;
+mod write;
 
 use std::path::PathBuf;
 use std::process::ExitCode;

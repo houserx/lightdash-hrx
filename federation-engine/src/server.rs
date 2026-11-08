@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::routing::get;
+use axum::routing::{get, post};
 use engine_config::{Config, TlsFiles};
 use pgwire::tokio::TlsAcceptor;
 use rustls::pki_types::pem::PemObject;
@@ -12,7 +12,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tokio::io::Interest;
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::pg::PgHandlers;
+use crate::pg::{PgHandlers, SOURCE_CONNECT_TIMEOUT};
+use crate::write::WriteMode;
 
 pub async fn run(config: Config) -> Result<(), String> {
     // Load the certificate before binding: a bad tls_cert_file/tls_key_file stops the engine
@@ -36,7 +37,7 @@ pub async fn run(config: Config) -> Result<(), String> {
     let cert_pem = tls.as_ref().map(|t| t.cert_pem.as_slice());
     let handlers = Arc::new(PgHandlers::new(&config, cert_pem)?);
     let acceptor = tls.map(|t| t.acceptor);
-    let http_server = axum::serve(http, http_router());
+    let http_server = axum::serve(http, http_router(&config));
     tokio::select! {
         r = http_server => r.map_err(|e| format!("HTTP server failed: {e}")),
         () = serve_pg(pg, acceptor, handlers) => Ok(()),
@@ -157,6 +158,11 @@ async fn hung_up(watcher: &TcpStream) {
 }
 
 /// The HTTP side port (CONTRACTS §1.3). `/healthz` does not probe sources yet (eng-healthz).
-fn http_router() -> Router {
-    Router::new().route("/healthz", get(|| async { "ok\n" }))
+/// `POST /v1/write` is Write Mode (§4.2).
+fn http_router(config: &Config) -> Router {
+    let write = Arc::new(WriteMode::new(config, SOURCE_CONNECT_TIMEOUT));
+    Router::new()
+        .route("/healthz", get(|| async { "ok\n" }))
+        .route("/v1/write", post(crate::write::handle))
+        .with_state(write)
 }
