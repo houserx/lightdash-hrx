@@ -1203,3 +1203,30 @@ token verification for a *valid* token, which feature 39 then hardens.
   42809, trace() → 42883. The check sources::eng_trace_by_id passes, eng_traceql_search still
   passes, and the 2 new trace unit tests plus the 4 traceql unit tests pass. No build warnings.
 - 2026-11-08T20:04:26Z supervisor: eng-trace-by-id passed the gate in round 1
+- eng-identity-restricted-denied (worker, round 1): **no code change.** The fail-closed rule
+  already in `src/sources.rs` (`HttpSources::pick`, `is_restricted`) meets every step. Earlier
+  sessions added it for eng-promql-source-selection. It refuses a `restricted = true` source with
+  42501 `source "<name>" is Restricted Telemetry and needs telemetry_restricted` at plan time. That
+  happens before any source request (inside a JOIN too) and before any audit write. It refuses
+  every identity because no token is read yet. That covers every case this feature lists: no
+  identity, a token without the claim, a token signed with another key, and an expired token.
+  The check passed on the untouched tree, both after init and again after my manual run.
+  - Deliberately not built here: token verification and *allowing* a valid claim-bearing token.
+    Allowing a restricted read before the audit writer exists would let restricted data out
+    unaudited. So the deny-all stays until the audit features and
+    eng-identity-token-verification land together.
+  - Trap for the next session: eng-audit-dynamodb-item (next in the list) needs an Audited Query
+    to happen. So it must first verify the §3 token (A5) from `hrx.setting:hrx.identity` (read with
+    `Settings::get`) and let a valid `telemetry_restricted` reader through `pick`. The restricted
+    check also needs the session identity in `HttpSources::pick`, which today has no session
+    access. Keep the refusal text naming `telemetry_restricted`, because the identity tests match
+    on it.
+  Tested as a user: `../tmp/restricted/run.sh` starts three Python mocks (prom-open,
+  prom-restricted, and a logger on the audit DynamoDB/S3 endpoint) plus the engine, then runs
+  queries over pg-wire on one session. The open promql query returned 2 rows. The restricted
+  query returned 42501 naming telemetry_restricted each time: with no identity, after SET
+  hrx.identity with a token without the claim, with a token signed by another key, with an
+  expired token, and inside a JOIN with the open source. The restricted mock and the audit logger
+  received zero requests. The open mock saw only the first query, because the JOIN is refused at
+  plan time.
+- 2026-11-08T20:06:37Z supervisor: eng-identity-restricted-denied passed the gate in round 1
