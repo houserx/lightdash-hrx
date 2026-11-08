@@ -801,3 +801,24 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - About 18s in, graphile had run the second tick on its own: 2 heartbeat rows, and the next tick queued at +30s. There was still one warehouse call, because the 1m slot was not re-evaluated.
   - Not verified: booting the full App/SchedulerApp. That needs full config (S3 and others) not available locally. The mount position and the middlewares were checked by reading the code: the JWT, session-account and unverified-session middlewares all pass sessionless requests through.
 - 2026-11-08T22:06:34Z supervisor: alert-worker-wiring passed the gate in round 1
+- alert-ai-state-api (round 1) — 2026-11-08
+  - No code changes. The endpoint already shipped in commit 86c83ec7e (alert-eval-error):
+    - Route: `GET ${ALERTING_PROJECT_API_PATH}/state` in `alerting/router.ts`.
+    - Service: `AlertRuleService.listState`. It checks the `view AlertRule` ability, then lists every rule's instances and keeps `firing` and `pending`.
+    - Shape: `AlertStateInstance` in common `alerting/alertRules.ts`, `{ruleUuid, ruleName, state, labels, annotations, value, since}`, under `results.instances`.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - As a user: a scratch walk (packages/backend/tmp/walk, removed afterwards) went through the harness's real HTTP router on the throwaway Postgres.
+      - An empty project returned `instances: []`.
+      - Rules in the project:
+        - Firing on db-1 and db-4.
+        - Pending (`for: 5m`) on db-2.
+        - Quiet on db-3.
+        - Fired, then recovered (resolved), on db-5.
+        - Failing source (state `error`).
+      - Viewer, editor and admin all got exactly the 3 firing and pending instances. Each had labels (including alertname and instance), annotations, value and since=T0. The resolved, normal and error instances were left out.
+      - Outsider got 403, no session got 401, and an unknown project got 404.
+  - Notes for the next session:
+    - Instances are not sorted (rule list order, then DB order). `error` and `nodata` series are not listed, because the feature says "firing and pending". With errorState/noDataState=alerting they are `firing` and so are listed.
+    - The endpoint has no filters, and shadow and paused rules' instances are listed like any other. Nothing in the spec asks otherwise.
+- 2026-11-08T22:10:00Z supervisor: alert-ai-state-api passed the gate in round 1
