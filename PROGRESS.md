@@ -682,3 +682,28 @@ should add a dated line here per feature.
 - **For the next sessions.** The span drawer feature ("See a note when the span was clamped") can read `isClamped` and
   compare `durationMs` with `reportedDurationMs`.
 - 2026-11-08T19:29:03Z supervisor: viz-trace-waterfall-clock-skew passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-view (session)
+
+- **What.** New `packages/frontend/src/components/TraceWaterfall/`: `TraceWaterfallView.tsx` (+ CSS module) and
+  `traceWaterfallFormat.ts` (`isErrorStatus`, `formatDurationMs`, `percentOf`). The view takes the
+  `TraceWaterfallModel` and draws the **first** trace: a time axis (`data-testid="trace-time-axis"`, labels at 0, ¼,
+  ½, ¾ and the full trace duration) above one row per span in model order (`trace-span-row` with `data-span-id`,
+  `data-depth`, `data-status`), each with name, service, duration and a bar (`trace-span-bar`) whose inline `left`
+  / `width` are `offsetMs` / `durationMs` as a percentage of the trace duration, coloured with `span.color`. No
+  traces or no spans shows "No spans".
+- **Decisions.** Error = status `error` or `STATUS_CODE_ERROR`, any case, trimmed; `data-status` is then `error`,
+  otherwise `ok` (also for blank or other statuses). Error rows get a red-light background, a red outline on the bar
+  and a warning icon (aria-label "Error"). Durations print as `50 ms` (≤2 decimals) and `1.5 s` from 1000 ms up.
+  Indentation is a `--span-depth` CSS variable (16 px per level). Not virtualised. Bars already use the service
+  colour, but the legend is left to `viz-trace-waterfall-service-colours`. The view is not mounted in any chart
+  yet (mounting belongs to a later feature, as with `LogStreamView`).
+- **Tested as a user.** No app mounts it, so I rendered it with the fixtures' real model (BASIC_TRACE plus a
+  `STATUS_CODE_ERROR` grandchild of c, 1500 ms, clamped by the model) from a throwaway vitest file (deleted): axis
+  `0 ms 50 ms 100 ms 150 ms 200 ms`; rows a(0) e(1) b(1) c(2) g(3) d(2) with names, services and durations
+  (c "50 ms", g "40 ms" clamped); bars a 0%/100%, c 10%/25%, d 40%/2.5%; d and g marked error, the rest ok.
+  After `bash ./init.sh` the check passes 5/5; frontend `tsc --noEmit` clean; oxlint and oxfmt clean on the new
+  files.
+- **For the next sessions.** Collapse (buttons "Collapse <name>"/"Expand <name>"), the span drawer (click on the
+  name) and the trace picker (replace `model.traces[0]`) all hang off `SpanRow` / `TraceWaterfallView` here.
+- 2026-11-08T19:32:37Z supervisor: viz-trace-waterfall-view passed the gate in round 1

@@ -1,0 +1,105 @@
+.root {
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* The span's name and service, indented by its depth (--span-depth). */
+.labelColumn {
+    flex: 0 0 35%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0 var(--mantine-spacing-xs) 0
+        calc(var(--mantine-spacing-xs) + var(--span-depth, 0) * 16px);
+}
+
+.axisRow {
+    height: 24px;
+    border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+/* The time axis lines up with the bar tracks below it. */
+.axis {
+    position: relative;
+    flex: 1 1 auto;
+    align-self: stretch;
+    margin: 0 var(--mantine-spacing-xs);
+}
+
+.tick {
+    position: absolute;
+    top: 50%;
+    left: var(--tick-left);
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+}
+
+.tickStart {
+    transform: translate(0, -50%);
+}
+
+.tickEnd {
+    transform: translate(-100%, -50%);
+}
+
+/* The duration column after the track, as wide on the axis row as on the span rows. */
+.axisRow::after {
+    content: '';
+    flex: 0 0 72px;
+}
+
+.row {
+    height: 24px;
+    border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.row:hover {
+    background-color: var(--mantine-color-default-hover);
+}
+
+.errorRow {
+    background-color: var(--mantine-color-red-light);
+}
+
+.errorRow:hover {
+    background-color: var(--mantine-color-red-light-hover);
+}
+
+.name {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+.service {
+    flex: 0 1 auto;
+    min-width: 0;
+}
+
+/* The bar's lane: 0 ms on the left, the trace's duration on the right. */
+.track {
+    position: relative;
+    flex: 1 1 auto;
+    align-self: stretch;
+    margin: 0 var(--mantine-spacing-xs);
+}
+
+/* left, width and the service colour are set on the element. */
+.bar {
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    min-width: 1px;
+    border-radius: 2px;
+}
+
+.errorBar {
+    outline: 2px solid var(--mantine-color-red-filled);
+    outline-offset: 1px;
+}
+
+.duration {
+    flex: 0 0 72px;
+    box-sizing: border-box;
+    padding-right: var(--mantine-spacing-xs);
+    text-align: right;
+    white-space: nowrap;
+}
