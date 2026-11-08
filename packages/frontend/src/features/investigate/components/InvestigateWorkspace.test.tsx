@@ -285,4 +285,75 @@ describe('InvestigateWorkspace', () => {
         });
         expect(screen.getByRole('button', { name: 'Explain' })).toBeDisabled();
     });
+
+    it('opens shared saved SQL from the Saved SQL list and runs it', async () => {
+        const items = [
+            {
+                uuid: 'saved-1',
+                name: 'Open refills by status',
+                description: 'Synthetic test script',
+                spaceName: 'Platform saved SQL',
+            },
+            {
+                uuid: 'saved-2',
+                name: 'Error rate',
+                description: null,
+                spaceName: 'Service health',
+            },
+        ];
+        const savedSqlText =
+            "SELECT * FROM platform_query('select status, count(*) from refills group by 1')";
+        const loadItems = vi.fn(async () => items);
+        const loadSql = vi.fn(async (item: { uuid: string }) => {
+            if (item.uuid === 'saved-2') throw new Error('Chart not found');
+            return savedSqlText;
+        });
+        const runQuery = vi.fn(async () => tableResult);
+        render(
+            <MantineProvider env="test" forceColorScheme="light">
+                <InvestigateWorkspace
+                    runQuery={runQuery}
+                    savedSql={{ loadItems, loadSql }}
+                />
+            </MantineProvider>,
+        );
+        // The list loads only when the user opens it.
+        expect(loadItems).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Saved SQL' }));
+        expect(await screen.findByText('Error rate')).toBeInTheDocument();
+        expect(screen.getByText('Synthetic test script')).toBeInTheDocument();
+        expect(screen.getByText('Service health')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Search saved SQL'), {
+            target: { value: 'health' },
+        });
+        expect(screen.queryByText('Open refills by status')).toBeNull();
+        fireEvent.click(screen.getByText('Error rate'));
+        expect(
+            await screen.findByText('Could not open Error rate'),
+        ).toBeInTheDocument();
+        expect(screen.getByText('Chart not found')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Search saved SQL'), {
+            target: { value: '' },
+        });
+        fireEvent.click(screen.getByText('Open refills by status'));
+        await waitFor(() =>
+            expect(screen.getByLabelText('SQL')).toHaveValue(savedSqlText),
+        );
+        expect(loadSql).toHaveBeenLastCalledWith(items[0]);
+        // Saved Platform Database SQL is still an Audited Query.
+        fireEvent.change(screen.getByLabelText(/Description/), {
+            target: { value: 'Weekly check' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+        await waitFor(() =>
+            expect(runQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sql: savedSqlText,
+                    audit: { description: 'Weekly check' },
+                }),
+            ),
+        );
+    });
 });

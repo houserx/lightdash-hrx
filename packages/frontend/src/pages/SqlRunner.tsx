@@ -19,6 +19,7 @@ import {
 import { useFederationAccess } from '../features/investigate/hooks/useFederationAccess';
 import { useInvestigateRunQuery } from '../features/investigate/hooks/useInvestigateRunQuery';
 import { useInvestigateSaveAsChart } from '../features/investigate/hooks/useInvestigateSaveAsChart';
+import { useOperationsSavedSql } from '../features/investigate/hooks/useOperationsSavedSql';
 import { usePlatformSchemaLoaders } from '../features/investigate/hooks/usePlatformSchemaLoaders';
 import { SqlRunnerSidebar } from '../features/sqlRunner';
 import { ContentPanel } from '../features/sqlRunner/components/ContentPanel';
@@ -96,6 +97,7 @@ const SqlRunner = ({
         isFederationProject(project),
     );
     const platformSchema = usePlatformSchemaLoaders(projectUuid);
+    const operationsSavedSql = useOperationsSavedSql(projectUuid);
     const { data: shareConnections, error: shareConnectionsError } =
         useSqlRunnerConnections(
             projectUuid,
@@ -308,6 +310,7 @@ const SqlRunner = ({
                                 runQuery={runInvestigateQuery}
                                 onSaveAsChart={saveInvestigateChart}
                                 platformSchema={platformSchema}
+                                savedSql={operationsSavedSql}
                                 access={federationAccess?.attrs}
                             />
                         </Box>

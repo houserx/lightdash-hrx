@@ -1563,3 +1563,33 @@ largest files. Do them inside the features they serve, with unit tests, and keep
   - Next (write-mode-toggle) already passes `access` with `platform_write`. This feature does
     not interpret `platform_write`.
 - 2026-11-08T21:34:37Z supervisor: ldq-platform-explain-only passed the gate in round 1
+- ldq-saved-sql-picker (round 1):
+  - New `SavedSqlPicker` (features/investigate/components) takes `{items, onSelect}`. `SavedSqlItem`
+    is `{uuid, name, description|null, spaceName}`, and the props are generic, so extra fields
+    such as the acceptance test's `sql` go back to onSelect unchanged. The "Search saved SQL" field
+    matches name, description and space name, case-insensitively. An empty list shows
+    "No saved SQL yet", with no search box.
+  - `InvestigateWorkspace` takes an optional `savedSql?: SavedSqlLoaders`
+    (`{loadItems(), loadSql(item)}`). With it, a "Saved SQL" button opens a "Saved SQL" modal.
+    The list loads each time the modal opens, never before. Picking a script loads its SQL. A
+    failure shows "Could not open <name>" and the modal stays open. On success the modal closes
+    and the editor is remounted (`key`) with `initialSql`. The workspace resets its own
+    source/platformStatement to match the new editor (Prometheus, empty Platform SQL), so the
+    source picker shows Prometheus while the SQL box holds the saved SQL. Saved platform_query
+    SQL is still an Audited Query through isAuditedSql. Explain stays disabled until the user
+    types Platform SQL, because it explains the Platform SQL box.
+  - Page wiring: the new `hooks/useOperationsSavedSql(projectUuid)` lists GET
+    `/api/v2/content?projectUuids=<p>&contentTypes=chart` (100 per page, up to 10 pages, sorted by
+    name). It keeps `source === 'sql'` and reads the SQL on pick through the existing
+    `fetchSavedSqlChart` (GET `/api/v1/projects/{p}/sqlRunner/saved/{uuid}`). SqlRunner passes it
+    as `savedSql`.
+  - Contract assumption: the "Operations Project" is the federation project the SQL Runner is
+    on, and "shared" saved SQL is every SQL chart the content API returns for it (spaces the
+    user can view). Private spaces are not filtered out.
+  - Tested: no browser or backend (no Docker), so I drove the components through vitest. Feature
+    check 3/3. InvestigateWorkspace.test.tsx 10/10: the new test opens Saved SQL, sees name,
+    description and space, searches, fails to open one, opens another into the SQL box, and runs
+    it with an audit description. Regressions save-as-chart 2/2, platform-explain-only 3/3,
+    audit-fields 3/3 and time-range 2/2. frontend typecheck, oxlint and oxfmt are clean.
+    The useOperationsSavedSql hook has no unit test.
+- 2026-11-08T21:38:44Z supervisor: ldq-saved-sql-picker passed the gate in round 1

@@ -22,10 +22,11 @@ import {
 import {
     IconAlertCircle,
     IconDeviceFloppy,
+    IconFolderOpen,
     IconListTree,
     IconPlayerPlay,
 } from '@tabler/icons-react';
-import { useRef, useState, type FC } from 'react';
+import { useEffect, useRef, useState, type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
 import { TimeRangePicker } from '../../timeRange/components/TimeRangePicker';
 import { getTimeRangeLabel } from '../../timeRange/utils';
@@ -38,6 +39,7 @@ import {
 } from './InvestigateEditor';
 import { InvestigateResults } from './InvestigateResults';
 import { type PlatformSchemaLoaders } from './PlatformSchemaBrowser';
+import { SavedSqlPicker, type SavedSqlItem } from './SavedSqlPicker';
 
 /** Investigate opens over the last 6 hours unless the caller says otherwise. */
 const DEFAULT_INVESTIGATE_TIME_RANGE: TimeRangeInput = {
@@ -68,12 +70,20 @@ export type InvestigateWorkspaceProps = {
     onSaveAsChart?: (chart: InvestigateSaveAsChartRequest) => Promise<void>;
     /** Reads the Platform Database catalog for the schema browser; hidden without it. */
     platformSchema?: PlatformSchemaLoaders;
+    /** Reads the Operations Project's shared saved SQL; the Saved SQL list is hidden without it. */
+    savedSql?: SavedSqlLoaders;
     /**
      * The user's ldq claims. On the Platform Database, Run needs platform_read and Explain
      * needs platform_read or platform_explain. Without it both are offered and the engine
      * decides. The engine enforces every claim either way.
      */
     access?: FederationAttrs;
+};
+
+/** How Investigate reads shared saved SQL: the list when it opens, a script's SQL when picked. */
+export type SavedSqlLoaders = {
+    loadItems: () => Promise<SavedSqlItem[]>;
+    loadSql: (item: SavedSqlItem) => Promise<string>;
 };
 
 /** What Save as chart sends: the chart's name and the SQL exactly as shown in the SQL box. */
@@ -135,12 +145,16 @@ const errorMessage = (error: unknown, fallback: string) =>
  * On the Platform Database, Explain runs an estimate-only platform_explain of the Platform SQL
  * (also an Audited Query) and shows the plan as text with JSON and text downloads. Users with
  * platform_explain but not platform_read get Explain without Run.
+ *
+ * Saved SQL lists the Operations Project's shared saved SQL; opening one shows its SQL in the
+ * SQL box of a fresh editor, ready to run.
  */
 export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     runQuery,
     initialTimeRange = DEFAULT_INVESTIGATE_TIME_RANGE,
     onSaveAsChart,
     platformSchema,
+    savedSql,
     access,
 }) => {
     const [source, setSource] = useState<InvestigateSource>('prometheus');
@@ -157,11 +171,28 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
     >(null);
     // The SQL being saved while the Save as chart dialog is open.
     const [saveAsChartSql, setSaveAsChartSql] = useState<string | null>(null);
+    const [isSavedSqlOpen, setIsSavedSqlOpen] = useState(false);
+    // Opening saved SQL starts a fresh editor showing that SQL in the SQL box.
+    const [editor, setEditor] = useState<{ key: number; initialSql?: string }>({
+        key: 0,
+    });
     // Only the latest run may set the result; an earlier one finishing late is dropped.
     const latestRun = useRef(0);
 
     const handleEditorChange = (change: InvestigateEditorChange) =>
         setSql(change.sql);
+
+    const openSavedSql = (savedSqlText: string) => {
+        setIsSavedSqlOpen(false);
+        setEditor((current) => ({
+            key: current.key + 1,
+            initialSql: savedSqlText,
+        }));
+        // The new editor starts on its default source with no Platform SQL.
+        setSource('prometheus');
+        setPlatformStatement('');
+        setSql(savedSqlText);
+    };
 
     const isPlatformSource = source === 'platform';
     const canRun = !isPlatformSource || !access || access.platform_read;
@@ -248,6 +279,16 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
             <Group justify="space-between">
                 <TimeRangePicker value={timeRange} onChange={setTimeRange} />
                 <Group gap="xs">
+                    {savedSql && (
+                        <Button
+                            size="xs"
+                            variant="default"
+                            leftSection={<MantineIcon icon={IconFolderOpen} />}
+                            onClick={() => setIsSavedSqlOpen(true)}
+                        >
+                            Saved SQL
+                        </Button>
+                    )}
                     {onSaveAsChart && (
                         <Button
                             size="xs"
@@ -294,6 +335,8 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                 </Group>
             </Group>
             <InvestigateEditor
+                key={editor.key}
+                initialSql={editor.initialSql}
                 onChange={handleEditorChange}
                 onSourceChange={setSource}
                 onPlatformSqlChange={setPlatformStatement}
@@ -320,6 +363,16 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                         }
                     />
                 </Group>
+            )}
+            {savedSql && (
+                <Modal
+                    opened={isSavedSqlOpen}
+                    onClose={() => setIsSavedSqlOpen(false)}
+                    title="Saved SQL"
+                    size="lg"
+                >
+                    <SavedSqlList loaders={savedSql} onOpen={openSavedSql} />
+                </Modal>
             )}
             {onSaveAsChart && (
                 <SaveAsChartModal
@@ -370,6 +423,82 @@ export const InvestigateWorkspace: FC<InvestigateWorkspaceProps> = ({
                         />
                     )}
                 </Stack>
+            )}
+        </Stack>
+    );
+};
+
+type SavedSqlListProps = {
+    loaders: SavedSqlLoaders;
+    onOpen: (sql: string) => void;
+};
+
+/**
+ * The shared saved SQL list inside the Saved SQL dialog. It loads the list each time the
+ * dialog opens, and a picked script's SQL before handing it to onOpen.
+ */
+const SavedSqlList: FC<SavedSqlListProps> = ({ loaders, onOpen }) => {
+    const [items, setItems] = useState<SavedSqlItem[] | null>(null);
+    const [openingUuid, setOpeningUuid] = useState<string | null>(null);
+    const [error, setError] = useState<{ title: string; message: string }>();
+
+    // Load once per opening of the dialog, whatever the parent's callback identity.
+    const loadersRef = useRef(loaders);
+    loadersRef.current = loaders;
+    useEffect(() => {
+        let cancelled = false;
+        loadersRef.current
+            .loadItems()
+            .then((data) => {
+                if (!cancelled) setItems(data);
+            })
+            .catch((loadError: unknown) => {
+                if (!cancelled)
+                    setError({
+                        title: 'Could not load saved SQL',
+                        message: errorMessage(
+                            loadError,
+                            'The saved SQL list could not be loaded',
+                        ),
+                    });
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const handleSelect = async (item: SavedSqlItem) => {
+        if (openingUuid !== null) return;
+        setOpeningUuid(item.uuid);
+        setError(undefined);
+        try {
+            const sql = await loadersRef.current.loadSql(item);
+            setOpeningUuid(null);
+            onOpen(sql);
+        } catch (loadError) {
+            setOpeningUuid(null);
+            setError({
+                title: `Could not open ${item.name}`,
+                message: errorMessage(loadError, 'Its SQL could not be read'),
+            });
+        }
+    };
+
+    return (
+        <Stack gap="sm">
+            {error && (
+                <Alert
+                    color="red"
+                    icon={<MantineIcon icon={IconAlertCircle} />}
+                    title={error.title}
+                >
+                    {error.message}
+                </Alert>
+            )}
+            {items === null && !error && <Loader size="sm" />}
+            {openingUuid !== null && <Loader size="sm" />}
+            {items !== null && (
+                <SavedSqlPicker items={items} onSelect={handleSelect} />
             )}
         </Stack>
     );
