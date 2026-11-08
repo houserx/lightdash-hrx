@@ -1464,3 +1464,18 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     succeeds with the trimmed name. Regression investigate-audit-retry 2/2. frontend tsc,
     oxlint and oxfmt are clean. The page hook itself has no unit test.
 - 2026-11-08T21:14:30Z supervisor: ldq-investigate-save-as-chart passed the gate in round 1
+- ldq-platform-schema-sql (round 1):
+  - common `utils/auditedSql.ts` now exports `PLATFORM_TABLES_SQL`
+    (`SELECT table_schema, table_name FROM platform_tables()`) and
+    `buildPlatformColumnsSql(schema, table)`
+    (`SELECT column_name, data_type, is_nullable FROM platform_columns('<schema>', '<table>')`).
+    Both names become SQL string literals with single quotes doubled. That is the same private
+    `sqlStringLiteral` helper `buildPlatformQuerySql` now uses. The column lists follow
+    CONTRACTS §1.1. Both statements are Audited Queries under `isAuditedSql`, so the schema
+    browser has to send them with an audit description like any platform_* call.
+  - Not done (next feature, ldq-platform-schema-browser): no UI uses these yet. The browser
+    should run them through the same SQL runner path Investigate uses.
+  - Tested: this is a pure common helper with no running UI to drive. Feature check 3/3.
+    auditedSql.test.ts 7/7: new cases cover quotes in both schema and table names, and both
+    statements counting as audited. common tsc, oxfmt and oxlint are clean.
+- 2026-11-08T21:16:56Z supervisor: ldq-platform-schema-sql passed the gate in round 1

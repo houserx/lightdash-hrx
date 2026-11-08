@@ -20,12 +20,36 @@ const stripLiteralsAndComments = (sql: string): string =>
 export const isAuditedSql = (sql: string): boolean =>
     PLATFORM_FUNCTION.test(stripLiteralsAndComments(sql));
 
+/** Quotes a value as a SQL string literal, doubling single quotes. */
+const sqlStringLiteral = (value: string): string =>
+    `'${value.replace(/'/g, "''")}'`;
+
 /**
  * Wraps a Platform Database statement in `platform_query(sql)` (CONTRACTS §1.1). The statement
  * is passed as one SQL string literal with single quotes doubled; it takes no source argument.
  */
 export const buildPlatformQuerySql = (statement: string): string =>
-    `SELECT * FROM platform_query('${statement.replace(/'/g, "''")}')`;
+    `SELECT * FROM platform_query(${sqlStringLiteral(statement)})`;
+
+/**
+ * Lists the Platform Database tables the schema browser shows (CONTRACTS §1.1,
+ * `platform_tables()`). The engine audits it like any platform_* call.
+ */
+export const PLATFORM_TABLES_SQL =
+    'SELECT table_schema, table_name FROM platform_tables()';
+
+/**
+ * Lists the columns of one Platform Database table (CONTRACTS §1.1,
+ * `platform_columns(table_schema, table_name)`). Both names are passed as SQL
+ * string literals with single quotes doubled.
+ */
+export const buildPlatformColumnsSql = (
+    tableSchema: string,
+    tableName: string,
+): string =>
+    `SELECT column_name, data_type, is_nullable FROM platform_columns(${sqlStringLiteral(
+        tableSchema,
+    )}, ${sqlStringLiteral(tableName)})`;
 
 const AUDIT_DESCRIPTION_REQUIRED = /audited query requires a description/i;
 

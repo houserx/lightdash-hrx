@@ -1,7 +1,9 @@
 import {
+    buildPlatformColumnsSql,
     buildPlatformQuerySql,
     isAuditDescriptionRequiredError,
     isAuditedSql,
+    PLATFORM_TABLES_SQL,
 } from './auditedSql';
 
 describe('isAuditedSql', () => {
@@ -38,6 +40,23 @@ describe('buildPlatformQuerySql', () => {
     it('doubles single quotes and is itself an Audited Query', () => {
         const sql = buildPlatformQuerySql("select 'it''s'");
         expect(sql).toBe("SELECT * FROM platform_query('select ''it''''s''')");
+        expect(isAuditedSql(sql)).toBe(true);
+    });
+});
+
+describe('Platform Database schema SQL', () => {
+    it('lists tables through platform_tables() as an Audited Query', () => {
+        expect(PLATFORM_TABLES_SQL).toBe(
+            'SELECT table_schema, table_name FROM platform_tables()',
+        );
+        expect(isAuditedSql(PLATFORM_TABLES_SQL)).toBe(true);
+    });
+
+    it("lists one table's columns, doubling quotes in both names", () => {
+        const sql = buildPlatformColumnsSql("o'ps", "it's");
+        expect(sql).toBe(
+            "SELECT column_name, data_type, is_nullable FROM platform_columns('o''ps', 'it''s')",
+        );
         expect(isAuditedSql(sql)).toBe(true);
     });
 });
