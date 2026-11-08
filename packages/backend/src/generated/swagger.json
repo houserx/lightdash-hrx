@@ -72897,6 +72897,122 @@
                 "required": ["results", "status"],
                 "type": "object"
             },
+            "AuditExecution": {
+                "properties": {
+                    "createdAtMonth": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string"
+                    },
+                    "integrityHash": {
+                        "type": "string"
+                    },
+                    "action": {
+                        "type": "string"
+                    },
+                    "preview": {
+                        "type": "boolean"
+                    },
+                    "errorMessage": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "durationMs": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "rowCount": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "executedBySub": {
+                        "type": "string"
+                    },
+                    "executedByEmail": {
+                        "type": "string"
+                    },
+                    "linearTicketId": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "database": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["read", "write"]
+                    },
+                    "sql": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": {},
+                "required": [
+                    "createdAtMonth",
+                    "createdAt",
+                    "integrityHash",
+                    "action",
+                    "preview",
+                    "errorMessage",
+                    "durationMs",
+                    "rowCount",
+                    "status",
+                    "executedBySub",
+                    "executedByEmail",
+                    "linearTicketId",
+                    "database",
+                    "description",
+                    "mode",
+                    "sql",
+                    "id"
+                ],
+                "type": "object",
+                "description": "One execution record from the Federation Engine's audit store: the db-query-portal\n`executions` item (CONTRACTS §6), passed through as the engine sent it."
+            },
+            "AuditPage": {
+                "properties": {
+                    "nextCursor": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "items": {
+                        "items": {
+                            "$ref": "#/components/schemas/AuditExecution"
+                        },
+                        "type": "array"
+                    }
+                },
+                "required": ["nextCursor", "items"],
+                "type": "object",
+                "description": "A page of the engine's GET /v1/audit; `nextCursor` is null on the last page."
+            },
+            "ApiAuditPageResponse": {
+                "properties": {
+                    "results": {
+                        "$ref": "#/components/schemas/AuditPage"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ok"],
+                        "nullable": false
+                    }
+                },
+                "required": ["results", "status"],
+                "type": "object"
+            },
             "FeatureFlag": {
                 "properties": {
                     "enabled": {
@@ -118683,6 +118799,79 @@
                         "in": "path",
                         "name": "projectUuid",
                         "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ]
+            }
+        },
+        "/api/v2/projects/{projectUuid}/federation/audit": {
+            "get": {
+                "operationId": "listFederationAudit",
+                "responses": {
+                    "200": {
+                        "description": "Success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiAuditPageResponse"
+                                }
+                            }
+                        }
+                    },
+                    "default": {
+                        "description": "Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiErrorPayload"
+                                }
+                            }
+                        }
+                    }
+                },
+                "description": "Lists executions from the Federation Engine's audit store (GET /v1/audit), filtered by\nLinear ticket, user and month (YYYY-MM), one page at a time from `cursor`. Requires the\nplatform_read user attribute.",
+                "summary": "List federation audit executions",
+                "tags": ["v2", "Federation"],
+                "security": [],
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "projectUuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "ticket",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "user",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "month",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "cursor",
+                        "required": false,
                         "schema": {
                             "type": "string"
                         }

@@ -1,5 +1,6 @@
 import {
     assertRegisteredAccount,
+    type ApiAuditPageResponse,
     type ApiErrorPayload,
     type ApiFederationAccessResponse,
 } from '@lightdash/common';
@@ -8,6 +9,7 @@ import {
     Middlewares,
     OperationId,
     Path,
+    Query,
     Request,
     Response,
     Route,
@@ -43,6 +45,39 @@ export class FederationController extends BaseController {
             results: await this.services
                 .getFederationService()
                 .getAccess(req.account, projectUuid),
+        };
+    }
+
+    /**
+     * Lists executions from the Federation Engine's audit store (GET /v1/audit), filtered by
+     * Linear ticket, user and month (YYYY-MM), one page at a time from `cursor`. Requires the
+     * platform_read user attribute.
+     * @summary List federation audit executions
+     */
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Get('/audit')
+    @OperationId('listFederationAudit')
+    async listFederationAudit(
+        @Path() projectUuid: string,
+        @Request() req: express.Request,
+        @Query() ticket?: string,
+        @Query() user?: string,
+        @Query() month?: string,
+        @Query() cursor?: string,
+    ): Promise<ApiAuditPageResponse> {
+        assertRegisteredAccount(req.account);
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: await this.services
+                .getFederationService()
+                .listAudit(req.account, projectUuid, {
+                    ticket,
+                    user,
+                    month,
+                    cursor,
+                }),
         };
     }
 }

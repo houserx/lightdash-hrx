@@ -318,6 +318,9 @@ largest files. Do them inside the features they serve, with unit tests, and keep
 10. **The portal saved-scripts export** is a JSON array of `SavedScript`.
 11. **Investigate's Save as chart** saves to the first space the user can create charts in,
     as a TABLE SQL chart on the default connection. The spec names no space picker.
+12. **The audit browser's identity token** uses audit source `investigate` with no description
+    or ticket. §3 lists no source for the audit browser, and listing the audit store is not an
+    Audited Query, so the engine needs only `attrs.platform_read` from it.
 
 ## Status
 
@@ -1787,3 +1790,32 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     confirmation is cleared and Commit is disabled again. write-mode-preview 2/2 and
     write-mode-toggle 2/2. Frontend typecheck, oxlint and oxfmt are clean.
 - 2026-11-08T22:11:54Z supervisor: ldq-write-mode-commit passed the gate in round 1
+- ldq-audit-route (round 1):
+  - `GET /api/v2/projects/{projectUuid}/federation/audit?ticket&user&month&cursor` is a new
+    method `listFederationAudit` on the existing `FederationController`. It calls
+    `FederationService.listAudit`, which mints a fresh identity token for the user and calls
+    `GET {httpBaseUrl}/v1/audit`. It returns `{status:'ok', results:<engine page>}`, and the page
+    passes through unchanged.
+  - Filters are trimmed, and blank or missing ones are left out, so the engine only ever gets the
+    filters that were given. A month that isn't `YYYY-MM` with a month from 01 to 12 is a 400,
+    returned before anything is loaded. Without `platform_read` the route returns 403, and
+    non-federation projects get NotSupported. Both happen before the engine is called.
+  - New common types are `AuditExecution`, `AuditFilters`, `AuditPage` (`{items, nextCursor}`)
+    and `ApiAuditPageResponse`, and `AuditPage` is added to `ApiResults`. `nextCursor` is typed
+    `string | null`, and the frontend should treat null or a missing value as the last page.
+  - Refactor: the engine HTTP call (fetch, bearer token, timeout, 4xx passthrough, 5xx becomes
+    500) moved from `engineWrite.ts` to `engineHttp.ts` `requestEngine`. Write and audit both use
+    it. `engineAudit.ts` holds `parseAuditFilters` and `getEngineAudit`.
+  - Decision: see Contract assumption 12 (the audit browser token uses source `investigate`).
+  - Next (ldq-audit-browser-ui): the client is
+    `GET /api/v2/projects/{uuid}/federation/audit` with the filters as query params. Don't send
+    empty strings. The server drops them anyway.
+  - Tested: no Docker, running server or browser, so I drove the real Express app with the
+    generated TSOA routes through the acceptance harness. Feature check 4/4. The engine got
+    exactly the given query params and a validly signed token (sub, attrs.platform_read). A user
+    with only platform_explain got 403, `month=2026-13` got 400, and the engine was called in
+    neither case. New engineAudit.test.ts 9/9 covers trimming, bad months, URL encoding, and
+    engine 403/503. engineWrite.test.ts 11/11. write-preview-route 3/3, write-commit-route 4/4,
+    write-agent-refused 3/3 and federation-access-route 3/3 all pass. Backend and common
+    typecheck, oxlint and oxfmt are clean.
+- 2026-11-08T22:16:44Z supervisor: ldq-audit-route passed the gate in round 1

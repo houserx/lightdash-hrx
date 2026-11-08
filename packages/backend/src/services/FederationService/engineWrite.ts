@@ -3,12 +3,11 @@
  * to the Federation Engine's POST /v1/write.
  */
 import {
-    LightdashError,
     ParameterError,
-    UnexpectedServerError,
     type WriteMode,
     type WriteResult,
 } from '@lightdash/common';
+import { requestEngine } from './engineHttp';
 
 const ENGINE_WRITE_TIMEOUT_MS = 60_000;
 
@@ -57,15 +56,6 @@ export const parseWriteRequest = (body: unknown): ParsedWriteRequest => {
     };
 };
 
-const engineErrorMessage = (body: unknown, status: number): string => {
-    if (typeof body === 'object' && body !== null) {
-        const { error, message } = body as Record<string, unknown>;
-        if (typeof error === 'string' && error) return error;
-        if (typeof message === 'string' && message) return message;
-    }
-    return `Federation Engine write failed with status ${status}`;
-};
-
 /**
  * POSTs to the engine's /v1/write. A 4xx refusal (guard, confirmation token, identity) comes
  * back with the engine's status and message; anything else is an unexpected server error.
@@ -74,49 +64,13 @@ export const postEngineWrite = async (
     httpBaseUrl: string,
     identityToken: string,
     payload: Record<string, unknown>,
-): Promise<WriteResult> => {
-    const url = `${httpBaseUrl.replace(/\/+$/, '')}/v1/write`;
-    let response: Response;
-    try {
-        response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'content-type': 'application/json',
-                authorization: `Bearer ${identityToken}`,
-            },
-            body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(ENGINE_WRITE_TIMEOUT_MS),
-        });
-    } catch (error) {
-        throw new UnexpectedServerError(
-            `Could not reach the Federation Engine: ${
-                error instanceof Error ? error.message : String(error)
-            }`,
-        );
-    }
-    const text = await response.text();
-    let body: unknown;
-    try {
-        body = text ? JSON.parse(text) : undefined;
-    } catch {
-        body = undefined;
-    }
-    if (!response.ok) {
-        const message = engineErrorMessage(body, response.status);
-        if (response.status >= 400 && response.status < 500) {
-            throw new LightdashError({
-                message,
-                name: 'FederationEngineError',
-                statusCode: response.status,
-                data: {},
-            });
-        }
-        throw new UnexpectedServerError(message);
-    }
-    if (typeof body !== 'object' || body === null) {
-        throw new UnexpectedServerError(
-            'The Federation Engine returned an invalid write result',
-        );
-    }
-    return body as WriteResult;
-};
+): Promise<WriteResult> =>
+    (await requestEngine({
+        httpBaseUrl,
+        identityToken,
+        method: 'POST',
+        path: '/v1/write',
+        body: payload,
+        timeoutMs: ENGINE_WRITE_TIMEOUT_MS,
+        label: 'write',
+    })) as WriteResult;

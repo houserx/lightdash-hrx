@@ -274,6 +274,7 @@ import {
 } from './externalSources';
 import { type ApiFavoriteItems, type ApiToggleFavorite } from './favorites';
 import {
+    type ApiAuditPageResponse,
     type ApiFederationAccessResponse,
     type ApiWriteConfirmationResponse,
     type ApiWriteResponse,
@@ -1850,7 +1851,8 @@ type ApiResults =
     | ApiProjectAiCredentialResponse['results']
     | ApiFederationAccessResponse['results']
     | ApiWriteConfirmationResponse['results']
-    | ApiWriteResponse['results'];
+    | ApiWriteResponse['results']
+    | ApiAuditPageResponse['results'];
 // Note: EE API types removed from ApiResults to avoid circular imports
 // They can still be used with ApiResponse<T> by importing from '@lightdash/common'
 

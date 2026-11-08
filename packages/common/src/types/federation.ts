@@ -105,3 +105,48 @@ export type ApiWriteResponse = {
     status: 'ok';
     results: WriteResult;
 };
+
+/**
+ * One execution record from the Federation Engine's audit store: the db-query-portal
+ * `executions` item (CONTRACTS §6), passed through as the engine sent it.
+ */
+export type AuditExecution = {
+    id: string;
+    sql: string;
+    mode: 'read' | 'write';
+    description: string | null;
+    database: string;
+    linearTicketId: string | null;
+    executedByEmail: string;
+    executedBySub: string;
+    status: string;
+    rowCount: number | null;
+    durationMs: number | null;
+    errorMessage: string | null;
+    preview: boolean;
+    action: string;
+    integrityHash: string;
+    createdAt: string;
+    createdAtMonth: string;
+    [field: string]: unknown;
+};
+
+/** Query of GET /api/v2/projects/{projectUuid}/federation/audit (CONTRACTS §4.2). */
+export type AuditFilters = {
+    ticket?: string;
+    user?: string;
+    /** YYYY-MM */
+    month?: string;
+    cursor?: string;
+};
+
+/** A page of the engine's GET /v1/audit; `nextCursor` is null on the last page. */
+export type AuditPage = {
+    items: AuditExecution[];
+    nextCursor: string | null;
+};
+
+export type ApiAuditPageResponse = {
+    status: 'ok';
+    results: AuditPage;
+};

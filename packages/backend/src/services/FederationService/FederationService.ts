@@ -10,6 +10,8 @@ import {
     isFederationProject,
     NotSupportedError,
     ParameterError,
+    type AuditFilters,
+    type AuditPage,
     type FederationAccess,
     type RegisteredAccount,
     type WriteConfirmation,
@@ -23,6 +25,7 @@ import {
     isAgentSession,
 } from '../FederationIdentity/FederationIdentityService';
 import { identityAttrsFromUserAttributes } from '../FederationIdentity/identityToken';
+import { getEngineAudit, parseAuditFilters } from './engineAudit';
 import { parseWriteRequest, postEngineWrite } from './engineWrite';
 import { mintWriteConfirmationToken } from './writeConfirmationToken';
 
@@ -219,5 +222,65 @@ export class FederationService extends BaseService {
             description: request.description,
             ticket: request.ticket,
         });
+    }
+
+    /**
+     * CONTRACTS §4.2 audit browser: a page of executions from the engine's GET /v1/audit,
+     * filtered by ticket, user and month (YYYY-MM), from `cursor`. Only the filters given are
+     * sent. Requires view access and the platform_read user attribute; a malformed month is
+     * refused before anything is loaded. The identity token carries audit source
+     * `investigate` and no description: listing the audit store is not an Audited Query
+     * (Contract assumption 12).
+     */
+    async listAudit(
+        account: RegisteredAccount,
+        projectUuid: string,
+        filters: AuditFilters,
+    ): Promise<AuditPage> {
+        const parsedFilters = parseAuditFilters(filters);
+        const project = await this.getViewableProject(account, projectUuid);
+        const credentials = project.warehouseConnection;
+        if (!isFederationCredentials(credentials)) {
+            throw new NotSupportedError(
+                'The audit browser is only available on Federation Engine projects',
+            );
+        }
+        const attrs = await this.getAttrs(account, project.organizationUuid);
+        if (!attrs.platform_read) {
+            throw new ForbiddenError(
+                'The audit browser requires the platform_read user attribute',
+            );
+        }
+        if (!credentials.identitySigningSecret) {
+            throw new NotSupportedError(
+                'This Federation Engine connection has no identity signing secret',
+            );
+        }
+        if (!credentials.httpBaseUrl) {
+            throw new NotSupportedError(
+                'This Federation Engine connection has no HTTP base URL',
+            );
+        }
+        const { email } = account.user;
+        if (!email) {
+            throw new ForbiddenError(
+                'The audit browser requires a user with an email address',
+            );
+        }
+        const identityToken = await this.federationIdentityService.mintForUser({
+            secret: credentials.identitySigningSecret,
+            user: {
+                userUuid: account.user.userUuid,
+                email,
+                organizationUuid: project.organizationUuid,
+            },
+            projectUuid,
+            audit: { source: 'investigate' },
+        });
+        return getEngineAudit(
+            credentials.httpBaseUrl,
+            identityToken,
+            parsedFilters,
+        );
     }
 }
