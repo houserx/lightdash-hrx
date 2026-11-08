@@ -1048,3 +1048,26 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - All of them match `packages/backend/src/alerting/router.ts`.
   - For the next session: the UI pages (alert-ui-*) should import from `features/alerting/api`. There are no React Query hooks yet. Add them with the pages that need them.
 - 2026-11-08T23:18:02Z supervisor: alert-ui-api-client passed the gate in round 1
+- alert-ui-rules-list (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/frontend/src/features/alerting/components/AlertRulesList.tsx` (presentational).
+      - Props: `{ rules: AlertRuleSummary[], spaces: {uuid, name}[], onOpenRule(ruleUuid) }`.
+      - It renders a Mantine table with columns State badge, Name (with "Managed in git", Paused and Shadow badges), `key=value` label badges and Folder (the space name, or "—").
+      - Filters are client-side:
+        - State is a Select with All, Firing, Pending, Normal, No data and Error.
+        - Label is a TextInput with comma- or space-separated terms. `key=value` is an exact match, `key=` means the key exists, and a bare word is a case-insensitive substring of any key or value.
+        - Folder is a Select with All, each space and No folder.
+      - Clicking a row (or Enter on the name button) calls `onOpenRule(uuid)` once.
+    - New `components/AlertBadges.tsx` holds `AlertStateBadge` and `ManagedInGitBadge`, for reuse by the detail and editor pages.
+    - New `features/alerting/utils.ts` holds `ALERT_STATE_LABELS` and `matchesLabelFilter`. The lint rule `only-export-components` forbids non-component exports in .tsx files, so they live in a .ts file. Unit tests are in `utils.test.ts` (5 tests).
+    - New `components/AlertRulesList.module.css` sets the row cursor, because the lint rule `no-inline-style-prop` bans `style`.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). The unit file passes 5/5. Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) rendered the list with four rules and drove it with userEvent.
+      - At first: Disk almost full showed Firing, team=infra and Platform. RDS showed Pending and Managed in git. CPU showed Normal, Shadow and "—".
+      - Picking State: Firing left only Disk.
+      - Typing team=infra in Label left 3 rows. Adding Folder Platform left 2, and No folder left CPU only.
+      - A non-matching label showed "No Alert Rules match these filters."
+      - Enter on the CPU high name called onOpenRule('c') exactly once.
+  - For the next session: no page or React Query hook wraps this list yet. alert-ui-pages should feed it from `listAlertRules` in `features/alerting/api.ts`, plus the project's spaces. Mantine Select labels both the input and the listbox, so look up controls with the INPUT-filtering `field()` from the acceptance support (or `getAllByLabelText` filtered to INPUT).
+- 2026-11-08T23:25:40Z supervisor: alert-ui-rules-list passed the gate in round 1
