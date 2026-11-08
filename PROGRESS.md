@@ -1029,3 +1029,22 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - `--since yesterday` and a missing history file each gave exit 1 with a clear message and no request.
   - Note: the matched line prints Grafana's time from `ShadowRunMatch.at`. The acceptance mock sends `grafanaAt`, which is not in the contract type, so the CLI ignores it.
 - 2026-11-08T23:13:40Z supervisor: alert-cli-shadow-report passed the gate in round 1
+- alert-ui-api-client (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/frontend/src/features/alerting/api.ts` has one function per route of `/api/v2/projects/{uuid}/alerting`:
+      - rules: list, get, create, update, delete, preview, versions, history, notifications;
+      - project-wide: state, history, notifications;
+      - contact points: list, get, create, update, delete, test;
+      - notification routes: get and PUT save.
+    - Signature: `(projectUuid, ...args, lightdashApi = sharedLightdashApi)`. The acceptance test calls the functions with no client, so the shared one is the default. Embedded SDK components can pass `useLightdashApi()` as the last argument.
+    - Query objects use the server's query parameter names: `{state, label, spaceUuid}`, `{rule, since, limit}` and `{rule, contactPoint, limit}`. `label` is a `key=value` string or an array of them, and an array becomes repeated `label=` parameters. Undefined values are left out.
+    - Common: `ContactPointTestResult` moved from backend `AlertNotifier.ts` to common `alerting/contactPoints.ts`, because the frontend needs it. AlertNotifier imports and re-exports it, so backend importers are unchanged. The alerting result types (rules, preview, history, state, notifications, contact points, test result, route tree) were added to the `ApiResults` union in `types/api.ts`. Run `init` after this.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). Frontend and backend tsc are clean, the frontend oxlint is clean, and oxfmt is clean.
+    - As a user: a scratch vitest file (deleted afterwards) pointed the real client at a local node HTTP server through the SDK instance-URL session key and recorded every request.
+      - `GET .../rules?state=firing&label=team%3Dinfra&label=sev%3D1`
+      - POST, PATCH and preview bodies were JSON with `application/json`.
+      - `GET .../history?rule=r1&since=...`, `GET .../notifications?rule=r1`, `POST .../contact-points/cp1/test` and `PUT .../notification-routes`.
+      - All of them match `packages/backend/src/alerting/router.ts`.
+  - For the next session: the UI pages (alert-ui-*) should import from `features/alerting/api`. There are no React Query hooks yet. Add them with the pages that need them.
+- 2026-11-08T23:18:02Z supervisor: alert-ui-api-client passed the gate in round 1

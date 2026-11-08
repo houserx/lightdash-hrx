@@ -25,6 +25,7 @@ import {
     parsePrometheusDuration,
     routeAlert,
     type ContactPointIntegration,
+    type ContactPointTestResult,
     type NotificationRoute,
     type ResolvedNotificationRoute,
 } from '@lightdash/common';
@@ -149,15 +150,8 @@ export const TEST_ALERT_ANNOTATIONS: Readonly<Record<string, string>> = {
         'This is a test notification from Lightdash alerting. If you can read it, this Contact Point works.',
 };
 
-/** The outcome of a test notification, per integration in order. */
-export type ContactPointTestResult = {
-    ok: boolean;
-    results: Array<{
-        type: ContactPointIntegration['type'];
-        ok: boolean;
-        error?: string;
-    }>;
-};
+// The outcome of a test notification lives in common: the frontend reads it.
+export type { ContactPointTestResult } from '@lightdash/common';
 
 /** A firing alert, or a resolved one (which has `endsAt`). */
 export type NotificationAlert = ActiveAlert | ResolvedAlert;

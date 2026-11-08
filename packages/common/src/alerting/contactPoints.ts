@@ -38,3 +38,17 @@ export type CreateContactPoint = {
 export type UpdateContactPoint = Partial<
     Pick<ContactPoint, 'name' | 'integrations'>
 >;
+
+/**
+ * The result of POST .../contact-points/{uuid}/test: a synthetic TestAlert
+ * sent through every integration, one outcome per integration in order.
+ * `ok` only if every integration succeeded.
+ */
+export type ContactPointTestResult = {
+    ok: boolean;
+    results: Array<{
+        type: ContactPointIntegrationType;
+        ok: boolean;
+        error?: string;
+    }>;
+};
