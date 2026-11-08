@@ -120,11 +120,26 @@ export const buildCloudWatchMetricDataQuery = (
     };
 };
 
+/**
+ * A CloudWatch Logs Insights query over one or more log groups:
+ * `cloudwatch_logs(log_groups text, query text, start, end[, source])`, where `log_groups` is
+ * comma-separated (CONTRACTS §1.1).
+ */
+export type CloudWatchLogsTelemetryQuery = {
+    kind: 'cloudwatch_logs';
+    /** Log group names, e.g. `/aws/lambda/fills`. */
+    logGroups: string[];
+    /** The Logs Insights query. */
+    query: string;
+    source?: string;
+};
+
 export type TelemetryQuery =
     | PromqlTelemetryQuery
     | LogqlTelemetryQuery
     | LogqlMetricTelemetryQuery
-    | CloudWatchTelemetryQuery;
+    | CloudWatchTelemetryQuery
+    | CloudWatchLogsTelemetryQuery;
 
 /** Reserved time parameter references, substituted before the query runs. */
 export const TELEMETRY_SQL_FROM = '${ld.parameters.__from}';
@@ -134,6 +149,26 @@ export const TELEMETRY_SQL_INTERVAL = '${ld.parameters.__interval}';
 /** A SQL string literal, with single quotes doubled. */
 const toSqlStringLiteral = (value: string): string =>
     `'${value.replace(/'/g, "''")}'`;
+
+/**
+ * The engine's comma-separated `log_groups` argument. Names are trimmed and blanks dropped; a
+ * name containing a comma cannot be represented and is refused.
+ */
+const joinLogGroups = (logGroups: string[]): string => {
+    const names = logGroups.map((name) => name.trim()).filter((n) => n !== '');
+    if (names.length === 0) {
+        throw new Error(
+            'CloudWatch Logs Insights needs at least one log group',
+        );
+    }
+    const withComma = names.find((name) => name.includes(','));
+    if (withComma !== undefined) {
+        throw new Error(
+            `CloudWatch log group names cannot contain a comma, got ${withComma}`,
+        );
+    }
+    return names.join(',');
+};
 
 const tableFunctionSql = (
     name: string,
@@ -205,6 +240,17 @@ export const buildTelemetrySql = (telemetryQuery: TelemetryQuery): string => {
                     toSqlStringLiteral(
                         JSON.stringify(telemetryQuery.metricDataQuery),
                     ),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                ],
+                telemetryQuery.source,
+            );
+        case 'cloudwatch_logs':
+            return tableFunctionSql(
+                'cloudwatch_logs',
+                [
+                    toSqlStringLiteral(joinLogGroups(telemetryQuery.logGroups)),
+                    toSqlStringLiteral(telemetryQuery.query),
                     TELEMETRY_SQL_FROM,
                     TELEMETRY_SQL_TO,
                 ],

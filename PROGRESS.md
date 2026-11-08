@@ -1144,3 +1144,14 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     logql acceptance 3/3 (regression), telemetrySql.test.ts 14/14 (4 new). common tsc clean;
     oxfmt/oxlint clean on changed files.
 - 2026-11-08T20:28:41Z supervisor: ldq-investigate-sql-cloudwatch passed the gate in round 1
+- ldq-investigate-sql-logs-insights (round 1):
+  - `packages/common/src/utils/telemetrySql.ts`: `TelemetryQuery` gains `cloudwatch_logs`
+    (`{logGroups: string[], query, source?}`) -> `cloudwatch_logs('<g1,g2>', '<query>', __from,
+    __to[, '<source>'])` (CONTRACTS §1.1). Private `joinLogGroups` trims names, drops blanks,
+    joins with ',' (no space). It throws when no group is left, or when a name contains a comma,
+    because the engine's comma-separated argument can't carry that name (narrowest reading; the
+    contract gives no escape). Quotes are doubled in the groups, the query and the source.
+  - Tested: no Investigate UI yet; surface is the exported common function. Feature check 2/2,
+    cloudwatch acceptance 2/2 (regression), telemetrySql.test.ts 16/16 (2 new: trim/drop
+    blanks, refuse empty and comma). common tsc clean; oxfmt/oxlint clean on changed files.
+- 2026-11-08T20:31:05Z supervisor: ldq-investigate-sql-logs-insights passed the gate in round 1

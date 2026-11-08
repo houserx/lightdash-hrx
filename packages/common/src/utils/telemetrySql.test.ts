@@ -182,4 +182,35 @@ describe('buildTelemetrySql', () => {
             ).toContain("SEARCH(''{AWS/SQS} QueueName'', ''Sum'')");
         });
     });
+
+    describe('cloudwatch_logs', () => {
+        it('trims log groups and drops blank ones', () => {
+            expect(
+                buildTelemetrySql({
+                    kind: 'cloudwatch_logs',
+                    logGroups: [' /ecs/api ', '', '/ecs/worker'],
+                    query: 'fields @message',
+                }),
+            ).toBe(
+                "SELECT * FROM cloudwatch_logs('/ecs/api,/ecs/worker', 'fields @message', ${ld.parameters.__from}, ${ld.parameters.__to})",
+            );
+        });
+
+        it('refuses no log groups and a log group with a comma', () => {
+            expect(() =>
+                buildTelemetrySql({
+                    kind: 'cloudwatch_logs',
+                    logGroups: [' '],
+                    query: 'fields @message',
+                }),
+            ).toThrow(/at least one log group/);
+            expect(() =>
+                buildTelemetrySql({
+                    kind: 'cloudwatch_logs',
+                    logGroups: ['/ecs/a,b'],
+                    query: 'fields @message',
+                }),
+            ).toThrow(/comma/);
+        });
+    });
 });
