@@ -2120,6 +2120,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-guard"
+version = "0.1.0"
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2165,6 +2169,7 @@ dependencies = [
  "ciborium",
  "datafusion",
  "engine-config",
+ "engine-guard",
  "futures",
  "getrandom 0.3.4",
  "hex",

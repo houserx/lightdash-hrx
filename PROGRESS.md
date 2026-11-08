@@ -1547,3 +1547,29 @@ token verification for a *valid* token, which feature 39 then hardens.
   lines for it. Preparing `SELECT id, name FROM widgets WHERE false` showed id int8, name text,
   and 0 rows. `SELECT no_such_column FROM widgets` -> 42703. The check passed after init.
 - 2026-11-08T20:54:53Z supervisor: eng-platform-query-describe-only passed the gate in round 1
+- 2026-11-08 eng-guard-read-mode (round 1): new workspace crate `crates/engine-guard` (no
+  dependencies) is a line-for-line port of the portal's `api/src/services/query-guard.ts` @ aea73de
+  (read from `~/Remotes/HouseRx/db-query-portal`, `git show aea73de:...`, read-only). It has the same
+  check order, the same messages, `Rejection.status` 400 (empty SQL) or 422, and `Mode::Read`/`Write`.
+  It returns the trimmed SQL, which is what runs, as in the portal. JS semantics are kept on purpose:
+  ECMAScript whitespace for trim and `\s` (including U+FEFF, but not U+0085), and ASCII-only
+  case-insensitive matching (a Rust `(?i)` regex would also match the Kelvin sign for `k`).
+  `PlatformQuery::call_with_args` runs `guard(sql, Mode::Read)` right after `Access::require` and
+  before any connection. A rejection is `42501` with the portal's message verbatim, and it is not
+  audited because planning fails. The crate's unit tests port `query-guard.test.ts` case for case,
+  in both modes.
+  Also fixed a pre-existing `clippy::question_mark` error in `src/selectors.rs` (same behaviour;
+  the selectors unit tests and identity::eng_restricted_loki_selectors pass).
+  Tested as a user: `../tmp/guard-read/run.sh <out>` (throwaway cluster, audit store mock, engine;
+  pgclient's `platform` bin with a platform_read token, one session per case, extended then simple
+  protocol) ran all 45 read-mode cases. Each rejection got 42501 with the portal's message, and the
+  Postgres log and audit store did not grow. Each allowed case either returned rows (audited) or
+  failed in Postgres (42P01 for table `t`). patients 2/2 and widgets 200/200 before and after.
+  Differential: `tmp/guard-diff` (gitignored) runs the portal's own TS (node --experimental-strip-types)
+  and the crate over 2 x 20000 random fragment-built statements in both modes: 0 mismatches,
+  status included.
+  For eng-guard-write-mode: `/v1/write` should call `engine_guard::guard(stmt, Mode::Write)` and map
+  `Rejection.status` to HTTP 400/422. platform_explain (A30) should call it with `Mode::Read`.
+  Trap: `cargo fmt --all` with the private toolchain rewraps many existing files that earlier
+  sessions formatted by hand, so format only the files you touch (`cargo fmt -p engine-guard` is clean).
+- 2026-11-08T21:05:26Z supervisor: eng-guard-read-mode passed the gate in round 1

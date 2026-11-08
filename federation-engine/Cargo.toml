@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 # Library crates go under crates/ and are added here, e.g. members = ["crates/engine-core"].
-members = [".", "crates/engine-config"]
+members = [".", "crates/engine-config", "crates/engine-guard"]
 
 [package]
 name = "federation-engine"
@@ -37,6 +37,7 @@ chrono = "0.4"
 chrono-tz = "0.10"
 datafusion = { version = "55", default-features = false, features = ["sql", "nested_expressions", "datetime_expressions", "string_expressions", "unicode_expressions", "regex_expressions", "crypto_expressions", "encoding_expressions", "recursive_protection"] }
 engine-config = { path = "crates/engine-config" }
+engine-guard = { path = "crates/engine-guard" }
 futures = "0.3.34"
 getrandom = "0.3"
 hex = "0.4"

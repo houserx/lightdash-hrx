@@ -138,10 +138,8 @@ fn parse_selector(text: &str) -> Option<Selector> {
             (Op::Re, r)
         } else if let Some(r) = rest.strip_prefix("!~") {
             (Op::NotRe, r)
-        } else if let Some(r) = rest.strip_prefix('=') {
-            (Op::Eq, r)
         } else {
-            return None;
+            (Op::Eq, rest.strip_prefix('=')?)
         };
         rest = after.trim_start();
         let quote = rest.chars().next()?;

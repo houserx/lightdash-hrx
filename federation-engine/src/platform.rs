@@ -7,6 +7,9 @@
 //! role), and its rows come back in Postgres binary format.
 //!
 //! Reading the Platform Database needs `attrs.platform_read` and is an Audited Query (§1.2, §6).
+//! Then `sql` must pass the read guard (§5, [`engine_guard`]): a rejection is SQLSTATE 42501 with
+//! the portal's message, before any connection, and is not audited. The guarded (trimmed) SQL is
+//! what runs, as in the portal.
 //!
 //! Column types: `bool`, `int2`, `int4`, `int8`, `float4`, `float8`, `date`, `timestamp` and
 //! `timestamptz` keep their type; `text`, `varchar`, `bpchar`, `name`, `citext`, `uuid` and
@@ -33,6 +36,7 @@ use datafusion::error::DataFusionError;
 use datafusion::logical_expr::{Expr, TableType};
 use datafusion::physical_plan::ExecutionPlan;
 use engine_config::{Config, SourceKind, SourceSettings};
+use engine_guard::Mode;
 use futures::{TryStreamExt, pin_mut};
 use tokio_postgres::types::{FromSql, Type};
 use tokio_postgres::{Client, NoTls, Row};
@@ -165,6 +169,8 @@ impl TableFunctionImpl for PlatformQuery {
             .map_err(|why| sqlstate("42704", format!("{SIGNATURE}: {why}")))?;
         // Refused before anything reaches the Platform Database.
         Access::require(session, &source.name, Claim::PlatformRead)?;
+        let sql =
+            engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
         let timeout = self.connect_timeout;
         let types = block_on(async {
             let client = source.connect(timeout).await?;
