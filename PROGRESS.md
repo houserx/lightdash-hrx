@@ -1095,3 +1095,18 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - alert-ui-managed-readonly/editor own the `onEdit` prop and the Edit button. The button must be hidden for managed rules. The header already shows Managed in git.
     - The pages feature should pass `contactPoints` from `getContactPoints` so that names show.
 - 2026-11-08T23:29:15Z supervisor: alert-ui-rule-detail passed the gate in round 1
+- alert-ui-rule-test (round 1) — 2026-11-08
+  - Changes:
+    - `AlertRuleDetail.tsx` gained the optional prop `onTestRule?: () => Promise<AlertRulePreview>`. When it is given, a "Test rule" section appears under Query with a "Test rule" button, which shows a spinner while the test runs.
+    - The result table (aria-label "Test rule results") has a row per series: labels, value, Condition (Met/Not met) and "Would be" (a state badge). Rows are keyed by labels plus index, because `AlertRulePreviewSeries` has no fingerprint.
+    - A preview with `error` set, or a rejected promise (a network or API error), shows a red Alert "Test rule failed" with the message in monospace. The table goes away. A result with no series and no error reads "The query returned no series."
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). Frontend tsc, oxlint and oxfmt are clean on the file.
+    - The whole rules-ui file: list, detail and rule-test pass. The 3 editor/managed-readonly tests fail only because AlertRuleEditor does not exist yet (later features).
+    - As a user: a scratch vitest file (deleted) rendered the page and clicked Test rule four times.
+      - The rows read instance=db-1 | 95 | Met | Firing, then instance=db-2 | 40 | Not met | Normal.
+      - Next: "Test rule failed: relation "disk_usage" does not exist", and the table was gone.
+      - Next: "The query returned no series."
+      - A rejected call read "Test rule failed: Network down".
+  - For the next session: the pages feature should wire `onTestRule` to `() => previewAlertRule(projectUuid, <the rule as CreateAlertRule>)` from `features/alerting/api.ts`. The preview endpoint takes a CreateAlertRule body, not a rule uuid, so the page must map the saved rule to the create shape. The editor could reuse the same pattern for unsaved rules.
+- 2026-11-08T23:32:00Z supervisor: alert-ui-rule-test passed the gate in round 1

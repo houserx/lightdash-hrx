@@ -4,11 +4,14 @@
 // Presentational: the rule, history and notifications come in as props.
 import {
     type AlertNotification,
+    type AlertRulePreview,
     type AlertRuleWithInstances,
     type AlertStateHistoryEntry,
 } from '@lightdash/common';
 import {
+    Alert,
     Badge,
+    Button,
     Code,
     Group,
     Paper,
@@ -20,7 +23,7 @@ import {
     type MantineColor,
 } from '@mantine/core';
 import dayjs from 'dayjs';
-import { useMemo, type FC, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type FC, type ReactNode } from 'react';
 import {
     describeHistoryEntry,
     formatAlertCondition,
@@ -45,7 +48,18 @@ type Props = {
     notifications: AlertRuleNotification[];
     /** Contact Points of the project, to name notifications by. */
     contactPoints?: { uuid: string; name: string }[];
+    /**
+     * "Test rule": runs the rule's query once and saves nothing (the page
+     * wires it to `previewAlertRule`). The button shows only when given.
+     */
+    onTestRule?: () => Promise<AlertRulePreview>;
 };
+
+type TestRuleResult =
+    | { status: 'idle' }
+    | { status: 'running' }
+    | { status: 'done'; preview: AlertRulePreview }
+    | { status: 'failed'; error: string };
 
 const NOTIFICATION_STATUS: Record<
     AlertNotification['status'],
@@ -90,6 +104,55 @@ const Section: FC<{ title: string; children: ReactNode }> = ({
     </Paper>
 );
 
+const TestRuleResults: FC<{ result: TestRuleResult }> = ({ result }) => {
+    if (result.status === 'idle' || result.status === 'running') return null;
+    const error =
+        result.status === 'failed' ? result.error : result.preview.error;
+    if (result.status === 'failed' || error !== null) {
+        return (
+            <Alert color="red" title="Test rule failed">
+                <Text size="sm" ff="monospace">
+                    {error}
+                </Text>
+            </Alert>
+        );
+    }
+    const { series } = result.preview;
+    if (series.length === 0) {
+        return <Empty>The query returned no series.</Empty>;
+    }
+    return (
+        <Table verticalSpacing="xs" aria-label="Test rule results">
+            <Table.Thead>
+                <Table.Tr>
+                    <Table.Th>Labels</Table.Th>
+                    <Table.Th>Value</Table.Th>
+                    <Table.Th>Condition</Table.Th>
+                    <Table.Th>Would be</Table.Th>
+                </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+                {series.map((entry, index) => (
+                    <Table.Tr
+                        key={`${formatLabels(entry.labels).join(',')}-${index}`}
+                    >
+                        <Table.Td>
+                            <LabelBadges labels={entry.labels} />
+                        </Table.Td>
+                        <Table.Td>{formatValue(entry.value)}</Table.Td>
+                        <Table.Td>
+                            {entry.conditionMet ? 'Met' : 'Not met'}
+                        </Table.Td>
+                        <Table.Td>
+                            <AlertStateBadge state={entry.state} />
+                        </Table.Td>
+                    </Table.Tr>
+                ))}
+            </Table.Tbody>
+        </Table>
+    );
+};
+
 const Empty: FC<{ children: ReactNode }> = ({ children }) => (
     <Text c="dimmed" size="sm">
         {children}
@@ -101,7 +164,25 @@ export const AlertRuleDetail: FC<Props> = ({
     history,
     notifications,
     contactPoints,
+    onTestRule,
 }) => {
+    const [testResult, setTestResult] = useState<TestRuleResult>({
+        status: 'idle',
+    });
+
+    const runTest = useCallback(async () => {
+        if (!onTestRule) return;
+        setTestResult({ status: 'running' });
+        try {
+            setTestResult({ status: 'done', preview: await onTestRule() });
+        } catch (e) {
+            setTestResult({
+                status: 'failed',
+                error: e instanceof Error ? e.message : String(e),
+            });
+        }
+    }, [onTestRule]);
+
     const contactPointNames = useMemo(
         () => new Map((contactPoints ?? []).map((cp) => [cp.uuid, cp.name])),
         [contactPoints],
@@ -155,6 +236,25 @@ export const AlertRuleDetail: FC<Props> = ({
                     <Text size="sm">Time range {rule.timeRange}</Text>
                 </Group>
             </Section>
+
+            {onTestRule && (
+                <Section title="Test rule">
+                    <Group>
+                        <Button
+                            variant="default"
+                            onClick={runTest}
+                            loading={testResult.status === 'running'}
+                        >
+                            Test rule
+                        </Button>
+                        <Text size="sm" c="dimmed">
+                            Runs the query once and shows the state each series
+                            would enter. Nothing is saved.
+                        </Text>
+                    </Group>
+                    <TestRuleResults result={testResult} />
+                </Section>
+            )}
 
             <Section title="Series">
                 {rule.instances.length === 0 ? (
