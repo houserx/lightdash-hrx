@@ -10,6 +10,7 @@ use engine_config::{Config, TlsFiles};
 use pgwire::tokio::TlsAcceptor;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use serde_json::json;
 use tokio::io::Interest;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -29,13 +30,15 @@ pub async fn run(config: Config) -> Result<(), String> {
         .await
         .map_err(|e| format!("cannot listen on listen_http {}: {e}", config.listen_http))?;
     let signals = crate::shutdown::signals()?;
-    let tls_note = if tls.is_some() { " (TLS available)" } else { "" };
-    eprintln!(
-        "engine: serving pg-wire{tls_note} on {} and HTTP on {} ({} users, {} sources)",
-        config.listen_pg,
-        config.listen_http,
-        config.users.len(),
-        config.sources.len()
+    crate::log::info(
+        "serving",
+        &[
+            ("listen_pg", json!(config.listen_pg.to_string())),
+            ("listen_http", json!(config.listen_http.to_string())),
+            ("tls", json!(tls.is_some())),
+            ("users", json!(config.users.len())),
+            ("sources", json!(config.sources.len())),
+        ],
     );
 
     let cert_pem = tls.as_ref().map(|t| t.cert_pem.as_slice());
@@ -56,7 +59,10 @@ pub async fn run(config: Config) -> Result<(), String> {
         r = &mut http_server => return Err(format!("HTTP server stopped: {}", join_message(r))),
         r = &mut pg_server => return Err(format!("pg-wire server stopped: {}", join_message(r))),
     };
-    eprintln!("engine: {signal} received, no longer accepting connections; draining");
+    crate::log::info(
+        "signal received, no longer accepting connections; draining",
+        &[("signal", json!(signal.to_string()))],
+    );
     // Order matters: refuse new statements first, so the drain below can only shrink.
     crate::shutdown::begin();
     let _ = stop.send(true);
@@ -71,13 +77,16 @@ pub async fn run(config: Config) -> Result<(), String> {
         .await
         .is_err()
     {
-        eprintln!(
-            "engine: in-flight work still running after {} s; exiting anyway",
-            crate::shutdown::DRAIN_LIMIT.as_secs()
+        crate::log::warn(
+            "in-flight work still running at the drain limit; exiting anyway",
+            &[(
+                "drain_limit_seconds",
+                json!(crate::shutdown::DRAIN_LIMIT.as_secs()),
+            )],
         );
     }
     tokio::time::sleep(crate::shutdown::FLUSH_GRACE).await;
-    eprintln!("engine: shut down");
+    crate::log::info("shut down", &[]);
     Ok(())
 }
 
@@ -151,7 +160,7 @@ async fn serve_pg(
             }
             Err(e) => {
                 // Usually EMFILE: back off instead of spinning.
-                eprintln!("engine: pg-wire accept failed: {e}");
+                crate::log::warn("pg-wire accept failed", &[("error", json!(e.to_string()))]);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
@@ -170,7 +179,10 @@ async fn serve_connection(socket: TcpStream, tls: Option<TlsAcceptor>, handlers:
     let (socket, watcher) = match with_hangup_watcher(socket) {
         Ok(pair) => pair,
         Err(e) => {
-            eprintln!("engine: dropping pg-wire connection, cannot set it up: {e}");
+            crate::log::warn(
+                "dropping pg-wire connection, cannot set it up",
+                &[("error", json!(e.to_string()))],
+            );
             return;
         }
     };

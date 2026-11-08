@@ -2312,3 +2312,38 @@ token verification for a *valid* token, which feature 39 then hardens.
   -D warnings (tmp/rustup) is clean, and shutdown.rs is fmt-clean. `cargo fmt --check` drift is
   unchanged from the baseline (64 hunks, including the old tls_note line in server.rs).
 - 2026-11-08T23:07:02Z supervisor: eng-graceful-shutdown passed the gate in round 1
+- eng-json-logs (security): the serving engine now writes only JSON lines, one object per line on
+  stderr, with `timestamp` (RFC 3339 UTC, ms, `Z`), `level` (info|warn|error) and `message`,
+  plus optional fields. The new file is `src/log.rs`, with `log::info/warn/error(msg, &[(key,
+  json)])`. Each line goes out as a single locked write, so lines never interleave. Fields can't
+  override timestamp, level or message. `install_panic_hook` turns panics into JSON lines too.
+  Every former `eprintln!` in server.rs, pg.rs, write.rs, audit_browser.rs, cloudwatch_logs.rs
+  and main.rs now goes through it. The startup line is now `"message":"serving"`, with
+  listen_pg, listen_http, tls, users and sources as fields. Nothing in the harness waits on that
+  text: it polls the ports.
+  Decisions:
+  - `engine --check-config` (valid or invalid) and command-line usage errors stay plain text,
+    because they answer an interactive command and eng-config-check reads them. An invalid config
+    in serving mode is logged as JSON with a `problems` array. Those strings name keys and env
+    vars, never values.
+  - Nothing logs statements, rows, identity tokens or their claims. Audit write failures log only
+    the store's error `cause` (SDK error text, which carries no item).
+  - No `tracing`/`log` subscriber is installed, so the dependency crates (pgwire, AWS SDK) print
+    nothing. If someone adds a subscriber later, it must emit this same JSON shape and stay at
+    warn level or above. The check fails on any non-JSON line.
+  Unit test: `log::tests::a_line_is_one_json_object_with_timestamp_level_and_message`.
+  Tested as a user: `../tmp/json-logs-user/run.sh` (python mocks on 59881-59884, with the
+  canary `secret_label` in matrix results and an audit store answering 200; engine on
+  59891/59892). It sent SET hrx.identity with a token carrying a canary email and description,
+  an open query and a restricted query (both SELECT 2, labels carrying the canary), a prom-bad
+  query (XX000) and a login with a wrong canary password (28P01), then SIGTERM (exit 0).
+  stdout was empty. stderr had 3 lines, serving / signal received / shut down, all JSON with
+  timestamp and level. None of the canaries were in it: result, token, token payload, signature,
+  email, description, identity secret, pg password, wrong password, AWS key and secret.
+  `run_fail.sh` is the same run with the audit store answering 500 (58000). It adds one error
+  line, "audit write failed", whose cause is the DynamoDB SDK error, and it has no canary.
+  The check passes. config::eng_config_check, ops::eng_graceful_shutdown, ops::eng_metrics,
+  audit::eng_audit_fail_closed and pgwire::eng_pg_tls also pass. Clippy -D warnings (tmp/rustup)
+  is clean, and log.rs is fmt-clean. `cargo fmt --check` drift is unchanged (64 hunks, none in
+  log.rs or main.rs).
+- 2026-11-08T23:11:04Z supervisor: eng-json-logs passed the gate in round 1

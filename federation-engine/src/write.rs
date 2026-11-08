@@ -156,7 +156,7 @@ impl Failure {
     }
 
     fn audit_write_failed(cause: &str) -> Failure {
-        eprintln!("engine: audit write failed: {cause}");
+        crate::log::error("audit write failed", &[("cause", serde_json::json!(cause))]);
         Failure {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             message: "audit write failed".to_string(),

@@ -125,7 +125,10 @@ async fn browse(
         .query_page(index, key_attr, key_value, PAGE_SIZE, start.as_ref())
         .await
         .map_err(|e| {
-            eprintln!("engine: audit browser query failed: {e}");
+            crate::log::error(
+                "audit browser query failed",
+                &[("error", serde_json::json!(e.to_string()))],
+            );
             refuse(StatusCode::BAD_GATEWAY, "audit store query failed")
         })?;
     let next_cursor = next.map(|key| {

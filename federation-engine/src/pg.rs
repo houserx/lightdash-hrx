@@ -185,7 +185,10 @@ impl PgHandlers {
             // Channel binding is an extra, not a requirement: with a certificate whose signature
             // hash pgwire can't derive (e.g. Ed25519), plain SCRAM-SHA-256 is still offered.
             if let Err(e) = scram.configure_certificate(pem) {
-                eprintln!("engine: SCRAM channel binding is off for this certificate: {e}");
+                crate::log::warn(
+                    "SCRAM channel binding is off for this certificate",
+                    &[("error", serde_json::json!(e.to_string()))],
+                );
             }
         }
         let mut params = DefaultServerParameterProvider::default();
@@ -1173,7 +1176,7 @@ fn query_error(e: DataFusionError) -> PgWireError {
 /// The error an Audited Query fails with when its record cannot be written (CONTRACTS §6). The
 /// cause goes to the engine's log only.
 fn audit_write_failed(cause: String) -> DataFusionError {
-    eprintln!("engine: audit write failed: {cause}");
+    crate::log::error("audit write failed", &[("cause", serde_json::json!(cause))]);
     sqlstate("58000", "audit write failed".to_string())
 }
 

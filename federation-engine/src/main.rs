@@ -3,6 +3,8 @@
 //! `engine --config <file>` serves pg-wire and HTTP; `engine --check-config --config <file>` only validates the
 //! config (CONTRACTS §1.4), resolving secrets from env vars, without binding ports or contacting
 //! sources.
+//!
+//! The serving engine logs JSON lines on stderr (log.rs); `--check-config` answers in plain text.
 
 mod audit;
 mod audit_browser;
@@ -13,6 +15,7 @@ mod gcp_auth;
 mod health;
 mod identity;
 mod labels;
+mod log;
 mod logql;
 mod metrics;
 mod ops_marts;
@@ -33,6 +36,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use engine_config::Config;
+use serde_json::json;
 
 const USAGE: &str = "usage: engine [--check-config] --config <federation-engine.toml>";
 
@@ -74,11 +78,22 @@ fn main() -> ExitCode {
     };
     let config = match Config::load(&args.config) {
         Ok(config) => config,
-        Err(e) => {
+        Err(e) if args.check_config => {
             eprintln!("engine: config {} is invalid:", args.config.display());
             for problem in &e.problems {
                 eprintln!("  - {problem}");
             }
+            return ExitCode::FAILURE;
+        }
+        Err(e) => {
+            // Config problems name keys and env vars, never their secret values.
+            log::error(
+                "config is invalid",
+                &[
+                    ("config", json!(args.config.display().to_string())),
+                    ("problems", json!(e.problems)),
+                ],
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -92,6 +107,7 @@ fn main() -> ExitCode {
         );
         return ExitCode::SUCCESS;
     }
+    log::install_panic_hook();
     // rustls is built with both aws-lc-rs and ring, so it can't pick a default on its own.
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -100,14 +116,17 @@ fn main() -> ExitCode {
     {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("engine: cannot start the async runtime: {e}");
+            log::error(
+                "cannot start the async runtime",
+                &[("error", json!(e.to_string()))],
+            );
             return ExitCode::FAILURE;
         }
     };
     match runtime.block_on(server::run(config)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("engine: {e}");
+            log::error("engine stopped", &[("error", json!(e))]);
             ExitCode::FAILURE
         }
     }

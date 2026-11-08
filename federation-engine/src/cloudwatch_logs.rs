@@ -294,9 +294,12 @@ impl Drop for RunningQuery {
         let client = self.client.clone();
         runtime.spawn(async move {
             if let Err(e) = client.stop_query().query_id(&id).send().await {
-                eprintln!(
-                    "engine: cloudwatch_logs StopQuery for {id} failed: {}",
-                    DisplayErrorContext(&e)
+                crate::log::warn(
+                    "cloudwatch_logs StopQuery failed",
+                    &[
+                        ("query_id", serde_json::json!(id)),
+                        ("error", serde_json::json!(DisplayErrorContext(&e).to_string())),
+                    ],
                 );
             }
         });
