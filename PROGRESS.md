@@ -1846,3 +1846,16 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     an API error message, and the hook's URL with and without filters. sql-runner-mode-switch
     2/2. Frontend typecheck, plus oxlint and oxfmt on the changed files, are clean.
 - 2026-11-08T22:20:36Z supervisor: ldq-audit-browser-ui passed the gate in round 1
+- ldq-audit-browser-pagination (round 1):
+  - `AuditBrowser.tsx`: the `query` state is now `request: {filters, cursor?}`. The effect
+    calls `fetchPage(filters)` on page 1 and `fetchPage({...filters, cursor})` after that, so
+    page 1 gets no `cursor` key at all. A "Next page" button shows only when `page.nextCursor`
+    is set, and a "First page" button shows once you're past page 1. Both are disabled while
+    a page loads. They keep the *applied* filters and ignore anything typed into the form since.
+    "Apply filters" clears the shown page and the cursor, so a cursor from one query is never
+    used under another. The hook already forwarded `cursor` as a query param, so it's unchanged.
+  - Tested: no Docker, running server or browser tool, so I rendered the real component in
+    jsdom. Feature check 1/1. audit-browser 2/2 still passes. AuditBrowser.test.tsx is now 4/4:
+    a new case covers Next with the applied filters rather than the edited form, First page,
+    and Apply restarting at page 1. Frontend typecheck, oxlint and oxfmt are clean.
+- 2026-11-08T22:22:53Z supervisor: ldq-audit-browser-pagination passed the gate in round 1

@@ -53,6 +53,43 @@ describe('AuditBrowser', () => {
         ).toBeInTheDocument();
         expect(screen.queryByTestId('audit-executions')).toBeNull();
     });
+
+    it('pages with the applied filters, not the edited form, and new filters restart at page 1', async () => {
+        const row = (id: string) => ({
+            id,
+            sql: 'SELECT 1',
+            mode: 'read' as const,
+            description: `Item ${id}`,
+            executedByEmail: 'synthetic@example.com',
+            status: 'success',
+            rowCount: 1,
+            preview: false,
+            createdAt: '2026-11-04T08:00:00.000Z',
+        });
+        const fetchPage = vi.fn(async (query: { cursor?: string }) =>
+            query.cursor === 'c2'
+                ? { items: [row('2')], nextCursor: null }
+                : { items: [row('1')], nextCursor: 'c2' },
+        );
+        renderBrowser(fetchPage as unknown as AuditBrowserProps['fetchPage']);
+        await screen.findByText('Item 1');
+        expect(screen.queryByRole('button', { name: 'First page' })).toBeNull();
+
+        setText('Ticket', 'ENG-7');
+        fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+        await screen.findByText('Item 2');
+        expect(fetchPage).toHaveBeenLastCalledWith({ cursor: 'c2' });
+
+        fireEvent.click(screen.getByRole('button', { name: 'First page' }));
+        await screen.findByText('Item 1');
+        expect(fetchPage).toHaveBeenLastCalledWith({});
+
+        fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+        await screen.findByText('Item 2');
+        fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+        await screen.findByText('Item 1');
+        expect(fetchPage).toHaveBeenLastCalledWith({ ticket: 'ENG-7' });
+    });
 });
 
 describe('useAuditBrowserApi', () => {

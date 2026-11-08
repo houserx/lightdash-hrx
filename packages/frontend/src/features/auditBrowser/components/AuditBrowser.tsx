@@ -27,6 +27,9 @@ export type AuditBrowserProps = {
 
 type FilterForm = { ticket: string; user: string; month: string };
 
+/** The applied filters plus the engine cursor of the page being shown (absent on page 1). */
+type AuditRequest = { filters: AuditFilters; cursor?: string };
+
 const EMPTY_FORM: FilterForm = { ticket: '', user: '', month: '' };
 
 /** The query for a filter form: trimmed values, with blank ones left out. */
@@ -87,7 +90,7 @@ const ExecutionRow: FC<{ execution: AuditExecution }> = ({ execution }) => (
  */
 export const AuditBrowser: FC<AuditBrowserProps> = ({ canRead, fetchPage }) => {
     const [form, setForm] = useState<FilterForm>(EMPTY_FORM);
-    const [query, setQuery] = useState<AuditFilters>({});
+    const [request, setRequest] = useState<AuditRequest>({ filters: {} });
     const [page, setPage] = useState<AuditPage | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
@@ -99,6 +102,9 @@ export const AuditBrowser: FC<AuditBrowserProps> = ({ canRead, fetchPage }) => {
         let current = true;
         setLoading(true);
         setError(null);
+        const query: AuditFilters = request.cursor
+            ? { ...request.filters, cursor: request.cursor }
+            : request.filters;
         fetchPageRef
             .current(query)
             .then((result) => {
@@ -115,7 +121,7 @@ export const AuditBrowser: FC<AuditBrowserProps> = ({ canRead, fetchPage }) => {
         return () => {
             current = false;
         };
-    }, [canRead, query]);
+    }, [canRead, request]);
 
     if (!canRead) {
         return (
@@ -135,8 +141,25 @@ export const AuditBrowser: FC<AuditBrowserProps> = ({ canRead, fetchPage }) => {
 
     const applyFilters = (event: FormEvent) => {
         event.preventDefault();
-        setQuery(toAuditQuery(form));
+        // New filters start again from the first page; rows of the old query are dropped so
+        // that a cursor from one query is never followed under another.
+        setPage(null);
+        setRequest({ filters: toAuditQuery(form) });
     };
+
+    const nextCursor = page?.nextCursor || null;
+
+    const goToNextPage = () => {
+        if (!nextCursor) return;
+        // Keeps the applied filters, not whatever is typed in the form since.
+        setRequest((previous) => ({
+            filters: previous.filters,
+            cursor: nextCursor,
+        }));
+    };
+
+    const goToFirstPage = () =>
+        setRequest((previous) => ({ filters: previous.filters }));
 
     const items = page?.items ?? [];
 
@@ -217,6 +240,28 @@ export const AuditBrowser: FC<AuditBrowserProps> = ({ canRead, fetchPage }) => {
                 <Text c="dimmed" size="sm">
                     No executions match these filters.
                 </Text>
+            )}
+            {!error && page && (request.cursor || nextCursor) && (
+                <Group gap="sm" justify="flex-end">
+                    {request.cursor && (
+                        <Button
+                            variant="default"
+                            disabled={loading}
+                            onClick={goToFirstPage}
+                        >
+                            First page
+                        </Button>
+                    )}
+                    {nextCursor && (
+                        <Button
+                            variant="default"
+                            disabled={loading}
+                            onClick={goToNextPage}
+                        >
+                            Next page
+                        </Button>
+                    )}
+                </Group>
             )}
         </Stack>
     );
