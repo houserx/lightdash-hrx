@@ -1690,3 +1690,22 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     Feature check 3/3, write-confirmation-route 4/4, new engineWrite.test.ts 11/11. Backend tsc
     --noEmit, oxlint and oxfmt are clean.
 - 2026-11-08T21:56:28Z supervisor: ldq-write-preview-route passed the gate in round 1
+- ldq-write-commit-route (round 1):
+  - `parseWriteRequest` (services/FederationService/engineWrite.ts) now takes mode "commit"
+    as well as "preview". `ParsedWriteRequest.mode` is common's `WriteMode`. The temporary 400
+    "Write Mode commit is not available yet" branch is gone. Commit goes through the same
+    `FederationService.write` path: same checks, a fresh identity token with audit source
+    write_mode, and `mode: "commit"` in the engine body. Any other mode is still a 400 before
+    the engine is called.
+  - The engine's refusals reach the client through postEngineWrite's existing 4xx pass-through:
+    409 for a reused confirmation and 403 for a guard refusal, each with the engine's message.
+    No new code was needed for that.
+  - The unit test engineWrite.test.ts now expects commit to be accepted. The write() doc comment is updated.
+  - Next: ldq-write-agent-refused must refuse commit when isAgentSession() is true. Put that
+    check in FederationService.write after parsing. parseWriteRequest has no agent context.
+  - Tested: no Docker or backend server, so I drove the real TSOA route in-process against the
+    fake engine through the acceptance harness. Feature check 4/4: commit 200 with the engine
+    result, body mode commit, ticket null; engine 409 gives 409; engine 403 gives 403; mode
+    force gives 400 with no engine call. write-preview-route 3/3, engineWrite.test.ts 11/11.
+    Backend tsc --noEmit, oxlint and oxfmt are clean.
+- 2026-11-08T21:59:30Z supervisor: ldq-write-commit-route passed the gate in round 1

@@ -147,8 +147,9 @@ export class FederationService extends BaseService {
      * CONTRACTS §4.2: runs a Write Mode statement through the engine's POST /v1/write, with a
      * fresh identity token (audit source write_mode) for the account's user. Never goes
      * through AsyncQueryService. Requires view access and the platform_write user attribute;
-     * a missing description is refused before anything else. Only mode "preview" is
-     * supported here: the engine runs it inside a transaction it rolls back.
+     * a missing description is refused before anything else. Mode "preview" runs inside a
+     * transaction the engine rolls back; mode "commit" is forwarded the same way, and the
+     * engine's refusals (409 reused confirmation, 403 guard) come back with their status.
      */
     async write(
         account: RegisteredAccount,

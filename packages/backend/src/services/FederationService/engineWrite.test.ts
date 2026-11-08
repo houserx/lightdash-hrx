@@ -20,6 +20,12 @@ describe('parseWriteRequest', () => {
         });
     });
 
+    it('accepts commit mode', () => {
+        expect(parseWriteRequest({ ...valid, mode: 'commit' }).mode).toBe(
+            'commit',
+        );
+    });
+
     it('turns a missing or blank ticket into null', () => {
         expect(parseWriteRequest(valid).ticket).toBeNull();
         expect(parseWriteRequest({ ...valid, ticket: '  ' }).ticket).toBeNull();
@@ -36,7 +42,6 @@ describe('parseWriteRequest', () => {
 
     it.each([
         [{ statement: ' ' }, 'A statement is required'],
-        [{ mode: 'commit' }, 'Write Mode commit is not available yet'],
         [{ mode: 'force' }, 'mode must be "preview" or "commit"'],
         [{ confirmationToken: '' }, 'A confirmation token is required'],
         [{ ticket: 42 }, 'ticket must be a string'],

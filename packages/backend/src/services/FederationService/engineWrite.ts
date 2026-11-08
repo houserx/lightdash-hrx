@@ -4,9 +4,9 @@
  */
 import {
     LightdashError,
-    NotSupportedError,
     ParameterError,
     UnexpectedServerError,
+    type WriteMode,
     type WriteResult,
 } from '@lightdash/common';
 
@@ -14,7 +14,7 @@ const ENGINE_WRITE_TIMEOUT_MS = 60_000;
 
 export type ParsedWriteRequest = {
     statement: string;
-    mode: 'preview';
+    mode: WriteMode;
     confirmationToken: string;
     description: string;
     ticket: string | null;
@@ -39,10 +39,7 @@ export const parseWriteRequest = (body: unknown): ParsedWriteRequest => {
     if (!isNonBlankString(statement)) {
         throw new ParameterError('A statement is required');
     }
-    if (mode === 'commit') {
-        throw new NotSupportedError('Write Mode commit is not available yet');
-    }
-    if (mode !== 'preview') {
+    if (mode !== 'preview' && mode !== 'commit') {
         throw new ParameterError('mode must be "preview" or "commit"');
     }
     if (!isNonBlankString(confirmationToken)) {
