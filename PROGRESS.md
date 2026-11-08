@@ -568,3 +568,27 @@ token verification for a *valid* token, which feature 39 then hardens.
   rows 26..30. The connection stays usable afterwards. The check `pgwire::eng_pg_cursor_batches`,
   the eight earlier checks, the 3 harness self-tests and 15 unit tests all pass.
 - 2026-11-08T16:55:05Z supervisor: eng-pg-cursor-batches passed the gate in round 1
+- 2026-11-08 eng-pg-information-schema (session 10): turned on DataFusion's information_schema
+  (`SessionConfig::with_information_schema(true)` in pg.rs `Sql::new`), per CONTRACTS §1
+  "Catalog". No pg_catalog is provided. Added the unit test `information_schema_lists_its_own_tables`.
+  It enters a Tokio runtime because the information_schema scan spawns tasks: the `run` helper's
+  futures executor alone panics with "no reactor running". Use the same approach for any future
+  unit test that scans information_schema.
+  - What clients see: information_schema.tables lists catalog `datafusion`, schema
+    `information_schema`, with tables columns, df_settings, parameters, routines, schemata, tables
+    and views, all of type VIEW. information_schema.columns does NOT list information_schema's own
+    columns (DataFusion only lists registered tables), unlike Postgres. With no sources, getAllTables
+    returns 0 rows. Real tables come with the source features (eng-ops-marts-catalog etc.).
+  - getFields' `$1/$2` infer as text from `table_name = $1`, and every result column is text (OID 25).
+  - Side effect: `SHOW ALL` and `SHOW <datafusion option>` now work. They are rewritten into a
+    query on information_schema.df_settings, so verify_plan's allow_statements(false) does not
+    refuse them. They expose DataFusion config only (no secrets). If a guard feature needs to hide
+    them, refuse SHOW in `plan_statement` before planning.
+  Tested as a user: a throwaway tokio-postgres program `../tmp/pgclient/src/bin/infoschema.rs`
+  (config `../tmp/ver.toml`) spawns `target/debug/engine`. Lightdash's getAllTables query succeeds
+  (0 rows, no sources). `WHERE table_schema = 'information_schema'` lists tables and columns, among
+  others. Preparing getFields describes params [text, text] and 5 text columns. Running it with
+  ('no_such_table', 'public') returns 0 rows and no error. The check
+  `pgwire::eng_pg_information_schema`, the nine earlier checks, the 3 harness self-tests and
+  16 unit tests all pass.
+- 2026-11-08T17:02:32Z supervisor: eng-pg-information-schema passed the gate in round 1

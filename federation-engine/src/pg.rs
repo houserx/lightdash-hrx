@@ -178,8 +178,12 @@ impl Sql {
     /// as timestamptz) rather than being planned as zone-less timestamps.
     ///
     /// DataFusion's own `version()` is replaced by [`version_udf`].
+    ///
+    /// DataFusion's `information_schema` is the catalog clients see (CONTRACTS §1 "Catalog"):
+    /// Lightdash's `getAllTables` and `getFields` read `information_schema.tables` and
+    /// `information_schema.columns`. Nothing from `pg_catalog` is provided.
     fn new() -> Sql {
-        let mut config = SessionConfig::new();
+        let mut config = SessionConfig::new().with_information_schema(true);
         config.options_mut().execution.time_zone = Some(SESSION_TIME_ZONE.to_string());
         let ctx = SessionContext::new_with_config(config);
         ctx.register_udf(version_udf());
@@ -1114,6 +1118,27 @@ mod tests {
             b"\0\0\0\x08\0\0\0\0\0\0\0\x2a\0\0\0\x02hi\0\0\0\x08\0\0\0\0\0\x0f\x42\x40"
         );
         assert!(field_infos(&columns, &Format::Individual(vec![1])).is_err());
+    }
+
+    #[test]
+    fn information_schema_lists_its_own_tables() {
+        // The information_schema scan spawns tasks, so it needs a Tokio runtime.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let (_, batches) = run(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = 'information_schema'",
+        )
+        .unwrap();
+        let names: Vec<String> = batches
+            .iter()
+            .flat_map(|b| {
+                let col = b.column(0).as_string::<i32>();
+                (0..col.len()).map(|i| col.value(i).to_string()).collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(names.iter().any(|n| n == "tables"), "{names:?}");
+        assert!(names.iter().any(|n| n == "columns"), "{names:?}");
     }
 
     #[test]
