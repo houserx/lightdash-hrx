@@ -1407,3 +1407,4 @@ docs/eng-1799/telemetry-mcp.md
 - Results: acceptance has 35 files passing and 18 failing. All 18 failures are unbuilt features. ai-not-configured
   fails only on its ask_data case.
 - 2026-11-08T18:34:08Z supervisor: mcp-plan-advice passed the gate in round 1
+- 2026-11-08T18:35:23Z supervisor: mcp-answer-verification-port halted: worker mcp.feature.mcp-answer-verification-port.r1 stopped: STOP file present
