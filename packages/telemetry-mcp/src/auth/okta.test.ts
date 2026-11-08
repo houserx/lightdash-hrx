@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AccessTokenError, createOktaVerifier, type AccessTokenVerifier } from './okta.js';
+import { AccessTokenError, createOktaVerifier, JWKS_COOLDOWN_MS, type AccessTokenVerifier } from './okta.js';
 
 const AUDIENCE = 'api://telemetry-mcp-unit';
 const KID = 'unit-key-1';
@@ -105,5 +105,55 @@ describe('createOktaVerifier', () => {
     it('fails closed when the JWKS cannot be fetched', async () => {
         const unreachable = createOktaVerifier({ issuer, audience: AUDIENCE, jwksUri: 'http://127.0.0.1:1/v1/keys' });
         await expect(unreachable.verify(sign(claims()))).rejects.toBeInstanceOf(AccessTokenError);
+    });
+});
+
+describe('JWKS rotation', () => {
+    let rotating: http.Server;
+    let rotatingIssuer: string;
+    let fetches = 0;
+    let current = { pair: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }), kid: 'rot-1' };
+
+    const signCurrent = (kid = current.kid): string =>
+        sign(
+            { iss: rotatingIssuer, aud: AUDIENCE, iat: now(), exp: now() + 600, sub: 'unit-user' },
+            current.pair.privateKey,
+            kid,
+        );
+    const pastCooldown = (): Promise<void> => new Promise((r) => setTimeout(r, JWKS_COOLDOWN_MS + 100));
+
+    beforeAll(async () => {
+        rotating = http.createServer((_req, res) => {
+            fetches += 1;
+            const jwk = { ...current.pair.publicKey.export({ format: 'jwk' }), kid: current.kid, alg: 'RS256', use: 'sig' };
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ keys: [jwk] }));
+        });
+        await new Promise<void>((r) => rotating.listen(0, '127.0.0.1', r));
+        rotatingIssuer = `http://127.0.0.1:${(rotating.address() as AddressInfo).port}/oauth2/default`;
+    });
+
+    afterAll(async () => {
+        rotating.closeAllConnections();
+        await new Promise<void>((r) => rotating.close(() => r()));
+    });
+
+    it('refetches once on an unknown kid after rotation, and rate-limits bogus kids', async () => {
+        const v = createOktaVerifier({ issuer: rotatingIssuer, audience: AUDIENCE, jwksUri: `${rotatingIssuer}/v1/keys` });
+        await v.verify(signCurrent());
+        await v.verify(signCurrent());
+        expect(fetches).toBe(1);
+
+        current = { pair: crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }), kid: 'rot-2' };
+        await pastCooldown();
+        await v.verify(signCurrent());
+        expect(fetches).toBe(2);
+        await v.verify(signCurrent());
+        expect(fetches).toBe(2);
+
+        await pastCooldown();
+        const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => v.verify(signCurrent(`bogus-${i}`))));
+        expect(results.every((r) => r.status === 'rejected' && r.reason instanceof AccessTokenError)).toBe(true);
+        expect(fetches).toBe(3);
     });
 });

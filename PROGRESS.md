@@ -426,3 +426,23 @@ docs/eng-1799/telemetry-mcp.md
   in total; SIGTERM exit 0. Acceptance okta-claims-validation (10/10) plus the five earlier acceptance checks, unit tests
   (31) and typecheck pass.
 - 2026-11-08T16:00:15Z supervisor: mcp-okta-claims-validation passed the gate in round 1
+
+### mcp-okta-jwks-rotation (2026-11-08)
+
+- No behaviour change was needed: the jose remote key set built in `mcp-okta-claims-validation` (one per server, so it is
+  shared by all requests) already caches the JWKS, refetches once on an unknown `kid`, and rate-limits those refetches
+  to one per `JWKS_COOLDOWN_MS` (1 s). Concurrent lookups share one in-flight fetch. The acceptance test passed as
+  soon as `init` ran.
+- `src/auth/okta.ts`: the module doc and the `JWKS_COOLDOWN_MS` comment now state the rotation and rate-limit contract
+  (and jose's default 10-minute cache max age), so nobody "simplifies" the verifier into one per request or raises the
+  cooldown above the 1 s that the acceptance test relies on.
+- `src/auth/okta.test.ts`: new `JWKS rotation` unit test using a local JWKS server that rotates. It checks 1 fetch for
+  repeated tokens, exactly 1 refetch for the new kid, then cached, and 10 parallel bogus kids → all rejected with 1 fetch.
+- Tested as a user: ran `dist/main.js` against a local rotating JWKS server, with Lightdash/engine pointed at a counting
+  listener. Results: 0 fetches at startup. 5 initialize calls → 200 each with 1 fetch. After rotating to a new key and
+  waiting 1.1 s, a new-key token → 200 at 2 fetches, and again 200 with still 2 fetches. A token from the retired key →
+  401. 8 sequential plus 10 parallel bogus-kid tokens → 401 each with `invalid_token`, 0 extra fetches. SIGTERM exit 0,
+  0 Lightdash/engine contacts. The 7 acceptance files so far (34 tests), unit tests (32) and typecheck all pass.
+- Trap: a token signed by the retired key is refused as soon as Okta drops that key from the JWKS. Okta keeps old keys
+  published for a while during rotation, so in-flight tokens normally still verify.
+- 2026-11-08T16:02:17Z supervisor: mcp-okta-jwks-rotation passed the gate in round 1

@@ -6,7 +6,11 @@
  * `OKTA_AUDIENCE`, `exp` is present and in the future, and `nbf`, when present, is not in the future. Every other
  * algorithm (including `none` and HMAC) is refused before any key is looked up.
  *
- * The JWKS is fetched lazily on the first verification, never at startup, and cached by jose's remote key set.
+ * The JWKS is fetched lazily on the first verification, never at startup, and cached by jose's remote key set, shared by
+ * every request of one server. Key rotation: a token whose `kid` is not in the cached set triggers one refetch, so a
+ * newly published Okta key is accepted after exactly one fetch. Refetches are rate-limited to one per
+ * `JWKS_COOLDOWN_MS`, and concurrent lookups share one in-flight fetch, so a stream of tokens with bogus `kid`s cannot
+ * hammer Okta. The cached set is also refreshed after jose's default max age (10 minutes).
  */
 import { createRemoteJWKSet, errors, jwtVerify, type JWTPayload } from 'jose';
 import type { Config } from '../config.js';
@@ -17,7 +21,7 @@ export const ACCEPTED_ALGORITHMS = ['RS256'] as const;
 /** Allowed clock skew between Okta and this server when checking `exp` and `nbf`. */
 export const CLOCK_TOLERANCE_SECONDS = 30;
 
-/** Minimum time between two JWKS fetches triggered by an unknown `kid`. */
+/** Minimum time between two JWKS fetches triggered by an unknown `kid` (rate limit against bogus kids). */
 export const JWKS_COOLDOWN_MS = 1000;
 
 export interface VerifiedAccessToken {
