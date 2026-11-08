@@ -1181,3 +1181,25 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
   - For the next session (routes editor / pages):
     - The pages feature should map `onSendTest` to `testContactPoint`, `onSubmit` to `createContactPoint` or `updateContactPoint`, and `onOpen` to the editor route.
 - 2026-11-08T23:45:11Z supervisor: alert-ui-contact-points passed the gate in round 1
+- alert-ui-routes-editor (round 1) — 2026-11-08
+  - Changes:
+    - New `NotificationRoutesEditor` with props `tree?` (a `NotificationRouteTree` or saved tree with `managed`, or null for a new tree), `contactPoints` and `onSave(tree: NotificationRouteTree)`.
+      - "Default route" shows its contact point (shown by Contact Point name, or the slug if none matches), group by and timers. The documented root defaults are shown when the tree leaves them unset.
+      - Child routes show each matcher as `<label> <op> <value>` (e.g. `team = infra`), a "Continue matching" badge, the contact point (or "inherited"), timer overrides and nested routes, recursively. Nested routes are kept as they are.
+      - Unmanaged: "Default contact point" Select, "Remove route" on top-level routes, and "Add route", which adds a "New route N" fieldset. That fieldset has Label / Operator / Value matchers (with Add/Remove matcher), an optional "Contact point" Select (by slug, labelled by name), a Continue switch and "Discard route".
+      - Validation: Label is required. Matchers go through common `getAlertLabelMatcherError`, so a bad `=~` regex is refused. The default route needs a contact point.
+      - Save is disabled until something changes. It sends `{ contactPoint, groupBy?, groupWait?, groupInterval?, repeatInterval?, routes }` without `managed`, `version` or `type`, which is a valid PUT body. After a resolved save, the new routes join the tree.
+      - Managed: shows the badge and a violet Alert. There is no Add/Remove route button and no Select, and Save is disabled.
+    - `utils.ts`: `formatAlertLabelMatcher`, plus 1 unit test (16 in `utils.test.ts`).
+  - Decision: the editor keeps a local copy of the tree and has no effect that resyncs it from props. The pages feature should render it with `key` set to the loaded tree (e.g. after the query refetch), or remount it some other way.
+  - Trap: the default route's Select is labelled "Default contact point", not "Contact point". The acceptance `field('Contact point')` takes the first matching input, so a second "Contact point" label above the new route would break it.
+  - Tested:
+    - After init, the check passes (2 passed, 4 skipped). Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) clicked through the editor.
+      - Nested `sev =~ crit|page` and "Continue matching" showed. Save started disabled.
+      - Saving an empty new route showed "Label is required". `a)|(b` with `=~` showed "Invalid regex". Neither called onSave.
+      - Removing the existing route and adding `sev =~ crit|page` saved `{contactPoint, groupWait, routes:[that route]}`. The new route then showed in the tree and Save was disabled again.
+      - With `tree={null}`, picking a default contact point saved `{contactPoint:'incident-io', routes:[]}`.
+      - The managed tree had no Add or Remove route, no Select, and Save was disabled.
+  - For the next session (pages): map `onSave` to `saveNotificationRoutes`, and `tree` to `getNotificationRoutes` (null before the first save). Key the editor on the loaded tree.
+- 2026-11-08T23:48:47Z supervisor: alert-ui-routes-editor passed the gate in round 1

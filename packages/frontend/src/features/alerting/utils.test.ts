@@ -3,6 +3,7 @@ import {
     describeContactPointTestFailure,
     describeHistoryEntry,
     formatAlertCondition,
+    formatAlertLabelMatcher,
     formatLabels,
     isSecretRefName,
     labelsToText,
@@ -157,5 +158,24 @@ describe('describeContactPointTestFailure', () => {
                 ],
             }),
         ).toBe('Slack webhook: HTTP 500; incident.io: failed');
+    });
+});
+
+describe('formatAlertLabelMatcher', () => {
+    it('shows label, operator and value', () => {
+        expect(
+            formatAlertLabelMatcher({
+                label: 'team',
+                operator: '=',
+                value: 'infra',
+            }),
+        ).toBe('team = infra');
+        expect(
+            formatAlertLabelMatcher({
+                label: 'severity',
+                operator: '=~',
+                value: 'critical|page',
+            }),
+        ).toBe('severity =~ critical|page');
     });
 });

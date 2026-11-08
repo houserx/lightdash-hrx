@@ -1,5 +1,6 @@
 import {
     type AlertCondition,
+    type AlertLabelMatcher,
     type AlertInstanceState,
     type AlertStateHistoryEntry,
     type ContactPointIntegrationType,
@@ -139,3 +140,10 @@ export const describeContactPointTestFailure = (
         ? failures.join('; ')
         : 'The test notification failed';
 };
+
+/** A Notification Route matcher as one line, e.g. `team = infra`. */
+export const formatAlertLabelMatcher = ({
+    label,
+    operator,
+    value,
+}: AlertLabelMatcher): string => `${label} ${operator} ${value}`;
