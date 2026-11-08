@@ -476,6 +476,7 @@ export * from './utils/time';
 export * from './utils/timeFrames';
 export * from './utils/timeRange';
 export * from './utils/dashboardTimeRangeFilters';
+export * from './utils/auditedSql';
 export * from './utils/telemetryResultShape';
 export * from './utils/telemetrySql';
 export * from './utils/resolveQueryTimezone';

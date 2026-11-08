@@ -1180,3 +1180,19 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     (regression), new telemetryResultShape.test.ts 4/4 (case/order, partial metric, log needs
     timestamp, empty). common tsc clean; oxlint/oxfmt clean on changed files.
 - 2026-11-08T20:35:57Z supervisor: ldq-investigate-result-shape passed the gate in round 1
+- ldq-investigate-audited-sql-detection (round 1):
+  - New `packages/common/src/utils/auditedSql.ts` (exported from common index):
+    `isAuditedSql(sql)` is true when the SQL calls `platform_query`, `platform_explain`,
+    `platform_tables` or `platform_columns` (CONTRACTS §2 table; case-insensitive, optional
+    double quotes, whitespace before `(`, not part of a longer identifier). String literals
+    (`''` escapes) and `--` / `/* */` comments are stripped first so their text never counts.
+    `isAuditDescriptionRequiredError(message)` matches "audited query requires a description"
+    (CONTRACTS §2; SQLSTATE 42501 alone is not enough, it is also plain permission denied).
+  - Contract assumption: Restricted Telemetry is also audited but depends on source config the
+    client cannot see, so it is not detected from SQL; the UI should fall back to the engine
+    error via `isAuditDescriptionRequiredError`. Dollar-quoted strings are not stripped.
+  - Tested: no Investigate UI yet; called the exported functions through `tsx` from the common
+    index on all four platform_* calls (true), promql and Ops Marts SQL (false) and the engine
+    error text (true). Feature check 3/3, result-shape acceptance 4/4 (regression), new
+    auditedSql.test.ts 4/4. common tsc clean; oxlint/oxfmt clean on changed files.
+- 2026-11-08T20:38:25Z supervisor: ldq-investigate-audited-sql-detection passed the gate in round 1
