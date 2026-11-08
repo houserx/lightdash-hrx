@@ -15,6 +15,7 @@ import {
     FeatureFlags,
     type AdditionalMetric,
     type DashboardFilterRule,
+    type DashboardTileTimeDimension,
     type UpdateDashboard,
     type DashboardTile,
     type CreateSavedChartVersion,
@@ -29,6 +30,7 @@ import {
 } from '@sentry/react';
 import { IconAlertCircle, IconCircleCheckFilled } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { isEqual } from 'es-toolkit/compat';
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
 import { type Layout } from 'react-grid-layout';
 import {
@@ -263,6 +265,19 @@ const Dashboard: FC = () => {
             (requiredFiltersNote || undefined)
         );
     }, [dashboard, requiredFiltersNote]);
+    // Tile time dimensions of the dashboard time range staged in edit mode;
+    // undefined while the saved mapping is untouched
+    const [stagedTileTimeDimensions, setStagedTileTimeDimensions] =
+        useState<Record<string, DashboardTileTimeDimension>>();
+    const haveTileTimeDimensionsChanged = useMemo(
+        () =>
+            stagedTileTimeDimensions !== undefined &&
+            !isEqual(
+                stagedTileTimeDimensions,
+                dashboard?.timeRange?.tileTimeDimensions ?? {},
+            ),
+        [dashboard, stagedTileTimeDimensions],
+    );
     const oldestCacheTime = useDashboardSelector(selectOldestCacheTime);
     const preAggregateStatuses = useDashboardTileStatusContext(
         (c) => c.preAggregateStatuses,
@@ -765,6 +780,7 @@ const Dashboard: FC = () => {
         setDateZoomConfig(normalizeDateZoomConfig(dashboard.config));
         setHasDateZoomConfigChanged(false);
         setRequiredFiltersNote(undefined);
+        setStagedTileTimeDimensions(undefined);
 
         if (dashboardTabs.length > 0) {
             void navigate(
@@ -862,7 +878,8 @@ const Dashboard: FC = () => {
         haveControlSectionsChanged ||
         haveDateZoomGranularitiesChanged ||
         hasDefaultDateZoomGranularityChanged ||
-        hasDateZoomConfigChanged;
+        hasDateZoomConfigChanged ||
+        haveTileTimeDimensionsChanged;
 
     // Block navigating away if there are unsaved changes
     const blocker = useBlocker(({ nextLocation }) => {
@@ -911,6 +928,7 @@ const Dashboard: FC = () => {
             );
             // The saved config is the source of truth again
             setRequiredFiltersNote(undefined);
+            setStagedTileTimeDimensions(undefined);
             setDashboardTemporaryFilters({
                 dimensions: [],
                 metrics: [],
@@ -1398,6 +1416,15 @@ const Dashboard: FC = () => {
                 haveControlSectionsChanged,
             }),
             parameters: selectDashboardParameters(dashboardState),
+            // Omitted, the saved time range is kept as it is
+            ...(dashboard.timeRange && stagedTileTimeDimensions !== undefined
+                ? {
+                      timeRange: {
+                          ...dashboard.timeRange,
+                          tileTimeDimensions: stagedTileTimeDimensions,
+                      },
+                  }
+                : {}),
             ...(preserveVerification !== undefined
                 ? { preserveVerification }
                 : {}),
@@ -1439,6 +1466,8 @@ const Dashboard: FC = () => {
         isFitToScreenAvailable: fitToScreen.isAvailable,
         onToggleFitToScreen: handleToggleFitToScreen,
         hasDashboardChanged,
+        tileTimeDimensions: stagedTileTimeDimensions,
+        onTileTimeDimensionsChange: setStagedTileTimeDimensions,
         onAddTiles: handleAddTiles,
         onNewChart:
             isChartEditorEnabled && isEditMode ? handleOpenNewChart : undefined,

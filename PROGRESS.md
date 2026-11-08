@@ -965,3 +965,29 @@ largest files. Do them inside the features they serve, with unit tests, and keep
     opening ?from=now-24h&to=now&refresh=5m shows Last 24 hours and 5m over the saved 6h/1m; edit
     mode shows no control. Feature check 5/5, header test 7/7, frontend typecheck, oxlint, oxfmt clean.
 - 2026-11-08T19:44:59Z supervisor: ldq-dashboard-time-range-url passed the gate in round 1
+- 2026-11-08 ldq-dashboard-time-range-settings (session):
+  - Frontend `features/dashboardTimeRange/components/DashboardTimeRangeSettings.tsx` (presentational,
+    the acceptance target): props `tiles: {uuid,name,timeDimensions:{fieldId,tableName,label}[]}[]`,
+    `value` (tileTimeDimensions by tile uuid), `onChange`, `disabled`. One NativeSelect per tile,
+    labelled by the tile name, options None + its time dimensions; picking reports the whole map
+    with `{fieldId,tableName}`, None removes the tile's key. Tiles with no time dimension show the
+    name and "No time dimension". A saved mapping missing from a tile's options stays selectable.
+  - `utils/tileTimeDimensions.ts` `getTimeRangeSettingsTiles(tiles, filterableFieldsByTileUuid)`:
+    tile name via dashboardControls `getTileTitle` (fallback "Untitled tile"); time dimensions =
+    visible dimensions with date/timestamp type from the dashboard context's filterable fields.
+  - `components/DashboardTimeRangeSettingsButton.tsx`: edit-mode "Time range settings" button +
+    modal; reads `filterableFieldsByTileUuid` with useDashboardContext; shows a loader while undefined.
+  - Wiring: `DashboardHeader` new optional props `tileTimeDimensions` / `onTileTimeDimensionsChange`;
+    the button shows in edit mode only when `dashboard.timeRange` exists. `pages/Dashboard.tsx` keeps
+    a staged map (undefined = untouched), adds it to `hasDashboardChanged`, resets on cancel and on
+    save success, and sends `timeRange: {...saved, tileTimeDimensions: staged}` only when staged.
+  - Decision: no UI to create a time range on a dashboard that has none (spec doesn't ask; ranges come
+    from as-code/API). Backend keeps the saved range when `timeRange` is omitted and the model already
+    drops mappings of deleted tiles, so the page does not prune.
+  - Tested: no full stack (no Docker); drove the real DashboardHeader in edit mode with a stateful
+    harness (DashboardHeader.test.tsx, 3 new cases): open Time range settings -> Orders per hour shows
+    saved Created at, Runbook says No time dimension; pick Shipped at -> staged map has
+    orders_shipped_at/orders; pick None -> {}; loader before fields load; no button without a range.
+    Feature check 3/3, header test 10/10, tileTimeDimensions.test 2/2, frontend typecheck, oxlint,
+    oxfmt clean.
+- 2026-11-08T19:50:37Z supervisor: ldq-dashboard-time-range-settings passed the gate in round 1

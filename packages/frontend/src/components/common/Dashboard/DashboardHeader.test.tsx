@@ -1,6 +1,12 @@
-import { type Dashboard } from '@lightdash/common';
+import {
+    DimensionType,
+    FieldType,
+    type Dashboard,
+    type DashboardFilterableField,
+    type DashboardTileTimeDimension,
+} from '@lightdash/common';
 import { fireEvent, screen } from '@testing-library/react';
-import { type ComponentProps } from 'react';
+import { useState, type ComponentProps } from 'react';
 import { MemoryRouter, useLocation } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../../testing/testUtils';
@@ -9,6 +15,16 @@ import DashboardHeader from './DashboardHeader';
 const mocks = vi.hoisted(() => ({
     flagEnabled: true,
     userCanManageDashboard: true,
+    filterableFieldsByTileUuid: undefined as
+        | Record<string, DashboardFilterableField[]>
+        | undefined,
+}));
+
+vi.mock('../../../providers/Dashboard/useDashboardContext', () => ({
+    default: (selector: (context: unknown) => unknown) =>
+        selector({
+            filterableFieldsByTileUuid: mocks.filterableFieldsByTileUuid,
+        }),
 }));
 
 vi.mock('../../../hooks/useServerOrClientFeatureFlag', () => ({
@@ -194,6 +210,156 @@ describe('DashboardHeader time range in the URL', () => {
         renderHeaderWithTimeRange({ url: '/dashboards/d', isEditMode: true });
         expect(
             screen.queryByRole('button', { name: /Last 6 hours/ }),
+        ).not.toBeInTheDocument();
+    });
+});
+
+const timeDimension = (name: string, label: string) =>
+    ({
+        fieldType: FieldType.DIMENSION,
+        type: DimensionType.TIMESTAMP,
+        name,
+        label,
+        table: 'orders',
+        tableLabel: 'Orders',
+        sql: '',
+        hidden: false,
+    }) as DashboardFilterableField;
+
+const timeRangeDashboard = {
+    uuid: 'dashboard-uuid',
+    slug: 'weekly-revenue',
+    name: 'Weekly revenue',
+    tabs: [],
+    access: [],
+    tiles: [],
+    timeRange: {
+        from: 'now-6h',
+        to: 'now',
+        refreshInterval: '1m',
+        tileTimeDimensions: {
+            'tile-orders': {
+                fieldId: 'orders_created_at',
+                tableName: 'orders',
+            },
+        },
+    },
+} as unknown as Dashboard;
+
+const dashboardTiles = [
+    {
+        uuid: 'tile-orders',
+        type: 'saved_chart',
+        properties: { title: '', chartName: 'Orders per hour' },
+    },
+    { uuid: 'tile-note', type: 'markdown', properties: { title: 'Runbook' } },
+] as unknown as Dashboard['tiles'];
+
+const staged: {
+    current: Record<string, DashboardTileTimeDimension> | undefined;
+} = { current: undefined };
+
+// Holds the staged mapping like the dashboard page does
+const EditingHeader = ({ dashboard }: { dashboard: Dashboard }) => {
+    const [tileTimeDimensions, setTileTimeDimensions] =
+        useState<Record<string, DashboardTileTimeDimension>>();
+    staged.current = tileTimeDimensions;
+    return (
+        <DashboardHeader
+            {...({
+                dashboard,
+                dashboardTiles,
+                isEditMode: true,
+                hasDashboardChanged: false,
+                isSaving: false,
+                isFullscreen: false,
+                isMovingDashboardToSpace: false,
+                isFitToScreen: false,
+                isFitToScreenAvailable: false,
+                tileTimeDimensions,
+                onTileTimeDimensionsChange: setTileTimeDimensions,
+            } as ComponentProps<typeof DashboardHeader>)}
+        />
+    );
+};
+
+describe('DashboardHeader time range settings', () => {
+    beforeEach(() => {
+        mocks.flagEnabled = true;
+        mocks.userCanManageDashboard = true;
+        mocks.filterableFieldsByTileUuid = {
+            'tile-orders': [
+                timeDimension('created_at', 'Created at'),
+                timeDimension('shipped_at', 'Shipped at'),
+            ],
+        };
+        staged.current = undefined;
+    });
+
+    it('lets an editor map, change and clear tile time dimensions', async () => {
+        renderWithProviders(
+            <MemoryRouter>
+                <EditingHeader dashboard={timeRangeDashboard} />
+            </MemoryRouter>,
+        );
+
+        fireEvent.click(
+            screen.getByRole('button', { name: 'Time range settings' }),
+        );
+        const select = await screen.findByLabelText('Orders per hour');
+        expect(select).toHaveValue('orders_created_at');
+        expect(screen.getByText('Runbook')).toBeInTheDocument();
+        expect(screen.getByText('No time dimension')).toBeInTheDocument();
+
+        fireEvent.change(select, { target: { value: 'orders_shipped_at' } });
+        expect(staged.current).toEqual({
+            'tile-orders': {
+                fieldId: 'orders_shipped_at',
+                tableName: 'orders',
+            },
+        });
+        expect(screen.getByLabelText('Orders per hour')).toHaveValue(
+            'orders_shipped_at',
+        );
+
+        fireEvent.change(screen.getByLabelText('Orders per hour'), {
+            target: { value: '' },
+        });
+        expect(staged.current).toEqual({});
+        expect(screen.getByLabelText('Orders per hour')).toHaveValue('');
+    });
+
+    it('waits for the tile fields before listing tiles', async () => {
+        mocks.filterableFieldsByTileUuid = undefined;
+        renderWithProviders(
+            <MemoryRouter>
+                <EditingHeader dashboard={timeRangeDashboard} />
+            </MemoryRouter>,
+        );
+        fireEvent.click(
+            screen.getByRole('button', { name: 'Time range settings' }),
+        );
+        expect(
+            await screen.findByText("Loading the tiles' fields..."),
+        ).toBeInTheDocument();
+        expect(screen.queryByText('No time dimension')).not.toBeInTheDocument();
+    });
+
+    it('offers no settings on a dashboard without a time range', () => {
+        renderWithProviders(
+            <MemoryRouter>
+                <EditingHeader
+                    dashboard={
+                        {
+                            ...timeRangeDashboard,
+                            timeRange: null,
+                        } as Dashboard
+                    }
+                />
+            </MemoryRouter>,
+        );
+        expect(
+            screen.queryByRole('button', { name: 'Time range settings' }),
         ).not.toBeInTheDocument();
     });
 });

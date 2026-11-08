@@ -7,6 +7,7 @@ import {
     ContentType,
     ResourceViewItemType,
     type Dashboard,
+    type DashboardTileTimeDimension,
 } from '@lightdash/common';
 import {
     Badge,
@@ -72,6 +73,7 @@ import DashboardAsCodeModal from '../../../features/contentAsCode/components/Das
 import ProjectContentAsCodeUploadModal from '../../../features/contentAsCode/components/ProjectContentAsCodeUploadModal';
 import { useCanUploadContentAsCode } from '../../../features/contentAsCode/hooks/useCanUploadContentAsCode';
 import { DashboardTimeRangeControl } from '../../../features/dashboardTimeRange/components/DashboardTimeRangeControl';
+import { DashboardTimeRangeSettingsButton } from '../../../features/dashboardTimeRange/components/DashboardTimeRangeSettingsButton';
 import {
     DirectAccessModal,
     useCanManageDirectAccess,
@@ -167,6 +169,12 @@ type DashboardHeaderProps = {
     onToggleFitToScreen: () => void;
     setAddingTab: (value: React.SetStateAction<boolean>) => void;
     onEditClicked: () => void;
+    // Staged tile time dimensions of the dashboard time range (edit mode);
+    // undefined while unchanged from the saved range.
+    tileTimeDimensions?: Record<string, DashboardTileTimeDimension>;
+    onTileTimeDimensionsChange?: (
+        value: Record<string, DashboardTileTimeDimension>,
+    ) => void;
     className?: string;
 };
 
@@ -201,6 +209,8 @@ const DashboardHeader = memo(
         onToggleFitToScreen,
         setAddingTab,
         onEditClicked,
+        tileTimeDimensions,
+        onTileTimeDimensionsChange,
         className,
     }: DashboardHeaderProps) => {
         const authoringEnabled = useContentAuthoringEnabled();
@@ -714,6 +724,18 @@ const DashboardHeader = memo(
                             dashboardTiles={dashboardTiles}
                             dashboardTabs={dashboardTabs}
                         />
+
+                        {dashboard.timeRange && onTileTimeDimensionsChange && (
+                            <DashboardTimeRangeSettingsButton
+                                tiles={dashboardTiles ?? []}
+                                value={
+                                    tileTimeDimensions ??
+                                    dashboard.timeRange.tileTimeDimensions
+                                }
+                                onChange={onTileTimeDimensionsChange}
+                                disabled={isSaving}
+                            />
+                        )}
 
                         <AddTileButton
                             onAddTiles={onAddTiles}
