@@ -9,6 +9,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Config, SourceConfig } from '../config.js';
 import { EngineError, type EngineClient } from '../engine/client.js';
+import { engineErrorText } from '../engine/errors.js';
 
 export const LIST_SOURCES_TOOL = 'list_sources';
 
@@ -71,14 +72,11 @@ export function registerListSources(server: McpServer, config: Config, engine: E
             try {
                 result = await listSources(config, engine);
             } catch (err) {
-                const detail =
+                const text =
                     err instanceof EngineError
-                        ? `${err.message}${err.code ? ` (SQLSTATE ${err.code})` : ''}`
-                        : 'unexpected error';
-                return {
-                    isError: true,
-                    content: [{ type: 'text', text: `Could not list the Ops Marts: ${detail}` }],
-                };
+                        ? engineErrorText(err, 'Listing the Ops Marts')
+                        : 'Listing the Ops Marts failed: unexpected error';
+                return { isError: true, content: [{ type: 'text', text }] };
             }
             return {
                 content: [{ type: 'text', text: JSON.stringify(result) }],

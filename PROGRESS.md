@@ -787,3 +787,41 @@ docs/eng-1799/telemetry-mcp.md
 - Results: the check passes 3/3. 17 acceptance files pass: the earlier 16 plus this one. The 36 failing files belong
   to unbuilt features.
 - 2026-11-08T16:42:50Z supervisor: mcp-time-inputs passed the gate in round 1
+
+## mcp-engine-error-mapping (2026-11-08)
+
+- New `src/engine/errors.ts`:
+  - `engineErrorText(err, what)` maps SQLSTATEs to tool error text.
+    - `42501`: "Access denied: …" keeps the engine's message, which names the missing claim, and tells the caller to
+      ask a Lightdash admin. The other §1.2 `42501`, "audited query requires a description", gets advice about the
+      description instead of a claim.
+    - `54000`: "Result too large: …" with advice to narrow the query: a shorter range, a coarser step, more specific
+      filters or labels, or an aggregation.
+    - `58000`: "Audit write failed: …", result withheld, no rows.
+    - Any other SQLSTATE: `<what> failed: <message> (SQLSTATE x)`. No SQLSTATE: `<what> failed: <message>`.
+  - `redactSecrets(text, secrets)` replaces each given secret (longest first) and every token-shaped string
+    (`eyJ…` plus one or two segments, which covers §3 identity tokens and JWTs) with `[redacted]`. It also cuts the
+    message at 500 characters.
+- `createEngineClient(engine, session, secrets = [])`:
+  - It redacts every engine message against the identity token it just sent, `engine.pgPassword` and `secrets`.
+  - `serveMcpRequest` passes `identitySecret`, the Lightdash API token and the Anthropic key as `secrets`.
+  - The driver's non-SQLSTATE errors still become the fixed "could not reach the Federation Engine".
+- `failureResult` (every query tool) and the `list_sources` Ops Marts error both use `engineErrorText`. Error results
+  never carry `structuredContent`, so a 58000 can never return rows.
+- Later tools: call `failureResult(err, 'The LogQL query')` and so on, and the mapping comes for free. New SQLSTATEs go
+  into `engineErrorText`.
+- Contract reading: §1.1 (54000), §1.2 (42501) and §6 (58000) fix only the codes and the engine messages. The tool
+  wording is mine. The engine's message is shown after redaction, because for 42501 it is the only place that names
+  the claim.
+- Unit tests: `src/engine/errors.test.ts`. 125 unit tests pass and typecheck is clean.
+- Tested as a user: `../tmp/error-mapping-ut/run.mts`. Run it from the repo root with `node_modules/.bin/tsx <abs
+  path> $PWD/packages/telemetry-mcp`. It runs real `dist/main.js` with an RS256 token, the fake Lightdash and the fake
+  engine.
+  - 42501, the audit-description 42501, 54000, 58000 and XX000 each gave the expected `isError` text, with no
+    structuredContent.
+  - A hostile engine message that echoed the identity token, the pg password, the identity secret and the Lightdash
+    token came back with all four `[redacted]`.
+  - A normal call returned rows after each error. SIGTERM exits 0.
+- Results: the check passes 5/5. 18 acceptance files pass: the earlier 17 plus this one. The 35 failing files belong
+  to unbuilt features.
+- 2026-11-08T16:48:49Z supervisor: mcp-engine-error-mapping passed the gate in round 1

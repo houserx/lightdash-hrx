@@ -26,6 +26,14 @@ export { MCP_SERVER_NAME, MCP_SERVER_VERSION, createMcpServer } from './mcp/serv
 export type { McpRequestContext, McpServerDeps } from './mcp/server.js';
 export { ENGINE_CONNECT_TIMEOUT_MS, EngineError, createEngineClient, sessionStatements } from './engine/client.js';
 export type { EngineClient, EngineQueryOptions, EngineResult, EngineSession } from './engine/client.js';
+export {
+    MAX_ENGINE_MESSAGE_LENGTH,
+    SQLSTATE_ACCESS_DENIED,
+    SQLSTATE_AUDIT_WRITE_FAILED,
+    SQLSTATE_RESULT_TOO_LARGE,
+    engineErrorText,
+    redactSecrets,
+} from './engine/errors.js';
 export { createIdentitySession } from './engine/session.js';
 export {
     LIGHTDASH_GROUPS_PER_USER,

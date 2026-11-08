@@ -7,6 +7,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Config, SourceKind } from '../config.js';
 import { EngineError, type EngineResult } from '../engine/client.js';
+import { engineErrorText } from '../engine/errors.js';
 
 /** A tool argument the engine must never see. Its message is shown to the caller and names no secret. */
 export class ToolInputError extends Error {
@@ -163,11 +164,12 @@ export function errorResult(text: string): CallToolResult {
     return { isError: true, content: [{ type: 'text', text }] };
 }
 
-/** A tool error for a refused argument or a failed engine statement. Unexpected errors get a fixed sentence. */
+/**
+ * A tool error for a refused argument or a failed engine statement (SQLSTATEs mapped by `engineErrorText`). It never
+ * carries rows. Unexpected errors get a fixed sentence.
+ */
 export function failureResult(err: unknown, what: string): CallToolResult {
     if (err instanceof ToolInputError) return errorResult(err.message);
-    if (err instanceof EngineError) {
-        return errorResult(`${what} failed: ${err.message}${err.code ? ` (SQLSTATE ${err.code})` : ''}`);
-    }
+    if (err instanceof EngineError) return errorResult(engineErrorText(err, what));
     return errorResult(`${what} failed: unexpected error`);
 }

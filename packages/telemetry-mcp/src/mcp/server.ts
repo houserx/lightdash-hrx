@@ -115,7 +115,11 @@ export async function serveMcpRequest(
     } else {
         // Every tool call opens its own engine connection as the caller (SET hrx.identity, SET statement_timeout).
         const session = createIdentitySession(config, users, auth.claims, context.now);
-        server = createMcpServer(config, { engine: createEngineClient(config.engine, session), now: context.now });
+        server = createMcpServer(config, { engine: createEngineClient(config.engine, session, [
+                config.identitySecret,
+                config.lightdash.apiToken,
+                config.anthropicApiKey,
+            ]), now: context.now });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {

@@ -6,12 +6,14 @@
  * then close the connection whatever happened. Nothing is pooled, so no session state can leak from one tool call to
  * the next, and every query carries a freshly minted identity token (new `iat`, new nonce).
  *
- * Not here yet: `mcp-engine-error-mapping` turns SQLSTATEs into tool errors. Only §1.1 table functions and
- * `information_schema` may be queried, never `pg_*`.
+ * Engine messages are passed through `redactSecrets` (the identity token sent, the engine password, the configured
+ * secrets and anything token-shaped), and `errors.ts` turns their SQLSTATEs into tool error text. Only §1.1 table
+ * functions and `information_schema` may be queried, never `pg_*`.
  */
 import pg from 'pg';
 import type { Config } from '../config.js';
 import type { IdentityAuditInput } from '../identity/token.js';
+import { redactSecrets } from './errors.js';
 
 /** Gives up connecting after this long, so an unreachable engine fails the tool call instead of hanging it. */
 export const ENGINE_CONNECT_TIMEOUT_MS = 10_000;
@@ -64,17 +66,24 @@ export function sessionStatements(identityToken: string, statementTimeoutMs: num
     return [`SET hrx.identity = '${identityToken}'`, `SET statement_timeout = ${statementTimeoutMs}`];
 }
 
-export function createEngineClient(engine: Config['engine'], session: EngineSession): EngineClient {
+/**
+ * `secrets` are other values that must never appear in an error message (for example the identity secret); the
+ * engine password and each query's identity token are always redacted.
+ */
+export function createEngineClient(
+    engine: Config['engine'],
+    session: EngineSession,
+    secrets: readonly (string | undefined)[] = [],
+): EngineClient {
     return {
         async query(sql, params = [], options = {}) {
             // Minted before connecting: a user who cannot be identified never opens a connection. The error is the
             // identity layer's own fixed sentence (no token, claim or secret in it).
+            let identityToken: string;
             let setStatements: string[];
             try {
-                setStatements = sessionStatements(
-                    await session.identityToken(options.audit ?? null),
-                    session.statementTimeoutMs,
-                );
+                identityToken = await session.identityToken(options.audit ?? null);
+                setStatements = sessionStatements(identityToken, session.statementTimeoutMs);
             } catch (err) {
                 throw new EngineError(err instanceof Error ? err.message : 'could not identify the caller', undefined, {
                     cause: err,
@@ -98,8 +107,12 @@ export function createEngineClient(engine: Config['engine'], session: EngineSess
                 return { columns: result.fields.map((f) => f.name), rows: result.rows };
             } catch (err) {
                 const code = sqlState(err);
-                // The driver's message can name the host or user; keep only the engine's own message.
-                const message = code && err instanceof Error ? err.message : 'could not reach the Federation Engine';
+                // The driver's message can name the host or user; keep only the engine's own message, and never let it
+                // carry a token or secret back to the caller.
+                const message =
+                    code && err instanceof Error
+                        ? redactSecrets(err.message, [identityToken, engine.pgPassword, ...secrets])
+                        : 'could not reach the Federation Engine';
                 throw new EngineError(message, code, { cause: err });
             } finally {
                 await client.end().catch(() => undefined);
