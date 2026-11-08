@@ -4,9 +4,12 @@
 //!
 //! `metric_data_query` is the target model Grafana's CloudWatch datasource stores, not the AWS
 //! shape (contract assumption A19). Builder mode (`metricEditorMode = 0`, no `expression`) becomes
-//! a `MetricStat` from `namespace`, `metricName`, `dimensions`, `statistic` and `period`. The
-//! Grafana `label`, when non-empty, is sent as the AWS `Label` and is the `series` of every row;
-//! otherwise `series` is each result's `Label`.
+//! a `MetricStat` from `namespace`, `metricName`, `dimensions`, `statistic` and `period`. Code mode
+//! (`metricEditorMode = 1` or a non-empty `expression`, e.g. `SEARCH(...)` or metric math) sends
+//! the `expression` whole as the `Expression`, with the `period`, and no `MetricStat`; a search
+//! then gives one series per result. The Grafana `label`, when non-empty, is sent as the AWS
+//! `Label` and is the `series` of every row; otherwise `series` is each result's `Label`.
+//! Metrics Insights targets (`metricQueryType = 1`) are not supported yet (0A000).
 //!
 //! Requests are signed with SigV4 by the AWS SDK using the default credential chain, in the
 //! source's region, at the source's `endpoint_url` when one is set. `NextToken` pages are followed
@@ -126,15 +129,11 @@ impl TableFunctionImpl for Cloudwatch {
     }
 }
 
-/// A Grafana CloudWatch metric-stat target, checked and ready to send.
+/// A Grafana CloudWatch target, checked and ready to send.
 #[derive(Debug, Clone, PartialEq)]
 struct Target {
     id: String,
-    namespace: String,
-    metric_name: String,
-    /// (name, value), in the target's order.
-    dimensions: Vec<(String, String)>,
-    statistic: String,
+    metric: TargetMetric,
     period: i32,
     /// Grafana's `label`, when non-empty.
     label: Option<String>,
@@ -142,17 +141,25 @@ struct Target {
     region: Option<String>,
 }
 
+/// What a target asks CloudWatch for.
+#[derive(Debug, Clone, PartialEq)]
+enum TargetMetric {
+    /// Builder mode: one metric and statistic.
+    Stat {
+        namespace: String,
+        metric_name: String,
+        /// (name, value), in the target's order.
+        dimensions: Vec<(String, String)>,
+        statistic: String,
+    },
+    /// Code mode: a search or metric math expression, sent unchanged.
+    Expression(String),
+}
+
 impl Target {
     /// Reads Grafana's stored target JSON. `start`, `end` and `now` (µs) pick an `auto` period.
     fn parse(text: &str, start: i64, end: i64, now: i64) -> Result<Target, DataFusionError> {
         let invalid = |what: String| sqlstate("22023", format!("{SIGNATURE}: {what}"));
-        let unsupported = |what: &str| {
-            let hint = "use a metric stat with exact, single-value dimensions";
-            sqlstate(
-                "0A000",
-                format!("{SIGNATURE}: {what} are not supported yet; {hint}"),
-            )
-        };
         let target: Value = serde_json::from_str(text).map_err(|e| {
             sqlstate(
                 "22P02",
@@ -163,11 +170,66 @@ impl Target {
             return Err(invalid("metric_data_query must be a JSON object".into()));
         };
         let text = |key: &str| t.get(key).and_then(Value::as_str).unwrap_or("");
-        let expression = !text("expression").trim().is_empty()
-            || t.get("metricEditorMode").and_then(Value::as_i64) == Some(1);
-        if expression {
-            return Err(unsupported("metric math and search expressions"));
+        if t.get("metricQueryType").and_then(Value::as_i64) == Some(1) {
+            return Err(sqlstate(
+                "0A000",
+                format!(
+                    "{SIGNATURE}: Metrics Insights queries (metricQueryType = 1) are not \
+                     supported yet; use a metric stat or a search or math expression"
+                ),
+            ));
         }
+        let code_mode = !text("expression").trim().is_empty()
+            || t.get("metricEditorMode").and_then(Value::as_i64) == Some(1);
+        let metric = if code_mode {
+            match text("expression") {
+                e if e.trim().is_empty() => {
+                    return Err(invalid("the code-mode target has no expression".into()));
+                }
+                e => TargetMetric::Expression(e.to_string()),
+            }
+        } else {
+            Target::metric_stat(t)?
+        };
+        let period = match t.get("period") {
+            None | Some(Value::Null) => auto_period(start, end, now),
+            Some(Value::String(s)) if s.trim().is_empty() || s.trim() == "auto" => {
+                auto_period(start, end, now)
+            }
+            Some(Value::String(s)) => period_seconds(s.trim())
+                .ok_or_else(|| invalid(format!("invalid period \"{s}\"")))?,
+            Some(Value::Number(n)) => n
+                .as_i64()
+                .filter(|p| *p > 0)
+                .and_then(|p| i32::try_from(p).ok())
+                .ok_or_else(|| invalid(format!("invalid period {n}")))?,
+            Some(other) => return Err(invalid(format!("invalid period {other}"))),
+        };
+        let label = Some(text("label").to_string()).filter(|l| !l.is_empty());
+        let region = match text("region") {
+            "" | "default" => None,
+            r => Some(r.to_string()),
+        };
+        Ok(Target {
+            id: query_id(text("id"), text("refId")),
+            metric,
+            period,
+            label,
+            region,
+        })
+    }
+
+    /// The builder-mode part of a target: namespace, metric name, dimensions and statistic.
+    fn metric_stat(t: &Map<String, Value>) -> Result<TargetMetric, DataFusionError> {
+        let invalid = |what: String| sqlstate("22023", format!("{SIGNATURE}: {what}"));
+        let unsupported = |what: &str| {
+            let hint = "use a metric stat with exact, single-value dimensions or an expression";
+            sqlstate(
+                "0A000",
+                format!("{SIGNATURE}: {what} are not supported yet; {hint}"),
+            )
+        };
+        let text = |key: &str| t.get(key).and_then(Value::as_str).unwrap_or("");
         if t.get("matchExact") == Some(&Value::Bool(false)) {
             return Err(unsupported("matchExact = false (Grafana's SEARCH translation)"));
         }
@@ -214,66 +276,67 @@ impl Target {
             }
             Some(_) => return Err(invalid("dimensions must be a JSON object".into())),
         }
-        let period = match t.get("period") {
-            None | Some(Value::Null) => auto_period(start, end, now),
-            Some(Value::String(s)) if s.trim().is_empty() || s.trim() == "auto" => {
-                auto_period(start, end, now)
-            }
-            Some(Value::String(s)) => period_seconds(s.trim())
-                .ok_or_else(|| invalid(format!("invalid period \"{s}\"")))?,
-            Some(Value::Number(n)) => n
-                .as_i64()
-                .filter(|p| *p > 0)
-                .and_then(|p| i32::try_from(p).ok())
-                .ok_or_else(|| invalid(format!("invalid period {n}")))?,
-            Some(other) => return Err(invalid(format!("invalid period {other}"))),
-        };
-        let label = Some(text("label").to_string()).filter(|l| !l.is_empty());
-        let region = match text("region") {
-            "" | "default" => None,
-            r => Some(r.to_string()),
-        };
-        Ok(Target {
-            id: query_id(text("id"), text("refId")),
+        Ok(TargetMetric::Stat {
             namespace,
             metric_name,
             dimensions,
             statistic,
-            period,
-            label,
-            region,
         })
     }
 
     fn query(&self) -> MetricDataQuery {
-        let mut metric = Metric::builder()
-            .namespace(&self.namespace)
-            .metric_name(&self.metric_name);
-        for (name, value) in &self.dimensions {
-            metric = metric.dimensions(Dimension::builder().name(name).value(value).build());
-        }
-        let stat = MetricStat::builder()
-            .metric(metric.build())
-            .period(self.period)
-            .stat(&self.statistic)
-            .build();
-        MetricDataQuery::builder()
+        let query = MetricDataQuery::builder()
             .id(&self.id)
-            .metric_stat(stat)
             .set_label(self.label.clone())
-            .return_data(true)
-            .build()
+            .return_data(true);
+        match &self.metric {
+            TargetMetric::Stat {
+                namespace,
+                metric_name,
+                dimensions,
+                statistic,
+            } => {
+                let mut metric = Metric::builder().namespace(namespace).metric_name(metric_name);
+                for (name, value) in dimensions {
+                    metric =
+                        metric.dimensions(Dimension::builder().name(name).value(value).build());
+                }
+                let stat = MetricStat::builder()
+                    .metric(metric.build())
+                    .period(self.period)
+                    .stat(statistic)
+                    .build();
+                query.metric_stat(stat).build()
+            }
+            // As Grafana does for code mode: the expression whole, with the target's period.
+            TargetMetric::Expression(expression) => {
+                query.expression(expression).period(self.period).build()
+            }
+        }
     }
 
-    /// The `labels` JSON of every row: the metric's identity and the result's label.
+    /// The `labels` JSON of every row: the metric's identity (or the expression) and the
+    /// result's label.
     fn labels(&self, result_label: &str) -> String {
         let mut labels = Map::new();
-        for (name, value) in &self.dimensions {
-            labels.insert(name.clone(), Value::String(value.clone()));
+        match &self.metric {
+            TargetMetric::Stat {
+                namespace,
+                metric_name,
+                dimensions,
+                statistic,
+            } => {
+                for (name, value) in dimensions {
+                    labels.insert(name.clone(), Value::String(value.clone()));
+                }
+                labels.insert("namespace".into(), namespace.clone().into());
+                labels.insert("metric_name".into(), metric_name.clone().into());
+                labels.insert("statistic".into(), statistic.clone().into());
+            }
+            TargetMetric::Expression(expression) => {
+                labels.insert("expression".into(), expression.clone().into());
+            }
         }
-        labels.insert("namespace".into(), self.namespace.clone().into());
-        labels.insert("metric_name".into(), self.metric_name.clone().into());
-        labels.insert("statistic".into(), self.statistic.clone().into());
         labels.insert("label".into(), result_label.into());
         Value::Object(labels).to_string()
     }
@@ -545,15 +608,19 @@ mod tests {
         .unwrap();
         assert_eq!(t.id, "queryA");
         assert_eq!(t.period, 300);
-        assert_eq!(t.statistic, "Average");
         assert_eq!(t.label.as_deref(), Some("cpu-db-1"));
         assert_eq!(t.region, None);
         assert_eq!(
-            t.dimensions,
-            vec![
-                ("DBInstanceIdentifier".into(), "db-1".into()),
-                ("Role".into(), "writer".into())
-            ]
+            t.metric,
+            TargetMetric::Stat {
+                namespace: "AWS/RDS".into(),
+                metric_name: "CPUUtilization".into(),
+                dimensions: vec![
+                    ("DBInstanceIdentifier".into(), "db-1".into()),
+                    ("Role".into(), "writer".into())
+                ],
+                statistic: "Average".into(),
+            }
         );
         let q = t.query();
         assert_eq!(q.id(), Some("queryA"));
@@ -564,6 +631,27 @@ mod tests {
         let labels: Value = serde_json::from_str(&t.labels("x")).unwrap();
         assert_eq!(labels["Role"], "writer");
         assert_eq!(labels["label"], "x");
+    }
+
+    #[test]
+    fn a_grafana_code_mode_target_is_sent_whole() {
+        let expr = r#"SEARCH('{AWS/EC2,InstanceId} MetricName="CPUUtilization"', 'Average', 300)"#;
+        let t = parse(json!({"refId": "B", "id": "", "expression": expr, "metricEditorMode": 1,
+            "metricQueryType": 0, "label": "", "period": "300", "region": "default",
+            "namespace": "", "metricName": "", "dimensions": {}, "statistic": "Average"}))
+        .unwrap();
+        assert_eq!(t.metric, TargetMetric::Expression(expr.into()));
+        let q = t.query();
+        assert_eq!(q.id(), Some("queryB"));
+        assert_eq!(q.expression(), Some(expr));
+        assert_eq!(q.period(), Some(300));
+        assert_eq!(q.label(), None);
+        assert!(q.metric_stat().is_none());
+        let labels: Value = serde_json::from_str(&t.labels("i-aaa")).unwrap();
+        assert_eq!(labels, json!({"expression": expr, "label": "i-aaa"}));
+        // A legacy target without metricEditorMode is code mode when it has an expression.
+        let t = parse(json!({"expression": "m1 * 2", "matchExact": false})).unwrap();
+        assert_eq!(t.metric, TargetMetric::Expression("m1 * 2".into()));
     }
 
     #[test]
@@ -610,8 +698,11 @@ mod tests {
         };
         let ok = json!({"namespace": "N", "metricName": "M", "statistic": "Sum"});
         let mut t = ok.clone();
-        t["expression"] = json!("SEARCH('x', 'Average', 300)");
-        assert!(code(t).contains("not supported yet"));
+        t["metricEditorMode"] = json!(1);
+        assert!(code(t).contains("no expression"));
+        let mut t = ok.clone();
+        t["metricQueryType"] = json!(1);
+        assert!(code(t).contains("Metrics Insights"));
         let mut t = ok.clone();
         t["dimensions"] = json!({"A": ["x", "y"]});
         assert!(code(t).contains("multi-value"));

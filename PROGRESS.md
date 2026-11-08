@@ -1052,3 +1052,22 @@ token verification for a *valid* token, which feature 39 then hardens.
   promql::eng_promql_source_selection and eng_max_rows_overflow pass, and so do the 5 cloudwatch
   unit tests. clippy and rustfmt are not installed here; I formatted by hand (lines ≤ 100).
 - 2026-11-08T19:33:11Z supervisor: eng-cloudwatch-metric-stat passed the gate in round 1
+- eng-cloudwatch-expression (worker, round 1): `src/cloudwatch.rs` only. `Target` now holds a
+  `TargetMetric`: `Stat { namespace, metric_name, dimensions, statistic }` (builder mode, as before)
+  or `Expression(String)` (code mode: `metricEditorMode = 1` or a non-empty `expression`, per A19).
+  An expression is sent whole as `MetricDataQuery.Expression` with `Period` (the target's period,
+  same parsing/auto rule as metric stat; Grafana sets Period in its math-expression mode too) and
+  no `MetricStat`. Without a Grafana `label`, `series` is each result's Label, so a SEARCH gives one
+  series per matched metric. `labels` for an expression row = `{"expression", "label"}`. Builder-only
+  checks (namespace/metricName/statistic required, dimension shapes, `matchExact = false` → 0A000)
+  moved to `Target::metric_stat` and no longer apply to code mode.
+  - Decisions: code mode with an empty expression → 22023. `metricQueryType = 1` (Metrics Insights,
+    Grafana sends `sqlExpression`) → 0A000 "not supported yet"; no feature in the list covers it,
+    so it fails closed rather than sending the wrong field. Previously it was ignored.
+  Tested as a user: `../tmp/cloudwatch/run.sh` (mock now answers an Expression query with two
+  results, i-aaa ×2 and i-bbb ×1). The step's target (refId B, metricEditorMode 1, the SEARCH
+  expression) gave series i-aaa n=2, i-bbb n=1; the mock saw Id queryB, the Expression byte-for-byte,
+  Period 300, ReturnData true and no MetricStat/Label. Metric-stat queries and the error cases
+  (22P02, 42809, 42704, 42883) behave as before. Checks sources::eng_cloudwatch_expression and
+  sources::eng_cloudwatch_metric_stat pass; 6 cloudwatch unit tests pass; no build warnings.
+- 2026-11-08T19:37:27Z supervisor: eng-cloudwatch-expression passed the gate in round 1
