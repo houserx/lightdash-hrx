@@ -8,11 +8,57 @@
     top: 0;
     left: 0;
     width: 100%;
-    height: 24px;
     box-sizing: border-box;
     transform: translateY(var(--log-row-start));
-    padding: 2px var(--mantine-spacing-xs);
     border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+/* The clickable line itself; its height is ROW_HEIGHT in the component (border included). */
+.header {
+    height: 23px;
+    box-sizing: border-box;
+    padding: 2px var(--mantine-spacing-xs);
+    cursor: pointer;
+}
+
+.header:hover {
+    background-color: var(--mantine-color-default-hover);
+}
+
+.header:focus-visible {
+    outline: 2px solid var(--mantine-primary-color-filled);
+    outline-offset: -2px;
+}
+
+/* An expanded row's labels, one LABEL_HEIGHT line each, below the line. */
+.details {
+    padding: 4px var(--mantine-spacing-xs) 4px
+        calc(var(--mantine-spacing-xs) + 3px + var(--mantine-spacing-sm));
+    background-color: var(--mantine-color-default-hover);
+}
+
+.labels {
+    margin: 0;
+}
+
+.label {
+    display: flex;
+    gap: var(--mantine-spacing-sm);
+    height: 20px;
+    align-items: center;
+}
+
+.label dt {
+    flex: 0 0 auto;
+    min-width: 120px;
+}
+
+.label dd {
+    margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
 }
 
 /* The level's colour (`bg` style prop) down the row's left edge. */

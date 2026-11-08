@@ -482,3 +482,29 @@ should add a dated line here per feature.
   there. The bar uses `align-self: stretch` with `margin: -2px 0` to cover the row padding; with variable row heights it
   still stretches.
 - 2026-11-08T18:57:13Z supervisor: viz-log-stream-level-bar passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-expand-row (session)
+
+- **What.** In `packages/frontend/src/components/LogStream/LogStreamView.tsx`, each `log-stream-row` is now an outer
+  absolutely positioned `Box` (one per line, still carrying `data-testid="log-stream-row"` and `data-level`). It holds a
+  clickable header `Group` (`role="button"`, `tabIndex=0`, `aria-expanded`, toggled by click or Enter/Space) with the
+  level bar, timestamp and line. When the row is expanded it also holds a `log-stream-details` box that lists every label
+  as a `<dl>` of key (`dt`, dimmed) and value (`dd`), in model order, or "No labels". The view keeps a `Set` of
+  expanded line ids, so several rows can be open at once (as in Grafana). The ids are `line.id`, so the set survives
+  re-sorting and, later, filtering.
+- **Variable row heights.** Rows now use `ref={virtualizer.measureElement}` + `data-index`. The fixed `height` moved
+  from `.row` to `.header` (23 px + 1 px row border = `ROW_HEIGHT` 24). `estimateSize` returns
+  `24 + 9 + labels × 20` for expanded rows (`DETAILS_PADDING`, `LABEL_HEIGHT`; keep them in step with `.details` and
+  `.label` in the CSS module). A custom `measureElement` option falls back to that estimate when the element measures 0
+  (jsdom), so the jsdom window tests still draw rows and positions stay sensible.
+- **Tested as a user.** No app mounts the view yet, so I drove `FIVE_LOGS` in a throwaway vitest file (deleted) with
+  userEvent. Row starts were 0/24/48/72/96 px. After clicking rows 1 and 3, two details boxes showed app, namespace and
+  pod, and the starts became 0/93/117/210/234. Enter on a focused open header closed it, and Space opened it again.
+  After `bash ./init.sh` the check passes 1/1, and log-stream-view (3/3), virtualised (1/1) and level-bar (2/2) still
+  pass. The frontend typecheck, oxlint and oxfmt are clean.
+- **For the next sessions.** `log-stream-show-labels` expects `log-stream-labels` inside each row. Put it in the header
+  (or a second header line) and add its height to `estimatedRowHeight`. `log-stream-wrap-lines` can now drop
+  `white-space: pre` / the fixed `.header` height when wrapping; measurement already handles taller rows in a browser.
+  `log-stream-filter`: keep the expanded set keyed by `line.id`. Do not reset it on filter changes unless the spec says
+  to.
+- 2026-11-08T19:00:22Z supervisor: viz-log-stream-expand-row passed the gate in round 1
