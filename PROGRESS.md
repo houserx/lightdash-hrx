@@ -548,3 +548,24 @@ should add a dated line here per feature.
   log-stream-view (3/3), virtualised (1/1), level-bar (2/2), expand-row (1/1), show-labels (2/2) still pass. Frontend
   tsc, oxlint (`pnpm run linter`) and oxfmt clean.
 - 2026-11-08T19:06:27Z supervisor: viz-log-stream-wrap-lines passed the gate in round 1
+
+### 2026-11-08 viz-log-stream-filter (session)
+
+- **What.** `packages/frontend/src/components/LogStream/LogStreamView.tsx` now has a filter box (Mantine `TextInput`,
+  `aria-label="Filter lines"`, with a "Clear filter" close button while it has text) in a 36 px `.toolbar` above the
+  lines (`TOOLBAR_HEIGHT`, subtracted from the viewport height with the footer). `filterLines` keeps the lines whose
+  `line` text contains the trimmed filter, ignoring case; a blank filter keeps all. The virtualiser, row estimates and
+  keys all run over the filtered list, and the footer says `<shown> of <total> lines`. Filtered to nothing shows
+  "No lines match"; no lines at all still shows "No log lines". The box is shown in both cases.
+- **Decisions.** No spec text defines the match; I took the narrowest reading: the line text only (not labels or
+  level). The filter is view state only (not saved to the chart config). The expanded set stays keyed by `line.id` and is
+  not reset when the filter changes, so an expanded row stays expanded after the filter is cleared.
+- **Tested as a user.** No app mounts the view yet, so I drove `FIVE_LOGS` in a throwaway vitest file (deleted) with
+  userEvent: 5 of 5 lines → typed `timeout` → the two timeout lines (`TIMEOUT` matched too), `2 of 5 lines` → expanded
+  one → clicked Clear filter → all 5 lines back, `5 of 5 lines`, still expanded → typed `nope` → `0 of 5 lines`,
+  "No lines match". After `bash ./init.sh` the check passes 2/2; log-stream view, virtualised, level-bar, expand-row,
+  show-labels, wrap-lines still pass. Frontend tsc, oxlint, oxfmt clean.
+- **For the next sessions.** `log-stream-csv-export` exports "the shown lines": use the filtered `lines` array
+  inside `LogStreamView` (in display order), not `model.lines`. The toolbar is the natural place for the Download CSV
+  button.
+- 2026-11-08T19:09:27Z supervisor: viz-log-stream-filter passed the gate in round 1

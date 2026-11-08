@@ -3,6 +3,14 @@
     overflow: hidden;
 }
 
+/* The filter box above the lines; its height is TOOLBAR_HEIGHT in the component. */
+.toolbar {
+    display: flex;
+    align-items: center;
+    padding: 0 var(--mantine-spacing-xs);
+    border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
 .row {
     position: absolute;
     top: 0;
