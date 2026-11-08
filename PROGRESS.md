@@ -339,3 +339,18 @@ should add a dated line here per feature.
 - **Note.** `levelColors` keys are the 7 `LogLevel` names. Unknown keys are not rejected, because the schema has no
   `additionalProperties: false`, the same as other chart configs.
 - 2026-11-08T18:30:21Z supervisor: viz-log-stream-as-code passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-as-code (session)
+
+- **What.** No code change was needed. `viz-chart-type-members` had already added `TraceWaterfallChart`
+  (`packages/common/src/eng1799/traceWaterfall.ts`, all 9 span field ids as optional strings with doc comments) to
+  `ChartConfig`/`ChartAsCodeConfig`, and the generated `chart-as-code-1.0.json` has `$defs.TraceWaterfallChart`. The
+  check passed on the untouched tree (schema up to date, 5/5).
+- **Verified the as-code path.** The CLI `download` only special-cases cartesian and `data_app_viz`, so a trace waterfall
+  chart downloads as `type: trace_waterfall` with its `config` unchanged.
+- **Tested as a user.** `bash ./init.sh`, then the check. A real `lightdash download` needs a running backend and full DB
+  (pgvector is not available locally). Instead I wrote a synthetic chart YAML in the shape download writes, at
+  `../tmp/twac/charts/synthetic-trace.yml`, and ran `pnpm -F cli exec tsx src/index.ts lint --path …`. All 9 span field
+  ids were reported valid. With `spanIdFieldId: [a, b]` it failed with "Expected type 'string' (line 19)".
+- **Note.** Unknown config keys are not rejected (no `additionalProperties: false`), the same as other chart configs.
+- 2026-11-08T18:33:42Z supervisor: viz-trace-waterfall-as-code passed the gate in round 1
