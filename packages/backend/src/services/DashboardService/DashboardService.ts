@@ -41,6 +41,7 @@ import {
     isMergeMetricSource,
     isUserWithOrg,
     isValidDashboardTilePositions,
+    isValidDashboardTimeRange,
     isValidFrequency,
     isValidTimezone,
     KnexPaginateArgs,
@@ -1939,11 +1940,27 @@ export class DashboardService
         return this.create(user, projectUuid, dashboardToCreate);
     }
 
+    /** Refuses a malformed Dashboard Time Range; null or omitted means none. */
+    private static assertValidTimeRange(
+        timeRange: CreateDashboard['timeRange'],
+    ): void {
+        if (
+            timeRange !== undefined &&
+            timeRange !== null &&
+            !isValidDashboardTimeRange(timeRange)
+        ) {
+            throw new ParameterError(
+                'Invalid dashboard time range: from and to must be relative (now, now-6h) or ISO-8601 with an offset, from must not be after to, and refreshInterval must be one of 10s, 30s, 1m, 5m, 15m, 30m, 1h or null',
+            );
+        }
+    }
+
     async create(
         user: SessionUser,
         projectUuid: UUID,
         dashboard: CreateDashboard,
     ): Promise<Dashboard> {
+        DashboardService.assertValidTimeRange(dashboard.timeRange);
         const resolvedSpaceUuid =
             dashboard.spaceUuid ??
             (await this.spacePermissionService.getFirstViewableSpaceUuid(
@@ -2336,6 +2353,19 @@ export class DashboardService
                               },
                           }
                         : newDashboard.config,
+                    timeRange: newDashboard.timeRange
+                        ? {
+                              ...newDashboard.timeRange,
+                              tileTimeDimensions: Object.fromEntries(
+                                  Object.entries(
+                                      newDashboard.timeRange.tileTimeDimensions,
+                                  ).map(([key, value]) => [
+                                      tileUuidMap.get(key) ?? key,
+                                      value,
+                                  ]),
+                              ),
+                          }
+                        : null,
                 },
                 user,
                 projectUuid,
@@ -2752,6 +2782,10 @@ export class DashboardService
             organizationUuid: existingDashboardDao.organizationUuid,
         });
 
+        if ('timeRange' in dashboardFields) {
+            DashboardService.assertValidTimeRange(dashboardFields.timeRange);
+        }
+
         const draftResult = await this.maybeStoreDraft(
             user,
             existingDashboardDao,
@@ -2980,6 +3014,11 @@ export class DashboardService
                         dashboardFields.config === undefined
                             ? existingDashboardDao.config
                             : dashboardFields.config,
+                    // Omitted keeps the saved range; null clears it
+                    timeRange:
+                        dashboardFields.timeRange === undefined
+                            ? existingDashboardDao.timeRange
+                            : dashboardFields.timeRange,
                 },
                 user,
                 existingDashboardDao.projectUuid,
@@ -4410,6 +4449,7 @@ export class DashboardService
                     parameters: targetVersion.parameters,
                     tabs: targetVersion.tabs,
                     config: targetVersion.config,
+                    timeRange: targetVersion.timeRange ?? null,
                 },
                 user,
                 dashboardDao.projectUuid,

@@ -4,6 +4,7 @@ import {
     DashboardTileTypes,
     type AgentIdentityClaim,
     type DashboardParameters,
+    type DashboardTimeRange,
 } from '@lightdash/common';
 import { Knex } from 'knex';
 
@@ -46,6 +47,7 @@ type DbDashboardVersion = {
     created_at: Date;
     updated_by_user_uuid: string | undefined;
     config: DashboardConfig | undefined;
+    time_range: DashboardTimeRange | null;
 };
 
 type DbDashboardView = {
@@ -109,7 +111,9 @@ export type DashboardVersionTable = Knex.CompositeTableType<
         DbDashboardVersion,
         'dashboard_id' | 'updated_by_user_uuid' | 'config' | 'agent_identity'
     > &
-        Partial<Pick<DbDashboardVersion, 'dashboard_version_uuid'>>
+        Partial<
+            Pick<DbDashboardVersion, 'dashboard_version_uuid' | 'time_range'>
+        >
 >;
 
 export type DashboardViewTable = Knex.CompositeTableType<

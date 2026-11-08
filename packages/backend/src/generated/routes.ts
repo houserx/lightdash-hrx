@@ -9618,6 +9618,69 @@ const models: TsoaRoute.Models = {
         additionalProperties: true,
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    DashboardRefreshInterval: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'union',
+            subSchemas: [
+                { dataType: 'enum', enums: ['10s'] },
+                { dataType: 'enum', enums: ['30s'] },
+                { dataType: 'enum', enums: ['1m'] },
+                { dataType: 'enum', enums: ['5m'] },
+                { dataType: 'enum', enums: ['15m'] },
+                { dataType: 'enum', enums: ['30m'] },
+                { dataType: 'enum', enums: ['1h'] },
+            ],
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    DashboardTileTimeDimension: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                tableName: { dataType: 'string', required: true },
+                fieldId: { dataType: 'string', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    'Record_string.DashboardTileTimeDimension_': {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {},
+            additionalProperties: { ref: 'DashboardTileTimeDimension' },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
+    DashboardTimeRange: {
+        dataType: 'refAlias',
+        type: {
+            dataType: 'nestedObjectLiteral',
+            nestedProperties: {
+                tileTimeDimensions: {
+                    ref: 'Record_string.DashboardTileTimeDimension_',
+                    required: true,
+                },
+                refreshInterval: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { ref: 'DashboardRefreshInterval' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
+                    required: true,
+                },
+                to: { dataType: 'string', required: true },
+                from: { dataType: 'string', required: true },
+            },
+            validators: {},
+        },
+    },
+    // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
     DashboardOwner: {
         dataType: 'refAlias',
         type: {
@@ -9790,6 +9853,14 @@ const models: TsoaRoute.Models = {
                             { dataType: 'enum', enums: [null] },
                         ],
                         required: true,
+                    },
+                    timeRange: {
+                        dataType: 'union',
+                        subSchemas: [
+                            { ref: 'DashboardTimeRange' },
+                            { dataType: 'enum', enums: [null] },
+                            { dataType: 'undefined' },
+                        ],
                     },
                     colorPaletteUuid: {
                         dataType: 'union',
@@ -16853,6 +16924,13 @@ const models: TsoaRoute.Models = {
                         { dataType: 'enum', enums: [null] },
                     ],
                     required: true,
+                },
+                timeRange: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { ref: 'DashboardTimeRange' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
                 },
                 config: { ref: 'DashboardConfig' },
                 slug: { dataType: 'string', required: true },
@@ -66200,6 +66278,13 @@ const models: TsoaRoute.Models = {
                         { dataType: 'enum', enums: [null] },
                     ],
                 },
+                timeRange: {
+                    dataType: 'union',
+                    subSchemas: [
+                        { ref: 'DashboardTimeRange' },
+                        { dataType: 'enum', enums: [null] },
+                    ],
+                },
                 config: { ref: 'DashboardConfig' },
                 tabs: {
                     dataType: 'array',
@@ -77471,7 +77556,7 @@ const models: TsoaRoute.Models = {
         },
     },
     // WARNING: This file was auto-generated with tsoa. Please do not modify it. Re-run tsoa to re-generate this file: https://github.com/lukeautry/tsoa
-    'Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config_':
+    'Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config-or-timeRange_':
         {
             dataType: 'refAlias',
             type: {
@@ -77525,6 +77610,14 @@ const models: TsoaRoute.Models = {
                             { dataType: 'undefined' },
                         ],
                     },
+                    timeRange: {
+                        dataType: 'union',
+                        subSchemas: [
+                            { ref: 'DashboardTimeRange' },
+                            { dataType: 'enum', enums: [null] },
+                            { dataType: 'undefined' },
+                        ],
+                    },
                 },
                 validators: {},
             },
@@ -77533,7 +77626,7 @@ const models: TsoaRoute.Models = {
     DashboardVersionedFields: {
         dataType: 'refAlias',
         type: {
-            ref: 'Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config_',
+            ref: 'Pick_CreateDashboard.tiles-or-filters-or-parameters-or-updatedByUser-or-tabs-or-config-or-timeRange_',
             validators: {},
         },
     },

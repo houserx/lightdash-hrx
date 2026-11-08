@@ -118,6 +118,7 @@ export type GetDashboardQuery = Pick<
         | 'dashboard_version_uuid'
         | 'created_at'
         | 'config'
+        | 'time_range'
     > &
     Pick<ProjectTable['base'], 'project_uuid'> &
     Pick<UserTable['base'], 'user_uuid' | 'first_name' | 'last_name'> &
@@ -241,6 +242,8 @@ export class DashboardModel {
                 dashboard_version_uuid: uuidv4(),
                 updated_by_user_uuid: version.updatedByUser?.userUuid,
                 config,
+                // Each version stores its own range: omitted or null means none
+                time_range: version.timeRange ?? null,
             },
             [
                 'dashboard_version_id',
@@ -1173,6 +1176,7 @@ export class DashboardModel {
                 `${DashboardVersionsTableName}.dashboard_version_uuid`,
                 `${DashboardVersionsTableName}.created_at`,
                 `${DashboardVersionsTableName}.config`,
+                `${DashboardVersionsTableName}.time_range`,
                 `${UserTableName}.user_uuid`,
                 `${UserTableName}.first_name`,
                 `${UserTableName}.last_name`,
@@ -1625,6 +1629,7 @@ export class DashboardModel {
             },
             slug: dashboard.slug,
             config: dashboard?.config,
+            timeRange: dashboard.time_range ?? null,
             colorPaletteUuid: dashboard.color_palette_uuid ?? null,
             owner: dashboard.owner_user_uuid
                 ? {
@@ -2737,6 +2742,7 @@ export class DashboardModel {
                 `${DashboardVersionsTableName}.dashboard_version_uuid`,
                 `${DashboardVersionsTableName}.created_at`,
                 `${DashboardVersionsTableName}.config`,
+                `${DashboardVersionsTableName}.time_range`,
                 `${UserTableName}.user_uuid`,
                 `${UserTableName}.first_name`,
                 `${UserTableName}.last_name`,
@@ -3134,6 +3140,7 @@ export class DashboardModel {
             },
             slug: dashboard.slug,
             config: dashboard?.config,
+            timeRange: dashboard.time_range ?? null,
             colorPaletteUuid: dashboard.color_palette_uuid ?? null,
             owner: dashboard.owner_user_uuid
                 ? {
