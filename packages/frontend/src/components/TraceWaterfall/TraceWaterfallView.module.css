@@ -18,6 +18,15 @@
     border-bottom: 1px solid var(--mantine-color-default-border);
 }
 
+.tracePicker {
+    padding: 4px var(--mantine-spacing-xs);
+    border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.traceSelect {
+    flex: 0 1 320px;
+}
+
 .swatch {
     flex: 0 0 auto;
     width: 10px;

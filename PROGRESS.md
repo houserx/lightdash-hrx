@@ -764,3 +764,25 @@ should add a dated line here per feature.
   button showed the orphan note and parent id zz. After `bash ./init.sh` the check passes 3/3; view 5/5, collapse
   3/3, service-colours 2/2 still pass; frontend `tsc --noEmit` clean; oxlint and oxfmt clean.
 - 2026-11-08T19:42:00Z supervisor: viz-trace-waterfall-span-drawer passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-trace-picker (session)
+
+- **What.** `TraceWaterfallView.tsx`: when `model.traces` holds more than one trace, a searchable Mantine `Select`
+  above the legend lists them as "<traceId> (<n> spans)" and switches the drawn trace. The view keeps the picked
+  trace id in state and falls back to the first trace when none is picked or the picked id is gone from the model.
+  One trace (or none) shows no picker. CSS: `.tracePicker`, `.traceSelect`. The model already grouped spans by
+  trace, so `@lightdash/visualization` is unchanged.
+- **Trap.** Mantine 9 `Select` copies its `label` (or, without one, its `aria-label`) onto the options listbox, which
+  stays mounted while closed, so `getByLabelText('Trace')` found two elements. The visible "Trace" is a `Text` with a
+  `useId` id and the Select names itself with `aria-labelledby`; Mantine doesn't pass that on to the listbox.
+- **Decisions.** Collapse state (a set of span ids) and the selected span are not reset when switching traces: span
+  ids differ across traces, so collapsing in trace-b and coming back finds it still collapsed, and the drawer closes
+  because the selected span isn't in the new trace.
+- **Tested as a user.** No app mounts the view yet, so I drove it with user-event from a throwaway vitest file
+  (deleted) on BASIC_TRACE + a two-span trace-b: it opened on trace-a (rows a e b c d, 5 services, axis to 200 ms);
+  the options were "trace-a (5 spans)" and "trace-b (2 spans)"; picking trace-b showed b-root b-child, a worker legend
+  and an axis to 40 ms; collapsing job.run and opening its drawer worked; typing "trace-a" filtered to one option and
+  ArrowDown+Enter switched back; picking trace-b again still had job.run collapsed. A single trace showed no combobox.
+  After `bash ./init.sh` the check passes 3/3; view 5/5, collapse 3/3, span-drawer 3/3, service-colours 2/2 still
+  pass; frontend `tsc --noEmit` clean; oxlint and oxfmt clean on the component folder.
+- 2026-11-08T19:45:47Z supervisor: viz-trace-waterfall-trace-picker passed the gate in round 1

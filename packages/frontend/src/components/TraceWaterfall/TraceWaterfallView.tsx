@@ -8,6 +8,7 @@ import {
     Center,
     Group,
     ScrollArea,
+    Select,
     Stack,
     Text,
     UnstyledButton,
@@ -18,7 +19,7 @@ import {
     IconChevronRight,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useMemo, useState, type FC } from 'react';
+import { useCallback, useId, useMemo, useState, type FC } from 'react';
 import MantineIcon from '../common/MantineIcon';
 import { SpanDetailDrawer } from './SpanDetailDrawer';
 import {
@@ -228,17 +229,34 @@ const SpanRow: FC<
 };
 
 /**
- * A trace waterfall: one row per span of the first trace, in the model's
+ * A trace waterfall: one row per span of one trace, in the model's
  * tree order and indented by depth, each with its name, service and
  * duration and a bar placed on a time axis that runs from 0 ms to the
  * trace's duration. Bars take their service's colour, and a legend above
  * names each service in it. Spans whose status is an error are marked in red.
  * A span with children has a Collapse / Expand button that hides or shows
  * its whole subtree. Clicking a span's name opens a drawer with its
- * details and every attribute.
+ * details and every attribute. When the results hold several traces, the
+ * first is shown and a Trace picker switches between them.
  */
 export const TraceWaterfallView: FC<Props> = ({ model }) => {
-    const trace = model.traces[0];
+    const tracePickerLabelId = useId();
+    const [pickedTraceId, setPickedTraceId] = useState<string | null>(null);
+    // The picked trace, or the first one when none is picked or the picked
+    // one is no longer in the results.
+    const trace =
+        model.traces.find((t) => t.traceId === pickedTraceId) ??
+        model.traces[0];
+    const traceOptions = useMemo(
+        () =>
+            model.traces.map((t) => ({
+                value: t.traceId,
+                label: `${t.traceId} (${t.spans.length} ${
+                    t.spans.length === 1 ? 'span' : 'spans'
+                })`,
+            })),
+        [model.traces],
+    );
     const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(
         () => new Set(),
     );
@@ -271,6 +289,28 @@ export const TraceWaterfallView: FC<Props> = ({ model }) => {
     }
     return (
         <Stack gap={0} h="100%" className={classes.root}>
+            {traceOptions.length > 1 && (
+                // The visible "Trace" names the input through aria-labelledby:
+                // a Select `label` or `aria-label` would also name its options
+                // listbox, so "Trace" would name two elements.
+                <Group gap="xs" wrap="nowrap" className={classes.tracePicker}>
+                    <Text id={tracePickerLabelId} fz="xs" c="dimmed">
+                        Trace
+                    </Text>
+                    <Select
+                        aria-labelledby={tracePickerLabelId}
+                        size="xs"
+                        data={traceOptions}
+                        value={trace.traceId}
+                        onChange={(value) => {
+                            if (value !== null) setPickedTraceId(value);
+                        }}
+                        allowDeselect={false}
+                        searchable
+                        className={classes.traceSelect}
+                    />
+                </Group>
+            )}
             <ServiceLegend spans={trace.spans} />
             <TimeAxis durationMs={trace.durationMs} />
             <ScrollArea flex={1} type="auto">
