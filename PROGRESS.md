@@ -786,3 +786,27 @@ should add a dated line here per feature.
   After `bash ./init.sh` the check passes 3/3; view 5/5, collapse 3/3, span-drawer 3/3, service-colours 2/2 still
   pass; frontend `tsc --noEmit` clean; oxlint and oxfmt clean on the component folder.
 - 2026-11-08T19:45:47Z supervisor: viz-trace-waterfall-trace-picker passed the gate in round 1
+
+### 2026-11-08 viz-trace-waterfall-config-panel (session)
+
+- **What.** New `packages/frontend/src/components/VisualizationConfigs/TraceWaterfallConfig/TraceWaterfallConfigPanel.tsx`,
+  a controlled panel like `LogStreamConfigPanel`: props `config: TraceWaterfallChart`, `fields: { id, label }[]`,
+  `onChange(config)`. One "Span fields" section with nine searchable, clearable Mantine `Select`s: "Trace ID field",
+  "Span ID field", "Parent span ID field", "Service field", "Span name field", "Start field", "Duration field" (description
+  "In milliseconds"), "Status field", "Attributes field". Each pick calls `onChange({ ...config, [key]: value })`;
+  clearing sets the key to `undefined`, so `@lightdash/visualization` detects the column by name again
+  (placeholder "Detect automatically").
+- **Trap (same as log stream).** Pickers pass `comboboxProps={{ keepMounted: false }}`, else the always-mounted listbox
+  shares the label and `getByLabelText` finds two elements. Keep labels distinct for the acceptance regexes:
+  `/^span id field/` must not hit "Parent span ID field", `/duration field/` needs the label to be exactly
+  "Duration field" (not "Duration (ms) field").
+- **Tested as a user.** No app mounts the panel yet (`viz-native-types-mounted` does that). Throwaway vitest harness
+  (deleted): config in `useState`, panel + `TraceWaterfallView` fed by `renderChart`, `BASIC_TRACE` plus a
+  `spans_service_name` column ("svc-<service>"). All nine pickers showed their bound field; the Service options listed
+  all ten fields; picking "Service name" set `serviceFieldId: 'spans_service_name'` and the legend changed from
+  gateway/auth/orders-api/postgres/redis to svc-gateway/...; clearing the picker set it to `undefined` and the legend
+  went back (auto-detected `spans_service`). After `bash ./init.sh` the check passes 2/2. Frontend `tsc --noEmit`
+  clean; oxlint and oxfmt clean on the new folder.
+- **For the next sessions.** When mounting, map the explore's dimensions to `fields` and wire `onChange` to the chart
+  config store, as for the log stream panel.
+- 2026-11-08T19:48:43Z supervisor: viz-trace-waterfall-config-panel passed the gate in round 1
