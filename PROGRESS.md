@@ -805,3 +805,4 @@ token verification for a *valid* token, which feature 39 then hardens.
   still passes (full suite: 26 pass, including eng_perf_promql_large_range; the failures are all
   unbuilt or halted features).
 - 2026-11-08T18:27:15Z supervisor: eng-max-rows-overflow passed the gate in round 1
+- 2026-11-08T18:35:23Z supervisor: eng-pg-statement-timeout halted: command engine.feature.eng-pg-statement-timeout.r1.rerun-eng-promql-upstream-errors stopped: STOP file present
