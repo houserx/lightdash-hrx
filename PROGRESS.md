@@ -1470,3 +1470,21 @@ should add a dated line here per feature.
   tables, each with a target and either a Lightdash path or a drop reason. The module link is relative and resolves
   from `docs/eng-1799/`. The check passed 4/4 after `bash ./init.sh`, and `oxfmt --check` is clean.
 - 2026-11-08T21:41:30Z supervisor: viz-docs-panel-mapping passed the gate in round 1
+
+## viz-docs (round 1)
+- **What changed.** New doc `docs/eng-1799/viz.md` (doc only, no code). Sections: the ee/ typecheck measurement and
+  the native decision, log stream, trace waterfall, built-in chart additions, the HouseRx chart registry (six slugs
+  with fields and options), Build (`pnpm -F chart-registry build`, the `chart-registry/dist/` layout), Host the
+  registry (`LIGHTDASH_CHART_REGISTRY_URL` and the other `LIGHTDASH_CHART_REGISTRY_*` variables, https,
+  `index.json`/`index-next.json`, allowed image content types, size limits, immutable versions, `ALLOW_PRIVATE_HOSTS`
+  for an internal mirror), Grafana panel mapping (summary plus a link to `grafana-panel-mapping.md`), and Contract
+  assumptions (the seven from this handbook, plus bar-gauge min/max defaults and heatmap non-cumulative buckets).
+- **Sources.** Facts come from this file, `parseConfig.ts` (registry env vars) and `ee/clients/ChartRegistryClient.ts`
+  (read only: content-type allowlist, 8 MiB index / 50 MiB artifact limits). Nothing was invented about HouseRx
+  hosting: the doc says the bucket and variable setup is a later content task.
+- **Trap.** Hand-maintained like the mapping doc. If an env var, slug or registry option changes, update it by hand.
+- **Tested as a user.** Read the doc top to bottom against the feature steps: the log stream, trace waterfall,
+  registry and hosting sections are there, with `LIGHTDASH_CHART_REGISTRY_URL`, the build command and the ee/
+  measurement. The mapping link is relative and resolves from `docs/eng-1799/`. After `bash ./init.sh` the check
+  passed 6/6, docs-panel-mapping still passes 4/4, and `oxfmt --check` is clean.
+- 2026-11-08T21:44:32Z supervisor: viz-docs passed the gate in round 1
