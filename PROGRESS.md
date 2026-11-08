@@ -1840,3 +1840,13 @@ token verification for a *valid* token, which feature 39 then hardens.
   write::run. Replace it by running the statement with COMMIT instead of ROLLBACK (generalise
   `preview_statement`). The verify endpoint (test_mode) is not routed yet.
 - 2026-11-08T21:57:49Z supervisor: eng-write-preview passed the gate in round 1
+- eng-write-preview-returning-cap (functional): no code change needed. eng-write-preview had
+  already built it: `write::MAX_RETURNING = 100` caps the rows collected (the rest are read and
+  dropped, so the command still completes), `rows_affected` comes from CommandComplete, and
+  `returning` is null when the prepared statement has no result columns.
+  Tested as a user: `../tmp/write-preview-cap/run.sh <out>` (same rig as write-preview, seeded
+  with 200 widgets). Preview of `UPDATE widgets SET note = 'x' RETURNING id` gave 200,
+  rows_affected 200, preview true, 100 returning rows (ids 1..100). Preview of
+  `DELETE FROM widgets WHERE id > 190` gave 200, rows_affected 10, returning null. Through
+  platform_query the table still had 200 rows and 0 notes. Check passes.
+- 2026-11-08T21:59:22Z supervisor: eng-write-preview-returning-cap passed the gate in round 1
