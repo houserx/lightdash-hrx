@@ -124,6 +124,28 @@ describe('evaluateAlertSeries', () => {
         expect(byInstance(previous, 'db-1')?.stateSince).toEqual(at(2));
     });
 
+    it('keeps a recovered series firing for `keepFiringFor`, then resolves it', () => {
+        const keepRule = { ...rule, keepFiringFor: '2m' };
+        const states: string[] = [];
+        let previous: AlertInstanceRecord[] = [];
+        for (const [m, value] of [
+            [0, 95],
+            [1, 10],
+            [2, 10],
+            [3, 10],
+        ] as const) {
+            ({ instances: previous } = evaluateAlertSeries({
+                rule: keepRule,
+                rows: disk({ 'db-1': value }),
+                previous,
+                at: at(m),
+            }));
+            states.push(byInstance(previous, 'db-1')!.state);
+        }
+        expect(states).toEqual(['firing', 'firing', 'resolved', 'normal']);
+        expect(byInstance(previous, 'db-1')?.stateSince).toEqual(at(3));
+    });
+
     it('resolves a firing series missing from the result, then removes it', () => {
         const fired = evaluateAlertSeries({
             rule,
