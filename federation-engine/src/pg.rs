@@ -137,8 +137,10 @@ impl PgHandlers {
             .build()
             .map_err(|e| format!("cannot build the HTTP client for sources: {e}"))?;
         let sql = Sql::new();
+        let logql = Logql::new(config, http.clone());
         sql.ctx
-            .register_udtf("logql", Arc::new(Logql::new(config, http.clone())));
+            .register_udtf("logql_metric", Arc::new(logql.clone().metric()));
+        sql.ctx.register_udtf("logql", Arc::new(logql));
         let promql = Promql::new(config, http);
         sql.ctx
             .register_udtf("promql_instant", Arc::new(promql.clone().instant()));

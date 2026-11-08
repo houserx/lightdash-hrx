@@ -986,3 +986,25 @@ token verification for a *valid* token, which feature 39 then hardens.
   sources::eng_logql_streams, promql::eng_promql_source_selection and promql::eng_max_rows_overflow
   pass, and so do the logql/promql unit tests.
 - 2026-11-08T19:03:51Z supervisor: eng-logql-streams passed the gate in round 1
+- 2026-11-08 eng-logql-metric (worker, round 1): `logql_metric(query, start, end, step[, source])`
+  is `Logql::new(..).metric()` in `src/logql.rs` (the same pattern as `Promql::instant`) and is
+  registered in pg.rs. It returns the promql columns (`sample_schema`). At plan time it takes 4 or
+  5 constant arguments (else 42883), and step goes through promql's `parse_duration` (a bad step →
+  22023 with no request). At scan time it POSTs `query` unchanged to
+  `<url>/loki/api/v1/query_range`, with start/end as Unix-ns integers and `step` as decimal seconds
+  (`1m` → `60`). It sends no limit or direction. The matrix becomes rows through promql's
+  `result_batch`, which is now `pub(crate)` and takes a `kind` label for its messages
+  ("loki source …" / "prometheus source …"; the promql messages are unchanged). `seconds_text` is
+  `pub(crate)` too. A `streams` answer (a log query given to logql_metric) fails with 42809 and
+  points to logql. max_rows → 54000, and the restricted-source fail-closed rule (42501) is the
+  same as for logql (shared `HttpSources::resolve`).
+  Tested as a user: `../tmp/logql_metric/run.sh` (a Python Loki mock on 59202 that answers a matrix
+  when the query contains `over_time` and streams otherwise, plus the real engine on 55541, driven
+  by `../tmp/pgclient` bin `sql`). The step-1 query gave 3 rows with timestamp/value/labels/series
+  (`{app="api"}` 3.0 at 00:00 and 5.0 at 00:01, `{app="web"}` 1.0). GROUP BY label(labels,'app')
+  summed api=8, web=1. Loki received the query byte-for-byte with step=60 (and `'90s'` → 90). A log
+  query gave 42809 "use logql", step '0s' gave 22023, source 'nope' gave 42704 and 3 arguments gave
+  42883. logql() still sends limit/direction. Checks sources::eng_logql_metric, eng_logql_streams,
+  promql::eng_promql_range, eng_promql_instant and eng_max_rows_overflow pass, and so do the
+  logql/promql unit tests. rustfmt is not installed on this machine, so `cargo fmt` was not run.
+- 2026-11-08T19:07:59Z supervisor: eng-logql-metric passed the gate in round 1

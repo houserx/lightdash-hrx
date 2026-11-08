@@ -2,6 +2,10 @@
 //! for log streams as a table of `timestamp timestamptz, line text, labels json, stream text`,
 //! one row per log line.
 //!
+//! `logql_metric(query, start, end, step[, source])`: a Loki `query_range` for a metric query (a
+//! matrix) as the `promql` columns `timestamp timestamptz, value float8, labels json, series
+//! text`, one row per sample.
+//!
 //! As with `promql`, the arguments are constants checked when the statement is planned, and the
 //! query goes to Loki unchanged when the table is scanned. Loki's nanosecond timestamps are kept
 //! to the microsecond (timestamptz precision), truncated.
@@ -23,12 +27,14 @@ use engine_config::{Config, SourceKind};
 use serde_json::{Map, Value};
 
 use crate::promql::{
-    EXTENSION_NAME_KEY, JSON_EXTENSION, UTC, constant, series_name, text_argument, time_argument,
+    EXTENSION_NAME_KEY, JSON_EXTENSION, UTC, constant, parse_duration, result_batch,
+    sample_schema, seconds_text, series_name, text_argument, time_argument,
 };
 use crate::session::sqlstate;
 use crate::sources::{HttpSource, HttpSources};
 
 const SIGNATURE: &str = "logql(query, start, end[, limit, direction, source])";
+const METRIC_SIGNATURE: &str = "logql_metric(query, start, end, step[, source])";
 const DEFAULT_LIMIT: i64 = 1000;
 const DEFAULT_DIRECTION: &str = "backward";
 /// How much of a non-JSON Loki error body goes into the SQL error.
@@ -49,11 +55,13 @@ pub fn stream_schema() -> SchemaRef {
     ]))
 }
 
-/// The configured Loki sources and the HTTP client that queries them, as `logql`.
+/// The configured Loki sources and the HTTP client that queries them, as `logql` (a log query)
+/// or, after [`Logql::metric`], as `logql_metric`.
 #[derive(Debug, Clone)]
 pub struct Logql {
     sources: HttpSources,
     http: reqwest::Client,
+    metric: bool,
 }
 
 impl Logql {
@@ -61,7 +69,58 @@ impl Logql {
         Logql {
             sources: HttpSources::new(config, SourceKind::Loki),
             http,
+            metric: false,
         }
+    }
+
+    /// The same sources as `logql_metric(query, start, end, step[, source])`.
+    pub fn metric(self) -> Logql {
+        Logql {
+            metric: true,
+            ..self
+        }
+    }
+
+    /// `logql_metric(query, start, end, step[, source])`: the query, its range and its step go
+    /// to Loki; `limit` and `direction` don't apply to a metric query.
+    fn metric_call(&self, args: TableFunctionArgs) -> datafusion::error::Result<LogqlQuery> {
+        let sig = METRIC_SIGNATURE;
+        let exprs = args.exprs();
+        if !(4..=5).contains(&exprs.len()) {
+            return Err(sqlstate(
+                "42883",
+                format!("{sig} takes 4 or 5 arguments, not {}", exprs.len()),
+            ));
+        }
+        let session = args.session();
+        let arg = |i: usize| constant(&exprs[i], session, sig);
+        let query = text_argument(arg(0)?, "query", sig)?;
+        let start = time_argument(arg(1)?, "start", sig)?;
+        let end = time_argument(arg(2)?, "end", sig)?;
+        let step = text_argument(arg(3)?, "step", sig)?;
+        let step = parse_duration(&step).ok_or_else(|| {
+            sqlstate(
+                "22023",
+                format!(
+                    "{sig}: invalid step \"{step}\": expected a positive duration such as 30s, 5m or 1h"
+                ),
+            )
+        })?;
+        let source = match exprs.get(4) {
+            Some(_) => Some(text_argument(arg(4)?, "source", sig)?),
+            None => None,
+        };
+        Ok(LogqlQuery {
+            http: self.http.clone(),
+            source: self.sources.resolve(source)?,
+            metric: true,
+            form: vec![
+                ("query", query),
+                ("start", nanos_text(start)),
+                ("end", nanos_text(end)),
+                ("step", seconds_text(step)),
+            ],
+        })
     }
 }
 
@@ -70,6 +129,9 @@ impl TableFunctionImpl for Logql {
         &self,
         args: TableFunctionArgs,
     ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        if self.metric {
+            return Ok(Arc::new(self.metric_call(args)?));
+        }
         let exprs = args.exprs();
         if !(3..=6).contains(&exprs.len()) {
             return Err(sqlstate(
@@ -98,6 +160,7 @@ impl TableFunctionImpl for Logql {
         Ok(Arc::new(LogqlQuery {
             http: self.http.clone(),
             source,
+            metric: false,
             form: vec![
                 ("query", query),
                 ("start", nanos_text(start)),
@@ -156,11 +219,13 @@ fn nanos_text(us: i64) -> String {
     (i128::from(us) * 1000).to_string()
 }
 
-/// One `logql()` call: the request to send and where.
+/// One `logql()` or `logql_metric()` call: the request to send and where.
 #[derive(Debug)]
 struct LogqlQuery {
     http: reqwest::Client,
     source: HttpSource,
+    /// A metric query (`logql_metric`): a matrix answer and the `promql` columns.
+    metric: bool,
     form: Vec<(&'static str, String)>,
 }
 
@@ -281,6 +346,22 @@ fn stream_batch(
     Ok(RecordBatch::try_new(stream_schema(), columns)?)
 }
 
+/// One row per sample of a metric query's `matrix` answer. A log query (a `streams` answer)
+/// belongs in `logql`. More than `max_rows` samples fails with SQLSTATE 54000.
+fn metric_batch(
+    source: &str,
+    data: &Value,
+    max_rows: usize,
+) -> Result<RecordBatch, DataFusionError> {
+    if data["resultType"] == "streams" {
+        return Err(sqlstate(
+            "42809",
+            format!("loki source \"{source}\" answered a log query; use logql for it"),
+        ));
+    }
+    result_batch("loki", source, data, false, max_rows)
+}
+
 /// `["<unix ns>", "<line>"(, metadata)]` as (µs, line). The ns are truncated to µs.
 fn parse_entry(entry: &Value) -> Option<(i64, &str)> {
     let ns: i64 = match entry.get(0)? {
@@ -294,7 +375,11 @@ fn parse_entry(entry: &Value) -> Option<(i64, &str)> {
 #[async_trait]
 impl TableProvider for LogqlQuery {
     fn schema(&self) -> SchemaRef {
-        stream_schema()
+        if self.metric {
+            sample_schema()
+        } else {
+            stream_schema()
+        }
     }
 
     fn table_type(&self) -> TableType {
@@ -309,10 +394,15 @@ impl TableProvider for LogqlQuery {
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
         let data = self.fetch().await?;
-        let batch = stream_batch(&self.source.name, &data, self.source.max_rows)?;
+        let (name, max_rows) = (&self.source.name, self.source.max_rows);
+        let batch = if self.metric {
+            metric_batch(name, &data, max_rows)?
+        } else {
+            stream_batch(name, &data, max_rows)?
+        };
         Ok(MemorySourceConfig::try_new_exec(
             &[vec![batch]],
-            stream_schema(),
+            self.schema(),
             projection.cloned(),
         )?)
     }
@@ -322,7 +412,7 @@ impl TableProvider for LogqlQuery {
 mod tests {
     use super::*;
     use datafusion::arrow::array::AsArray;
-    use datafusion::arrow::datatypes::TimestampMicrosecondType;
+    use datafusion::arrow::datatypes::{Float64Type, TimestampMicrosecondType};
     use serde_json::json;
 
     #[test]
@@ -361,6 +451,30 @@ mod tests {
         assert_eq!(stream_batch("l", &data, 2).unwrap().num_rows(), 2);
         let e = stream_batch("l", &data, 1).unwrap_err().to_string();
         assert!(e.contains("result exceeds max_rows (1)"), "{e}");
+    }
+
+    #[test]
+    fn a_metric_matrix_becomes_one_row_per_sample() {
+        let data = json!({"resultType": "matrix", "stats": {}, "result": [
+            {"metric": {"app": "api"}, "values": [[1762560000, "3"], [1762560060, "5"]]},
+            {"metric": {"app": "web"}, "values": [[1762560000, "1"]]},
+        ]});
+        let batch = metric_batch("l", &data, usize::MAX).unwrap();
+        assert_eq!(batch.schema(), sample_schema());
+        assert_eq!(batch.num_rows(), 3);
+        let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
+        assert_eq!(t.value(1), 1_762_560_060_000_000);
+        assert_eq!(batch.column(1).as_primitive::<Float64Type>().value(1), 5.0);
+        assert_eq!(batch.column(2).as_string::<i32>().value(2), r#"{"app":"web"}"#);
+        assert_eq!(batch.column(3).as_string::<i32>().value(0), r#"{app="api"}"#);
+        let e = metric_batch("l", &data, 2).unwrap_err().to_string();
+        assert!(e.contains("result exceeds max_rows (2)"), "{e}");
+        let streams = json!({"resultType": "streams", "result": []});
+        let e = metric_batch("l", &streams, usize::MAX).unwrap_err().to_string();
+        assert!(e.contains("use logql"), "{e}");
+        let vector = json!({"resultType": "vector", "result": []});
+        let e = metric_batch("l", &vector, usize::MAX).unwrap_err().to_string();
+        assert!(e.contains("loki source \"l\""), "{e}");
     }
 
     #[test]

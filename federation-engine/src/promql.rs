@@ -257,9 +257,9 @@ pub fn parse_duration(s: &str) -> Option<i64> {
     (total > 0).then_some(total)
 }
 
-/// µs as decimal Unix seconds (`1762560000`, `1762560000.5`), which Prometheus accepts for
-/// times and steps.
-fn seconds_text(us: i64) -> String {
+/// µs as decimal Unix seconds (`1762560000`, `1762560000.5`), which Prometheus and Loki accept
+/// for times and steps.
+pub(crate) fn seconds_text(us: i64) -> String {
     let (secs, frac) = (us.div_euclid(1_000_000), us.rem_euclid(1_000_000));
     if frac == 0 {
         return secs.to_string();
@@ -328,18 +328,20 @@ fn prometheus_data(source: &str, status: u16, body: &[u8]) -> Result<Value, Data
     Ok(answer["data"].take())
 }
 
-/// The rows of a Prometheus answer's `data`. A range query must answer a matrix; an instant
+/// The rows of a Prometheus-shaped answer's `data` from a `kind` source (`prometheus`, or `loki`
+/// for `logql_metric`). A range query must answer a matrix; an instant
 /// query may answer a vector, a scalar (one row, labels `{}`), a string (one row, value NULL,
 /// labels `{}`, series = the string; a contract assumption) or a matrix (e.g. `up[5m]`).
 /// More than `max_rows` rows fails with SQLSTATE 54000 (CONTRACTS §1.2); exactly `max_rows` is fine.
-fn result_batch(
+pub(crate) fn result_batch(
+    kind: &str,
     source: &str,
     data: &Value,
     instant: bool,
     max_rows: usize,
 ) -> Result<RecordBatch, DataFusionError> {
     let fail =
-        |what: &str| DataFusionError::Execution(format!("prometheus source \"{source}\": {what}"));
+        |what: &str| DataFusionError::Execution(format!("{kind} source \"{source}\": {what}"));
     let mut rows = Rows::new(source, max_rows);
     let result = &data["result"];
     match data["resultType"].as_str() {
@@ -539,7 +541,7 @@ impl TableProvider for PromqlQuery {
         _limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
         let data = self.fetch().await?;
-        let batch = result_batch(&self.source, &data, self.instant, self.max_rows)?;
+        let batch = result_batch("prometheus", &self.source, &data, self.instant, self.max_rows)?;
         Ok(MemorySourceConfig::try_new_exec(
             &[vec![batch]],
             sample_schema(),
@@ -592,7 +594,7 @@ mod tests {
              "values": [[1762560000, "1"], [1762560030.5, "NaN"], [1762560060, "+Inf"]]},
             {"metric": {}, "values": [[1762560000, "-Inf"]]},
         ]});
-        let batch = result_batch("p", &data, false, usize::MAX).unwrap();
+        let batch = result_batch("prometheus", "p", &data, false, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 4);
         let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
         assert_eq!(t.value(1), 1_762_560_030_500_000);
@@ -610,9 +612,9 @@ mod tests {
         assert_eq!(batch.column(2).null_count(), 0);
 
         let empty = json!({"resultType": "matrix", "result": []});
-        assert_eq!(result_batch("p", &empty, false, usize::MAX).unwrap().num_rows(), 0);
+        assert_eq!(result_batch("prometheus", "p", &empty, false, usize::MAX).unwrap().num_rows(), 0);
         let vector = json!({"resultType": "vector", "result": []});
-        assert!(result_batch("p", &vector, false, usize::MAX).is_err());
+        assert!(result_batch("prometheus", "p", &vector, false, usize::MAX).is_err());
     }
 
     #[test]
@@ -621,7 +623,7 @@ mod tests {
             {"metric": {"job": "api"}, "value": [1762560600, "3"]},
             {"metric": {"job": "worker"}, "value": [1762560600, "0.25"]},
         ]});
-        let batch = result_batch("p", &vector, true, usize::MAX).unwrap();
+        let batch = result_batch("prometheus", "p", &vector, true, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 2);
         let t = batch.column(0).as_primitive::<TimestampMicrosecondType>();
         assert_eq!(t.value(0), 1_762_560_600_000_000);
@@ -632,14 +634,14 @@ mod tests {
         );
 
         let scalar = json!({"resultType": "scalar", "result": [1762560600, "42"]});
-        let batch = result_batch("p", &scalar, true, usize::MAX).unwrap();
+        let batch = result_batch("prometheus", "p", &scalar, true, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 1);
         assert_eq!(batch.column(1).as_primitive::<Float64Type>().value(0), 42.0);
         assert_eq!(batch.column(2).as_string::<i32>().value(0), "{}");
         assert_eq!(batch.column(3).as_string::<i32>().value(0), "{}");
 
         let string = json!({"resultType": "string", "result": [1762560600, "hello"]});
-        let batch = result_batch("p", &string, true, usize::MAX).unwrap();
+        let batch = result_batch("prometheus", "p", &string, true, usize::MAX).unwrap();
         assert_eq!(batch.num_rows(), 1);
         assert!(batch.column(1).is_null(0));
         assert_eq!(batch.column(2).as_string::<i32>().value(0), "{}");
@@ -648,9 +650,9 @@ mod tests {
         let matrix = json!({"resultType": "matrix", "result": [
             {"metric": {}, "values": [[1762560000, "1"], [1762560030, "2"]]},
         ]});
-        assert_eq!(result_batch("p", &matrix, true, usize::MAX).unwrap().num_rows(), 2);
+        assert_eq!(result_batch("prometheus", "p", &matrix, true, usize::MAX).unwrap().num_rows(), 2);
         let odd = json!({"resultType": "histogram", "result": []});
-        assert!(result_batch("p", &odd, true, usize::MAX).is_err());
+        assert!(result_batch("prometheus", "p", &odd, true, usize::MAX).is_err());
     }
 
     #[test]
@@ -659,11 +661,11 @@ mod tests {
             {"metric": {"s": "1"}, "values": [[1762560000, "1"], [1762560001, "1"]]},
             {"metric": {"s": "2"}, "values": [[1762560000, "2"]]},
         ]});
-        assert_eq!(result_batch("p", &data, false, 3).unwrap().num_rows(), 3);
-        let e = result_batch("p", &data, false, 2).unwrap_err().to_string();
+        assert_eq!(result_batch("prometheus", "p", &data, false, 3).unwrap().num_rows(), 3);
+        let e = result_batch("prometheus", "p", &data, false, 2).unwrap_err().to_string();
         assert!(e.contains("result exceeds max_rows (2)") && e.contains("\"p\""), "{e}");
         let scalar = json!({"resultType": "scalar", "result": [1762560000, "1"]});
-        assert_eq!(result_batch("p", &scalar, true, 1).unwrap().num_rows(), 1);
+        assert_eq!(result_batch("prometheus", "p", &scalar, true, 1).unwrap().num_rows(), 1);
     }
 
     #[test]
