@@ -299,3 +299,26 @@ token verification for a *valid* token, which feature 39 then hardens.
   self-tests pass, and all 83 checks fail on the stub, each running exactly one test.
 - 2026-11-08T15:21:41Z supervisor: initialized: 83 features, run 20261108-093244
 - 2026-11-08T15:46:00Z supervisor: initialized: 83 features, run 20261108-104127
+- 2026-11-08 eng-config-check (session 1): new workspace member `federation-engine/crates/engine-config`
+  (serde + toml 0.8) and a real `engine` CLI in `src/main.rs` (`--config <file>`, `--config=<file>`,
+  `--check-config`). `Config::load` parses the file and validates it. It resolves every `*_env` name and
+  collects **all** problems, one line each, before failing (exit 1; bad CLI args exit 2). It never binds a
+  port or connects to anything. Secrets live in `Secret` (redacted `Debug`; `expose()` to read). Typed
+  per-kind settings are in `SourceSettings`, and `Config::default_source(kind)` returns the `default = true`
+  source, or a lone source of that kind. Tested as a user: ran `engine --check-config` on a full config
+  (all 7 kinds, users, audit) and saw exit 0 with no secret echoed; then an unset env var, an unknown kind,
+  a duplicate name, two defaults, a config with no `[audit]` and broken TOML, which each exit 1 naming the
+  problem. Check `config::eng_config_check`, the 3 harness self-tests, the 6 crate unit tests, fmt and
+  clippy (`--workspace --all-targets -D warnings`) all pass.
+  Decisions for later sessions:
+  - `deny_unknown_fields` on every table. A `[[sources]]` key that belongs to another kind (e.g. `region` on
+    prometheus) is an error. **A new config key must be added to `RawConfig`/`RawSource` and to `kind_keys`.**
+  - A `*_env` key that is present but names an unset or empty var fails. This includes `write_url_env`:
+    Write Mode is off only when the key is *absent* (narrowest reading of "unset means Write Mode off").
+  - Several sources of one kind with no `default = true` is allowed. `default_source` then returns `None`,
+    so the table function must be given a source name.
+  - Without `--check-config`, the binary still validates and then exits 2 ("serving is not implemented
+    yet"). eng-pg-startup-auth replaces that branch with the server.
+  - The private clippy/rustfmt toolchain is installed in `tmp/rustup` (the rustup "not installed at
+    tmp/cargohome" message at the end of the install is harmless).
+- 2026-11-08T15:51:24Z supervisor: eng-config-check passed the gate in round 1

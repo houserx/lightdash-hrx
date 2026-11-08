@@ -1,9 +1,72 @@
 //! HouseRx Federation Engine entry point.
 //!
-//! Placeholder written by the init session: nothing is implemented yet. The first feature in
-//! the build line (`eng-config-check`) replaces this with the real `engine` binary.
+//! `engine --config <file>` serves; `engine --check-config --config <file>` only validates the
+//! config (CONTRACTS §1.4), resolving secrets from env vars, without binding ports or contacting
+//! sources.
 
-fn main() {
-    eprintln!("federation-engine: not implemented yet (see PROGRESS.md at the repo root)");
-    std::process::exit(2);
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+use engine_config::Config;
+
+const USAGE: &str = "usage: engine [--check-config] --config <federation-engine.toml>";
+
+struct Args {
+    config: PathBuf,
+    check_config: bool,
+}
+
+fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut config = None;
+    let mut check_config = false;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--check-config" => check_config = true,
+            "--config" => match args.next() {
+                Some(path) => config = Some(PathBuf::from(path)),
+                None => return Err("--config needs a file path".into()),
+            },
+            other => match other.strip_prefix("--config=") {
+                Some(path) => config = Some(PathBuf::from(path)),
+                None => return Err(format!("unknown argument \"{other}\"")),
+            },
+        }
+    }
+    let config = config.ok_or("--config <file> is required")?;
+    Ok(Args {
+        config,
+        check_config,
+    })
+}
+
+fn main() -> ExitCode {
+    let args = match parse_args(std::env::args().skip(1)) {
+        Ok(args) => args,
+        Err(e) => {
+            eprintln!("engine: {e}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let config = match Config::load(&args.config) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("engine: config {} is invalid:", args.config.display());
+            for problem in &e.problems {
+                eprintln!("  - {problem}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    if args.check_config {
+        println!(
+            "engine: config {} is valid ({} sources, {} users, audit {})",
+            args.config.display(),
+            config.sources.len(),
+            config.users.len(),
+            if config.audit.is_some() { "on" } else { "off" },
+        );
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("engine: serving is not implemented yet (see PROGRESS.md at the repo root)");
+    ExitCode::from(2)
 }

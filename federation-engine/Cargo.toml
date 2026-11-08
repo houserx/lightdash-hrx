@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 # Library crates go under crates/ and are added here, e.g. members = ["crates/engine-core"].
-members = ["."]
+members = [".", "crates/engine-config"]
 
 [package]
 name = "federation-engine"
@@ -21,6 +21,7 @@ name = "acceptance"
 path = "tests/acceptance/main.rs"
 
 [dependencies]
+engine-config = { path = "crates/engine-config" }
 
 # Used only by tests/acceptance. They drive the real `engine` binary through pg-wire and HTTP,
 # so they compile without any engine code. Keep these: the protected harness needs them.
