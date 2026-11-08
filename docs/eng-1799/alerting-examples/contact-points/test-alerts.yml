@@ -1,0 +1,11 @@
+version: 1
+type: contact_point
+slug: test-alerts
+name: test-alerts
+integrations:
+  - type: slack_webhook
+    url:
+      secretRef: test-alerts-webhook
+    title: '{{ template "slack.title" . }}'
+    text: '{{ template "slack.message" . }}'
+    disableResolveMessage: false

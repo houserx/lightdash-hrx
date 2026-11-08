@@ -1224,3 +1224,26 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - On notification-routes, adding `team = infra` and saving with the PUT refused kept the route fieldset and its value. A second save PUT again.
       - The tabs navigated from rules to notification-routes, which showed "Default route" for a null tree.
 - 2026-11-08T23:56:17Z supervisor: alert-ui-pages passed the gate in round 1
+- alert-grafana-port-examples (round 1) — 2026-11-08
+  - Changes: new `docs/eng-1799/alerting-examples/`. It uses the CLI layout, so `lightdash upload --alerting-only --path docs/eng-1799/alerting-examples` reads it as is.
+    - `contact-points/`: the six Grafana contact points. `incident-io` is `incident_io`, with token `{secretRef: incident-io-alert-source-token}` and a placeholder alert source id in its URL. `slack-infra-alerts`, `slack-alerts` (`disableResolveMessage: true`), `slack-alerts-swat`, `slack-sec` and `test-alerts` are `slack_webhook`, with `url: {secretRef: <slug>-webhook}` and the ported `slack.title`/`slack.message` templates.
+    - `notification-routes/notification-routes.yml`: the HouseRx tree from `routing.accept.ts` (`grafana_notification_policy.tf`), route for route. The default is `slack-infra-alerts`, with group_by `...` and timers 5s/2m/1h. The routes are test, engineering+#alerts, infra, swat (all `continue`), then the sweep.
+    - `alert-rules/`: three example rules, all `shadow: true`. They are `alb-unhealthy-hosts` (cloudwatch, team=infra), `pg-cron-job-failed` (platform_query, team=engineering channel=#alerts) and `platform-environment-sweep-errors` (logql_metric, system=platform-environment-sweep).
+    - `README.md`: tables for the contact points, routes and rules, plus the known differences. All files were formatted with oxfmt.
+  - Decisions (contract assumptions):
+    - ADR 0003's routing-bug fixes are NOT applied. The spec doesn't say where `team=Support` and unlabelled `team=engineering` should go, or what should route to `slack-sec`. They keep today's behaviour (the default route, and no route for slack-sec), and the README lists them as a follow-up for the owners. The check also requires unmatched labels to reach `slack-infra-alerts` only.
+    - Annotations are static text, because the template engine has no `$labels` annotation templating.
+  - Tested:
+    - The check passes after init (1 passed, 1 skipped).
+    - As a user: a scratch tsx script (deleted) ran the real CLI, `lightdash upload --alerting-only --project ... --path docs/eng-1799/alerting-examples`, against the mock Lightdash from the CLI acceptance support.
+      - It exited 0 and printed "Uploaded 6 contact points, 1 notification route trees and 3 alert rules".
+      - There was one POST, with contact points first, then the tree, then the rules. Each contact point carried only its secretRef, and every rule had shadow=true.
+    - `routeAlert` on the YAML tree gave these results:
+      - infra → incident-io (5s/2m/1d)
+      - test → test-alerts
+      - swat → slack-alerts-swat
+      - engineering+#alerts → slack-alerts (1m/1m)
+      - sweep → slack-infra-alerts (1d)
+      - Support, engineering and nobody → slack-infra-alerts (1h)
+    - Intervals and timers pass the backend `validateAlertRuleDefinition` limits (interval ≥ 30s).
+- 2026-11-08T23:59:46Z supervisor: alert-grafana-port-examples passed the gate in round 1

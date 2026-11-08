@@ -1,0 +1,11 @@
+version: 1
+type: contact_point
+slug: slack-sec
+name: slack-sec
+integrations:
+  - type: slack_webhook
+    url:
+      secretRef: slack-sec-webhook
+    title: '{{ template "slack.title" . }}'
+    text: '{{ template "slack.message" . }}'
+    disableResolveMessage: false
