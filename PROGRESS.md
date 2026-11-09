@@ -1825,3 +1825,24 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Follow-up: 4035 warnings is a lot. roundtrip-warning-snapshot (a later feature) is where to look at that.
 - Checks: roundtrip-dashboards 4/4 after init.
 - 2026-11-09T06:09:47Z supervisor: imp-roundtrip-dashboards passed the gate in round 1
+
+## imp-roundtrip-alerts (2026-11-09)
+
+- No code change: roundtrip-alerts passed 3/3 after init at the start of this session. The earlier alert, contact
+  point, notification route and routing-fix features already cover the full fixture rule set.
+- Tested as a user: from packages/cli, `node --import tsx src/index.ts import grafana-alerts --rules <every
+  grafana_rule_groups_*.tf + grafana_lb_rules.tf> --contact-points .../grafana_contact_points.tf --policy
+  .../grafana_notification_policy.tf --locals .../locals.tf --folders .../grafana_folders.tf --datasources
+  .../grafana_data_sources.tf --out ../../tmp/ra-manual` (fixtures under src/__acceptance__/importers/fixtures/terraform)
+  exited 0: "Imported 84 alert rules, 6 contact points and the notification routes (79 warnings, 11 rules to review)".
+  A scratch script ran validateAlertingAsCode (packages/common/src/alerting/asCode.ts) over every output document:
+  0 invalid out of 84 rules, 6 contact points and 1 routes doc. All 6 contact points named in the tree exist; the
+  notify labels (grafana-alerts-incident-io, slack-infra-alerts) exist; 0 rules with unbalanced quotes; every
+  telemetry call has ${ld.parameters.__to}. Scratch output and script were deleted afterwards.
+- Follow-up (not changed, needs a decision): Dialpad Error Logs and Documo Error Logs keep `[$__auto]` in their
+  LogQL, and IMPORT-REPORT flags it as query-macro-unsupported. Loki would reject it as written. Grafana's $__auto
+  is the step for range queries and the whole range for instant ones, so mapping it to __interval or __range
+  depends on the query type. The spec (CONTRACTS §2) doesn't say. The check's macro list doesn't include $__auto,
+  so it passes. TIME_MACRO_PARAMETERS in packages/common/src/eng1799/grafanaQuery.ts is where to add a mapping.
+- Checks: roundtrip-alerts 3/3 after init.
+- 2026-11-09T06:12:47Z supervisor: imp-roundtrip-alerts passed the gate in round 1
