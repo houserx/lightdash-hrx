@@ -116,7 +116,7 @@ form body */, headers: Record<string,string> /* lower-case keys */, body: string
 | `startFakeCloudWatch({ metrics })` | `metrics: { label, points: [iso, number][] }[]`. GetMetricData: for the i-th MetricDataQuery returns `Id` = its Id, `Label` = its Label or `metrics[i].label` (falls back to `metrics[0]`), the points, `StatusCode: Complete`. Extra: `metricDataQueries()` = every decoded MetricDataQuery received, in order, with AWS field names (`Id`, `MetricStat.Metric.{Namespace,MetricName,Dimensions[{Name,Value}]}`, `MetricStat.{Period,Stat}`, `Expression`, `Label`). |
 | `startFakeCloudWatchLogs({ results })` | `results: Record<string,string>[]` (fields incl. `@timestamp` `YYYY-MM-DD HH:MM:SS.mmm` UTC, `@message`, `@ptr`). StartQuery → GetQueryResults `Complete` with them. Extra: `startQueries()` = `{ logGroupNames, queryString, startTime, endTime }[]` (epoch seconds). |
 | `startFakeTempo({ traces })` | See `syntheticTrace` in `fixtures.ts` for the input shape. `/api/search` returns every trace (`spanSets[].matched` = span count; `limit` param recorded); `/api/traces/<id>` and `/api/v2/traces/<id>` return Tempo's OTLP JSON (base64 ids), 404 for unknown ids. |
-| `startFakeBigQuery({ tables })` | See `OPS_MART_TABLES` in `fixtures.ts`. Serves what the engine's Ops Marts client calls (`tables.get`, `jobs.query`/`getQueryResults` or `tabledata.list`). |
+| `startFakeBigQuery({ tables })` | See `OPS_MART_TABLES` in `fixtures.ts`. Serves what the engine's Ops Marts client calls (`tables.get`, `jobs.query`/`getQueryResults` or `tabledata.list`). Implemented (int-mcp-telemetry-tools): `tables.get`, `jobs.query` (only the engine's ``SELECT `c`, … FROM `p.d.t` [LIMIT n]``), `jobs.getQueryResults` with `pageToken` paging; optional `pageSize` (default 1000) and `token`. Returns a `FakeServer` plus `tables`, `token` (`BIGQUERY_TOKEN` = `test-bigquery-token-not-real`) and `queries()`. `startEngine({ bigquery })` renders `ops-marts` with project `e2e-ops-marts` and `access_token_env = "HRX_BIGQUERY_TOKEN"`. |
 | `startFakeAuditStore()` | `{ dynamodbUrl, s3Url, items(), objects(), setFailing(bool), requests, close() }`. DynamoDB JSON 1.0 `PutItem` and `Query` over the portal GSIs (byTicket, byUser, byMonth; paging with `LastEvaluatedKey`); S3 `PutObject` (aws-chunked bodies). `items()` = stored executions as plain JSON in write order; `objects()` = `{ key, body, headers }[]`. `setFailing(true)` makes every put fail (5xx). |
 | `startPlatformDatabase()` | Throwaway Postgres under `tmp/e2e/<dir>/pgdata`, 127.0.0.1, free port, `unix_socket_directories=''`. Roles `engine_read` (SELECT) and `engine_write` (SELECT/INSERT/UPDATE/DELETE) with fake passwords; `public.widgets(id int primary key, name text not null, qty int not null)` with ids 1..200, `name = 'widget-<id>'`, `qty = id % 7`. Returns `{ port, readUrl, writeUrl, query(sql, params?) /* superuser, returns rows */, stop() }`. |
 | `startRecorder()` | A `FakeServer` that answers 200 `{}` to everything (incident.io, webhooks, heartbeat). |
@@ -845,3 +845,50 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     `engine.sources` (selectors restrict lines, not the source); adjust `engineSources` only if the
     MCP needs to know.
 - 2026-11-09T03:57:24Z supervisor: int-mcp-oauth-gate passed the gate in round 1
+- 2026-11-09 int-mcp-telemetry-tools: three changes.
+  1. **Harness: fake BigQuery** (the check starts one). It was missing because int-harness-fake-bigquery
+     halted with its work uncommitted. New `harness/bigquery.ts` (`startFakeBigQuery`, see the Harness API
+     row); `engine.ts` gained the `bigquery` option (removed from `NOT_YET_SUPPORTED`), the `ops-marts`
+     source in `engineSources`, and `HRX_BIGQUERY_TOKEN` in the env (the helper's variable is now
+     `sourceEnv`). The MCP's `list_sources` already drops the per-catalog `information_schema` views, so
+     this check does not depend on that halt's open question. **int-harness-fake-bigquery still fails
+     only on it** (9 rows instead of 2, because DataFusion lists its information_schema views under
+     every catalog); that needs the decision recorded in that halt (engine change or amended check).
+  2. **Engine: bind parameters as table-function arguments** (`federation-engine/src/pg.rs`). The MCP
+     sends every user value as a bind parameter (`promql($1, $2, $3, $4)`; its own acceptance test
+     `sql-injection-safety` requires this). The engine planned at Parse and table functions refuse
+     non-constant arguments (0A000 "arguments must be constants, not $1"). Now a Parse whose statement
+     has a `$n` inside a table function's arguments is kept as a parsed statement (`Stage::AtBind`) and
+     planned at Describe-portal/Execute, with each `$n` replaced by the bound value as a literal AST
+     node (DataFusion's `Unparser::expr_to_sql`; never text pasting). Every other statement is
+     unchanged (planned at Parse; `$n` bound into the plan). For AtBind statements: parameters are the
+     declared type or text; Describe *statement* reports no columns (portal Describe does); the audit
+     record's `sql` is the statement with the values in place (otherwise it would only say `$1`).
+     Also a `TypePlanner` maps SQL `json` to Utf8 marked as JSON, so `$1::json` (MCP query_cloudwatch)
+     and `'{}'::json` plan (before: "Unsupported SQL type JSON", the trap noted under
+     int-fix-cloudwatch-query-shape). README paragraph under "SQL functions". Unit tests in pg.rs.
+  3. **MCP: `limit` cast to int** (`queryLogql.ts`, `searchTraces.ts`, via a `casts` argument to
+     `placeholders` in `telemetryArgs.ts`): parameters arrive as text, and the engine's `limit` must
+     be an integer (42804 otherwise). Unit tests updated (`$4::int`).
+  Contract assumption: CONTRACTS §1 promises the extended protocol and does not limit table-function
+  arguments to constants, so the engine accepts `$n` there (narrowest reading compatible with both
+  the MCP's bind-parameter rule and the engine's planning).
+  Tested by hand (`../tmp/manual-mcp-telemetry-tools/try.mts` and `audit.mts`, run from e2e/eng-1799
+  with tsx; synthetic values unlike the check) through the real MCP over HTTP: list_sources (all
+  sources plus a `marts_x.daily` Ops Mart); query_promql range 30s, instant, explicit source, a
+  hostile `x'); DROP TABLE …` query (reached the fake Prometheus verbatim, no error); the restricted
+  source refused for the agent identity; query_logql forward limit 1, backward, metric; query_cloudwatch
+  with an Expression and a Label containing `'`; query_cloudwatch_logs with two groups; search_traces
+  limit 5 (Tempo got limit=5); get_trace and an unknown id (0 rows). With `pg` directly: bound
+  promql/traceql (named statement reused with new values), a bad bound time gives 22007, `'{}'::json`
+  is OID 114, and an audited bound query is audited with the literal SQL. Checks: this one 1/1;
+  int-mcp-oauth-gate, int-harness-engine, int-client-log-trace-functions, int-client-platform-functions,
+  int-identity-agent-restricted, int-fix-cloudwatch-query-shape, int-client-limits-and-errors pass;
+  engine unit tests 95/95 and acceptance pgwire/promql/platform/ops_marts/docs pass; MCP unit tests for
+  logql/traces and acceptance sql-injection-safety, tool-query-logql, tool-search-traces,
+  tool-query-cloudwatch pass; e2e and MCP typecheck clean. No clippy/rustfmt on this machine.
+  Next sessions must know:
+  - int-mcp-platform-tools: `platform_query($1)` / `platform_explain($1)` / `platform_columns($1, $2)`
+    now plan at Bind, so they should work as sent; the audit record will hold the bound SQL.
+  - Engine params bound as text: any non-text table-function argument sent as `$n` needs a cast.
+- 2026-11-09T04:11:48Z supervisor: int-mcp-telemetry-tools passed the gate in round 1

@@ -15,6 +15,7 @@ import {
     type FakeAuditStore,
     startFakeAuditStore,
 } from './auditStore';
+import { BIGQUERY_PROJECT } from './bigquery';
 import { freePorts, REPO_ROOT, scratchDir, sleep, tcpOpen } from './util';
 
 export const ENGINE_BINARY =
@@ -59,6 +60,16 @@ export type StartEngineOptions = {
      */
     platform?: { readUrl: string; writeUrl?: string };
     /**
+     * A fake BigQuery: the `ops-marts` source (kind `bigquery`, project `e2e-ops-marts`) allows
+     * every fake table as `dataset.table`, points `api_base_url` at its `url` and authenticates
+     * with the fake's static `token` through `access_token_env = "HRX_BIGQUERY_TOKEN"`.
+     */
+    bigquery?: {
+        url: string;
+        token: string;
+        tables: { dataset: string; table: string }[];
+    };
+    /**
      * The `[audit]` store's endpoints. `[audit]` is always configured: without this option the
      * harness starts its own fake store, returns it as `engine.auditStore` and closes it on
      * `stop()`.
@@ -68,7 +79,6 @@ export type StartEngineOptions = {
 
 /** Options the Harness API names that later harness features implement. */
 const NOT_YET_SUPPORTED = [
-    'bigquery',
     'restrictedLokiSelectors',
     'restrictedLogGroups',
 ];
@@ -107,6 +117,7 @@ export function engineSources(opts: StartEngineOptions): EngineSource[] {
     if (opts.cloudwatchLogs)
         sources.push(source('cloudwatch-logs', 'cloudwatch_logs'));
     if (opts.platform) sources.push(source('platform', 'platform_postgres'));
+    if (opts.bigquery) sources.push(source('ops-marts', 'bigquery'));
     return sources;
 }
 
@@ -129,15 +140,16 @@ export type Engine = {
 };
 
 function engineEnv(dir: string, opts: StartEngineOptions): NodeJS.ProcessEnv {
-    const platform: NodeJS.ProcessEnv = {};
+    const sourceEnv: NodeJS.ProcessEnv = {};
     if (opts.platform) {
-        platform.HRX_PLATFORM_READ_URL = opts.platform.readUrl;
+        sourceEnv.HRX_PLATFORM_READ_URL = opts.platform.readUrl;
         if (opts.platform.writeUrl) {
-            platform.HRX_PLATFORM_WRITE_URL = opts.platform.writeUrl;
+            sourceEnv.HRX_PLATFORM_WRITE_URL = opts.platform.writeUrl;
         }
     }
+    if (opts.bigquery) sourceEnv.HRX_BIGQUERY_TOKEN = opts.bigquery.token;
     return {
-        ...platform,
+        ...sourceEnv,
         PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
         HOME: dir,
         TMPDIR: dir,
@@ -215,6 +227,25 @@ function renderConfig(
             : '';
         tables.push(
             `[[sources]]\nname = "platform"\nkind = "platform_postgres"\nread_url_env = "HRX_PLATFORM_READ_URL"\n${write}`,
+        );
+    }
+    if (opts.bigquery) {
+        const allow = [
+            ...new Set(
+                opts.bigquery.tables.map((t) => `${t.dataset}.${t.table}`),
+            ),
+        ].map(tomlString);
+        tables.push(
+            [
+                '[[sources]]',
+                'name = "ops-marts"',
+                'kind = "bigquery"',
+                `project = ${tomlString(BIGQUERY_PROJECT)}`,
+                `allow = [${allow.join(', ')}]`,
+                `api_base_url = ${tomlString(opts.bigquery.url)}`,
+                'access_token_env = "HRX_BIGQUERY_TOKEN"',
+                '',
+            ].join('\n'),
         );
     }
     // Always on: the engine refuses every Audited Query without a working store.

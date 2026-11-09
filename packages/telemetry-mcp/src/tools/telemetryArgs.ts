@@ -126,9 +126,15 @@ export function sourceParams(config: Pick<Config, 'sources'>, kind: SourceKind, 
     return [source];
 }
 
-/** `$1, $2, …` for `count` parameters. */
-export function placeholders(count: number): string {
-    return Array.from({ length: count }, (_, i) => `$${i + 1}`).join(', ');
+/**
+ * `$1, $2, …` for `count` parameters. `casts` types parameters by number (`{ 4: 'int' }` gives `$4::int`): every
+ * parameter is sent as text, so a table-function argument that is not text (such as `limit int`) needs its cast.
+ */
+export function placeholders(count: number, casts: Readonly<Record<number, string>> = {}): string {
+    return Array.from({ length: count }, (_, i) => {
+        const cast = casts[i + 1];
+        return cast === undefined ? `$${i + 1}` : `$${i + 1}::${cast}`;
+    }).join(', ');
 }
 
 /**

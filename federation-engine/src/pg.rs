@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,8 +13,8 @@ use datafusion::arrow::array::timezone::Tz;
 use datafusion::arrow::array::{Array, ArrayRef, AsArray};
 use datafusion::arrow::compute::cast;
 use datafusion::arrow::datatypes::{
-    DataType, Date32Type, Float32Type, Float64Type, Int16Type, Int32Type, Int64Type, Schema,
-    TimeUnit, TimestampMicrosecondType,
+    DataType, Date32Type, Field, FieldRef, Float32Type, Float64Type, Int16Type, Int32Type,
+    Int64Type, Schema, TimeUnit, TimestampMicrosecondType,
 };
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::util::display::{ArrayFormatter, FormatOptions};
@@ -24,12 +25,18 @@ use datafusion::error::DataFusionError;
 use datafusion::execution::FunctionRegistry;
 use datafusion::execution::context::SQLOptions;
 use datafusion::execution::{SessionState, SessionStateBuilder};
+use datafusion::logical_expr::planner::TypePlanner;
 use datafusion::logical_expr::{
     Cast, ColumnarValue, Expr, LogicalPlan, ScalarUDF, TryCast, Volatility, create_udf,
 };
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion::sql::parser::{DFParserBuilder, Statement as DFStatement};
+use datafusion::sql::sqlparser::ast::{
+    self as sql_ast, TableFactor, Value as SqlValue, ValueWithSpan, Visit, Visitor,
+    visit_expressions, visit_expressions_mut,
+};
 use datafusion::sql::sqlparser::dialect::dialect_from_str;
+use datafusion::sql::unparser::Unparser;
 use engine_config::{Config, User};
 use futures::{Sink, stream};
 use pgwire::api::auth::sasl::SASLAuthStartupHandler;
@@ -265,7 +272,8 @@ impl Sql {
     /// Sessions default to UTC, so `TIMESTAMP WITH TIME ZONE` values carry a zone (and are sent
     /// as timestamptz) rather than being planned as zone-less timestamps.
     ///
-    /// DataFusion's own `version()` is replaced by [`version_udf`].
+    /// DataFusion's own `version()` is replaced by [`version_udf`]. The SQL type `json` plans as
+    /// text marked as JSON ([`JsonAsText`]).
     ///
     /// DataFusion's `information_schema` is the catalog clients see (CONTRACTS §1 "Catalog"):
     /// Lightdash's `getAllTables` and `getFields` read `information_schema.tables` and
@@ -273,7 +281,12 @@ impl Sql {
     fn new() -> Sql {
         let mut config = SessionConfig::new().with_information_schema(true);
         config.options_mut().execution.time_zone = Some(SESSION_TIME_ZONE.to_string());
-        let ctx = SessionContext::new_with_config(config);
+        let state = SessionStateBuilder::new()
+            .with_config(config)
+            .with_default_features()
+            .with_type_planner(Arc::new(JsonAsText))
+            .build();
+        let ctx = SessionContext::new_with_state(state);
         ctx.register_udf(version_udf());
         ctx.register_udf(label_udf());
         ctx.register_udf(series_name_udf());
@@ -321,13 +334,8 @@ impl Sql {
             .parse_statements()
     }
 
-    /// Plans a query string that must hold exactly one statement (a Parse message).
-    async fn plan(
-        &self,
-        sql: &str,
-        settings: &Settings,
-        status: TransactionStatus,
-    ) -> Result<Action, DataFusionError> {
+    /// The one statement of a query string that must hold exactly one (a Parse message).
+    fn single_statement(&self, sql: &str) -> Result<DFStatement, DataFusionError> {
         let mut statements = self.statements(sql)?;
         if statements.len() > 1 {
             return Err(sqlstate(
@@ -335,10 +343,9 @@ impl Sql {
                 "cannot insert multiple commands into a prepared statement".to_string(),
             ));
         }
-        let statement = statements.pop_front().ok_or_else(|| {
+        statements.pop_front().ok_or_else(|| {
             DataFusionError::Plan("no SQL statement in the query string".to_string())
-        })?;
-        self.plan_statement(statement, settings, status).await
+        })
     }
 
     /// Plans one statement in a connection's settings and transaction status.
@@ -554,19 +561,40 @@ impl QueryHandler {
     }
 }
 
-/// A statement from a Parse message: planned once, executed on every Bind/Execute.
+/// A statement from a Parse message, executed on every Bind/Execute.
 #[derive(Debug)]
 pub struct Prepared {
-    /// The plan with `$n` placeholders still in it, or the `SET` it makes.
-    action: Action,
+    stage: Stage,
     /// The statement as the client sent it in Parse.
     sql: String,
     /// The Arrow type each `$n` binds as (index 0 is `$1`).
     params: Vec<DataType>,
     /// The Postgres type each `$n` is described as.
     param_types: Vec<Type>,
-    /// Result column names and Postgres types.
+    /// Result column names and Postgres types (empty for [`Stage::AtBind`]).
     columns: Vec<(String, Type)>,
+}
+
+/// When a prepared statement is planned.
+#[derive(Debug)]
+enum Stage {
+    /// At Parse: the plan with `$n` placeholders still in it, or the `SET` it makes.
+    Planned(Action),
+    /// At Bind, because a table function takes a `$n` argument (`promql($1, $2, $3, $4)`):
+    /// table-function arguments must be constants when the function is planned. Each Bind plans
+    /// the parsed statement with every placeholder replaced by its bound value as a literal
+    /// node, never by pasting text into SQL. Its result columns are known only then, so
+    /// describing the statement (not the portal) reports no columns.
+    AtBind(DFStatement),
+}
+
+/// What a portal runs: its plan, the audited sources it reads, its result columns and the SQL
+/// recorded for it.
+struct Bound {
+    plan: LogicalPlan,
+    audited: Vec<AuditedRead>,
+    columns: Vec<(String, Type)>,
+    sql: String,
 }
 
 #[async_trait]
@@ -583,14 +611,26 @@ impl QueryParser for Sql {
         C: ClientInfo + Unpin + Send + Sync,
     {
         let settings = Settings::of(client.metadata());
+        let statement = self.single_statement(sql).map_err(query_error)?;
+        if takes_table_function_parameter(&statement) {
+            let count = placeholder_count(&statement).map_err(query_error)?;
+            let (params, param_types) = declared_or_text(types, count)?;
+            return Ok(Some(Arc::new(Prepared {
+                stage: Stage::AtBind(statement),
+                sql: sql.to_string(),
+                params,
+                param_types,
+                columns: vec![],
+            })));
+        }
         let action = self
-            .plan(sql, &settings, client.transaction_status())
+            .plan_statement(statement, &settings, client.transaction_status())
             .await
             .map_err(query_error)?;
         let prepared = match action {
             Action::Query(plan, audited) => prepare(plan, audited, sql, types)?,
             action @ (Action::Change(_) | Action::Transaction(_)) => Prepared {
-                action,
+                stage: Stage::Planned(action),
                 sql: sql.to_string(),
                 params: vec![],
                 param_types: vec![],
@@ -610,6 +650,43 @@ impl QueryParser for Sql {
         column_format: Option<&Format>,
     ) -> PgWireResult<Vec<FieldInfo>> {
         field_infos(&stmt.columns, column_format.unwrap_or(&Format::UnifiedText))
+    }
+}
+
+impl QueryHandler {
+    /// Plans a [`Stage::AtBind`] statement with the portal's bound values. The SQL recorded for
+    /// it (in the audit record of an Audited Query) is the statement with the values in place,
+    /// since the text the client sent names only `$n`.
+    async fn plan_at_bind<C>(
+        &self,
+        client: &C,
+        template: &DFStatement,
+        values: &[ScalarValue],
+    ) -> PgWireResult<Bound>
+    where
+        C: ClientInfo,
+    {
+        let statement = bind_statement(template, values).map_err(query_error)?;
+        let sql = statement.to_string();
+        let settings = Settings::of(client.metadata());
+        let action = self
+            .sql
+            .plan_statement(statement, &settings, client.transaction_status())
+            .await
+            .map_err(query_error)?;
+        let Action::Query(plan, audited) = action else {
+            return Err(user_error(
+                "0A000",
+                "a statement with a table function must be a query".to_string(),
+            ));
+        };
+        let columns = columns_of(plan.schema().as_arrow());
+        Ok(Bound {
+            plan,
+            audited,
+            columns,
+            sql,
+        })
     }
 }
 
@@ -643,7 +720,7 @@ impl ExtendedQueryHandler for QueryHandler {
 
     async fn do_describe_portal<C>(
         &self,
-        _client: &mut C,
+        client: &mut C,
         target: &Portal<Arc<Prepared>>,
     ) -> PgWireResult<DescribePortalResponse>
     where
@@ -652,9 +729,16 @@ impl ExtendedQueryHandler for QueryHandler {
         C::Error: Debug,
         PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
     {
-        let columns = &target.statement.statement.columns;
+        let stmt = &target.statement.statement;
+        let columns = match &stmt.stage {
+            Stage::Planned(_) => stmt.columns.clone(),
+            Stage::AtBind(template) => {
+                let values = bind_params(stmt, target)?;
+                self.plan_at_bind(client, template, &values).await?.columns
+            }
+        };
         Ok(DescribePortalResponse::new(field_infos(
-            columns,
+            &columns,
             &target.result_column_format,
         )?))
     }
@@ -674,30 +758,181 @@ impl ExtendedQueryHandler for QueryHandler {
         let _in_flight = in_flight()?;
         let stmt = &portal.statement.statement;
         let status = client.transaction_status();
-        stmt.action.check_not_aborted(status)?;
         let values = bind_params(stmt, portal)?;
-        let (plan, audited) = match &stmt.action {
-            Action::Query(plan, audited) => (plan.clone(), audited),
-            Action::Change(change) => {
-                change.apply(client.metadata_mut());
-                return Ok(Response::Execution(Tag::new(change.tag())));
+        let bound = match &stmt.stage {
+            Stage::Planned(action) => {
+                action.check_not_aborted(status)?;
+                match action {
+                    Action::Query(plan, audited) => Bound {
+                        plan: plan.clone().with_param_values(values).map_err(query_error)?,
+                        audited: audited.clone(),
+                        columns: stmt.columns.clone(),
+                        sql: stmt.sql.clone(),
+                    },
+                    Action::Change(change) => {
+                        change.apply(client.metadata_mut());
+                        return Ok(Response::Execution(Tag::new(change.tag())));
+                    }
+                    Action::Transaction(txn) => return Ok(txn.response(status)),
+                }
             }
-            Action::Transaction(txn) => return Ok(txn.response(status)),
+            Stage::AtBind(template) => self.plan_at_bind(client, template, &values).await?,
         };
-        let plan = plan.with_param_values(values).map_err(query_error)?;
         let settings = Settings::of(client.metadata());
         let (_, batches) = self
             .sql
-            .run(plan, audited, &stmt.sql, &settings)
+            .run(bound.plan, &bound.audited, &bound.sql, &settings)
             .await
             .map_err(query_error)?;
         // Encoded as described, so binary values match the types in RowDescription.
-        let fields = Arc::new(field_infos(&stmt.columns, &portal.result_column_format)?);
+        let fields = Arc::new(field_infos(&bound.columns, &portal.result_column_format)?);
         let rows = encode_rows(&fields, &batches)?;
         Ok(Response::Query(QueryResponse::new(
             fields,
             stream::iter(rows.into_iter().map(Ok)),
         )))
+    }
+}
+
+/// The SQL type `json` (casts such as `$1::json` or `'{}'::json`) plans as text marked as JSON,
+/// as the engine's own `json` columns are (CONTRACTS §1 "Types"); table functions read such an
+/// argument as its text.
+#[derive(Debug)]
+struct JsonAsText;
+
+impl TypePlanner for JsonAsText {
+    fn plan_type_field(
+        &self,
+        sql_type: &sql_ast::DataType,
+    ) -> Result<Option<FieldRef>, DataFusionError> {
+        Ok(matches!(sql_type, sql_ast::DataType::JSON).then(|| {
+            Arc::new(
+                Field::new("", DataType::Utf8, true).with_metadata(HashMap::from([(
+                    EXTENSION_NAME_KEY.to_string(),
+                    JSON_EXTENSION.to_string(),
+                )])),
+            )
+        }))
+    }
+}
+
+/// The `$n` of a placeholder expression, if it is one.
+fn placeholder_id(expr: &sql_ast::Expr) -> Option<&str> {
+    match expr {
+        sql_ast::Expr::Value(ValueWithSpan {
+            value: SqlValue::Placeholder(id),
+            ..
+        }) => Some(id),
+        _ => None,
+    }
+}
+
+/// `n` of a `$n` placeholder; any other placeholder style is refused.
+fn placeholder_number(id: &str) -> Result<usize, DataFusionError> {
+    id.strip_prefix('$')
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .ok_or_else(|| {
+            DataFusionError::NotImplemented(format!(
+                "parameter {id} is not supported; use $1, $2, ..."
+            ))
+        })
+}
+
+/// Whether a placeholder appears in the arguments of a table function (`FROM f(..., $1)`).
+fn takes_table_function_parameter(statement: &DFStatement) -> bool {
+    struct Finder;
+    impl Visitor for Finder {
+        type Break = ();
+        fn pre_visit_table_factor(&mut self, factor: &TableFactor) -> ControlFlow<()> {
+            if let TableFactor::Table {
+                args: Some(args), ..
+            } = factor
+            {
+                return visit_expressions(&args.args, |e| match placeholder_id(e) {
+                    Some(_) => ControlFlow::Break(()),
+                    None => ControlFlow::Continue(()),
+                });
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    match statement {
+        DFStatement::Statement(statement) => statement.visit(&mut Finder).is_break(),
+        _ => false,
+    }
+}
+
+/// The highest `$n` in a statement (0 without placeholders).
+fn placeholder_count(statement: &DFStatement) -> Result<usize, DataFusionError> {
+    let DFStatement::Statement(statement) = statement else {
+        return Ok(0);
+    };
+    let mut count = 0;
+    let found = visit_expressions(statement.as_ref(), |e| match placeholder_id(e) {
+        Some(id) => match placeholder_number(id) {
+            Ok(n) => {
+                count = count.max(n);
+                ControlFlow::Continue(())
+            }
+            Err(e) => ControlFlow::Break(e),
+        },
+        None => ControlFlow::Continue(()),
+    });
+    match found {
+        ControlFlow::Break(e) => Err(e),
+        ControlFlow::Continue(()) => Ok(count),
+    }
+}
+
+/// Parameter types for `count` parameters that have no plan to infer them from: the one the
+/// client declared in Parse, else text.
+fn declared_or_text(
+    declared: &[Option<Type>],
+    count: usize,
+) -> PgWireResult<(Vec<DataType>, Vec<Type>)> {
+    let count = count.max(declared.len());
+    let mut params = Vec::with_capacity(count);
+    let mut param_types = Vec::with_capacity(count);
+    for i in 0..count {
+        let ty = declared.get(i).cloned().flatten().unwrap_or(Type::TEXT);
+        params.push(arrow_type_of(&ty)?);
+        param_types.push(ty);
+    }
+    Ok((params, param_types))
+}
+
+/// The statement with every `$n` replaced by the n-th bound value as a literal expression.
+fn bind_statement(
+    template: &DFStatement,
+    values: &[ScalarValue],
+) -> Result<DFStatement, DataFusionError> {
+    let mut statement = template.clone();
+    let DFStatement::Statement(inner) = &mut statement else {
+        return Ok(statement);
+    };
+    let unparser = Unparser::default();
+    let replaced = visit_expressions_mut(inner.as_mut(), |e| {
+        let Some(id) = placeholder_id(e) else {
+            return ControlFlow::Continue(());
+        };
+        let literal = placeholder_number(id).and_then(|n| {
+            let value = values.get(n - 1).ok_or_else(|| {
+                DataFusionError::Plan(format!("no value supplied for parameter {id}"))
+            })?;
+            unparser.expr_to_sql(&Expr::Literal(value.clone(), None))
+        });
+        match literal {
+            Ok(literal) => {
+                *e = literal;
+                ControlFlow::Continue(())
+            }
+            Err(err) => ControlFlow::Break(err),
+        }
+    });
+    match replaced {
+        ControlFlow::Break(e) => Err(e),
+        ControlFlow::Continue(()) => Ok(statement),
     }
 }
 
@@ -736,7 +971,7 @@ fn prepare(
     }
     let columns = columns_of(plan.schema().as_arrow());
     Ok(Prepared {
-        action: Action::Query(plan, audited),
+        stage: Stage::Planned(Action::Query(plan, audited)),
         sql: sql.to_string(),
         params,
         param_types,
@@ -1218,12 +1453,19 @@ mod tests {
         assert_eq!(get(None).password(), [4]);
     }
 
+    /// Plans a one-statement query string in default settings, outside a transaction.
+    async fn plan(sql_: &Sql, sql: &str) -> Result<Action, DataFusionError> {
+        let statement = sql_.single_statement(sql)?;
+        sql_.plan_statement(statement, &Settings::default(), TransactionStatus::Idle)
+            .await
+    }
+
     /// Plans and runs a query in a fresh session.
     fn run(sql: &str) -> Result<(Schema, Vec<RecordBatch>), DataFusionError> {
         futures::executor::block_on(async {
             let sql_ = Sql::new();
             let settings = Settings::default();
-            match sql_.plan(sql, &settings, TransactionStatus::Idle).await? {
+            match plan(&sql_, sql).await? {
                 Action::Query(plan, _) => sql_.execute(plan, &settings).await,
                 other => panic!("not a query: {other:?}"),
             }
@@ -1290,12 +1532,7 @@ mod tests {
 
     fn prepared(sql: &str, declared: &[Option<Type>]) -> Prepared {
         let sql_ = Sql::new();
-        let action = futures::executor::block_on(sql_.plan(
-            sql,
-            &Settings::default(),
-            TransactionStatus::Idle,
-        ))
-        .unwrap();
+        let action = futures::executor::block_on(plan(&sql_, sql)).unwrap();
         let Action::Query(plan, audited) = action else {
             panic!("not a query: {sql}")
         };
@@ -1415,5 +1652,83 @@ mod tests {
             format!("PostgreSQL 16.0 (hrx-federation-engine {crate_version})")
         );
         assert!(v.starts_with(&format!("PostgreSQL {SERVER_VERSION} ")));
+    }
+
+    fn statement(sql: &str) -> DFStatement {
+        Sql::new().single_statement(sql).unwrap()
+    }
+
+    #[test]
+    fn only_placeholders_in_table_function_arguments_defer_planning() {
+        let at_bind = |sql: &str| takes_table_function_parameter(&statement(sql));
+        assert!(at_bind("SELECT * FROM promql($1, $2, $3, $4)"));
+        assert!(at_bind("SELECT * FROM cloudwatch($1::json, '2026-11-08T10:00:00Z', $2)"));
+        assert!(at_bind("SELECT n FROM (SELECT count(*) AS n FROM trace($1)) t"));
+        assert!(at_bind("SELECT * FROM t JOIN logql('{a=\"b\"}', $1, $2) l ON true"));
+        assert!(!at_bind("SELECT $1::text AS echo"));
+        assert!(!at_bind("SELECT * FROM promql('up', '2026-11-08T10:00:00Z', '2026-11-08T10:01:00Z', '1m') WHERE value > $1"));
+        assert!(!at_bind("SELECT * FROM information_schema.tables WHERE table_catalog = $1"));
+    }
+
+    #[test]
+    fn placeholders_count_to_the_highest_and_only_dollar_n_is_accepted() {
+        assert_eq!(placeholder_count(&statement("SELECT * FROM trace($2, $1)")).unwrap(), 2);
+        assert_eq!(placeholder_count(&statement("SELECT * FROM trace($3)")).unwrap(), 3);
+        assert_eq!(placeholder_count(&statement("SELECT 1")).unwrap(), 0);
+        assert!(placeholder_count(&statement("SELECT * FROM trace($0)")).is_err());
+    }
+
+    #[test]
+    fn bound_values_become_literals_not_sql_text() {
+        let hostile = "x'); DROP TABLE users; SELECT ('";
+        let bound = bind_statement(
+            &statement("SELECT $1 AS a, $2 AS b, $1 AS c, $3 AS d"),
+            &[
+                ScalarValue::Utf8(Some(hostile.to_string())),
+                ScalarValue::Int64(Some(7)),
+                ScalarValue::Utf8(None),
+            ],
+        )
+        .unwrap();
+        let (_, batches) = futures::executor::block_on(async {
+            let sql_ = Sql::new();
+            let settings = Settings::default();
+            match sql_
+                .plan_statement(bound, &settings, TransactionStatus::Idle)
+                .await
+                .unwrap()
+            {
+                Action::Query(plan, _) => sql_.execute(plan, &settings).await,
+                other => panic!("not a query: {other:?}"),
+            }
+        })
+        .unwrap();
+        let batch = &batches[0];
+        let text = |i: usize| {
+            let col = cast(batch.column(i), &DataType::Utf8).unwrap();
+            let col = col.as_string::<i32>();
+            (!col.is_null(0)).then(|| col.value(0).to_string())
+        };
+        assert_eq!(text(0).as_deref(), Some(hostile));
+        assert_eq!(text(1).as_deref(), Some("7"));
+        assert_eq!(text(2).as_deref(), Some(hostile));
+        assert_eq!(text(3), None);
+        assert!(bind_statement(&statement("SELECT $2"), &[ScalarValue::Int64(Some(1))]).is_err());
+    }
+
+    #[test]
+    fn parameters_without_a_plan_are_declared_types_or_text() {
+        let (params, types) = declared_or_text(&[None, Some(Type::INT8)], 3).unwrap();
+        assert_eq!(types, [Type::TEXT, Type::INT8, Type::TEXT]);
+        assert_eq!(params, [DataType::Utf8, DataType::Int64, DataType::Utf8]);
+        assert!(declared_or_text(&[Some(Type::JSONB)], 1).is_err());
+    }
+
+    #[test]
+    fn json_casts_plan_as_text_marked_json() {
+        let (schema, batches) = run("SELECT '{\"a\": 1}'::json AS j").unwrap();
+        assert_eq!(columns_of(&schema), [("j".to_string(), Type::JSON)]);
+        let col = batches[0].column(0).as_string::<i32>();
+        assert_eq!(col.value(0), "{\"a\": 1}");
     }
 }

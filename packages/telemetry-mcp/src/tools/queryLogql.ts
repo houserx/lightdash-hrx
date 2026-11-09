@@ -78,7 +78,8 @@ export function buildLogqlQuery(
     const defaults = [String(LOGQL_DEFAULT_LIMIT), LOGQL_DEFAULT_DIRECTION];
     const tail = optional.slice(0, lastGiven + 1).map((v, i) => v ?? defaults[i]);
     const params = [args.query, start, end, ...tail];
-    return { sql: `SELECT * FROM logql(${placeholders(params.length)})`, params };
+    // `limit` ($4) is an int in the engine signature; parameters arrive as text.
+    return { sql: `SELECT * FROM logql(${placeholders(params.length, { 4: 'int' })})`, params };
 }
 
 export function registerQueryLogql(

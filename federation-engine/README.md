@@ -38,6 +38,15 @@ FROM promql('rate(http_requests_total[5m])', '2026-11-08T00:00:00Z', '2026-11-08
 GROUP BY series;
 ```
 
+Function arguments must be constants when a query is planned. Through the extended protocol they
+may also be bind parameters (`FROM promql($1, $2, $3, $4)`). Such a statement is planned at Bind,
+with each `$n` replaced by its bound value as a literal in the parsed statement (never pasted as
+text). Its parameters are text unless the client declares a type in Parse, so a non-text argument
+takes a cast (`logql($1, $2, $3, $4::int)`). Describing the statement reports no result columns
+because they are known only at Bind; describing the portal reports them. The audit record of
+such a statement holds the SQL with the bound values in place. The SQL type `json` is planned as
+text marked as JSON, so `$1::json` and `'{}'::json` work.
+
 ## Building and running it
 
 You need Rust 1.85 or later (edition 2024). The repo pins rustc 1.99. Building `aws-lc-sys` also

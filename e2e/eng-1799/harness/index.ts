@@ -49,6 +49,18 @@ export type {
     TempoSpan,
     TempoTrace,
 } from './tempo';
+export {
+    BIGQUERY_PROJECT,
+    BIGQUERY_TOKEN,
+    startFakeBigQuery,
+} from './bigquery';
+export type {
+    BigQueryCell,
+    BigQueryColumn,
+    BigQueryTable,
+    FakeBigQuery,
+    StartFakeBigQueryOptions,
+} from './bigquery';
 export { startFakePrometheus } from './prometheus';
 export type {
     FakePrometheus,
