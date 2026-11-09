@@ -869,79 +869,68 @@ const CLOUDWATCH_DYNAMIC_LABELS: ReadonlySet<string> = new Set([
     'TIME_RANGE',
 ]);
 
-const translateCloudWatchTarget = (
+/**
+ * The other targets of the panel a target is translated in, so CloudWatch metric math can read
+ * the targets it references (hidden ones included).
+ */
+type PanelScope = {
+    targets: GrafanaTarget[];
+    /** Translates one of the panel's targets on its own (no panel scope). */
+    translate: (target: GrafanaTarget) => TargetTranslation;
+};
+
+/** What a CloudWatch target in Metrics mode asks for. */
+type CloudWatchMetricsKind =
+    | { kind: 'metric-stat' }
+    | { kind: 'expression'; expression: string; what: string }
+    | { kind: 'unsupported' };
+
+/**
+ * A Metrics-mode target's kind, as Grafana's CloudWatch datasource reads it: Metrics Insights
+ * (`metricQueryType` 1) sends its `sqlExpression`; Metric Search (`metricQueryType` 0 or unset)
+ * in code mode (`metricEditorMode` 1) or with a non-empty `expression` sends the expression
+ * (metric math, `SEARCH(...)`); otherwise it is a metric stat.
+ */
+const cloudWatchMetricsKind = (
     target: GrafanaTarget,
+): CloudWatchMetricsKind => {
+    const text = (value: unknown) =>
+        typeof value === 'string' ? value.trim() : '';
+    if (target.metricQueryType === 1) {
+        return {
+            kind: 'expression',
+            expression: text(target.sqlExpression),
+            what: 'Metrics Insights query',
+        };
+    }
+    if (
+        target.metricQueryType !== undefined &&
+        target.metricQueryType !== null &&
+        target.metricQueryType !== 0
+    ) {
+        return { kind: 'unsupported' };
+    }
+    const expression = text(target.expression);
+    if (expression !== '' || target.metricEditorMode === 1) {
+        return { kind: 'expression', expression, what: 'code-mode expression' };
+    }
+    return { kind: 'metric-stat' };
+};
+
+/** The target's `label` (or legacy `alias`), when it has one. */
+const cloudWatchLabel = (target: GrafanaTarget): string | undefined =>
+    [target.label, target.alias].find(
+        (l): l is string => typeof l === 'string' && l.trim() !== '',
+    );
+
+/** `cloudwatch(<metric data query>, from, to[, source])` with the query's variables resolved. */
+const cloudWatchSql = (
+    target: GrafanaTarget,
+    metricDataQuery: CloudWatchMetricDataQuery,
     source: string | undefined,
     variables: GrafanaTemplatingVariable[],
     warnings: ImportWarning[],
 ): TargetTranslation => {
-    const queryMode =
-        typeof target.queryMode === 'string' ? target.queryMode : 'Metrics';
-    const expression =
-        typeof target.expression === 'string' ? target.expression.trim() : '';
-    const isMetricStat =
-        queryMode === 'Metrics' &&
-        (target.metricQueryType === undefined ||
-            target.metricQueryType === 0) &&
-        expression === '';
-    if (!isMetricStat) {
-        warnings.push({
-            code: 'query-cloudwatch-unsupported',
-            message: `CloudWatch ${targetLabel(target)} is a ${queryMode === 'Metrics' ? 'metric math, code or Metrics Insights' : queryMode} query, which has no translation yet`,
-        });
-        return {
-            sql: null,
-            todo: `TODO: translate CloudWatch ${targetLabel(target)} by hand`,
-            warnings,
-        };
-    }
-    const namespace =
-        typeof target.namespace === 'string' ? target.namespace.trim() : '';
-    const metricName =
-        typeof target.metricName === 'string' ? target.metricName.trim() : '';
-    if (namespace === '' || metricName === '') {
-        warnings.push({
-            code: 'query-empty',
-            message: `CloudWatch ${targetLabel(target)} has no namespace or metric name`,
-        });
-        return {
-            sql: null,
-            todo: `TODO: CloudWatch ${targetLabel(target)} has no namespace or metric name to translate`,
-            warnings,
-        };
-    }
-    const region =
-        typeof target.region === 'string' ? target.region.trim() : '';
-    if (region !== '' && region !== 'default') {
-        warnings.push({
-            code: 'query-region-unsupported',
-            message: `CloudWatch ${targetLabel(target)} reads region ${region}; the MetricDataQuery has no region, so the region of the Telemetry Source ${source ?? '(default)'} is used`,
-        });
-    }
-    const dimensions = cloudWatchDimensions(target, warnings);
-    if (target.matchExact === false) {
-        warnings.push({
-            code: 'query-match-exact-dropped',
-            message: `CloudWatch ${targetLabel(target)} also matches metrics with more dimensions than it lists (Match exact off); a MetricStat matches the listed dimensions exactly`,
-        });
-    }
-    const metricDataQuery: CloudWatchMetricDataQuery = {
-        Id: cloudWatchQueryId(target),
-        MetricStat: {
-            Metric: {
-                Namespace: namespace,
-                MetricName: metricName,
-                Dimensions: dimensions,
-            },
-            Period: cloudWatchPeriod(target, warnings),
-            Stat: cloudWatchStatistic(target, warnings),
-        },
-        ReturnData: true,
-    };
-    const label = [target.label, target.alias].find(
-        (l): l is string => typeof l === 'string' && l.trim() !== '',
-    );
-    if (label !== undefined) metricDataQuery.Label = label;
     // Compact JSON, so the query stays one readable line in the SQL (as buildTelemetrySql).
     const query = queryExpressionSql(
         JSON.stringify(metricDataQuery),
@@ -965,6 +954,284 @@ const translateCloudWatchTarget = (
     };
 };
 
+/** A token of CloudWatch metric math, as far as SQL can evaluate it. */
+const MATH_TOKEN =
+    /\s+|(\d+(?:\.\d*)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)|([A-Za-z_][A-Za-z0-9_]*)|([-+*/()])|(.)/g;
+
+type MathToken =
+    | { kind: 'number' | 'operator'; text: string }
+    | { kind: 'identifier'; text: string; call: boolean }
+    | { kind: 'other'; text: string };
+
+const mathTokens = (expression: string): MathToken[] => {
+    const tokens: MathToken[] = [];
+    for (const match of expression.matchAll(MATH_TOKEN)) {
+        const [, num, identifier, operator, other] = match;
+        if (num !== undefined) tokens.push({ kind: 'number', text: num });
+        else if (operator !== undefined) {
+            tokens.push({ kind: 'operator', text: operator });
+        } else if (other !== undefined) {
+            tokens.push({ kind: 'other', text: other });
+        } else if (identifier !== undefined) {
+            const rest = expression.slice(match.index + identifier.length);
+            tokens.push({
+                kind: 'identifier',
+                text: identifier,
+                call: /^\s*\(/.test(rest),
+            });
+        }
+    }
+    return tokens;
+};
+
+const quoteIdentifier = (name: string): string =>
+    `"${name.replace(/"/g, '""')}"`;
+
+/**
+ * Metric math over other targets of the panel (`100 * errors / invocations`), or undefined
+ * when the expression references none of them and goes to CloudWatch as it is.
+ *
+ * `cloudwatch()` carries one MetricDataQuery (CONTRACTS §1.1), so CloudWatch cannot evaluate
+ * math over queries of the same request. Each referenced target (a metric stat, hidden or not)
+ * becomes its own `cloudwatch()` call, joined on `timestamp`, and the arithmetic (numbers,
+ * `+ - * /`, parentheses) is evaluated in SQL over their values. The result keeps the series
+ * columns: the first input's `labels`, and the target's label (else its id) as `series`.
+ * Functions (`METRICS()`, `SUM(...)`, `FILL(...)`), other operators and references to math
+ * targets are a TODO with a `query-cloudwatch-math-unsupported` warning.
+ */
+const cloudWatchPanelMath = (
+    target: GrafanaTarget,
+    expression: string,
+    panel: PanelScope,
+    variables: GrafanaTemplatingVariable[],
+    warnings: ImportWarning[],
+): TargetTranslation | undefined => {
+    const others = new Map<string, GrafanaTarget>();
+    panel.targets.forEach((t) => {
+        if (t !== target) {
+            const id = cloudWatchQueryId(t);
+            if (!others.has(id)) others.set(id, t);
+        }
+    });
+    const tokens = mathTokens(expression);
+    const usesMetrics = tokens.some(
+        (t) =>
+            t.kind === 'identifier' &&
+            t.call &&
+            t.text.toUpperCase() === 'METRICS',
+    );
+    const references = tokens.filter(
+        (t) => t.kind === 'identifier' && !t.call && others.has(t.text),
+    );
+    if (references.length === 0 && !usesMetrics) return undefined;
+    const fail = (why: string): TargetTranslation => {
+        warnings.push({
+            code: 'query-cloudwatch-math-unsupported',
+            message: `CloudWatch ${targetLabel(target)} computes ${expression} over other queries of the panel; ${why}, so it has no translation`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: translate the CloudWatch metric math ${expression} (${targetLabel(target)}) by hand`,
+            warnings,
+        };
+    };
+    const unsupported = tokens.filter(
+        (t) =>
+            t.kind === 'other' ||
+            (t.kind === 'identifier' && (t.call || !others.has(t.text))),
+    );
+    if (unsupported.length > 0) {
+        return fail(
+            `SQL evaluates only numbers, + - * / and references to the panel's metric queries, not ${[
+                ...new Set(unsupported.map((t) => t.text)),
+            ].join(', ')}`,
+        );
+    }
+    let depth = 0;
+    for (const t of tokens) {
+        if (t.text === '(') depth += 1;
+        if (t.text === ')') depth -= 1;
+        if (depth < 0) break;
+    }
+    if (depth !== 0) return fail('its parentheses do not balance');
+    const ids = [...new Set(references.map((t) => t.text))];
+    const inputs: { id: string; sql: string; period: number }[] = [];
+    for (const id of ids) {
+        const input = others.get(id) as GrafanaTarget;
+        const inputMode =
+            typeof input.queryMode === 'string' ? input.queryMode : 'Metrics';
+        if (
+            inputMode !== 'Metrics' ||
+            cloudWatchMetricsKind(input).kind !== 'metric-stat'
+        ) {
+            return fail(
+                `${id} is not a metric stat, and only math over metric stats is evaluated in SQL`,
+            );
+        }
+        const translated = panel.translate(input);
+        // A visible input reports its own warnings as a query of the panel.
+        if (input.hide === true) warnings.push(...translated.warnings);
+        if (translated.sql === null || translated.shape !== 'series') {
+            return fail(`its input ${id} does not translate`);
+        }
+        inputs.push({
+            id,
+            sql: translated.sql,
+            period: cloudWatchPeriod(input, []),
+        });
+    }
+    const periods = [...new Set(inputs.map((i) => i.period))];
+    if (periods.length > 1) {
+        warnings.push({
+            code: 'query-cloudwatch-math-periods',
+            message: `CloudWatch ${targetLabel(target)} computes ${expression} over inputs with different periods (${periods.join(', ')} seconds); only the timestamps they share have a value`,
+        });
+    }
+    const value = tokens
+        .map((t) =>
+            t.kind === 'identifier'
+                ? `${quoteIdentifier(t.text)}."value"`
+                : t.text,
+        )
+        .join(' ');
+    const findings = emptyFindings();
+    const series = referencesSql(
+        cloudWatchLabel(target) ?? cloudWatchQueryId(target),
+        variables,
+        { nativeNames: CLOUDWATCH_DYNAMIC_LABELS },
+        findings,
+    );
+    pushReferenceWarnings(
+        `The label of CloudWatch ${targetLabel(target)}`,
+        findings,
+        warnings,
+    );
+    const [first, ...rest] = inputs;
+    const from = [
+        `(${first.sql}) AS ${quoteIdentifier(first.id)}`,
+        ...rest.map(
+            (i) =>
+                `JOIN (${i.sql}) AS ${quoteIdentifier(i.id)} ON ${quoteIdentifier(i.id)}."timestamp" = ${quoteIdentifier(first.id)}."timestamp"`,
+        ),
+    ].join('\n');
+    return {
+        sql: `SELECT ${quoteIdentifier(first.id)}."timestamp", ${value} AS "value", ${quoteIdentifier(first.id)}.labels, ${series} AS series\nFROM ${from}`,
+        todo: null,
+        warnings,
+        shape: 'series',
+    };
+};
+
+const translateCloudWatchTarget = (
+    target: GrafanaTarget,
+    source: string | undefined,
+    variables: GrafanaTemplatingVariable[],
+    warnings: ImportWarning[],
+    panel?: PanelScope,
+): TargetTranslation => {
+    const queryMode =
+        typeof target.queryMode === 'string' ? target.queryMode : 'Metrics';
+    const metricsKind: CloudWatchMetricsKind =
+        queryMode === 'Metrics'
+            ? cloudWatchMetricsKind(target)
+            : { kind: 'unsupported' };
+    if (metricsKind.kind === 'unsupported') {
+        warnings.push({
+            code: 'query-cloudwatch-unsupported',
+            message:
+                queryMode === 'Metrics'
+                    ? `CloudWatch ${targetLabel(target)} has metric query type ${String(target.metricQueryType)}, which has no translation yet`
+                    : `CloudWatch ${targetLabel(target)} is a ${queryMode} query, which has no translation yet`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: translate CloudWatch ${targetLabel(target)} by hand`,
+            warnings,
+        };
+    }
+    if (metricsKind.kind === 'expression' && metricsKind.expression === '') {
+        warnings.push({
+            code: 'query-empty',
+            message: `CloudWatch ${targetLabel(target)} is a ${metricsKind.what} with no text`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: CloudWatch ${targetLabel(target)} has no ${metricsKind.what} to translate`,
+            warnings,
+        };
+    }
+    if (metricsKind.kind === 'expression' && panel !== undefined) {
+        const math = cloudWatchPanelMath(
+            target,
+            metricsKind.expression,
+            panel,
+            variables,
+            warnings,
+        );
+        if (math !== undefined) return math;
+    }
+    const namespace =
+        typeof target.namespace === 'string' ? target.namespace.trim() : '';
+    const metricName =
+        typeof target.metricName === 'string' ? target.metricName.trim() : '';
+    if (
+        metricsKind.kind === 'metric-stat' &&
+        (namespace === '' || metricName === '')
+    ) {
+        warnings.push({
+            code: 'query-empty',
+            message: `CloudWatch ${targetLabel(target)} has no namespace or metric name`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: CloudWatch ${targetLabel(target)} has no namespace or metric name to translate`,
+            warnings,
+        };
+    }
+    const region =
+        typeof target.region === 'string' ? target.region.trim() : '';
+    if (region !== '' && region !== 'default') {
+        warnings.push({
+            code: 'query-region-unsupported',
+            message: `CloudWatch ${targetLabel(target)} reads region ${region}; the MetricDataQuery has no region, so the region of the Telemetry Source ${source ?? '(default)'} is used`,
+        });
+    }
+    let metricDataQuery: CloudWatchMetricDataQuery;
+    if (metricsKind.kind === 'expression') {
+        // Metric math, SEARCH and Metrics Insights all go to CloudWatch as the Expression.
+        metricDataQuery = {
+            Id: cloudWatchQueryId(target),
+            Expression: metricsKind.expression,
+            Period: cloudWatchPeriod(target, warnings),
+            ReturnData: true,
+        };
+    } else {
+        const dimensions = cloudWatchDimensions(target, warnings);
+        if (target.matchExact === false) {
+            warnings.push({
+                code: 'query-match-exact-dropped',
+                message: `CloudWatch ${targetLabel(target)} also matches metrics with more dimensions than it lists (Match exact off); a MetricStat matches the listed dimensions exactly`,
+            });
+        }
+        metricDataQuery = {
+            Id: cloudWatchQueryId(target),
+            MetricStat: {
+                Metric: {
+                    Namespace: namespace,
+                    MetricName: metricName,
+                    Dimensions: dimensions,
+                },
+                Period: cloudWatchPeriod(target, warnings),
+                Stat: cloudWatchStatistic(target, warnings),
+            },
+            ReturnData: true,
+        };
+    }
+    const label = cloudWatchLabel(target);
+    if (label !== undefined) metricDataQuery.Label = label;
+    return cloudWatchSql(target, metricDataQuery, source, variables, warnings);
+};
+
 /** The datasource types with a translation; anything else is `datasource-unsupported`. */
 const TARGET_TRANSLATORS = new Map<
     string,
@@ -973,6 +1240,7 @@ const TARGET_TRANSLATORS = new Map<
         source: string | undefined,
         variables: GrafanaTemplatingVariable[],
         warnings: ImportWarning[],
+        panel?: PanelScope,
     ) => TargetTranslation
 >([
     ['prometheus', translatePrometheusTarget],
@@ -983,6 +1251,7 @@ const TARGET_TRANSLATORS = new Map<
 const translateTarget = (
     target: GrafanaTarget,
     ctx: GrafanaQueryContext,
+    panel?: PanelScope,
 ): TargetTranslation => {
     const warnings: ImportWarning[] = [];
     const ref = resolveDatasourceVariable(
@@ -1023,7 +1292,13 @@ const translateTarget = (
             message: `The ${resolved.type} datasource ${resolved.label} of ${targetLabel(target)} is not a known Grafana datasource; the engine's default source is used`,
         });
     }
-    return translator(target, resolved.source, ctx.variables ?? [], warnings);
+    return translator(
+        target,
+        resolved.source,
+        ctx.variables ?? [],
+        warnings,
+        panel,
+    );
 };
 
 /** Translates one Grafana target into SQL, or a TODO with warnings saying why not. */
@@ -1043,7 +1318,8 @@ const unionAll = (queries: string[]): string =>
 
 /**
  * Translates a panel's targets into one chart's SQL. Hidden targets are skipped. The visible
- * targets that translate become one result set (UNION ALL); a target whose result has other
+ * targets that translate become one result set (UNION ALL); CloudWatch metric math evaluates
+ * over the targets it references, hidden or not. A target whose result has other
  * columns than the first translated target's (log lines next to series) is left out with a
  * `panel-targets-not-combined` warning. Targets that don't translate are left out with their
  * warnings; when none translates, the panel is a TODO.
@@ -1072,9 +1348,14 @@ export const translateGrafanaPanelQueries = (
     const warnings: ImportWarning[] = [];
     const todos: string[] = [];
     const queries: string[] = [];
+    // Metric math reads the panel's other targets, hidden ones included.
+    const panelScope: PanelScope = {
+        targets: panel.targets ?? [],
+        translate: (target) => translateTarget(target, targetCtx),
+    };
     let shape: ResultShape | undefined;
     visible.forEach((target) => {
-        const result = translateTarget(target, targetCtx);
+        const result = translateTarget(target, targetCtx, panelScope);
         warnings.push(...result.warnings);
         if (result.sql === null) {
             if (result.todo !== null) todos.push(result.todo);

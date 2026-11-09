@@ -13,6 +13,8 @@ export type ImportWarningCode =
     | 'query-limit-invalid'
     | 'query-direction-unsupported'
     | 'query-cloudwatch-unsupported'
+    | 'query-cloudwatch-math-unsupported'
+    | 'query-cloudwatch-math-periods'
     | 'query-region-unsupported'
     | 'query-period-auto'
     | 'query-period-invalid'

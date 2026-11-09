@@ -506,3 +506,33 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   loki 5/5, cloudwatch-metrics 5/5, panel-targets 3/3, datasources 6/6, time-macros 5/5, variables 6/6. tsc clean,
   oxlint clean, oxfmt applied.
 - 2026-11-09T02:08:54Z supervisor: imp-query-legend-format passed the gate in round 1
+
+### imp-query-cloudwatch-expressions (2026-11-08)
+
+- `grafanaQuery.ts`: `cloudWatchMetricsKind` classifies a Metrics-mode target: `metricQueryType` 1 → its
+  `sqlExpression`; type 0/unset with `metricEditorMode` 1 or a non-empty `expression` → the expression; else a
+  MetricStat. Expressions become `{Id, Expression, Period, ReturnData: true[, Label]}` (no MetricStat, top-level
+  Period) in one `cloudwatch()` call; empty text → TODO + `query-empty`; other `metricQueryType` values and
+  non-Metrics modes (Logs) stay TODO + `query-cloudwatch-unsupported` (imp-query-cloudwatch-logs replaces the Logs part).
+- Panel metric math (option (b) of the check, within CONTRACTS §1.1): `translateGrafanaPanelQueries` passes a
+  `PanelScope` (all panel targets, hidden included) to translators. A code-mode expression whose identifiers name
+  other targets' ids (`cloudWatchQueryId`) becomes one `cloudwatch()` per referenced MetricStat input, JOINed on
+  `timestamp`, with the arithmetic in SQL (`100 * "errors"."value" / "invocations"."value" AS "value"`), the first
+  input's `labels`, and the target's label (variables resolved) or id as `series`. Only numbers, `+ - * /` and
+  parentheses are evaluated; functions (`METRICS()`, `SUM`, `FILL`…), unknown names, `^`, unbalanced parentheses or a
+  non-MetricStat input → TODO + `query-cloudwatch-math-unsupported`. Inputs with different periods →
+  `query-cloudwatch-math-periods`. Hidden inputs' warnings are added; visible inputs report their own.
+  An expression referencing no panel target (SEARCH, Metrics Insights) goes to CloudWatch unchanged.
+- `translateGrafanaTarget` (no panel) never does math: it sends the expression as is.
+- **Integration trap**: the engine's `federation-engine/src/cloudwatch.rs` parses the *Grafana target* JSON
+  (its contract assumption A19: `namespace`, `metricName`, `expression`…), and rejects `metricQueryType` 1, while
+  this line (since imp-query-cloudwatch-metric-stat) emits the AWS `MetricDataQuery` shape that CONTRACTS §1.1
+  names. The integration line has to pick one shape. Recorded, not changed here.
+- Tested: rebuilt common via init.sh, drove the built `dist/cjs` translator from node: code-mode Metrics Insights
+  expression → `Expression` with `Period` 300, no MetricStat; metricQueryType 1 → `sqlExpression` as Expression;
+  panel with hidden `errors`/`invocations` and `100 * errors / invocations` → two cloudwatch() calls joined, math in
+  SQL, series 'Error rate'; `SUM(METRICS())` → TODO + warning; differing periods → warning; `$env` in the label →
+  parameter; SEARCH alone → Expression; Logs mode still TODO. Acceptance: cloudwatch-expressions 3/3;
+  cloudwatch-metrics 5/5, panel-targets 3/3, datasources 6/6, variables 6/6, time-macros 5/5, prometheus 5/5,
+  loki 5/5, legend-format 2/2. tsc clean, oxlint clean, oxfmt applied.
+- 2026-11-09T02:13:18Z supervisor: imp-query-cloudwatch-expressions passed the gate in round 1
