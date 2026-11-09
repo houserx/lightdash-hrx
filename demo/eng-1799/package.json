@@ -6,7 +6,7 @@
     "license": "MIT",
     "scripts": {
         "typecheck": "tsc --noEmit -p tsconfig.json",
-        "walkthrough": "node -e \"console.error('eng-1799-demo walkthrough: not implemented yet (walkthrough/run.sh comes with the demo-scene-* features)'); process.exit(1)\" --",
+        "walkthrough": "bash walkthrough/run.sh",
         "video": "node -e \"console.error('eng-1799-demo video: not implemented yet (video/build.ts comes with demo-video-build)'); process.exit(1)\" --",
         "ask": "node --import tsx ask/main.ts"
     },

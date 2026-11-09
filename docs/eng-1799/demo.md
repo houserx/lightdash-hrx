@@ -176,6 +176,25 @@ list. Today both scripted questions are about the fill queue backlog and run `qu
 `hrx_fill_queue_backlog{queue="fill"}`: "What is the fill queue backlog right now?" (an instant query at `now`) and
 "How has the fill queue backlog changed over the last 15 minutes?" (a 1-minute range query).
 
+## Walkthrough scenes (recorded)
+
+`bash demo/eng-1799/walkthrough/run.sh [scene-id ...]` (or `pnpm -F eng-1799-demo walkthrough [scene-id ...]`)
+drives the real UI in headless Chromium against the running stack (`up.sh` first). With no scene id it runs every
+scene in order. It never restarts the scenario clock. Each scene is one Playwright spec,
+`demo/eng-1799/walkthrough/<scene-id>.spec.ts`, which asserts what it shows. It writes
+`demo/eng-1799/out/scenes/<scene-id>/video.webm` (the whole scene) and `key-moment.png`, both 1920x1080. The runner
+stops at the first scene that fails and exits non-zero.
+
+Each scene runs Playwright in its own process group. On TERM, INT or HUP, or when a scene runs longer than
+`DEMO_SCENE_TIMEOUT` seconds (default 900), the runner stops the whole group: TERM first, then KILL after 5 s. No
+Chromium outlives the run.
+
+- **01-sign-in**: signs in through the login form as the demo user and opens Pharmacy Ops overview from the
+  dashboards list. It changes the Dashboard Time Range from "Last 30 minutes" to "Last 1 hour" and the range's
+  Refresh from 30s to 10s, which moves the relative bounds forward. It then turns on "Auto-refresh while viewing"
+  at every 5m, which re-runs every Tile. Key moment: the dashboard over the last hour, with "Last 1 hour", "10s"
+  and "Every 5m" in the header.
+
 ## Known limits
 
 - **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's

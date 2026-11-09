@@ -2440,3 +2440,41 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   its return value as out/scenes/06-ai-question/answer.json. To script more questions, add entries to `INTENTS` in
   client.ts. Order matters: the range intent is checked before the "right now" intent.
 - 2026-11-09T10:47:21Z supervisor: demo-mcp-ask passed the gate in round 1
+
+### demo-scene-01-sign-in (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** New `demo/eng-1799/walkthrough/`:
+  - `run.sh [scene-id ...]` runs each scene in its own Playwright process against the running stack. With no ids it
+    runs every `NN-*.spec.ts` present, in name order. It stops at the first failure (exit 1), and a bad or missing
+    id exits 2. Each scene's Playwright starts in its own process group: `set -m` is on only around the spawn, so
+    bash prints no job notices. On TERM, INT or HUP, or after `DEMO_SCENE_TIMEOUT` seconds (default 900, via a
+    watchdog subshell), the whole group gets TERM and then KILL after 5 s. After a normal exit the group is reaped
+    too. `.bin/playwright` is called directly, without pnpm.
+  - `playwright.config.ts` runs one worker at 1920x1080 with built-in video off. Its outputDir is the repo's
+    `tmp/demo-walkthrough/` (not `.state/`, which down.sh reaps).
+  - `lib/scene.ts` holds the shared fixtures. **Every later scene should import `test`/`expect` from here.** The
+    `context` fixture records a 1920x1080 video and saves it as `out/scenes/<id>/video.webm` on teardown, even when
+    the scene fails. The `scene` fixture takes the id from the spec file name, clears `out/scenes/<id>/` at the
+    start, and gives `scene.keyMoment(page)` → `key-moment.png`. The `stack` fixture reads `.state/stack.json`.
+    Steps: `signIn` (the real /login form: email → Continue → password → Sign in), `openDashboardFromList`, `tile`
+    (`.react-grid-item` by exact title), `beat` (a short hold for viewers, never a wait for state), and
+    `QUERY_ERROR_TEXT`.
+  - `01-sign-in.spec.ts` (16 `expect`s) signs in and opens Pharmacy Ops overview from the dashboards list. It sets
+    the Dashboard Time Range from Last 30 minutes to Last 1 hour (URL `from=now-1h`) and the range's **Refresh**
+    select from 30s to 10s (URL `refresh=10s`). It then turns on **"Auto-refresh while viewing"** at 5m (menu
+    "Auto-refresh options": the chosen item is disabled, and the header shows "Every 5m"). Decision: "turn
+    auto-refresh on" maps to that stock menu, which defaults to Off. The Refresh select was already 30s from the
+    seed, so the scene changes both.
+  - `package.json` `walkthrough` is now `bash walkthrough/run.sh`. docs/eng-1799/demo.md has a new section,
+    "Walkthrough scenes (recorded)", describing the runner and scene 01.
+- **Selector traps.** The Time Range presets in the popover are buttons named "Last …" too. The header trigger is
+  `button[aria-haspopup="dialog"]` filtered by text. The Refresh select is `getByRole('combobox', {name: 'Refresh'})`.
+- **Tested as a user.** I brought the stack up with up.sh and ran `run.sh 01-sign-in`: it passed in about 17 s. The
+  video is 1920x1080 and about 17 s long. I looked at the frames (login → home → dashboard). key-moment.png shows
+  the dashboard over 09:55–10:50, with "Last 1 hour", "10s" and "Every 5m" in the header and the toast "Your
+  dashboard will refresh every 5m". The stat is in black (baseline). TERM sent to run.sh at 7 s, with 4 chromium
+  processes alive: exit 143 and 0 chromium afterwards. `DEMO_SCENE_TIMEOUT=6`: "ran longer than 6s", exit 1, 0
+  chromium. A bad id exits 2.
+- **Checks:** `bash ./init.sh`, then `run.sh --stack scene-01-sign-in.spec.ts` passed (1 test, about 51 s with
+  up/down). `run.sh package.spec.ts` passed. Demo typecheck is clean. No `.state` process or chromium is left.
+- 2026-11-09T11:01:21Z supervisor: demo-scene-01-sign-in passed the gate in round 1
