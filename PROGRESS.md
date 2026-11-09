@@ -1178,3 +1178,34 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: transform-rename-organize 3/3; dashboard-charts, panel-kinds, report, legend-stacking pass. tsc
   (common), oxlint, oxfmt clean.
 - 2026-11-09T04:03:54Z supervisor: imp-transform-rename-organize passed the gate in round 1
+
+## imp-transform-filter (round 1)
+- grafanaTransformations.ts: new `filterFieldsByName` and `filterByValue` cases. They share a `SqlRewrite` result
+  (`{sql}` | `{unsupported}` | null) with renameByRegex, through a small `rewrite` helper in the switch.
+- They apply only when the result has no known shape (`translated.shape === undefined`: Postgres or Ops Mart queries,
+  whose Grafana field names are the SQL column names). A shaped result (series/number/log) is reported as
+  `transformation-unsupported`, because Grafana's fields there are series, not columns.
+- filterFieldsByName with `include.names` -> `SELECT "a", "b"\nFROM (<sql>) AS filtered`. Identifiers are double-quoted
+  and deduplicated. A pattern, `byVariable` or `exclude.names` needs the query's columns, which the importer doesn't
+  know for a hand-written query, so it is reported. The decision: no parsing of the raw SQL select list (the spec
+  allows "select or be reported"). An empty include is a no-op.
+- filterByValue -> `SELECT *\nFROM (<sql>) AS filtered\nWHERE <cond>`. Matchers: equal(=), notEqual(<>), greater,
+  greaterOrEqual, lower, lowerOrEqual, range (exclusive `> from AND < to`, as Grafana does), regex
+  (`CAST(col AS VARCHAR) ~ '...'`), isNull, isNotNull. `match: all` joins with AND, anything else with OR. A numeric
+  string value is emitted as a number (Grafana compares loosely). Any filter with an unknown matcher or no fieldName
+  -> the whole transformation is reported, and the SQL is left as it is.
+- Null semantics (decision): Grafana's matchers are false on null, but SQL `NOT (NULL)` drops the row. So exclude writes
+  `NOT COALESCE(cond, FALSE)`. The exception is when the condition can't be NULL (only null checks, or `any` with an
+  isNull on every compared column), which gives the plain `NOT (range_days = 0 OR range_days IS NULL)` of the spec
+  step.
+- Contract assumptions: DataFusion (CONTRACTS: Postgres dialect) supports `~`, `CAST(.. AS VARCHAR)`, COALESCE and
+  quoted identifiers.
+- Trap: the acceptance pattern case also passed before this change, because the report already names every panel
+  (datasource-unresolved rows). The unit tests check the real warning.
+- Unit tests: grafanaTransformations.test.ts +5 cases (11 total).
+- Tested as a user: ran the CLI from source on a synthetic 3-panel Postgres dashboard (scratch dir since removed).
+  "Some fields" SQL: SELECT "created_at", "title" FROM (platform_query(...)) AS filtered. "Non-zero ranges": WHERE NOT
+  ("range_days" = 0 OR "range_days" IS NULL). "Pattern fields": SQL left as it is, with one transformation-unsupported
+  row in IMPORT-REPORT.md naming the panel, also counted in import-summary byCode.
+- Acceptance: transform-filter 3/3, transform-rename-organize 3/3. tsc (common), oxlint, oxfmt clean.
+- 2026-11-09T04:08:44Z supervisor: imp-transform-filter passed the gate in round 1

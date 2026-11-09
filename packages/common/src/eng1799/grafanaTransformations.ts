@@ -6,6 +6,8 @@
  * - `renameByRegex` renames series: `regexp_replace` on the `series` column of a series
  *   result (CONTRACTS §1.1), with Grafana's regex and its replacement pattern.
  * - `organize` renames, hides and orders table columns in the table chart config.
+ * - `filterFieldsByName` selects the columns it names around the query, and `filterByValue`
+ *   filters its rows with a WHERE, for a query whose columns are named (Postgres, Ops Marts).
  *
  * Disabled transformations are skipped. Transformations this module does not know yet are
  * left as they are.
@@ -33,6 +35,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const sqlStringLiteral = (value: string): string =>
     `'${value.replace(/'/g, "''")}'`;
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+
+/** A rewritten query, a reason the transformation can't apply, or null for a no-op. */
+type SqlRewrite = { sql: string } | { unsupported: string } | null;
 
 /** The columns of each result shape that carries series names, in order (CONTRACTS §1.1). */
 const SERIES_COLUMNS: Partial<Record<GrafanaResultShape, string[]>> = {
@@ -67,7 +74,7 @@ const renameByRegex = (
     sql: string,
     shape: GrafanaResultShape | undefined,
     options: Record<string, unknown>,
-): { sql: string } | { unsupported: string } | null => {
+): SqlRewrite => {
     const regex = typeof options.regex === 'string' ? options.regex : '';
     if (regex === '') return null;
     const others = shape ? SERIES_COLUMNS[shape] : undefined;
@@ -93,6 +100,182 @@ const renameByRegex = (
     };
 };
 
+/** A column name as a quoted SQL identifier, exactly as the panel query returns it. */
+const sqlIdentifier = (name: string): string => `"${name.replace(/"/g, '""')}"`;
+
+/**
+ * Only a result whose columns its query names (a Postgres or Ops Mart query: no known
+ * shape) has fields whose Grafana names are its SQL column names. A shaped result's Grafana
+ * fields are its series (and time), which aren't columns.
+ */
+const SHAPED_RESULT_REASON =
+    'Grafana names the fields of this query by series, which are not columns of the chart SQL; filter the result in the chart SQL by hand';
+
+/**
+ * `filterFieldsByName` keeping the fields it names: `SELECT <names> FROM (<sql>)`. A name
+ * pattern, a variable or an exclude list needs the result's column names, which the importer
+ * doesn't know for a hand-written query, so it is reported.
+ */
+const filterFieldsByName = (
+    sql: string,
+    shape: GrafanaResultShape | undefined,
+    options: Record<string, unknown>,
+): SqlRewrite => {
+    const include = isRecord(options.include) ? options.include : {};
+    const exclude = isRecord(options.exclude) ? options.exclude : {};
+    const names = Array.isArray(include.names)
+        ? [...new Set(include.names.filter(isString))]
+        : [];
+    const pattern =
+        typeof include.pattern === 'string' ? include.pattern.trim() : '';
+    const excluded = Array.isArray(exclude.names)
+        ? exclude.names.filter(isString)
+        : [];
+    if (
+        names.length === 0 &&
+        pattern === '' &&
+        excluded.length === 0 &&
+        options.byVariable !== true
+    ) {
+        return null;
+    }
+    if (shape !== undefined) return { unsupported: SHAPED_RESULT_REASON };
+    if (pattern !== '' || excluded.length > 0 || options.byVariable === true) {
+        return {
+            unsupported:
+                'it picks fields by pattern, variable or exclusion, and the importer does not know the columns of the panel query; select the columns in the chart SQL by hand',
+        };
+    }
+    return {
+        sql: `SELECT ${names
+            .map(sqlIdentifier)
+            .join(', ')}\nFROM (${sql}) AS filtered`,
+    };
+};
+
+/**
+ * A matcher's value as a SQL literal: a number (or numeric string, as Grafana compares
+ * loosely) as a number, else a string.
+ */
+const sqlValue = (value: unknown): string | undefined => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return String(value);
+    }
+    if (typeof value === 'string') {
+        return value.trim() !== '' && Number.isFinite(Number(value))
+            ? String(Number(value))
+            : sqlStringLiteral(value);
+    }
+    return undefined;
+};
+
+const COMPARISONS: Record<string, string> = {
+    equal: '=',
+    notEqual: '<>',
+    greater: '>',
+    greaterOrEqual: '>=',
+    lower: '<',
+    lowerOrEqual: '<=',
+};
+
+/**
+ * One filterByValue matcher on a column as a SQL condition (Grafana's value matchers), and
+ * whether it can be NULL (a comparison on a NULL value).
+ */
+const valueCondition = (
+    column: string,
+    config: Record<string, unknown>,
+): { sql: string; nullable: boolean; isNull?: true } | undefined => {
+    const options = isRecord(config.options) ? config.options : {};
+    const id = typeof config.id === 'string' ? config.id : '';
+    if (id === 'isNull') {
+        return { sql: `${column} IS NULL`, nullable: false, isNull: true };
+    }
+    if (id === 'isNotNull') {
+        return { sql: `${column} IS NOT NULL`, nullable: false };
+    }
+    if (id in COMPARISONS) {
+        const value = sqlValue(options.value);
+        return value === undefined
+            ? undefined
+            : { sql: `${column} ${COMPARISONS[id]} ${value}`, nullable: true };
+    }
+    if (id === 'range') {
+        const from = sqlValue(options.from);
+        const to = sqlValue(options.to);
+        return from === undefined || to === undefined
+            ? undefined
+            : {
+                  sql: `(${column} > ${from} AND ${column} < ${to})`,
+                  nullable: true,
+              };
+    }
+    if (id === 'regex' && typeof options.value === 'string') {
+        return {
+            sql: `CAST(${column} AS VARCHAR) ~ ${sqlStringLiteral(
+                options.value,
+            )}`,
+            nullable: true,
+        };
+    }
+    return undefined;
+};
+
+/**
+ * `filterByValue` as a WHERE around the query: its matchers joined by OR (`match: any`) or
+ * AND (`all`), kept (`include`) or negated (`exclude`). Grafana's matchers are false on a
+ * null value, so a negated condition that can be NULL is read as false first; with `any`
+ * and an `isNull` matcher on every compared column it can't be NULL.
+ */
+const filterByValue = (
+    sql: string,
+    shape: GrafanaResultShape | undefined,
+    options: Record<string, unknown>,
+): SqlRewrite => {
+    const filters = Array.isArray(options.filters)
+        ? options.filters.filter(isRecord)
+        : [];
+    if (filters.length === 0) return null;
+    if (shape !== undefined) return { unsupported: SHAPED_RESULT_REASON };
+    const conditions = filters.map((filter) =>
+        typeof filter.fieldName === 'string' &&
+        filter.fieldName !== '' &&
+        isRecord(filter.config)
+            ? {
+                  field: filter.fieldName,
+                  condition: valueCondition(
+                      sqlIdentifier(filter.fieldName),
+                      filter.config,
+                  ),
+              }
+            : undefined,
+    );
+    if (conditions.some((c) => c?.condition === undefined)) {
+        return {
+            unsupported:
+                'one of its filters has no field or uses a matcher the importer does not translate; filter the rows in the chart SQL by hand',
+        };
+    }
+    const parts = conditions.flatMap((c) =>
+        c?.condition ? [{ field: c.field, ...c.condition }] : [],
+    );
+    const any = options.match !== 'all';
+    const joined = parts.map((p) => p.sql).join(any ? ' OR ' : ' AND ');
+    let where = joined;
+    if (options.type === 'exclude') {
+        const nullChecked = new Set(
+            parts.filter((p) => p.isNull).map((p) => p.field),
+        );
+        const canBeNull = parts.some(
+            (p) => p.nullable && !(any && nullChecked.has(p.field)),
+        );
+        where = canBeNull
+            ? `NOT COALESCE(${joined}, FALSE)`
+            : `NOT (${joined})`;
+    }
+    return { sql: `SELECT *\nFROM (${sql}) AS filtered\nWHERE ${where}` };
+};
+
 /** The string-keyed entries of an organize option map. */
 const entries = <T>(
     value: unknown,
@@ -104,7 +287,6 @@ const entries = <T>(
           )
         : [];
 
-const isString = (v: unknown): v is string => typeof v === 'string';
 const isTrue = (v: unknown): v is true => v === true;
 const isIndex = (v: unknown): v is number =>
     typeof v === 'number' && Number.isInteger(v) && v >= 0;
@@ -168,19 +350,31 @@ export const applyGrafanaTransformations = (
         .filter((t: GrafanaTransformation) => t.disabled !== true)
         .forEach((t: GrafanaTransformation) => {
             const options = isRecord(t.options) ? t.options : {};
-            switch (t.id) {
-                case 'renameByRegex': {
-                    const renamed = renameByRegex(
-                        sql,
-                        translated.shape,
-                        options,
-                    );
-                    if (renamed && 'sql' in renamed) sql = renamed.sql;
-                    if (renamed && 'unsupported' in renamed) {
-                        unsupported(t.id, renamed.unsupported);
-                    }
-                    break;
+            const rewrite = (id: string, result: SqlRewrite) => {
+                if (result && 'sql' in result) sql = result.sql;
+                if (result && 'unsupported' in result) {
+                    unsupported(id, result.unsupported);
                 }
+            };
+            switch (t.id) {
+                case 'renameByRegex':
+                    rewrite(
+                        t.id,
+                        renameByRegex(sql, translated.shape, options),
+                    );
+                    break;
+                case 'filterFieldsByName':
+                    rewrite(
+                        t.id,
+                        filterFieldsByName(sql, translated.shape, options),
+                    );
+                    break;
+                case 'filterByValue':
+                    rewrite(
+                        t.id,
+                        filterByValue(sql, translated.shape, options),
+                    );
+                    break;
                 case 'organize':
                     // An organize that names no column changes nothing.
                     if (
