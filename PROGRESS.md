@@ -674,3 +674,12 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   now-24h gave 10:00Z..10:00Z at 300 s, 289 rows. now-1h with a 5m refresh at 10:04:59Z gave
   09:00..10:00 at 15 s (the floor), 241 rows. No missing references. No engine left running.
 - 2026-11-09T03:22:56Z supervisor: int-time-params-engine passed the gate in round 1
+- 2026-11-09 int-time-cache-key: no code change was needed. The check already passed (1/1) when this
+  session started. Relative bounds round down to the refresh bucket in `withTimeRangeParameters`
+  (backend AsyncQueryService/queryTimeRange.ts), so the substituted SQL, and with it
+  `QueryHistoryModel.getCacheKey`, stay the same inside a bucket.
+  Tested by hand (`../tmp/manual-cache-key/try.ts`, run from e2e/eng-1799 with tsx) with a fake
+  Prometheus and the real engine: now-15m..now with a 1m refresh at 10:00:05, 10:00:30 and 10:00:55
+  gave one cache key and the window 09:45..10:00 (step 15 s). At 10:01:01 the key was different and
+  the window was 09:46..10:01. 61 rows each time. No engine left running.
+- 2026-11-09T03:25:03Z supervisor: int-time-cache-key passed the gate in round 1
