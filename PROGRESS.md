@@ -1489,3 +1489,15 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   (4 from the dynamic block over local.pa_renewal_health_alert_rules + 4 standalone), not 9. Every other group matches
   the hand count (2+7+7+30+2+8+3+13+4+8 = 84). The test accepts 80-90, so nothing to change.
 - 2026-11-09T05:07:11Z supervisor: imp-alerts-full-ruleset passed the gate in round 1
+
+## imp-alert-contact-points (2026-11-09, round 1)
+- No code change: imp-cli-grafana-alerts already converts contact points (Slack webhooks -> slack_webhook with
+  url {secretRef: <slug>-webhook}, incident.io webhook -> incident_io with the placeholder URL and token
+  {secretRef: <slug>-token}). The check passed on the first run after init (4/4).
+- Tested as a user: CLI `import grafana-alerts` with the full fixture rules, contact points, policy and trimmed
+  locals (scratch in ../tmp/cp-manual, outside the repo). contact-points/ has six files; slack-infra-alerts.yml has
+  slack_webhook, secretRef slack-infra-alerts-webhook, title `{{ template "slack.title" . }}`;
+  grafana-alerts-incident-io.yml has incident_io, the test-alert-source-not-real URL, token secretRef
+  grafana-alerts-incident-io-token. grep over the whole output for hooks.slack.com, secret_string and
+  local.grafana_/local.slack_webhooks: 0 files.
+- 2026-11-09T05:08:43Z supervisor: imp-alert-contact-points passed the gate in round 1
