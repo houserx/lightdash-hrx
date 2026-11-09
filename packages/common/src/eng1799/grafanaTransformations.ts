@@ -14,8 +14,11 @@
  * - `merge` combines the panel's targets into one result (UNION ALL), which the panel query
  *   translation does when `mergesGrafanaTargets` says so; here it changes nothing more.
  *
- * Disabled transformations are skipped. Transformations this module does not know yet are
- * left as they are. A rewrite that changes the result's columns changes the shape the next
+ * - `convertFieldType` casts the columns it converts to number, string or boolean, for a
+ *   query whose columns are named: `SELECT * REPLACE (CAST(...) AS ...)`.
+ *
+ * Disabled transformations are skipped. `configFromData` and any transformation this module
+ * does not know are `transformation-unsupported` warnings naming them. A rewrite that changes the result's columns changes the shape the next
  * transformation sees.
  */
 import { ChartKind } from '../types/savedCharts';
@@ -483,6 +486,70 @@ const reduce = (
     };
 };
 
+/**
+ * The SQL types of Grafana's field types (the federation engine runs DataFusion SQL). `time`
+ * reads a date format or epoch milliseconds, `enum` builds a value list and `other` keeps the
+ * value as an object: none has a single CAST.
+ */
+const CAST_TYPES: Record<string, string> = {
+    number: 'DOUBLE',
+    string: 'VARCHAR',
+    boolean: 'BOOLEAN',
+};
+
+/**
+ * `convertFieldType` as `SELECT * REPLACE (CAST(<field> AS <type>) AS <field>, ...)` around
+ * the query, which keeps the columns in their order. A conversion with no field (Grafana's
+ * "all fields") and a field type with no CAST are reported.
+ */
+const convertFieldType = (
+    sql: string,
+    shape: GrafanaResultShape | undefined,
+    options: Record<string, unknown>,
+): SqlRewrite => {
+    const conversions = Array.isArray(options.conversions)
+        ? options.conversions.filter(isRecord)
+        : [];
+    if (conversions.length === 0) return null;
+    if (shape !== undefined) {
+        return {
+            unsupported:
+                'Grafana names the fields of this query by series, which are not columns of the chart SQL; cast the column in the chart SQL by hand',
+        };
+    }
+    const casts = new Map<string, string>();
+    for (const conversion of conversions) {
+        const field =
+            typeof conversion.targetField === 'string'
+                ? conversion.targetField
+                : '';
+        const type =
+            typeof conversion.destinationType === 'string'
+                ? conversion.destinationType
+                : '';
+        const sqlType = CAST_TYPES[type];
+        if (field.trim() === '' || !sqlType) {
+            return {
+                unsupported: `one of its conversions has no field or converts to ${
+                    type || 'no type'
+                }, which the importer does not cast; cast the column in the chart SQL by hand`,
+            };
+        }
+        casts.set(field, sqlType);
+    }
+    const replaced = [...casts].map(
+        ([field, sqlType]) =>
+            `CAST(${sqlIdentifier(field)} AS ${sqlType}) AS ${sqlIdentifier(
+                field,
+            )}`,
+    );
+    return {
+        sql: `SELECT * REPLACE (${replaced.join(
+            ', ',
+        )})\nFROM (${sql}) AS converted`,
+    };
+};
+
 /** Whether the panel merges its targets: an enabled `merge` transformation. */
 export const mergesGrafanaTargets = (transformations: unknown): boolean =>
     Array.isArray(transformations) &&
@@ -589,8 +656,17 @@ export const applyGrafanaTransformations = (
                 case 'reduce':
                     rewrite(t.id, reduce(sql, shape, options));
                     break;
+                case 'convertFieldType':
+                    rewrite(t.id, convertFieldType(sql, shape, options));
+                    break;
                 case 'merge':
                     // The panel query translation already combined the targets.
+                    break;
+                case 'configFromData':
+                    unsupported(
+                        t.id,
+                        'it sets field config (such as min, max or thresholds) from the values of a query, and Lightdash chart config is fixed; set it on the chart by hand',
+                    );
                     break;
                 case 'organize':
                     // An organize that names no column changes nothing.
@@ -609,6 +685,12 @@ export const applyGrafanaTransformations = (
                     }
                     break;
                 default:
+                    unsupported(
+                        typeof t.id === 'string' && t.id.trim() !== ''
+                            ? t.id
+                            : '(unnamed)',
+                        'the importer has no translation for it; reshape the result in the chart SQL by hand',
+                    );
                     break;
             }
         });

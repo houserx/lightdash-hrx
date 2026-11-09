@@ -1243,3 +1243,30 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: transform-calculate-reduce-merge 3/3; transform-filter, transform-rename-organize, dashboard-charts,
   dashboard-report, common query-panel-targets and query-postgres pass. tsc (common), oxlint, oxfmt clean.
 - 2026-11-09T04:15:38Z supervisor: imp-transform-calculate-reduce-merge passed the gate in round 1
+
+## imp-transform-convert-config (round 1)
+- grafanaTransformations.ts: new `convertFieldType` case, an explicit `configFromData` warning, and the `default`
+  case now warns: every enabled transformation id the module doesn't know is a transformation-unsupported warning
+  naming it ("The <id> transformation is not imported: the importer has no translation for it; ..."); a missing id
+  is named `(unnamed)`. Disabled transformations are still skipped silently.
+- convertFieldType (named-column queries only): `SELECT * REPLACE (CAST("f" AS DOUBLE) AS "f", ...)\nFROM (<sql>) AS
+  converted`, keeping column order. Types: number -> DOUBLE, string -> VARCHAR, boolean -> BOOLEAN. time (date
+  format / epoch ms ambiguity), enum, other, a conversion with no targetField, or a shaped (series/number/log) result
+  -> reported. Empty conversions -> no-op.
+- Decision: `* REPLACE` is DataFusion/Generic-dialect syntax. Checked: federation-engine leaves
+  datafusion.sql_parser.dialect at its default (generic), and sqlparser 0.62's GenericDialect has
+  supports_select_wildcard_replace = true. Not executed against a running engine (no cargo build this session).
+- Decision: plain CAST, as the spec says; Grafana turns unparsable numbers into null, CAST errors instead. If that
+  bites on real dashboards, TRY_CAST is the drop-in change (acceptance regex `cast \(` would still match).
+- Trap for later sessions: a new transformation id in a fixture now changes warning counts (roundtrip warning
+  snapshot). Fixture ids today: renameByRegex, filterFieldsByName, filterByValue, organize, calculateField,
+  configFromData (3), reduce, merge, convertFieldType - all handled.
+- Unit tests: grafanaTransformations.test.ts: replaced "leaves unknown as they are" with 3 cases (20 total).
+- Tested as a user: CLI from source on a synthetic 3-panel Postgres dashboard (scratch dir removed). Throttles SQL:
+  `SELECT * REPLACE (CAST("throttled" AS DOUBLE) AS "throttled") FROM (SELECT * FROM platform_query(...)) AS
+  converted`. IMPORT-REPORT.md: one transformation-unsupported row for "Config from data", one for "Matrix" naming
+  groupingToMatrix; import-summary byCode transformation-unsupported = 2.
+- Acceptance: transform-convert-config 2/2; transform-calculate-reduce-merge, transform-filter,
+  transform-rename-organize, dashboard-report, -charts, -panel-kinds, -multi, -command, -todo-tiles pass.
+  tsc (common), oxlint, oxfmt clean. Note: the CLI loads built common, so run init.sh after editing common.
+- 2026-11-09T04:20:50Z supervisor: imp-transform-convert-config passed the gate in round 1

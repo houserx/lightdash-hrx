@@ -403,12 +403,94 @@ describe('applyGrafanaTransformations', () => {
         });
     });
 
-    it('leaves transformations it does not know as they are', () => {
-        const result = applyGrafanaTransformations(
-            [{ id: 'sortBy', options: {} }],
-            { sql: 'SELECT 1' },
-            ChartKind.TABLE,
-        );
-        expect(result).toEqual({ sql: 'SELECT 1', columns: {}, warnings: [] });
+    describe('convertFieldType and unsupported transformations', () => {
+        const PG_SQL = "SELECT * FROM platform_query('SELECT a, b FROM t')";
+        const apply = (transformations: object[], shape?: 'series') =>
+            applyGrafanaTransformations(
+                transformations,
+                { sql: shape ? SERIES_SQL : PG_SQL, shape },
+                ChartKind.TABLE,
+            );
+
+        it('casts converted fields in place with SELECT * REPLACE', () => {
+            const result = apply([
+                {
+                    id: 'convertFieldType',
+                    options: {
+                        conversions: [
+                            {
+                                targetField: 'throttled',
+                                destinationType: 'number',
+                            },
+                            { targetField: 'ok', destinationType: 'boolean' },
+                            { targetField: 'id', destinationType: 'string' },
+                        ],
+                        fields: {},
+                    },
+                },
+            ]);
+            expect(result.sql).toBe(
+                `SELECT * REPLACE (CAST("throttled" AS DOUBLE) AS "throttled", CAST("ok" AS BOOLEAN) AS "ok", CAST("id" AS VARCHAR) AS "id")\nFROM (${PG_SQL}) AS converted`,
+            );
+            expect(result.warnings).toEqual([]);
+            expect(
+                apply([
+                    { id: 'convertFieldType', options: { conversions: [] } },
+                ]).sql,
+            ).toBe(PG_SQL);
+        });
+
+        it('reports conversions it cannot cast', () => {
+            const time = apply([
+                {
+                    id: 'convertFieldType',
+                    options: {
+                        conversions: [
+                            { targetField: 't', destinationType: 'time' },
+                        ],
+                    },
+                },
+            ]);
+            expect(time.sql).toBe(PG_SQL);
+            expect(time.warnings[0].code).toBe('transformation-unsupported');
+            expect(time.warnings[0].message).toContain('time');
+            const shaped = apply(
+                [
+                    {
+                        id: 'convertFieldType',
+                        options: {
+                            conversions: [
+                                { targetField: 'x', destinationType: 'number' },
+                            ],
+                        },
+                    },
+                ],
+                'series',
+            );
+            expect(shaped.sql).toBe(SERIES_SQL);
+            expect(shaped.warnings).toHaveLength(1);
+        });
+
+        it('warns about configFromData and transformations it does not know, by name', () => {
+            const result = applyGrafanaTransformations(
+                [
+                    { id: 'configFromData', options: {} },
+                    { id: 'groupingToMatrix', options: {} },
+                    { id: 'sortBy', disabled: true },
+                    { options: {} },
+                ],
+                { sql: 'SELECT 1' },
+                ChartKind.TABLE,
+            );
+            expect(result.sql).toBe('SELECT 1');
+            expect(result.warnings.map((w) => w.code)).toEqual([
+                'transformation-unsupported',
+                'transformation-unsupported',
+                'transformation-unsupported',
+            ]);
+            expect(result.warnings[0].message).toContain('configFromData');
+            expect(result.warnings[1].message).toContain('groupingToMatrix');
+            expect(result.warnings[2].message).toContain('(unnamed)');
+        });
     });
 });
