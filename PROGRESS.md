@@ -501,3 +501,34 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     `types.setTypeParser(INT8, BigInt)`. Its field type is still `number`. `JSON.stringify` on
     raw rows throws, so checks and scripts must handle BigInt.
 - 2026-11-09T02:42:27Z supervisor: int-client-log-trace-functions passed the gate in round 1
+- 2026-11-09 int-client-streaming: **engine change** in `federation-engine/src/promql.rs`.
+  The check failed at first: the fake Prometheus (like real Prometheus) refuses a range query of
+  more than 11,000 points per series (`bad_data: exceeded maximum resolution`), so a valid
+  30000-row `promql()` call failed. CONTRACTS §1.1/§1.2 promise one row per sample and cap only
+  at `max_rows`.
+  **Contract assumption** (narrowest reading): `promql()` splits a long range into windows of at
+  most 11,000 steps, aligned to the original `start` (each window starts one step after the
+  previous one ends; the last ends at the original `end`). It fetches the windows one after another
+  and merges series with the same labels in time order (series in order of first appearance).
+  So the result is exactly what one unlimited request would return. A range that fits, or an
+  invalid one (`end < start`), is still a single request with the same error as before. Once the
+  merged samples exceed `max_rows`, no more windows are fetched and 54000 is raised as before.
+  `promql_instant` is unchanged. New unit tests: `long_ranges_split_into_aligned_windows_of_at_most_11000_points`,
+  `windows_merge_into_one_series_per_label_set_in_time_order` (promql 9/9 pass).
+  Tested by hand with a tsx script outside the repo (real engine + fake Prometheus, synthetic
+  series) through `warehouseClientFromCredentials(...).streamQuery/runQuery`: 30000 points at
+  1 s → 30000 distinct rows in order, first T0 and last T0+29999 s, and the fake saw 3 requests
+  (11000/11000/8000 points). With 2 series, each had 30000 rows. A 10-minute range → 1 request. Ten days at 1m
+  → 14401 rows in 2 windows. `max_rows = 15000` → `WarehouseQueryError: result exceeds max_rows`
+  after 1 request. `end < start` → Prometheus' own error. Regression: int-harness-fake-prometheus,
+  int-client-metric-functions pass. No engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - Upstream `PostgresWarehouseClient.streamQuery` reads through pg-query-stream (cursor portal
+    fetches) but calls the callback **once per row** (`rows: [row]`), so the "batches" in the
+    check are callback calls. That's upstream behaviour, deliberately left alone.
+  - `logql_metric()` (Loki has the same 11,000-point limit, see `harness/loki.ts`) does **not**
+    split yet. Reuse `range_windows`/`merge_matrix` if a later feature needs long Loki ranges.
+  - Without ORDER BY, DataFusion may interleave the rows of one promql() result (round-robin
+    repartition); queries that need an order must say ORDER BY.
+  - rustfmt and clippy are not installed on this machine; only `cargo build`/`cargo test` ran.
+- 2026-11-09T02:59:33Z supervisor: int-client-streaming passed the gate in round 1
