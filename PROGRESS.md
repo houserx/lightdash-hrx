@@ -848,3 +848,32 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   options.code.showLineNumbers. Acceptance: dashboard-text 3/3, dashboard-dropped-panels 4/4, dashboard-charts 4/4,
   dashboard-collapsed-rows 2/2. tsc (common) and oxlint are clean, and oxfmt was applied.
 - 2026-11-09T03:02:00Z supervisor: imp-dashboard-text passed the gate in round 1
+
+### imp-dashboard-links (2026-11-08)
+
+- packages/common/src/eng1799/grafanaDashboardImport.ts: panel links (`links`), field links
+  (`fieldConfig.defaults.links`) and `links` override properties are added to the SQL chart `description`, after the
+  panel description: a blank line, `Links:`, then one `- [title](url)` per link (repeats dropped, title falls back to
+  the url). Brackets in titles are escaped; a url with spaces, parentheses or `<>` is written `<url>` so it stays one
+  link. Grafana data-link variables (`${__field.labels.route}`) are copied as they are.
+- The dashboard `description` is now set: the Grafana dashboard description, then the same `Links:` list from the
+  dashboard `links`. A `type: 'link'` link becomes `[title](url)`. A `type: 'dashboards'` (tag-based) link is named
+  without a url, as `Related (not imported: it lists the Grafana dashboards tagged kubernetes-app)`, and gives a
+  `dashboard-link-unsupported` warning (no panel) that names the tags, so it is in IMPORT-REPORT.md. With neither
+  description nor links, `description` is left out of the YAML.
+- A panel/field link with no url is left out and gives `link-unsupported`. New codes are in importWarnings.ts.
+- Links no longer give `option-dropped`: `links` is in NON_OPTION_PANEL_KEYS and `fieldConfig.defaults.links` /
+  `fieldConfig.overrides.links` are skipped in `droppedPanelOptions`. The panel mapping module (and its doc) still
+  says `links` is dropped ("no per-panel link menu"), which is still true of the menu; I didn't touch it because
+  docs-panel-mapping.test.ts ties the doc to the module. Whoever owns that doc may want the reason to mention that
+  links now go into the chart description.
+- `GrafanaDashboardPanel` got `links` and a wider `fieldConfig` (`defaults.links`, `overrides`).
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard with two panel links plus one
+  without a url, a field link, a links override with a spaced url, a plain dashboard link and a tag-based one. Chart
+  descriptions held "Requests per second." then [Service SLOs](...) and [Runbook](...); the field-links chart held
+  [Trace search](...) and [Wiki (old)](<... page>). The dashboard description held "Synthetic dashboard.",
+  [Platform docs](...) and the named Related link; IMPORT-REPORT.md listed dashboard-link-unsupported (kubernetes-app)
+  and link-unsupported (Broken), and no option-dropped. `lightdash lint -p` said all files are valid. Acceptance:
+  dashboard-links 2/2, dashboard-dropped-panels 4/4, dashboard-charts 4/4, dashboard-command 4/4, dashboard-text 3/3,
+  dashboard-collapsed-rows 2/2. tsc (common) and oxlint are clean, and oxfmt was applied.
+- 2026-11-09T03:06:46Z supervisor: imp-dashboard-links passed the gate in round 1

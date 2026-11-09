@@ -57,7 +57,12 @@ export type GrafanaDashboardPanel = GrafanaPanelWithTargets & {
     /** Legacy text panels keep these at the panel root instead of under `options`. */
     mode?: unknown;
     content?: unknown;
-    fieldConfig?: { defaults?: { custom?: { drawStyle?: unknown } } };
+    /** Panel links (fieldConfig holds the field links). */
+    links?: unknown;
+    fieldConfig?: {
+        defaults?: { custom?: { drawStyle?: unknown }; links?: unknown };
+        overrides?: unknown;
+    };
 };
 
 export type GrafanaDashboardInput = {
@@ -308,7 +313,113 @@ const NON_OPTION_PANEL_KEYS = new Set([
     'pluginVersion',
     'libraryPanel',
     'transformations',
+    // Panel and field links go into the chart description (panelLinks).
+    'links',
 ]);
+
+/** The objects of a JSON array (links, overrides, override properties); [] if not an array. */
+const objectList = (value: unknown): Record<string, unknown>[] =>
+    Array.isArray(value) ? value.filter(isRecord) : [];
+
+const nonBlank = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+/**
+ * `[title](url)`. Brackets in the title are escaped; a url with spaces, parentheses or angle
+ * brackets is written as `<url>` (with `<` and `>` percent-encoded) so it stays one link.
+ */
+const markdownLink = (title: string, url: string) => {
+    const text = title.replace(/([\\[\]])/g, '\\$1');
+    const target = /[\s()<>]/.test(url)
+        ? `<${url.replace(/</g, '%3C').replace(/>/g, '%3E')}>`
+        : url;
+    return `[${text}](${target})`;
+};
+
+/** `text`, then a blank line and a `Links:` list; undefined if both are empty. */
+const describeWithLinks = (
+    text: string | undefined,
+    links: string[],
+): string | undefined => {
+    const parts = [
+        ...(text ? [text] : []),
+        ...(links.length > 0
+            ? [`Links:\n${links.map((link) => `- ${link}`).join('\n')}`]
+            : []),
+    ];
+    return parts.length > 0 ? parts.join('\n\n') : undefined;
+};
+
+/**
+ * A panel's links (`links`) and field links (`fieldConfig.defaults.links` and `links`
+ * overrides) as markdown links, in that order, without repeats. A link without a url can't
+ * be followed and is left out; `missing` names it so it can be reported.
+ */
+const panelLinks = (
+    panel: GrafanaDashboardPanel,
+): { links: string[]; missing: string[] } => {
+    const overrides = objectList(panel.fieldConfig?.overrides);
+    const overrideLinks = overrides.flatMap((override) =>
+        objectList(override.properties)
+            .filter((property) => property.id === 'links')
+            .flatMap((property) => objectList(property.value)),
+    );
+    const links = new Set<string>();
+    const missing: string[] = [];
+    [
+        ...objectList(panel.links),
+        ...objectList(panel.fieldConfig?.defaults?.links),
+        ...overrideLinks,
+    ].forEach((link) => {
+        const url = nonBlank(link.url);
+        const title = nonBlank(link.title);
+        if (url) links.add(markdownLink(title ?? url, url));
+        else missing.push(title ?? 'Untitled link');
+    });
+    return { links: [...links], missing };
+};
+
+/**
+ * Dashboard links as description lines. A `link` becomes `[title](url)`. A `dashboards` link
+ * lists Grafana dashboards by tag, which has no Lightdash equivalent: it is named (with its
+ * tags) without a url, and reported.
+ */
+const dashboardLinks = (
+    value: unknown,
+): { links: string[]; unsupported: string[] } => {
+    const links: string[] = [];
+    const unsupported: string[] = [];
+    objectList(value).forEach((link) => {
+        const url = nonBlank(link.url);
+        const title = nonBlank(link.title);
+        if (link.type !== 'dashboards' && url) {
+            links.push(markdownLink(title ?? url, url));
+            return;
+        }
+        const tags = (Array.isArray(link.tags) ? link.tags : [])
+            .map(nonBlank)
+            .filter((tag): tag is string => tag !== undefined);
+        const what =
+            link.type === 'dashboards'
+                ? `lists the Grafana dashboards ${
+                      tags.length > 0
+                          ? `tagged ${tags.join(', ')}`
+                          : 'of the instance'
+                  }`
+                : 'has no url';
+        const name =
+            title ?? (tags.length > 0 ? tags.join(', ') : 'Dashboards');
+        links.push(`${name} (not imported: it ${what})`);
+        unsupported.push(
+            `The dashboard link "${name}" ${what}${
+                link.type === 'dashboards'
+                    ? '; Lightdash has no tag-based dashboard list, so the link is named in the dashboard description without a url'
+                    : ', so it is named in the dashboard description without a url'
+            }`,
+        );
+    });
+    return { links, unsupported };
+};
 
 /**
  * The markdown tile content for a Grafana text panel. markdown and html content are copied
@@ -343,8 +454,14 @@ const textPanelMarkdown = (panel: GrafanaDashboardPanel): string => {
  * object (`options.legend.calcs`) is one warning, not one per key. Override properties
  * are looked up as `fieldConfig.overrides.<property id>`. Per-panel time overrides
  * (`timeFrom`, `timeShift`) are dropped options too. Options the mapping keeps are not
- * reported here, even where a SQL chart cannot hold them yet.
+ * reported here, even where a SQL chart cannot hold them yet. Links are not reported: the
+ * panel has no link menu, but its links go into the chart description (panelLinks).
  */
+const LINK_OPTION_PATHS = new Set([
+    'fieldConfig.defaults.links',
+    'fieldConfig.overrides.links',
+]);
+
 const droppedPanelOptions = (
     panel: GrafanaDashboardPanel,
     type: string,
@@ -354,6 +471,7 @@ const droppedPanelOptions = (
         // Unset, null and blank values (Grafana exports `description: ""`) set nothing.
         if (value === undefined || value === null) return;
         if (typeof value === 'string' && value.trim() === '') return;
+        if (LINK_OPTION_PATHS.has(path)) return;
         const mapping = getGrafanaPanelOptionMapping(type, path);
         if (mapping) {
             if (mapping.target === 'dropped' && !found.has(path)) {
@@ -625,6 +743,13 @@ export const convertGrafanaDashboard = (
             );
             return;
         }
+        const { links, missing } = panelLinks(panel);
+        missing.forEach((name) =>
+            warn(
+                'link-unsupported',
+                `The ${type} panel link "${name}" has no url, so it is not added to the chart description`,
+            ),
+        );
         const { kind, fallbackFrom } = chartKindForPanel(panel, mapping);
         if (fallbackFrom) {
             warn(
@@ -637,10 +762,7 @@ export const convertGrafanaDashboard = (
             contentType: ContentAsCodeType.SQL_CHART,
             name: panelName,
             description:
-                typeof panel.description === 'string' &&
-                panel.description.trim()
-                    ? panel.description.trim()
-                    : null,
+                describeWithLinks(nonBlank(panel.description), links) ?? null,
             slug: uniqueSlug(
                 `${slug} ${panelName}`,
                 `${slug}-chart`,
@@ -666,11 +788,25 @@ export const convertGrafanaDashboard = (
         });
     });
 
+    const sourceLinks = dashboardLinks(source.links);
+    sourceLinks.unsupported.forEach((message) =>
+        warnings.push({
+            code: 'dashboard-link-unsupported',
+            message,
+            dashboard: title,
+        }),
+    );
+    const description = describeWithLinks(
+        nonBlank(source.description),
+        sourceLinks.links,
+    );
+
     return {
         dashboard: {
             version: 1,
             contentType: ContentAsCodeType.DASHBOARD,
             name: title,
+            ...(description === undefined ? {} : { description }),
             slug,
             spaceSlug: options.spaceSlug,
             tabs: layout.tabs,

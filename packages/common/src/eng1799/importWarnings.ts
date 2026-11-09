@@ -37,6 +37,8 @@ export type ImportWarningCode =
     | 'panel-dropped'
     | 'option-dropped'
     | 'chart-kind-fallback'
+    | 'link-unsupported'
+    | 'dashboard-link-unsupported'
     | (string & {});
 
 export type ImportWarning = {
