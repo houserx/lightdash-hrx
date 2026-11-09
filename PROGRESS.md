@@ -485,3 +485,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - Lightdash reports the `labels` field type as `string` even though row values are objects
     (json → string mapping); checks should accept an object or parse a string.
 - 2026-11-09T02:39:48Z supervisor: int-client-metric-functions passed the gate in round 1
+- 2026-11-09 int-client-log-trace-functions: **no code change needed.** The check passed on the
+  first run after `init.sh` (1/1, ~7 s).
+  Tested by hand with a tsx script outside the repo (real engine + fake Loki/CloudWatch Logs/Tempo,
+  synthetic data) through `warehouseClientFromCredentials(...).runQuery`:
+  logql with no optional args → 3 lines across 2 streams, Loki got `limit=1000`,
+  `direction=backward` (defaults); `logql(..., 2, 'backward')` → 2 newest lines, Loki got
+  `limit=2`; an invalid direction → `WarehouseQueryError` with the engine's message.
+  cloudwatch_logs → timestamp/message/fields (timestamp/string/string), `fields` an object without
+  `@ptr`. traceql default → 2 traces, Tempo `/api/search` got `limit=20`; `traceql(..., 1)` →
+  1 trace, `limit=1`. trace(id) → spans with parent_span_id and `attributes` as an object.
+  No engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - `span_count` (int8) arrives as a JS **BigInt**: upstream `PostgresWarehouseClient` sets
+    `types.setTypeParser(INT8, BigInt)`. Its field type is still `number`. `JSON.stringify` on
+    raw rows throws, so checks and scripts must handle BigInt.
+- 2026-11-09T02:42:27Z supervisor: int-client-log-trace-functions passed the gate in round 1
