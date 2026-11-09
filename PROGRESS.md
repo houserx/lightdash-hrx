@@ -1672,3 +1672,28 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   `config-validation.spec.ts` still passes. `tsc --strict --module nodenext` over `stack/*.ts` is clean
   (pass `--ignoreConfig`: a parent tsconfig is picked up otherwise; the demo still has no `tsconfig.json`).
 - 2026-11-09T06:54:45Z supervisor: demo-scenario-clock passed the gate in round 1
+
+### demo-platform-db (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/platform-db.ts` (CLI, not a module: importing it runs it). `prepare --dir .state/platform-db`
+  wipes and `initdb`s a fresh cluster (superuser `demo_admin`, scram, C locale), appends port (free ephemeral),
+  `listen_addresses = '127.0.0.1'`, `unix_socket_directories = ''`, fsync off; prints the port. `seed --port --pid
+  --ready-file` waits for the server, creates database `platform`, roles `engine_read` (SELECT) and `engine_write`
+  (SELECT/INSERT/UPDATE/DELETE), tables `queues` (4: demo-intake/fill/verification/shipping), `orders` (120,
+  `DEMO-ORD-nnnnn`, "Demo Customer n", `@example.com`), `fills` (120, one per order, 48 `queued`), `shipments` (72,
+  `FAKE-TRK-…`, "… Example Street, Demo City"), timestamps relative to seed time; writes `.state/run/platform-db.json`.
+  Every name/email/phone/address-shaped value says demo/example; no dob/mrn/ssn-shaped columns (spec checks this).
+- `up.sh`: between the scenario clock and stack.json, runs `prepare`, then `start platform-db $PG_BIN/postgres -D
+  .state/platform-db/pgdata` (own process group, pid in `processes`; down.sh's `pg_ctl stop -m fast` handles it),
+  then `seed`. `PG_BIN` = `DEMO_PG_BIN` or the dir of `postgres` on PATH (/opt/homebrew/bin). Logs:
+  `.state/logs/platform-db.log` (server), `platform-db-init.log` (initdb/seed). **The data is reset on every fresh
+  up.sh** (Write Mode commits do not survive a restart; a live stack is kept as-is).
+- `stack.json` now has `platformDb: {host, port, user, password, database, roles: {read: {user,password}, write:
+  {user,password}}}`; `user` is the superuser (the spec needs `show data_directory`). **The engine feature should use
+  `roles.read`/`roles.write`** for Audited Queries / Write Mode. `report()` prints the Platform Database URL (no password).
+- Tested as a user: `up.sh` → connected with stack.json credentials (node pg; no `psql` on this machine): data dir under
+  `.state`, listen 127.0.0.1, counts 120/120/4/72, sample rows all demo/example/fake; `engine_read` can select but
+  UPDATE is refused, `engine_write` can update. Second `up.sh` kept the stack; `down.sh` stopped Postgres, no
+  `.state` process left. Checks `platform-db.spec.ts` and `scenario-clock.spec.ts` (--stack), `config-validation.spec.ts`
+  pass; `tsc --ignoreConfig --strict --module nodenext --types node stack/*.ts` clean.
+- 2026-11-09T06:58:14Z supervisor: demo-platform-db passed the gate in round 1

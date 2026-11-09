@@ -68,6 +68,7 @@ report() {
     local scenario_url
     scenario_url="$(json_url "$STACK_JSON" scenario)"
     echo "up.sh: scenario clock: $scenario_url/scenario (restart: POST $scenario_url/scenario/restart)"
+    "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
 }
 
@@ -138,19 +139,43 @@ SCENARIO_URL="$(json_url "$RUN/telemetry-fakes.json" scenario)"
 curl -fsS -m 5 "$SCENARIO_URL/scenario" >/dev/null ||
     { echo "up.sh: the scenario clock at $SCENARIO_URL does not answer" >&2; exit 1; }
 
-# Later demo features start the Platform Database, Federation Engine, remaining fakes, Lightdash and telemetry-mcp here
+# Platform Database: a fresh throwaway cluster under .state/platform-db (synthetic pharmacy operations data).
+PG_BIN="${DEMO_PG_BIN:-}"
+[ -n "$PG_BIN" ] || PG_BIN="$(dirname "$(command -v postgres || echo /opt/homebrew/bin/postgres)")"
+[ -x "$PG_BIN/postgres" ] && [ -x "$PG_BIN/initdb" ] ||
+    { echo "up.sh: postgres/initdb not found (looked in $PG_BIN; set DEMO_PG_BIN)" >&2; exit 1; }
+export DEMO_PG_BIN="$PG_BIN"
+PLATFORM_DIR="$STATE/platform-db"
+rm -f "$RUN/platform-db.json"
+PLATFORM_PORT="$(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/platform-db.ts" prepare --dir "$PLATFORM_DIR" 2>>"$LOGS/platform-db-init.log")" ||
+    { echo "up.sh: creating the Platform Database cluster failed (see ${LOGS#"$DEMO"/}/platform-db-init.log)" >&2; exit 1; }
+start platform-db "$PG_BIN/postgres" -D "$PLATFORM_DIR/pgdata"
+PLATFORM_PID=$STARTED_PID
+(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/platform-db.ts" seed --port "$PLATFORM_PORT" --pid "$PLATFORM_PID" \
+    --ready-file "$RUN/platform-db.json") >>"$LOGS/platform-db-init.log" 2>&1 || {
+    echo "up.sh: seeding the Platform Database failed; last lines of ${LOGS#"$DEMO"/}/platform-db-init.log and platform-db.log:" >&2
+    tail -10 "$LOGS/platform-db-init.log" "$LOGS/platform-db.log" >&2
+    exit 1
+}
+echo "up.sh: Platform Database seeded (synthetic orders, fills, queues, shipments)"
+
+# Later demo features start the Federation Engine, remaining fakes, Lightdash and telemetry-mcp here
 # and add them to stack.json below.
 
 "$NODE" -e '
-const [file, scenarioUrl, telemetryPid] = process.argv.slice(1);
+const [file, scenarioUrl, telemetryPid, platformFile, platformPid] = process.argv.slice(1);
+const fs = require("fs");
 const stack = {
     scenario: { url: scenarioUrl },
-    processes: [{ name: "telemetry-fakes", pid: Number(telemetryPid) }],
+    platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
+    processes: [
+        { name: "telemetry-fakes", pid: Number(telemetryPid) },
+        { name: "platform-db", pid: Number(platformPid) },
+    ],
 };
-const fs = require("fs");
 fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n");
 fs.renameSync(file + ".tmp", file);
-' "$STACK_JSON" "$SCENARIO_URL" "$TELEMETRY_PID"
+' "$STACK_JSON" "$SCENARIO_URL" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID"
 
 echo "up.sh: demo stack is up (state: ${STATE#"$DEMO"/}, stop with demo/eng-1799/down.sh)"
 report
