@@ -631,3 +631,33 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Next sessions: the fake Prometheus is the only fake with a reply delay or cancel count; Loki
   and Tempo have neither.
 - 2026-11-09T03:15:13Z supervisor: int-client-limits-and-errors passed the gate in round 1
+- 2026-11-09 int-fix-cloudwatch-query-shape: the engine's `cloudwatch()` only read Grafana's stored
+  target (camelCase `namespace`/`metricName`/`statistic`). The AWS `MetricDataQuery` shape that
+  Investigate's form builds (`buildCloudWatchMetricDataQuery`) and MCP callers send failed with
+  "the target has no namespace". Fix in `federation-engine/src/cloudwatch.rs`: when an object has
+  any of the PascalCase keys `Id`, `MetricStat` or `Expression`, the new `Target::parse_aws` reads it
+  (Grafana targets never have those keys). It accepts `MetricStat{Metric{Namespace, MetricName,
+  Dimensions:[{Name,Value}]}, Period, Stat, Unit?}` or `Expression` + optional `Period` (auto when
+  absent), plus `Label` and `Id`. It refuses: both/neither of MetricStat and Expression (22023), no
+  Period in the MetricStat (22023), `ReturnData: false` (22023, as it would return nothing), and
+  `AccountId` (0A000). `TargetMetric::Stat` gained `unit`, which only the AWS shape sets. Period
+  parsing moved into `target_period` and is shared by both shapes. The
+  module doc and the `CloudWatchMetricDataQuery` doc comment in common/telemetrySql.ts now say
+  both shapes are read. New unit tests: the two shapes of one metric give an equal `Target` and
+  an equal SDK query, plus the error cases.
+  Contract assumption: CONTRACTS §1.1 says "the CloudWatch MetricDataQuery shape that Grafana's
+  CloudWatch datasource stores", which can mean either shape. The engine now reads both.
+  Tested by hand (`../tmp/manual-cloudwatch/try.ts`, run from e2e/eng-1799 with tsx): fake
+  CloudWatch + real engine + Lightdash client. (1) Investigate's form → buildTelemetrySql →
+  withTimeRangeParameters → safeReplaceParametersWithSqlBuilder → 1 row, value 42.5. (2) A Grafana
+  target (period "1m", single-item dimension list) → the same row. (3) The MetricDataQuery
+  from MCP's `buildCloudwatchQuery`, as a literal → the same row, series = Label. The fake saw an
+  identical MetricStat each time. `{"Id":"m1"}` → "the query has neither MetricStat nor
+  Expression". The check passes (1/1), as do int-harness-fake-cloudwatch and
+  int-client-metric-functions.
+  **Trap for int-mcp-telemetry-tools:** the real MCP tool sends `SELECT * FROM cloudwatch($1::json,
+  $2, $3)` with bind parameters. Over pg-wire with `pg`, the engine answers 0A000 "Unsupported SQL type
+  JSON" for the `::json` cast. This is separate from the query shape, and this feature's check passes
+  the JSON as a literal. That session needs to make the engine accept a `::json` parameter cast or
+  change the MCP SQL (e.g. `$1::text`).
+- 2026-11-09T03:20:38Z supervisor: int-fix-cloudwatch-query-shape passed the gate in round 1
