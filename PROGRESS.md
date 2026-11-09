@@ -2107,3 +2107,4 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - For the next session: after a scenario restart the stat can take one or two reloads to go red. Results are
   cached per rounded Dashboard Time Range, which is why the spec reloads in a loop. Keep that in mind for scene specs.
 - 2026-11-09T08:39:26Z supervisor: demo-dashboard-pharmacy-ops-ui passed the gate in round 1
+- 2026-11-09T08:43:02Z supervisor: demo-dashboard-service-health halted: the worker halted on demo-dashboard-service-health
