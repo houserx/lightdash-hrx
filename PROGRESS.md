@@ -975,3 +975,29 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Trap: roundtrip-dashboards still fails only because `--datasources` is not built (unknown option).
 - Perses (imp-perses-queries-variables) should reuse `mergeProjectParameters` and the same lightdash.config.yml write.
 - 2026-11-09T03:26:45Z supervisor: imp-dashboard-variables passed the gate in round 1
+
+## imp-dashboard-datasources (round 1)
+- New pure module packages/common/src/eng1799/grafanaImportMaps.ts (exported from index.ts):
+  - `parseGrafanaDatasourcesTf(text)` reads each `resource "grafana_data_source"` block's top-level `type`, `name`,
+    `uid` from HCL (comments, heredocs, nested blocks and `jsonencode(...)` are skipped by a small scanner, not a
+    Terraform evaluator). A resource whose type/name/uid is not a plain string literal (`local.x`, `"${var.env}"`) is
+    listed in `skipped` with the reason. A resource without `uid` (the fixture's Sentry) is kept with uid `''` and
+    resolves by name; grafanaQuery.ts `resolveDatasource` now ignores an empty ref uid so `''` never matches it.
+  - `readGrafanaOpsMarts(doc)` checks a parsed `--ops-marts` YAML: only `github` / `sentry` keys, each mapping a query
+    type to a non-empty string. The table name format is still checked where it is used (`ops-mart-invalid` TODO).
+- CLI: packages/cli/src/handlers/grafanaImportMaps.ts reads the files (`readGrafanaDatasourcesFile` prints skipped
+  resources as warnings and fails when the file has no readable grafana_data_source; `readGrafanaOpsMartsFile` fails
+  on bad YAML/shape, naming the file). `import grafana-dashboard` gained `--datasources <tf>` and `--ops-marts <yml>`,
+  passed to `convertGrafanaDashboard` as `query`. imp-cli-grafana-alerts should reuse these two readers for its
+  `--datasources`.
+- Unit test: packages/common/src/eng1799/grafanaImportMaps.test.ts (5 cases).
+- Tested as a user: ran init.sh, then the CLI from source on the step dashboard (staging Prometheus panel + GitHub
+  Pull_Requests panel). Without options: promql('up', from, to, interval) with no source, warnings
+  datasource-unresolved 1 + no-ops-mart 1, 1 TODO. With `--datasources fixtures/terraform/grafana_data_sources.tf
+  --ops-marts ops-marts.yml`: promql(..., 'prometheus-staging'), Pull requests chart `SELECT * FROM
+  ops_marts.github.pull_requests`, 0 TODOs, one ops-mart-filters-dropped warning (owner/repository). grafana_folders.tf
+  as --datasources and an ops-marts file with a `jira` key each fail with a clear message.
+- Acceptance: dashboard-datasources 3/3; dashboard-command, -variables, -todo-tiles, -report and common
+  query-datasources, -ops-marts pass. tsc (common, cli), oxlint, oxfmt clean.
+- Trap: roundtrip-dashboards now fails only on the unbuilt `--dashboards-tf` option (unknown option).
+- 2026-11-09T03:32:27Z supervisor: imp-dashboard-datasources passed the gate in round 1

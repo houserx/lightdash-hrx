@@ -14,6 +14,10 @@ import * as yaml from 'js-yaml';
 import * as path from 'path';
 import GlobalState from '../globalState';
 import * as styles from '../styles';
+import {
+    readGrafanaDatasourcesFile,
+    readGrafanaOpsMartsFile,
+} from './grafanaImportMaps';
 
 /** The space imported dashboards and charts go to when `--space` is not given. */
 export const DEFAULT_GRAFANA_DASHBOARD_SPACE = 'operations';
@@ -23,6 +27,10 @@ type ImportGrafanaDashboardOptions = {
     space: string;
     /** false with --no-tabs. */
     tabs: boolean;
+    /** grafana_data_sources.tf: datasource uids resolve to Telemetry Sources. */
+    datasources?: string;
+    /** YAML mapping GitHub and Sentry query types to Ops Mart tables. */
+    opsMarts?: string;
     verbose: boolean;
 };
 
@@ -84,11 +92,23 @@ export const importGrafanaDashboardHandler = async (
         inputs.push(await readDashboardFile(file));
     }
 
+    const query = {
+        datasources:
+            options.datasources === undefined
+                ? undefined
+                : await readGrafanaDatasourcesFile(options.datasources),
+        opsMarts:
+            options.opsMarts === undefined
+                ? undefined
+                : await readGrafanaOpsMartsFile(options.opsMarts),
+    };
+
     const takenDashboardSlugs = new Set<string>();
     const takenChartSlugs = new Set<string>();
     const results: GrafanaDashboardImport[] = inputs.map((input) =>
         convertGrafanaDashboard(input, {
             spaceSlug,
+            query,
             takenDashboardSlugs,
             takenChartSlugs,
             noTabs: options.tabs === false,

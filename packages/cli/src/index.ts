@@ -1472,6 +1472,14 @@ importProgram
         '--no-tabs',
         'turn collapsed rows into headings with their panels below, instead of dashboard tabs',
     )
+    .option(
+        '--datasources <tf>',
+        'grafana_data_sources.tf, to resolve datasource uids to Telemetry Source names (else the engine default source is used, with a warning)',
+    )
+    .option(
+        '--ops-marts <yml>',
+        'YAML mapping GitHub and Sentry query types to Ops Mart tables (github: {Pull_Requests: ops_marts.github.pull_requests}); unmapped ones become TODOs',
+    )
     .option('--verbose', undefined, false)
     .action(importGrafanaDashboardHandler);
 

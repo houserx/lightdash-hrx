@@ -137,8 +137,9 @@ const resolveDatasource = (
         };
     }
     // Dashboards migrated from the legacy name string can carry the name in `uid`.
+    // A datasource from grafana_data_sources.tf without a uid has an empty one; it matches by name.
     const found =
-        ref.uid === undefined
+        ref.uid === undefined || ref.uid === ''
             ? undefined
             : (datasources.find((ds) => ds.uid === ref.uid) ??
               datasources.find((ds) => ds.name === ref.uid));
