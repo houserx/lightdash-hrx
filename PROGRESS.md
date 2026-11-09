@@ -1846,3 +1846,15 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   so it passes. TIME_MACRO_PARAMETERS in packages/common/src/eng1799/grafanaQuery.ts is where to add a mapping.
 - Checks: roundtrip-alerts 3/3 after init.
 - 2026-11-09T06:12:47Z supervisor: imp-roundtrip-alerts passed the gate in round 1
+
+## imp-roundtrip-lint (2026-11-09)
+
+- No code change: roundtrip-lint passed 2/2 after init at the start of this session. The importers already write
+  charts, dashboards and lightdash.config.yml that `lightdash lint` accepts.
+- Tested as a user: from packages/cli, imported all 32 grafana_config dashboards (with --datasources and
+  --dashboards-tf) to tmp/, then `node --import tsx src/index.ts lint --path <out>`: "Found 331 YAML/JSON files",
+  "✓ All Lightdash Code files are valid!", exit 0. Imported perses/node-overview.yaml and api-latency.json, linted
+  that output: exit 0, all valid (9 YAMLs). Sanity check: setting one chart's `version` to garbage made lint exit 2
+  with "1 invalid", so lint really validates the importer output. Scratch output was deleted afterwards.
+- Checks: roundtrip-lint 2/2 after init.
+- 2026-11-09T06:14:58Z supervisor: imp-roundtrip-lint passed the gate in round 1
