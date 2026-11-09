@@ -92,7 +92,7 @@ and **docs**.
 | 8 | `int-harness-fake-cloudwatch-logs` | harness | A fake CloudWatch Logs Insights serves synthetic results to the engine's `cloudwatch_logs()`. |
 | 9 | `int-harness-fake-bigquery` | harness | A fake BigQuery API serves synthetic Ops Mart tables that appear in the engine's `information_schema` and can be read. The check skips `table_schema = 'information_schema'`: the engine lists DataFusion's own views under every catalog, as Postgres does (amended 2026-11-09). |
 | 10 | `int-client-connect` | functional | Lightdash's `FederationWarehouseClient` (federation flavour) connects to, tests and queries the real engine. |
-| 11 | `int-client-catalog` | functional | The Lightdash catalog lists the engine's Ops Marts and their fields through `information_schema` only. **Not passing yet**; see "Open checks". |
+| 11 | `int-client-catalog` | functional | The Lightdash catalog lists the engine's Ops Marts and their fields through `information_schema` only. The federation client maps the engine's Arrow type names (see "Open checks"). |
 | 12 | `int-client-metric-functions` | functional | `promql()`, `promql_instant()`, `logql_metric()` and `cloudwatch()` work through the Lightdash client with `label()` and `series_name()`. |
 | 13 | `int-client-log-trace-functions` | functional | `logql()`, `cloudwatch_logs()`, `traceql()` and `trace()` work through the Lightdash client, passing optional arguments. |
 | 14 | `int-client-streaming` | functional | A 30000-row `promql()` result streams to Lightdash through cursors in several batches, every row once and in order. |
@@ -136,17 +136,20 @@ and **docs**.
 ### Open checks
 
 Their sessions halted two checks on 2026-11-09. The whole-suite run that day (`run-all.sh`) gave
-48 passed and 2 failed. One of the two has since been settled:
+48 passed and 2 failed. Both have since been settled:
 
 - `int-harness-fake-bigquery` (settled 2026-11-09, check amended): the engine's DataFusion lists its own
   `information_schema` views under every catalog, so `information_schema.tables WHERE table_catalog =
   'ops_marts'` gives 7 views plus the 2 Ops Mart tables. The decision was to keep that behaviour, which
   matches Postgres listing `information_schema` in `information_schema.tables`. The check now filters
   out `table_schema = 'information_schema'`, and it passes with no engine change.
-- `int-client-catalog` (still failing): `getAllTables` passes. `getFields('fills_hourly', 'ops_marts', 'ops_marts')`
-  returns `string` for the `hour` (timestamp) and `fills` (number) columns, where the check expects
-  `timestamp` and `number`. The column types that reach Lightdash from the engine's
-  `information_schema.columns` for Ops Marts need fixing in the engine or the federation client.
+- `int-client-catalog` (settled 2026-11-09, client fix): the engine's `information_schema.columns.data_type`
+  is DataFusion's Arrow type name (`Timestamp(µs, "UTC")`, `Utf8`, `Int64`, `Float64`), which the Postgres
+  type map read as `string`. CONTRACTS §1.1 names DataFusion's `information_schema` as the catalog, so the
+  engine stays as it is. `FederationWarehouseClient` maps Arrow names (`mapFederationFieldType`; anything
+  else falls back to the Postgres map) through the `mapCatalogFieldType` hook that `getFields` and
+  `getCatalog` now call. Engine columns get no timestamp domain, so their catalogs have no
+  `__lightdashTimestampDomains` sidecar.
 
 ## Reconciled assumptions
 

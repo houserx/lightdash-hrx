@@ -100,7 +100,7 @@ export enum PostgresTypes {
     TIMESTAMP_WITH_TIME_ZONE = 'timestamp with time zone',
 }
 
-const mapFieldType = (type: string): DimensionType => {
+export const mapPostgresFieldType = (type: string): DimensionType => {
     switch (type) {
         case PostgresTypes.DECIMAL:
         case PostgresTypes.NUMERIC:
@@ -814,14 +814,14 @@ export class PostgresClient<
                     acc[table_catalog][table_schema][table_name] =
                         acc[table_catalog][table_schema][table_name] || {};
                     acc[table_catalog][table_schema][table_name][column_name] =
-                        mapFieldType(data_type);
+                        this.mapCatalogFieldType(data_type);
                     setCatalogTimestampDomain(
                         acc,
                         table_catalog,
                         table_schema,
                         table_name,
                         column_name,
-                        getPostgresTimestampDomain(data_type),
+                        this.getCatalogTimestampDomain(data_type),
                     );
                 }
 
@@ -951,9 +951,21 @@ export class PostgresClient<
     ): WarehouseCatalog {
         return this.parseWarehouseCatalog(
             rows,
-            mapFieldType,
-            getPostgresTimestampDomain,
+            (type) => this.mapCatalogFieldType(type),
+            (type) => this.getCatalogTimestampDomain(type),
         );
+    }
+
+    /** Lightdash field type for an `information_schema.columns.data_type` value. */
+    protected mapCatalogFieldType(dataType: string): DimensionType {
+        return mapPostgresFieldType(dataType);
+    }
+
+    /** Timestamp domain for an `information_schema.columns.data_type` value. */
+    protected getCatalogTimestampDomain(
+        dataType: string,
+    ): TimestampDomain | undefined {
+        return getPostgresTimestampDomain(dataType);
     }
 
     parseError(error: pg.DatabaseError, query: string = '') {

@@ -1333,3 +1333,30 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Arrow type name (`Timestamp(µs, "UTC")`, `Utf8`, `Int64`, `Float64`), not a Postgres type name. That
   is probably why getFields maps `hour` and `fills` to `string`.
 - 2026-11-09T05:55:29Z supervisor: int-harness-fake-bigquery passed the gate in round 1
+- 2026-11-09 int-client-catalog (round 1): client fix in packages/warehouses, no engine change.
+  - Cause: the engine's `information_schema.columns.data_type` is DataFusion's Arrow type name
+    (`Timestamp(µs, "UTC")`, `Utf8`, `Int64`, `Float64`). The Postgres type map read every one of them as
+    `string`. CONTRACTS §1.1 names DataFusion's information_schema as the catalog, so the client adapts.
+  - `PostgresWarehouseClient.ts`: `PostgresClient` has two new protected hooks,
+    `mapCatalogFieldType(dataType)` and `getCatalogTimestampDomain(dataType)`. They default to the
+    existing Postgres behaviour, and `getCatalog` and `parsePostgresCatalog` (`getFields`) call them.
+    The internal `mapFieldType` is now exported as `mapPostgresFieldType`. Postgres and Redshift behave
+    as before.
+  - `FederationWarehouseClient.ts`: new `mapFederationFieldType` maps Arrow names (Int*/UInt*/Float*/
+    Decimal* to number, Date32/64 to date, Timestamp(..)/Time32/64(..) to timestamp, Boolean to boolean,
+    Utf8 etc. to string) and falls back to the Postgres map for anything else. The timestamp domain is
+    left undefined for engine columns. Trap: the domain sidecar `__lightdashTimestampDomains` is a plain
+    string key on the catalog, so setting one would break the protected check's `toEqual` on getFields.
+    A follow-up could classify `Timestamp(.., "UTC")` as `aware` if the check is amended.
+  - New unit test `FederationWarehouseClient.test.ts` (18 cases).
+  - `docs/eng-1799/integration.md`: row 11 and "Open checks" now mark this check settled.
+  Tested as a user: a throwaway driver (temporary vitest config plus a test file in e2e/eng-1799, both
+  deleted) started the fake BigQuery with OPS_MART_TABLES and the real engine and used
+  `warehouseClientFromCredentials` (FederationWarehouseClient). Raw information_schema.columns showed the
+  Arrow names. getAllTables listed both Ops Marts. getFields(queue_depth) gave at=timestamp, depth=number,
+  and getCatalog gave fills_hourly hour/site/fills = timestamp/string/number. The preview query returned
+  2 rows with fills typed as an integer number. No engine was left running.
+  Checks: int-client-catalog 1/1; int-client-connect, int-client-platform-functions,
+  int-harness-fake-bigquery and int-docs-integration pass. Unit: Federation 18/18, Postgres 35/35.
+  warehouses tsc clean. eslint/prettier are not installed in this tree, so they were not run.
+- 2026-11-09T06:00:45Z supervisor: int-client-catalog passed the gate in round 1
