@@ -1501,3 +1501,16 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   grafana-alerts-incident-io-token. grep over the whole output for hooks.slack.com, secret_string and
   local.grafana_/local.slack_webhooks: 0 files.
 - 2026-11-09T05:08:43Z supervisor: imp-alert-contact-points passed the gate in round 1
+
+## imp-alert-notification-routes (2026-11-09, round 1)
+- No code change: imp-cli-grafana-alerts already converts the policy route for route (root contact point, group_by,
+  timers; children in order with matchers, continue and timers). The check passed on the first run after init (3/3).
+- Tested as a user: CLI `import grafana-alerts` with the full fixture rules, contact points, policy, locals, folders,
+  datasources and --no-routing-fixes (scratch in ../tmp/routes-manual, outside the repo). notification-routes.yml:
+  root slack-infra-alerts, groupBy [...], 5s/2m/1h; five routes test-alerts, slack-alerts (team=engineering +
+  channel=#alerts, 1m/1m), grafana-alerts-incident-io, slack-alerts-swat (all continue: true), slack-infra-alerts
+  (system=platform-environment-sweep, no continue, 1d). A small script (../tmp/routes-script) ran common's
+  routeAlert on the file: team=infra -> grafana-alerts-incident-io; team=Support -> slack-infra-alerts;
+  engineering/#alerts -> slack-alerts; system=platform-environment-sweep -> slack-infra-alerts.
+- Note: --no-routing-fixes still prints "Routing fixes are not implemented ..."; the imp-routing-* features own that.
+- 2026-11-09T05:10:23Z supervisor: imp-alert-notification-routes passed the gate in round 1
