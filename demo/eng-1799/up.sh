@@ -77,7 +77,7 @@ report() {
     echo "up.sh: incident.io receiver (fake): $(json_url "$STACK_JSON" incidentIo) (webhook: POST /webhook, received: GET /api/received)"
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
-    # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
+    echo "up.sh: Lightdash: $(json_url "$STACK_JSON" lightdash) (backend with the scheduler and alert worker in-process; results S3 (fake) $(json_url "$STACK_JSON" lightdashS3))"
 }
 
 # A live stack (every recorded pid running, the scenario clock answering) is kept as it is.
@@ -114,6 +114,7 @@ trap on_exit EXIT
 # detached from up.sh's stdio, logging to .state/logs/<name>.log. Sets STARTED_PID.
 # With DEMO_START_ENV_FILE=<file> set for the call, the command gets exactly the KEY=value lines of that file
 # as its environment (nothing of up.sh's environment leaks in, and no secret appears on a command line).
+# With DEMO_START_DIR=<dir> set for the call, the command runs in <dir> instead of demo/eng-1799.
 EXEC_WITH_ENV_FILE='
     if (defined(my $file = delete $ENV{DEMO_START_ENV_FILE})) {
         open(my $fh, "<", $file) or die "open $file: $!\n";
@@ -128,7 +129,7 @@ EXEC_WITH_ENV_FILE='
 start() {
     local name="$1"
     shift
-    (cd "$DEMO" && exec perl -e "setpgrp(0, 0); $EXEC_WITH_ENV_FILE" "$@") \
+    (cd "${DEMO_START_DIR:-$DEMO}" && exec perl -e "setpgrp(0, 0); $EXEC_WITH_ENV_FILE" "$@") \
         </dev/null >"$LOGS/$name.log" 2>&1 &
     STARTED_PID=$!
     STARTED_PIDS="$STARTED_PIDS $STARTED_PID"
@@ -252,13 +253,70 @@ until [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$ENGINE_HTTP_URL/healthz
 done
 echo "up.sh: Federation Engine running (${ENGINE_BIN#"$ROOT"/}, config ${ENGINE_CONFIG#"$DEMO"/})"
 
-# Later demo features add the remaining fakes to the telemetry-fakes process (on the endpoints in
-# .state/run/engine-config.json), start Lightdash and telemetry-mcp here and add them to stack.json below.
+# Lightdash backend: its own throwaway Postgres under .state/lightdash (fresh and migrated every up.sh), results
+# and exports in the fake S3 of the telemetry-fakes process, the scheduler worker (and with it the alert worker)
+# in-process, on an ephemeral port (served as http://127.0.0.1:<port>; Lightdash's App has no listen-address
+# setting and binds every interface). Its whole environment is .state/lightdash/lightdash.env (written by
+# stack/lightdash.ts; phone-home features off).
+LIGHTDASH_S3_URL="$(json_url "$RUN/telemetry-fakes.json" lightdashS3)"
+curl -fsS -m 5 "$LIGHTDASH_S3_URL/ready" >/dev/null ||
+    { echo "up.sh: the fake results S3 at $LIGHTDASH_S3_URL does not answer" >&2; exit 1; }
+LIGHTDASH_DIR="$STATE/lightdash"
+rm -f "$RUN/lightdash.json"
+# The backend runs on the Node the workspace pins for pnpm (package.json devEngines; the backend's native addons,
+# such as Sentry's profiler, have no build for newer Node majors). DEMO_LIGHTDASH_NODE overrides it.
+LIGHTDASH_NODE="${DEMO_LIGHTDASH_NODE:-}"
+[ -n "$LIGHTDASH_NODE" ] ||
+    LIGHTDASH_NODE="$(cd "$ROOT" && pnpm --silent exec node -e 'process.stdout.write(process.execPath)' 2>/dev/null || true)"
+[ -x "$LIGHTDASH_NODE" ] ||
+    { echo "up.sh: cannot find the workspace's pinned Node for Lightdash (pnpm exec node); run bash ./init.sh or set DEMO_LIGHTDASH_NODE" >&2; exit 1; }
+(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/lightdash.ts" prepare --dir "$LIGHTDASH_DIR" --s3-url "$LIGHTDASH_S3_URL" \
+    --ready-file "$RUN/lightdash.json") >>"$LOGS/lightdash-init.log" 2>&1 || {
+    echo "up.sh: creating the Lightdash database cluster failed; last lines of ${LOGS#"$DEMO"/}/lightdash-init.log:" >&2
+    tail -20 "$LOGS/lightdash-init.log" >&2
+    exit 1
+}
+start lightdash-db "$PG_BIN/postgres" -D "$LIGHTDASH_DIR/pgdata"
+LIGHTDASH_DB_PID=$STARTED_PID
+(cd "$DEMO" && "$LIGHTDASH_NODE" --import tsx "$DEMO/stack/lightdash.ts" migrate --env-file "$LIGHTDASH_DIR/lightdash.env" \
+    --pid "$LIGHTDASH_DB_PID") >>"$LOGS/lightdash-init.log" 2>&1 || {
+    echo "up.sh: migrating the Lightdash database failed; last lines of ${LOGS#"$DEMO"/}/lightdash-init.log and lightdash-db.log:" >&2
+    tail -20 "$LOGS/lightdash-init.log" "$LOGS/lightdash-db.log" >&2
+    exit 1
+}
+echo "up.sh: Lightdash database migrated"
+# stack/lightdash-server.ts boots the backend's App (as src/index.ts does, without its Sentry bootstrap). It runs
+# from packages/backend so tsx compiles the backend with its own tsconfig, as `pnpm -F backend dev` does. The
+# trailing argument is ignored; it puts .state on the command line so down.sh finds the process even without
+# stack.json.
+DEMO_START_DIR="$ROOT/packages/backend" DEMO_START_ENV_FILE="$LIGHTDASH_DIR/lightdash.env" \
+    start lightdash "$LIGHTDASH_NODE" --import tsx "$DEMO/stack/lightdash-server.ts" --demo-env-file "$LIGHTDASH_DIR/lightdash.env"
+LIGHTDASH_PID=$STARTED_PID
+LIGHTDASH_URL="$(json_url "$RUN/lightdash.json" lightdash)"
+deadline=$((SECONDS + ${DEMO_LIGHTDASH_START_SECONDS:-240}))
+until curl -fsS -m 5 "$LIGHTDASH_URL/api/v1/health" >/dev/null 2>&1; do
+    if ! kill -0 "$LIGHTDASH_PID" 2>/dev/null; then
+        echo "up.sh: the Lightdash backend exited during start-up; last lines of ${LOGS#"$DEMO"/}/lightdash.log:" >&2
+        tail -30 "$LOGS/lightdash.log" >&2
+        exit 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "up.sh: the Lightdash backend did not answer /api/v1/health within ${DEMO_LIGHTDASH_START_SECONDS:-240} s (see ${LOGS#"$DEMO"/}/lightdash.log)" >&2
+        exit 1
+    fi
+    sleep 1
+done
+echo "up.sh: Lightdash backend running ($LIGHTDASH_URL)"
+
+# Later demo features start telemetry-mcp here (on ephemeral ports: MCP_PORT and ENGINE_PG_PORT must be set,
+# their defaults are 8080 and 5433) and add it to stack.json below.
 
 "$NODE" -e '
-const [file, telemetryFile, telemetryPid, platformFile, platformPid, engineFile, enginePid] = process.argv.slice(1);
+const [file, telemetryFile, telemetryPid, platformFile, platformPid, engineFile, enginePid, lightdashFile, lightdashDbPid, lightdashPid] =
+    process.argv.slice(1);
 const fs = require("fs");
 const telemetry = JSON.parse(fs.readFileSync(telemetryFile, "utf8"));
+const lightdash = JSON.parse(fs.readFileSync(lightdashFile, "utf8"));
 const stack = {
     scenario: telemetry.scenario,
     prometheus: telemetry.prometheus,
@@ -271,15 +329,21 @@ const stack = {
     incidentIo: telemetry.incidentIo,
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
     engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
+    lightdash: lightdash.lightdash,
+    lightdashDb: lightdash.lightdashDb,
+    lightdashS3: telemetry.lightdashS3,
     processes: [
         { name: "telemetry-fakes", pid: Number(telemetryPid) },
         { name: "platform-db", pid: Number(platformPid) },
         { name: "engine", pid: Number(enginePid) },
+        { name: "lightdash-db", pid: Number(lightdashDbPid) },
+        { name: "lightdash", pid: Number(lightdashPid) },
     ],
 };
 fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n", { mode: 0o600 });
 fs.renameSync(file + ".tmp", file);
-' "$STACK_JSON" "$RUN/telemetry-fakes.json" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID"
+' "$STACK_JSON" "$RUN/telemetry-fakes.json" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID" \
+    "$RUN/lightdash.json" "$LIGHTDASH_DB_PID" "$LIGHTDASH_PID"
 
 echo "up.sh: demo stack is up (state: ${STATE#"$DEMO"/}, stop with demo/eng-1799/down.sh)"
 report

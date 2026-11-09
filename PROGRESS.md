@@ -1945,3 +1945,40 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   escaped. Checks incident-io-receiver (--stack) and engine-healthy (--stack) pass; `tsc ... stack/*.ts` clean;
   no demo process left.
 - 2026-11-09T07:45:08Z supervisor: demo-fake-incident-io passed the gate in round 1
+
+### demo-lightdash-backend (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/lightdash.ts`: `prepare` initdb's a fresh cluster in `.state/lightdash/pgdata`
+  (127.0.0.1 only, free port, no socket), picks a free backend port and writes `.state/lightdash/lightdash.env`
+  (0600, the backend's whole env) and `.state/run/lightdash.json`; `migrate` waits for the cluster, creates the
+  `lightdash` db and runs `stack/lightdash-migrate.ts` (all non-ee knex migrations + graphile-worker's, ~10 s, so
+  no template cache: every up.sh starts from an empty, freshly migrated Lightdash).
+- New `stack/lightdash-server.ts` boots the backend's `App` (like `src/index.ts` and the e2e harness's
+  lightdashServer.ts) **without index.ts's Sentry/tracing bootstrap**, run from `packages/backend` (tsx needs the
+  backend tsconfig). up.sh starts it via `start` with the new `DEMO_START_DIR` option and the env file.
+  `SCHEDULER_ENABLED=true`: the scheduler worker, and with it the alerting tick, runs in-process (one
+  `lightdash` process, plus `lightdash-db`, in stack.json `processes`). `/api/v1/alerting/health` is `ok` ~15 s
+  after start and a cycle completes every ~15 s.
+- **Trap: Node version.** Plain `node` on PATH is v26; `@sentry/profiling-node` has no native addon for it and
+  the backend dies on import (App imports tracing/bootstrap too). up.sh runs the backend (and the migrate step) on
+  the workspace's pnpm-pinned Node (`pnpm exec node` → node@runtime+24.22.1); `DEMO_LIGHTDASH_NODE` overrides.
+- New `stack/results-s3.ts`: in-memory S3 fake (path-style; Put/Get with Range/Head/Delete, multipart upload as
+  lib-storage's `Upload` does it, ListObjectsV2, HeadBucket, `/ready`), served by telemetry-fakes on an
+  ephemeral port (`lightdashS3.url` in stack.json). S3_* and RESULTS_S3_* point at it, bucket
+  `demo-lightdash-results`.
+- Phone-home off through env: `RUDDERSTACK_ANALYTICS_DISABLED`, `LIGHTDASH_DISABLE_UPDATE_CHECK`,
+  `LIGHTDASH_CHART_REGISTRY_URL=` (empty = disabled), `HEADWAY_ENABLED=false`, `AWS_EC2_METADATA_DISABLED`;
+  Sentry/Intercom/Pylon/PostHog unset. The backend held only 127.0.0.1 connections in lsof.
+- Ports: Lightdash PORT, its Postgres and the S3 fake are ephemeral; the engine already was. telemetry-mcp is
+  not started yet: demo-mcp-server must set `MCP_PORT` and `ENGINE_PG_PORT` (defaults 8080/5433) explicitly.
+- Known limitation: the App binds every interface (no listen-address setting in Lightdash); not changed.
+- stack.json gains `lightdash: {url, port}` (demo-seed-project adds `projectUuid`; the Stack type wants it),
+  `lightdashDb`, `lightdashS3`. `NODE_ENV=development` like the e2e harness; demo-lightdash-frontend may revisit
+  how the production frontend build is served. Logs: `.state/logs/lightdash.log`, `lightdash-init.log`.
+- Tested as a user: `up.sh` (~27 s) printed `up.sh: Lightdash: http://127.0.0.1:<port> (...)`; `GET
+  /api/v1/health` → `status: ok`, healthy, `requiresMigration: false`, headway off, rudder/latest empty; polled
+  `/api/v1/alerting/health` 40 s: `ok`, lastCycleAt advancing every 15 s, lag ≤ 10. Re-run up.sh → "already
+  running" with the Lightdash line. AWS SDK + lib-storage against the S3 fake: small put, 12 MiB multipart,
+  byte-exact get, range get, list, delete → 404. `down.sh` stopped everything. Checks lightdash-backend,
+  engine-healthy, incident-io-receiver (--stack) pass; `tsc ... stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:59:29Z supervisor: demo-lightdash-backend passed the gate in round 1
