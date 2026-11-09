@@ -1,6 +1,7 @@
 // ENG-1799 demo: seed a fresh Lightdash through its public HTTP API (run by up.sh once /api/v1/health answers).
 //
 //   node --import tsx stack/seed.ts --lightdash-url <url> --engine-file <.state/run/engine-config.json> \
+//       --content-dir <demo/eng-1799/content> --cli-home <.state/cli-home> --cli-node <node> \
 //       --ready-file <.state/run/seed.json>
 //
 // Every up.sh starts Lightdash on an empty database, so the seed always runs against a new instance:
@@ -12,11 +13,20 @@
 //      and HTTP side port (CONTRACTS §4.1);
 //   3. grants the demo user the user attributes platform_read and platform_write = "true" (POST
 //      /api/v1/org/attributes), which the engine reads from the identity token for the Platform Database;
-//   4. checks the result as the user sees it: GET /api/v2/projects/<uuid>/federation/access.
+//   4. checks the result as the user sees it: GET /api/v2/projects/<uuid>/federation/access;
+//   5. uploads the demo's content as code (demo/eng-1799/content: virtual views, charts, dashboards) with the
+//      Lightdash CLI from source (`lightdash upload`, on the Node given by --cli-node: the workspace's pinned Node),
+//      on a personal access token of the demo user, then checks that every dashboard in CONTENT_DASHBOARDS is
+//      there with each chart Tile resolving to its saved chart.
+//      The CLI runs with HOME=<cli-home> (it writes ~/.config/lightdash) and stack/no-network.mjs preloaded (it
+//      would post usage analytics and check GitHub for upgrades).
 // Then it writes the ready file atomically (mode 0600):
-//   {"lightdash": {"projectUuid"}, "demoUser": {email, password, userUuid}, "organizationUuid"}.
+//   {"lightdash": {"projectUuid", "apiToken"}, "demoUser": {email, password, userUuid}, "organizationUuid"}.
+// `apiToken` is the demo user's personal access token on this throwaway instance, for later seed steps.
 // All values are synthetic: the email is @example.com and the password a fake `test-...-not-real` value.
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 const DEMO_USER = {
@@ -28,6 +38,11 @@ const DEMO_USER = {
 const ORGANIZATION_NAME = 'HouseRx Demo (synthetic)';
 const PROJECT_NAME = 'Operations Project';
 const PLATFORM_ATTRIBUTES = ['platform_read', 'platform_write'] as const;
+/** Dashboards the content upload must produce (names pinned in PROGRESS.md), with their chart Tile count. */
+const CONTENT_DASHBOARDS = [{ name: 'Pharmacy Ops overview', chartTiles: 4 }] as const;
+const CLI_DIR = path.resolve(__dirname, '..', '..', '..', 'packages', 'cli');
+const CLI_TSX = path.join(CLI_DIR, 'node_modules', 'tsx', 'dist', 'cli.mjs');
+const NO_NETWORK = path.join(__dirname, 'no-network.mjs');
 
 type Engine = {
     host: string;
@@ -66,7 +81,64 @@ class Session {
     }
 }
 
-async function seed(lightdashUrl: string, engine: Engine) {
+type Content = { dir: string; cliHome: string; node: string };
+
+/** `lightdash upload` from the CLI's source, as a user would run it, against the demo's Lightdash. */
+function uploadContent(lightdashUrl: string, apiToken: string, projectUuid: string, content: Content) {
+    mkdirSync(content.cliHome, { recursive: true, mode: 0o700 });
+    const nodeOptions = [process.env.NODE_OPTIONS, `--import ${NO_NETWORK}`].filter(Boolean).join(' ');
+    // `pnpm -F @lightdash/cli exec tsx src/index.ts` without pnpm: pnpm itself reads HOME (its pinned version), so
+    // the CLI's own tsx runs on the workspace's pinned Node, from packages/cli, with HOME moved under .state.
+    const r = spawnSync(
+        content.node,
+        [CLI_TSX, 'src/index.ts', 'upload', '--project', projectUuid, '--path', content.dir],
+        {
+            cwd: CLI_DIR,
+            env: {
+                ...process.env,
+                HOME: content.cliHome,
+                LIGHTDASH_URL: lightdashUrl,
+                LIGHTDASH_API_KEY: apiToken,
+                CI: 'true',
+                NODE_OPTIONS: nodeOptions,
+            },
+            encoding: 'utf8',
+            timeout: 180_000,
+        },
+    );
+    // the CLI prints progress and per-file warnings; keep them in seed.log
+    process.stdout.write(r.stdout ?? '');
+    process.stderr.write(r.stderr ?? '');
+    if (r.error || r.status !== 0) {
+        throw new Error(`lightdash upload failed (exit ${r.status}${r.error ? `, ${r.error.message}` : ''})`);
+    }
+}
+
+/** Every dashboard of CONTENT_DASHBOARDS exists in the project and its chart Tiles open their saved charts. */
+async function checkContent(session: Session, projectUuid: string) {
+    const listed = await session.call<{ data: { uuid: string; name: string }[] }>(
+        'GET',
+        `/api/v2/content?projectUuids=${projectUuid}&contentTypes=dashboard&pageSize=200`,
+    );
+    for (const expected of CONTENT_DASHBOARDS) {
+        const hit = listed.data.find((d) => d.name === expected.name);
+        if (!hit) throw new Error(`content upload: no dashboard "${expected.name}"`);
+        const dashboard = await session.call<{ tiles: { type: string; properties: { savedChartUuid?: string | null } }[] }>(
+            'GET',
+            `/api/v1/dashboards/${hit.uuid}`,
+        );
+        const charts = dashboard.tiles.filter((t) => t.type === 'saved_chart');
+        if (charts.length !== expected.chartTiles) {
+            throw new Error(`content upload: "${expected.name}" has ${charts.length} chart Tiles, expected ${expected.chartTiles}`);
+        }
+        for (const tile of charts) {
+            if (!tile.properties.savedChartUuid) throw new Error(`content upload: a Tile of "${expected.name}" has no chart`);
+            await session.call('GET', `/api/v1/saved/${tile.properties.savedChartUuid}`);
+        }
+    }
+}
+
+async function seed(lightdashUrl: string, engine: Engine, content: Content) {
     const session = new Session(lightdashUrl);
 
     const health = await session.call<{ requiresOrgRegistration: boolean }>('GET', '/api/v1/health');
@@ -132,8 +204,17 @@ async function seed(lightdashUrl: string, engine: Engine) {
         throw new Error(`federation access is not as seeded: ${JSON.stringify(access)}`);
     }
 
+    // 5. The demo's dashboards, through the real upload path.
+    const pat = await session.call<{ token: string }>('POST', '/api/v1/user/me/personal-access-tokens', {
+        description: 'ENG-1799 demo seed (lightdash upload)',
+        expiresAt: null,
+        autoGenerated: false,
+    });
+    uploadContent(lightdashUrl, pat.token, projectUuid, content);
+    await checkContent(session, projectUuid);
+
     return {
-        lightdash: { projectUuid },
+        lightdash: { projectUuid, apiToken: pat.token },
         demoUser: { email: DEMO_USER.email, password: DEMO_USER.password, userUuid: user.userUuid },
         organizationUuid: org.organizationUuid,
     };
@@ -143,18 +224,30 @@ const { values: args } = parseArgs({
     options: {
         'lightdash-url': { type: 'string' },
         'engine-file': { type: 'string' },
+        'content-dir': { type: 'string' },
+        'cli-home': { type: 'string' },
+        'cli-node': { type: 'string' },
         'ready-file': { type: 'string' },
     },
 });
 const lightdashUrl = args['lightdash-url'];
 const engineFile = args['engine-file'];
+const contentDir = args['content-dir'];
+const cliHome = args['cli-home'];
+const cliNode = args['cli-node'] ?? process.execPath;
 const readyFile = args['ready-file'];
-if (!lightdashUrl || !engineFile || !readyFile) {
-    console.error('usage: seed.ts --lightdash-url <url> --engine-file <engine-config.json> --ready-file <file>');
+if (!lightdashUrl || !engineFile || !contentDir || !cliHome || !readyFile) {
+    console.error(
+        'usage: seed.ts --lightdash-url <url> --engine-file <engine-config.json> --content-dir <dir> --cli-home <dir> [--cli-node <node>] --ready-file <file>',
+    );
     process.exit(2);
 }
 
-seed(lightdashUrl, (JSON.parse(readFileSync(engineFile, 'utf8')) as { engine: Engine }).engine)
+seed(lightdashUrl, (JSON.parse(readFileSync(engineFile, 'utf8')) as { engine: Engine }).engine, {
+    dir: path.resolve(contentDir),
+    cliHome: path.resolve(cliHome),
+    node: cliNode,
+})
     .then((result) => {
         writeFileSync(`${readyFile}.tmp`, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
         renameSync(`${readyFile}.tmp`, readyFile);

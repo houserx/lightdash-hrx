@@ -1,0 +1,66 @@
+chartConfig:
+  config:
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: hrx_fill_queue_backlog_ts_raw
+            yRef:
+              field: hrx_fill_queue_backlog_backlog_max
+          name: fill
+          showSymbol: false
+          type: line
+      xAxis:
+        - name: Time
+      yAxis:
+        - max: "200"
+          min: "0"
+          name: Messages waiting
+    layout:
+      xField: hrx_fill_queue_backlog_ts_raw
+      yField:
+        - hrx_fill_queue_backlog_backlog_max
+    thresholds:
+      mode: absolute
+      steps:
+        - color: "#73BF69"
+          value: null
+        - color: "#F2495C"
+          value: 100
+      style: dashed
+  type: cartesian
+contentType: chart
+description: hrx_fill_queue_backlog{queue="fill"} (Prometheus, through the Federation Engine). The Alert Rule "Fill queue backlog high" fires at 100, drawn as the threshold line.
+metricQuery:
+  additionalMetrics:
+    - baseDimensionName: backlog
+      label: Backlog
+      name: backlog_max
+      sql: ${TABLE}.backlog
+      table: hrx_fill_queue_backlog
+      type: max
+  dimensions:
+    - hrx_fill_queue_backlog_ts_raw
+  exploreName: hrx_fill_queue_backlog
+  filters:
+    dimensions:
+      and:
+        - id: fill-queue-only-rule
+          operator: equals
+          target:
+            fieldId: hrx_fill_queue_backlog_queue
+          values:
+            - fill
+      id: fill-queue-only
+  limit: 5000
+  metrics:
+    - hrx_fill_queue_backlog_backlog_max
+  sorts:
+    - descending: false
+      fieldId: hrx_fill_queue_backlog_ts_raw
+  tableCalculations: []
+name: Fill queue backlog
+slug: fill-queue-backlog
+spaceSlug: pharmacy-ops
+tableName: hrx_fill_queue_backlog
+version: 1

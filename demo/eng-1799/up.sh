@@ -316,15 +316,18 @@ LIGHTDASH_UI_HTML="$(curl -fsS -m 10 "$LIGHTDASH_URL/login" 2>/dev/null || true)
     { echo "up.sh: the Lightdash backend does not serve the UI at $LIGHTDASH_URL/login (frontend build missing? run bash ./init.sh)" >&2; exit 1; }
 
 # Seed (through Lightdash's HTTP API; the database is new on every fresh up.sh): the demo user and its organization,
-# the Operations Project on the Federation Engine flavour, and the user attributes platform_read/platform_write.
+# the Operations Project on the Federation Engine flavour, the user attributes platform_read/platform_write, then
+# the dashboards in content/ through `lightdash upload` (the CLI from source; see stack/seed.ts).
 rm -f "$RUN/seed.json"
 (cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/seed.ts" --lightdash-url "$LIGHTDASH_URL" \
-    --engine-file "$RUN/engine-config.json" --ready-file "$RUN/seed.json") >>"$LOGS/seed.log" 2>&1 || {
+    --engine-file "$RUN/engine-config.json" --content-dir "$DEMO/content" --cli-home "$STATE/cli-home" \
+    --cli-node "$LIGHTDASH_NODE" \
+    --ready-file "$RUN/seed.json") >>"$LOGS/seed.log" 2>&1 || {
     echo "up.sh: seeding Lightdash failed; last lines of ${LOGS#"$DEMO"/}/seed.log:" >&2
     tail -20 "$LOGS/seed.log" >&2
     exit 1
 }
-echo "up.sh: Lightdash seeded (demo user, Operations Project on the Federation Engine flavour)"
+echo "up.sh: Lightdash seeded (demo user, Operations Project on the Federation Engine flavour, dashboards uploaded)"
 
 # Later demo features start telemetry-mcp here (on ephemeral ports: MCP_PORT and ENGINE_PG_PORT must be set,
 # their defaults are 8080 and 5433) and add it to stack.json below.

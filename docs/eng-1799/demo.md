@@ -34,3 +34,28 @@ the Inter font from Google Fonts; offline it falls back to a system font and wor
 
 If you change frontend code, re-run `bash ./init.sh` to rebuild, then `demo/eng-1799/down.sh` and
 `demo/eng-1799/up.sh`.
+
+## Dashboards as code
+
+The demo's dashboards live in `demo/eng-1799/content/` as Lightdash content as code (`virtual-views/`, `charts/`,
+`dashboards/`). On every fresh stack, `up.sh`'s seed (`demo/eng-1799/stack/seed.ts`) creates a personal access
+token for the demo user and runs `lightdash upload` from the CLI's source, then checks that the dashboards and
+their Tiles are there. The CLI runs with `HOME` under `.state/cli-home` (it writes `~/.config/lightdash`) and with
+`demo/eng-1799/stack/no-network.mjs` preloaded, because it would otherwise send usage analytics and check for
+upgrades over the internet. To change a dashboard, edit the YAML and restart the stack. Alternatively, upload by
+hand with the token in `.state/run/seed.json` (`lightdash.apiToken`).
+
+**Pharmacy Ops overview** has a Dashboard Time Range (default the last 30 minutes, refresh 30 s) mapped to every
+Tile. Its Tiles are all built-in Lightdash charts, so no chart registry or licence is needed:
+
+| Tile | Chart | What it shows |
+|---|---|---|
+| Current fill queue backlog | big number | the latest `hrx_fill_queue_backlog{queue="fill"}` sample, red at 100 and above (conditional formatting) |
+| Fill queue backlog | cartesian line | the fill queue's backlog over time, with a dashed threshold line at 100, the Alert Rule threshold |
+| Peak backlog by queue | horizontal bar, 0 to 200 | the bar gauge: each queue's highest backlog in the range |
+| Queue status | table | each queue's peak backlog, plus a Status column whose value mappings (Grafana's shape) read OK, Elevated or Backlogged |
+
+The charts query the virtual view `hrx_fill_queue_backlog`: `promql('hrx_fill_queue_backlog', now() - 6 hours,
+now(), '15s')` on the Federation Engine. Explore charts don't receive the reserved `__from`/`__to` parameters,
+which only reach SQL charts, so the view's window is fixed at 6 hours. The Dashboard Time Range filters each Tile
+on `ts` inside that window, so ranges longer than 6 hours show only the last 6 hours.
