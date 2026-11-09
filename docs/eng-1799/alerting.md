@@ -156,8 +156,9 @@ uptime checks can call it. It always answers HTTP 200 with
 | `stale`          | No tick has finished in more than 60 seconds.                       |
 | `never_run`      | No tick has ever finished. `lastCycleAt` and `lagSeconds` are null. |
 
-Agents read alert state from `GET .../alerting/state` (the firing and pending
-series) and `GET .../alerting/history?rule=&since=`.
+Agents read alert state from `GET .../alerting/state?rule=` (the firing and
+pending series, of one rule when `rule` is given) and
+`GET .../alerting/history?rule=&since=&until=&limit=`.
 
 ## Routing semantics
 

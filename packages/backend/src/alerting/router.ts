@@ -20,6 +20,7 @@ import {
 import {
     parseAlertHistoryQuery,
     parseAlertRuleListFilters,
+    parseAlertStateQuery,
     type AlertRuleService,
 } from './AlertRuleService';
 import { type ContactPointService } from './ContactPointService';
@@ -282,7 +283,11 @@ export const createAlertingApiRouter = (
     router.get(
         `${base}/state`,
         route((user, req) =>
-            services.alertRules.listState(user, req.params.projectUuid),
+            services.alertRules.listState(
+                user,
+                req.params.projectUuid,
+                parseAlertStateQuery(req.query),
+            ),
         ),
     );
 

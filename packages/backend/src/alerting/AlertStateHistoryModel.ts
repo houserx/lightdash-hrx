@@ -151,7 +151,7 @@ export class AlertStateHistoryModel {
      */
     async listForProject(
         projectUuid: string,
-        { ruleUuid, since }: AlertHistoryFilters,
+        { ruleUuid, since, until }: AlertHistoryFilters,
         limit: number,
     ): Promise<AlertProjectHistoryEntry[]> {
         const query = this.database(AlertStateHistoryTableName)
@@ -169,6 +169,9 @@ export class AlertStateHistoryModel {
         }
         if (since !== undefined) {
             void query.where(`${AlertStateHistoryTableName}.at`, '>=', since);
+        }
+        if (until !== undefined) {
+            void query.where(`${AlertStateHistoryTableName}.at`, '<=', until);
         }
         const rows = await query
             .orderBy(

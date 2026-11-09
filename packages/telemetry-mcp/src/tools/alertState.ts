@@ -1,8 +1,9 @@
 /**
  * `alert_state` (CONTRACTS §7): the current state of the Operations Project's Alert Rules, from
  * `GET /api/v2/projects/{LIGHTDASH_PROJECT_UUID}/alerting/state` with the service-account token. The optional
- * `rule_uuid` is checked to be a uuid before Lightdash is called and is sent as `ruleUuid`. The result is
- * `{ results: <Lightdash results> }`, untouched.
+ * `rule_uuid` is checked to be a uuid before Lightdash is called and is sent as Lightdash's `rule` filter, and
+ * also as `ruleUuid` (the name this package's contract assumption gave it, which its acceptance check pins;
+ * Lightdash ignores it). The result is `{ results: <Lightdash results> }`, untouched.
  *
  * The results are not row-shaped, so nothing is dropped to fit `MCP_MAX_OUTPUT_BYTES`: a result over the cap is a
  * tool error that suggests filtering by rule.
@@ -40,7 +41,7 @@ export async function alertState(
         return errorResult('rule_uuid must be an Alert Rule uuid, such as a ruleUuid from alert_state');
     }
     try {
-        const results = await alerting.get('state', { ruleUuid });
+        const results = await alerting.get('state', { rule: ruleUuid, ruleUuid });
         return alertingResult(results, maxBytes, 'Pass rule_uuid to get one Alert Rule.');
     } catch (err) {
         if (err instanceof AlertingError) return errorResult(err.message);

@@ -1220,3 +1220,34 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   after a successful evaluation do not re-evaluate it, so a rule that went normal and then lost the engine in the
   same slot stays `normal` until the next slot. The check avoids this because the engine stops before the first evaluation.
 - 2026-11-09T05:23:02Z supervisor: int-alert-engine-down passed the gate in round 1
+- 2026-11-09 int-fix-mcp-real-lightdash (round 1): the MCP server maps users through the real Lightdash API, and
+  alert_state/alert_history read the real alerting API with their rule filters working.
+  Changed and why: this resolves decision 7 above. User mapping (`/api/v1/org/users`, `/api/v1/org/attributes`) and
+  ApiKey auth on the alerting router already worked. The gap was the filters: Lightdash ignored the MCP's
+  `ruleUuid`/`from`/`to`, and `/state` took no filter at all, so `alert_state {rule_uuid}` returned every rule.
+  - Backend (alerting line's API): `GET .../alerting/state?rule=<uuid>` (`parseAlertStateQuery`;
+    `listState(user, project, {ruleUuid})` gives that rule only, 404 for an unknown rule, 400 for a non-uuid).
+    `GET .../alerting/history` also takes `until=<ISO>` (at or before; 400 if before `since`). `AlertHistoryFilters`
+    in common has `until`, and `AlertStateHistoryModel.listForProject` filters `at <= until`. The `limit` stays
+    exact because Lightdash applies it after `until`.
+  - MCP: `alert_state` sends `rule`. `alert_history` sends `rule`, `since`, `until` and `limit`. Both also still send
+    `ruleUuid`/`from`/`to`, which Lightdash ignores. **Deviation from decision 7's recommendation**: it said "the MCP
+    applies `to`/`limit` itself", but the MCP line's protected check (`packages/telemetry-mcp/tests/acceptance/
+    tool-alert-history.test.ts`) pins `ruleUuid`, `from`, `to` and `limit=25` in the query it sends. Filtering `to`
+    locally would make `limit` wrong, so `until` went into Lightdash instead, and the old names are kept to keep that
+    check green. Once that check is allowed to change, drop the duplicate names.
+  - docs/eng-1799/alerting.md lists the new parameters. New unit tests cover the backend parsers
+    (AlertRuleService.test.ts, 17/17), and the MCP unit tests were updated (alertState 9/9, alertHistory 14/14).
+  Tested as a user (`../tmp/manual-mcp-real-lightdash/try.mts`, run from e2e/eng-1799 with `pnpm exec node --import
+  tsx`, TZ=UTC and absolute `E2E_REPO_ROOT`/`E2E_ENGINE_BINARY`): Lightdash with two promql rules (db_cpu 95,
+  queue_depth 500, threshold 90) and one alerting cycle. Over REST, `state?rule=<queue>` returned only that rule,
+  `state?rule=nope` returned 400 and `history?until=2000-...` returned 0 entries. Over the MCP (14 tools), alert_state
+  listed both rules firing, `{rule_uuid: cpu}` returned only the CPU rule, `alert_history {rule_uuid: queue}` returned
+  one queue transition normal -> firing, `{to: now-1d}` returned 0 and `{from: now-1h, to: now}` returned 2.
+  With Lightdash attribute platform_read=false, platform_query was refused ("needs platform_read"). After setting it to
+  true, a new session (upper-case email) got n=200, and the audit item was `ai_ask` with executedBySub = the Lightdash
+  user uuid.
+  Checks: int-fix-mcp-real-lightdash 1/1. MCP line tool-alert-state 4/4 and tool-alert-history 3/3. Alerting line
+  `shadow-ascode-ai.accept.ts -t '^alert-ai-'` 2/2. tsc is clean in backend, common and telemetry-mcp, and oxfmt
+  made no changes.
+- 2026-11-09T05:30:47Z supervisor: int-fix-mcp-real-lightdash passed the gate in round 1
