@@ -1625,3 +1625,23 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   when you list a source's tables.
 - 2026-11-09T06:48:02Z supervisor: initialized: 45 features, run 20261109-013019
 - 2026-11-09T06:49:33Z supervisor: demo-package-workspace halted: the worker halted on demo-package-workspace
+
+### demo-config-validation (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/up.sh`: validates `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` (defaults 90 / 300; whole
+  non-negative seconds, at most 9 digits, incident < recovery) **before** creating anything, exit 2 with a message
+  naming the variable. With a valid timeline it currently prints the timeline, creates `.state/`, then exits 1
+  ("no stack services are implemented yet; nothing was started"): it never claims a stack that is not there.
+  **Next sessions:** replace that tail (the `# ---- stack` section) with the real start-up; keep validation first.
+- New `demo/eng-1799/down.sh` (idempotent, exit 0 when nothing runs): `pg_ctl -m fast stop` for every
+  `postmaster.pid` under `.state/`, TERM to each `stack.json` `"pid"` (its process group `-pid` and the pid) and to
+  any process whose command line mentions `.state` (`pgrep -f`), KILL after `DEMO_DOWN_GRACE_SECONDS` (10), then
+  removes `stack.json` (keeps logs/configs). So: start each service as a process-group leader and record its pid in
+  `stack.json`; pass a `.state/...` path on each service's command line so the leftover sweep catches it.
+- Tested as a user: `down.sh` with no state (exit 0); `up.sh` with `soon`, `-5`, `120/60`, `60/60`, `' 30'` all
+  refused naming the variable; default `up.sh` exits 1 with the "not implemented" line; `down.sh` stopped a fake
+  recorded pid and a fake process with `.state` in its command line; `pgrep -lf .state` empty afterwards.
+  Check `bash demo/eng-1799/acceptance/run.sh config-validation.spec.ts` passes (exit 0).
+- Note: demo-package-workspace halted earlier in this run (no `typecheck` script / `tsconfig.json` yet); this
+  feature does not depend on it.
+- 2026-11-09T06:51:17Z supervisor: demo-config-validation passed the gate in round 1
