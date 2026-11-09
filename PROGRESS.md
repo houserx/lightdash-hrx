@@ -1728,3 +1728,4 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Checks: perses-command 3/3 after init. Regression: dashboard-command 4/4, dashboard-report 4/4, dashboard-multi
   3/3. persesDashboardImport.test.ts 10/10. common and cli tsc clean, oxlint and oxfmt clean on changed files.
 - 2026-11-09T05:52:16Z supervisor: imp-cli-perses-dashboard passed the gate in round 1
+- 2026-11-09T05:52:24Z supervisor: imp-perses-panels halted: worker importers.feature.imp-perses-panels.r1 stopped: STOP file present
