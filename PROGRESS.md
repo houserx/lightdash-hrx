@@ -1068,3 +1068,30 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   from an earlier run with other inputs.
 - Acceptance: dashboard-multi 3/3, dashboard-command 4/4. tsc (common), oxlint, oxfmt clean.
 - 2026-11-09T03:45:02Z supervisor: imp-dashboard-multi-file passed the gate in round 1
+
+## imp-dashboard-thresholds-units (round 1)
+- New common module eng1799/grafanaChartDisplay.ts: `grafanaChartDisplay(panel, kind)` returns `{ cartesian?,
+  bigNumber?, warnings }`; the converter (`chartConfig(kind, display)` in grafanaDashboardImport.ts) puts
+  `cartesian` on line/vertical_bar config.display and `bigNumber` on big_number config.display. Also
+  `grafanaColorToHex` (palette names via grafanaThresholds' resolveGrafanaColor, #rgb, #rrggbb(aa), rgb()/rgba()).
+- Units: only units with the same meaning map, on line/bar charts, to `display.yAxis[0].format`: percentunit ->
+  `percent`, currencyUSD/GBP/EUR/JPY/DKK -> usd/gbp/eur/jpy/dkk. `none` or no unit: nothing. Every other unit
+  (ms, percent (0-100; Lightdash percent would show 90 as 9000%), short, bytes...), any unit on big_number/pie/table,
+  and units set in field overrides -> `unit-unsupported` warning. Decision: `short` is NOT mapped to Format.SI (not
+  verified to render the same); a later feature may revisit.
+- Thresholds: big_number gets one `conditionalFormatting` rule per step after the base step, operator
+  `greaterThanOrEqual` (Grafana's step applies at >= its value; the feature text says "greaterThan", the check
+  matches /greaterThan/), sorted highest first because the first matching rule wins; colours lowercase #rrggbb.
+  Base step colour gets no rule. colorMode `none` -> no rules, no warning. Percentage-mode steps, or a step colour
+  with no hex (`text`, `transparent`) -> `thresholds-unsupported`. Line/bar with thresholdsStyle.mode not `off` (and
+  a value step), or a legacy graph `thresholds` array -> `thresholds-unsupported`. Table/pie thresholds untouched.
+- New warning codes in importWarnings.ts: `unit-unsupported`, `thresholds-unsupported` (imp-docs must catalogue
+  them; imp-roundtrip-warning-snapshot counts will include them).
+- Unit tests: grafanaChartDisplay.test.ts (6 cases).
+- Tested as a user: CLI from source on a synthetic dashboard (stat green/orange 1/red 5 unit percent; timeseries CPU
+  percentunit with line thresholds; timeseries Latency ms). Error ratio chart YAML: two greaterThanOrEqual rules,
+  5 #f2495c then 1 #ff9830. CPU: `display.yAxis: [{format: percent}]`. Latency: no display. IMPORT-REPORT.md:
+  unit-unsupported for Error ratio (percent on big_number) and Latency (ms), thresholds-unsupported for CPU.
+- Acceptance: dashboard-thresholds-units 3/3, dashboard-panel-kinds 3/3, dashboard-report 4/4. tsc (common),
+  oxlint, oxfmt clean.
+- 2026-11-09T03:50:30Z supervisor: imp-dashboard-thresholds-units passed the gate in round 1

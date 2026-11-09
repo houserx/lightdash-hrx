@@ -20,6 +20,10 @@ import {
 } from '../utils/slugs';
 import type { AllVizChartConfig } from '../visualizations/types';
 import {
+    grafanaChartDisplay,
+    type GrafanaChartDisplay,
+} from './grafanaChartDisplay';
+import {
     getGrafanaPanelMapping,
     getGrafanaPanelOptionMapping,
     type GrafanaPanelMapping,
@@ -62,8 +66,15 @@ export type GrafanaDashboardPanel = GrafanaPanelWithTargets & {
     content?: unknown;
     /** Panel links (fieldConfig holds the field links). */
     links?: unknown;
+    /** Legacy graph panel thresholds. */
+    thresholds?: unknown;
     fieldConfig?: {
-        defaults?: { custom?: { drawStyle?: unknown }; links?: unknown };
+        defaults?: {
+            custom?: { drawStyle?: unknown };
+            links?: unknown;
+            unit?: unknown;
+            thresholds?: unknown;
+        };
         overrides?: unknown;
     };
 };
@@ -225,13 +236,29 @@ const chartKindForPanel = (
     }
 };
 
-const chartConfig = (kind: ChartKind): AllVizChartConfig => {
+/** The SQL chart config for a kind, with the display from the panel's unit and thresholds. */
+const chartConfig = (
+    kind: ChartKind,
+    display: GrafanaChartDisplay,
+): AllVizChartConfig => {
     const metadata = { version: 1 };
     switch (kind) {
         case ChartKind.LINE:
         case ChartKind.VERTICAL_BAR:
-        case ChartKind.PIE:
+            return {
+                metadata,
+                type: kind,
+                fieldConfig: undefined,
+                display: display.cartesian,
+            };
         case ChartKind.BIG_NUMBER:
+            return {
+                metadata,
+                type: kind,
+                fieldConfig: undefined,
+                display: display.bigNumber,
+            };
+        case ChartKind.PIE:
             return {
                 metadata,
                 type: kind,
@@ -785,6 +812,8 @@ export const convertGrafanaDashboard = (
                 `The ${type} panel maps to the ${fallbackFrom} chart type, which SQL charts do not support; it is imported as a ${kind} SQL chart`,
             );
         }
+        const display = grafanaChartDisplay(panel, kind);
+        display.warnings.forEach((w) => warn(w.code, w.message));
         const chart: SqlChartAsCode = {
             version: 1,
             contentType: ContentAsCodeType.SQL_CHART,
@@ -800,7 +829,7 @@ export const convertGrafanaDashboard = (
             sql: translation.sql,
             limit: IMPORTED_SQL_CHART_LIMIT,
             chartKind: kind,
-            config: chartConfig(kind),
+            config: chartConfig(kind, display),
         };
         charts.push(chart);
         tiles.push({

@@ -39,6 +39,8 @@ export type ImportWarningCode =
     | 'panel-dropped'
     | 'option-dropped'
     | 'chart-kind-fallback'
+    | 'unit-unsupported'
+    | 'thresholds-unsupported'
     | 'link-unsupported'
     | 'dashboard-link-unsupported'
     | 'time-range-adjusted'
