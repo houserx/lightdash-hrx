@@ -194,6 +194,13 @@ Chromium outlives the run.
   Refresh from 30s to 10s, which moves the relative bounds forward. It then turns on "Auto-refresh while viewing"
   at every 5m, which re-runs every Tile. Key moment: the dashboard over the last hour, with "Last 1 hour", "10s"
   and "Every 5m" in the header.
+- **02-incident**: opens Pharmacy Ops overview in the baseline (the line under the dashed threshold at 100, the stat
+  not red), then waits on the scenario clock until its phase is `incident`. It does not use a fixed sleep. After
+  that it presses "Refresh dashboard" until the line is drawn above the threshold line and the stat is red and at or
+  over 100. The scene does not restart the clock. Restart it first with the incident a few seconds out (`POST
+  <scenario>/scenario/restart` `{"incidentAfterSeconds": 20, "recoveryAfterSeconds": 900}`). If the incident is
+  more than 120 s away, the scene fails at once and says so. Key moment: the line over the threshold, the stat in
+  red and the fill queue "Backlogged".
 
 ## Known limits
 

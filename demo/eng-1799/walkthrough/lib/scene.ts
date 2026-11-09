@@ -100,5 +100,52 @@ export async function openDashboardFromList(page: Page, stack: WalkthroughStack,
 export const tile = (page: Page, title: string) =>
     page.locator('.react-grid-item').filter({ has: page.getByText(title, { exact: true }) });
 
+/** The scenario clock (GET <scenario>/scenario). The walkthrough reads it and never restarts it. */
+export type Scenario = {
+    startedAt: string;
+    incidentAt: string;
+    recoveryAt: string;
+    now: string;
+    phase: 'baseline' | 'incident' | 'recovered';
+};
+
+export async function getScenario(stack: WalkthroughStack): Promise<Scenario> {
+    const res = await fetch(`${stack.scenario.url}/scenario`);
+    if (!res.ok) throw new Error(`GET ${stack.scenario.url}/scenario: HTTP ${res.status}`);
+    return (await res.json()) as Scenario;
+}
+
+/**
+ * Wait on the scenario clock until it reaches `phase`. Fails at once, with what to do, when the phase is more than
+ * `maxWaitMs` away (the scene does not restart the clock: restart it with the incident a few seconds out first).
+ */
+export async function waitForPhase(stack: WalkthroughStack, phase: 'incident' | 'recovered', maxWaitMs: number): Promise<Scenario> {
+    const first = await getScenario(stack);
+    const at = new Date(phase === 'incident' ? first.incidentAt : first.recoveryAt).getTime();
+    const awayMs = at - new Date(first.now).getTime();
+    if (awayMs > maxWaitMs) {
+        throw new Error(
+            `the scenario's ${phase} is ${Math.round(awayMs / 1000)} s away (more than ${maxWaitMs / 1000} s): restart the ` +
+                `scenario clock with the ${phase} closer (POST ${stack.scenario.url}/scenario/restart)`,
+        );
+    }
+    let now = first;
+    await expect
+        .poll(
+            async () => {
+                now = await getScenario(stack);
+                return now.phase;
+            },
+            { message: `the scenario clock reaches the ${phase}`, timeout: Math.max(awayMs, 0) + 15_000, intervals: [500] },
+        )
+        .toBe(phase);
+    return now;
+}
+
+/** Re-run every Tile with the dashboard header's "Refresh dashboard" button. */
+export async function refreshDashboard(page: Page): Promise<void> {
+    await page.getByRole('button', { name: 'Refresh dashboard' }).click();
+}
+
 /** Errors a Tile or the page may show when a query fails. */
 export const QUERY_ERROR_TEXT = /there was an error|error running query|unable to load|42501|42P01|audited query requires a description/i;

@@ -2478,3 +2478,33 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Checks:** `bash ./init.sh`, then `run.sh --stack scene-01-sign-in.spec.ts` passed (1 test, about 51 s with
   up/down). `run.sh package.spec.ts` passed. Demo typecheck is clean. No `.state` process or chromium is left.
 - 2026-11-09T11:01:21Z supervisor: demo-scene-01-sign-in passed the gate in round 1
+
+### demo-scene-02-incident (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/walkthrough/lib/scene.ts` has new shared helpers. `getScenario(stack)` does a GET on the scenario
+    clock. `waitForPhase(stack, 'incident' | 'recovered', maxWaitMs)` polls `/scenario` every 500 ms until the phase
+    is reached. If the phase is more than maxWaitMs away, it fails at once with a message that says to restart the
+    clock. `refreshDashboard(page)` clicks the header's "Refresh dashboard" button. **Scenes 03 and 08 should use
+    `waitForPhase`.** The walkthrough never restarts the clock itself.
+  - `demo/eng-1799/walkthrough/02-incident.spec.ts` (24 `expect`s, scene timeout 240 s). It signs in and opens Pharmacy
+    Ops overview. If the phase is baseline and the incident is more than 8 s away, it asserts the baseline: the line
+    is under the threshold, and the stat is below 100 and not red. If not, it records a `baseline` annotation and
+    skips that check. It then waits on the clock for `incident`. After that it refreshes every ~5 s for up to 90 s,
+    until the line crosses the threshold and the stat is red and at or over 100. It also asserts Queue status
+    "Backlogged", no query errors, and that the phase is still incident. It moves the mouse off the refresh button
+    (so the "Last refreshed at" tooltip is gone), then takes the key moment.
+  - docs/eng-1799/demo.md: a bullet for 02-incident under "Walkthrough scenes (recorded)".
+- **How "crossed" is detected.** The time series Tile is ECharts drawn as **SVG** (not canvas). The series is the
+  solid path with a hex stroke (#5470c6) and `M x y L x y …` data. The threshold is the path with stroke `#F2495C`
+  and `stroke-dasharray="4,2"`. The line is crossed when the smallest series y is less than the threshold y (SVG y
+  points down). The stat's big number is the leaf `P` (`_bigNumberText_…`). In the incident its computed color is
+  rgb(224,47,68); in the baseline it is near-black.
+- **Tested as a user.** I ran up.sh, restarted the clock with `{20, 900}` and ran `run.sh 02-incident`: it passed in
+  about 57 s. The video is 1920x1080 and 57 s long. The frame at 14 s shows the baseline (stat 46 in black, line
+  ~20–48 under the dashed line, all OK). key-moment.png shows the line jumping over the dashed threshold, stat 105→142
+  in red and fill "Backlogged". When the clock was read after the run, the phase was incident.
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-02-incident.spec.ts` passed (1.6 min test,
+  about 2 min with up/down). `run.sh --stack scene-01-sign-in.spec.ts` still passes. The demo typecheck is clean. No
+  chromium or `.state` process is left.
+- 2026-11-09T11:16:45Z supervisor: demo-scene-02-incident passed the gate in round 1
