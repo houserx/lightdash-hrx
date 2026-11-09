@@ -1539,3 +1539,35 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - For imp-routing-unreached-contact-points: it also adds notify=<slug> routes. Don't add a second route for a
   slug that already has one from notification_settings.
 - 2026-11-09T05:14:48Z supervisor: imp-alert-notification-settings passed the gate in round 1
+
+## imp-routing-unreachable-routes (2026-11-09, round 1)
+- New packages/common/src/eng1799/grafanaRoutingFixes.ts (exported from common's index): fixUnreachableRoutes(tree,
+  rules) walks the tree once per imported rule's labels. Under each route the rule reaches, the first matching child
+  without continue "shadows" every later matching sibling. Each shadowed route is recorded with its shadower, the cause
+  and the affected rule names. The cause is matcher-order if the two routes match on the same label, otherwise
+  missing-continue. The fix sets `continue: true` on the shadower, so alerts keep every contact point they reach today
+  and also reach the shadowed route. This repeats to a fixpoint, because a fix can expose a later shadowed sibling.
+  The function returns a fixed copy and never mutates its input. renderGrafanaRoutingFixes(fixes) (moved out of
+  grafanaAlertImport.ts, now takes the fixes) writes ROUTING-FIXES.md: ADR 0003 / Shadow Run intro, whether the fixes
+  are applied, and an "## Unreachable routes" table (route, caught first by, cause, affected rules, fix).
+- convertGrafanaAlerting takes `routingFixes?: boolean` (default true) and returns `routingFixes: {applied,
+  unreachableRoutes}`. The analysis runs after the notify=<slug> routes are prepended, on the rules whose notify label
+  is not one of those slugs (notification_settings rules stop at their notify route and must stay that way). Route
+  paths in the report (root.0, ...) are therefore paths in the final tree.
+- CLI: --no-routing-fixes now works (defects are still listed in ROUTING-FIXES.md, marked not applied). It prints
+  "N unreachable routes fixed/found ...". The "not implemented" warning now covers only --routing-decisions.
+- Today's full fixtures: no unreachable routes, so their tree is unchanged.
+- Tested as a user: generated the test's Terraform with alertsupport (../tmp/unreach-manual, outside the repo) and ran
+  the CLI with and without --no-routing-fixes. ROUTING-FIXES.md lists `team = platform` -> slack-platform
+  (matcher order, Platform rule) and `severity = critical` -> slack-alerts (missing continue, Infra critical rule),
+  both caught by `team =~ infra|platform` -> pager. routeAlert on the output (../tmp/unreach-script/route.cjs):
+  unfixed platform -> pager, infra+critical -> pager. Fixed: platform -> pager,slack-platform; infra+critical ->
+  pager,slack-alerts; infra -> pager; web -> slack-infra-alerts.
+- Checks: routing-unreachable-routes 3/3 after init. Regression 2/2, 3/3, 3/3, 3/3, 4/4 for alerts-notification-settings,
+  -routes, -command, -full-ruleset and -contact-points. Unit tests: grafanaRoutingFixes.test.ts 7/7,
+  grafanaAlertImport.test.ts 10/10. common and cli tsc clean, oxlint clean, oxfmt applied.
+- For the next routing features: add sections and fields to GrafanaRoutingFixes and render them in
+  renderGrafanaRoutingFixes. Unreached contact points and severity routes should run in convertGrafanaAlerting
+  alongside fixUnreachableRoutes. Decide whether new routes go before or after the fix; continue: true routes don't
+  shadow anything.
+- 2026-11-09T05:21:16Z supervisor: imp-routing-unreachable-routes passed the gate in round 1

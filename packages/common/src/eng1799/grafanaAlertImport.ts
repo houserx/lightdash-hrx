@@ -32,6 +32,10 @@ import {
     type GrafanaDatasource,
     type GrafanaTarget,
 } from './grafanaQuery';
+import {
+    fixUnreachableRoutes,
+    type GrafanaRoutingFixes,
+} from './grafanaRoutingFixes';
 import type { ImportWarning } from './importWarnings';
 import {
     evaluateHcl,
@@ -66,12 +70,17 @@ export type GrafanaAlertingImportInput = {
     folders?: TerraformSourceFile;
     /** From grafana_data_sources.tf: `grafana_data_source.<name>.uid` resolves through these. */
     datasources?: GrafanaDatasource[];
+    /** false (--no-routing-fixes): routing defects are listed but not fixed. Default true. */
+    routingFixes?: boolean;
 };
 
 export type GrafanaAlertingImport = {
     alertRules: AlertRuleAsCode[];
     contactPoints: ContactPointAsCode[];
+    /** With the routing fixes applied unless the input turns them off. */
     notificationRoutes: NotificationRoutesAsCode;
+    /** What ROUTING-FIXES.md lists. */
+    routingFixes: GrafanaRoutingFixes;
     warnings: ImportWarning[];
 };
 
@@ -1695,7 +1704,28 @@ export const convertGrafanaAlerting = (
         ];
     }
 
-    return { alertRules, contactPoints, notificationRoutes, warnings };
+    // Routing defects, found from the rules' labels. Rules with notification_settings stop at their
+    // notify=<slug> route and never reach the policy, so they are left out.
+    const applyRoutingFixes = input.routingFixes ?? true;
+    const policyRouted = alertRules.filter(
+        (r) => !notifySlugs.has(r.labels?.[NOTIFY_LABEL] ?? ''),
+    );
+    const { fixed, unreachableRoutes } = fixUnreachableRoutes(
+        notificationRoutes,
+        policyRouted,
+    );
+    const routingFixes: GrafanaRoutingFixes = {
+        applied: applyRoutingFixes,
+        unreachableRoutes,
+    };
+
+    return {
+        alertRules,
+        contactPoints,
+        notificationRoutes: applyRoutingFixes ? fixed : notificationRoutes,
+        routingFixes,
+        warnings,
+    };
 };
 
 const cell = (text: string | undefined) =>
@@ -1733,16 +1763,3 @@ export const renderGrafanaAlertsImportReport = (
     }
     return `${lines.join('\n')}\n`;
 };
-
-/**
- * ROUTING-FIXES.md. Routing defect detection and fixes come with the routing features of the
- * importer; until then the file says that the routes are imported as Grafana has them.
- */
-export const renderGrafanaRoutingFixes = (): string =>
-    [
-        '# Routing fixes',
-        '',
-        'The notification routes are imported as the Grafana notification policy has them.',
-        'This version of the importer does not check them for routing defects yet.',
-        '',
-    ].join('\n');

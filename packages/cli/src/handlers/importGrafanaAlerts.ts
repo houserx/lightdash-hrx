@@ -148,6 +148,7 @@ export const importGrafanaAlertsHandler = async (
             locals,
             folders,
             datasources,
+            routingFixes: options.routingFixes,
         });
     } catch (e) {
         if (e instanceof GrafanaAlertingImportError) {
@@ -179,7 +180,10 @@ export const importGrafanaAlertsHandler = async (
         `${NOTIFICATION_ROUTES_FOLDER}/${NOTIFICATION_ROUTES_FILE}`,
         dumpYaml(result.notificationRoutes),
     );
-    await write('ROUTING-FIXES.md', renderGrafanaRoutingFixes());
+    await write(
+        'ROUTING-FIXES.md',
+        renderGrafanaRoutingFixes(result.routingFixes),
+    );
     await write('IMPORT-REPORT.md', renderGrafanaAlertsImportReport(result));
 
     const byCode: Record<string, number> = {};
@@ -217,10 +221,20 @@ export const importGrafanaAlertsHandler = async (
             `See ${path.join(options.out, 'IMPORT-REPORT.md')} for every warning.`,
         );
     }
-    if (options.routingDecisions !== undefined || !options.routingFixes) {
+    const routingDefects = result.routingFixes.unreachableRoutes.length;
+    if (routingDefects > 0) {
+        console.info(
+            `${plural(routingDefects, 'unreachable route')} ${
+                result.routingFixes.applied
+                    ? 'fixed'
+                    : 'found and not fixed (--no-routing-fixes)'
+            }; see ${path.join(options.out, 'ROUTING-FIXES.md')}.`,
+        );
+    }
+    if (options.routingDecisions !== undefined) {
         console.warn(
             styles.warning(
-                'Routing fixes are not implemented in this version of the importer: --routing-decisions and --no-routing-fixes have no effect yet.',
+                'Routing decisions are not implemented in this version of the importer: --routing-decisions has no effect yet.',
             ),
         );
     }

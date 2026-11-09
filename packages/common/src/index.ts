@@ -98,6 +98,7 @@ export * from './dbt/projectMergedManifest';
 // schemas. Import it from '@lightdash/common/dbt/validation' instead.
 export * from './ee';
 export * from './eng1799/grafanaAlertImport';
+export * from './eng1799/grafanaRoutingFixes';
 export * from './eng1799/grafanaDashboardImport';
 export * from './eng1799/grafanaImportMaps';
 export * from './eng1799/grafanaPanelMapping';
