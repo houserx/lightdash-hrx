@@ -8,7 +8,9 @@ import { SpaceMemberRole } from '../types/space';
 import { getPermissionsFromAbilityRules } from './abilityPermissions';
 import { AGENT_DEFAULT_CAPABILITY_SUBJECTS } from './agentCapabilityScopes';
 import {
+    ALERTING_SUBJECTS,
     DEVELOPER_EMBED_SUBJECTS,
+    EDITOR_ALERTING_SUBJECTS,
     INTERACTIVE_VIEWER_EMBED_SUBJECTS,
     VIEWER_EMBED_SUBJECTS,
     type MemberAbility,
@@ -55,6 +57,11 @@ export const applyOrganizationMemberStaticAbilities: Record<
             });
         });
         applyOrganizationMemberStaticAbilities.member(member, { can });
+        ALERTING_SUBJECTS.forEach((resource) => {
+            can('view', resource, {
+                organizationUuid: member.organizationUuid,
+            });
+        });
         VIEWER_EMBED_SUBJECTS.forEach((resource) => {
             can('view', resource, {
                 organizationUuid: member.organizationUuid,
@@ -300,6 +307,11 @@ export const applyOrganizationMemberStaticAbilities: Record<
         applyOrganizationMemberStaticAbilities.interactive_viewer(member, {
             can,
         });
+        EDITOR_ALERTING_SUBJECTS.forEach((resource) => {
+            can('manage', resource, {
+                organizationUuid: member.organizationUuid,
+            });
+        });
         can('create', 'DataApp', {
             organizationUuid: member.organizationUuid,
         });
@@ -343,6 +355,11 @@ export const applyOrganizationMemberStaticAbilities: Record<
         applyOrganizationMemberStaticAbilities.editor(member, { can });
         DEVELOPER_EMBED_SUBJECTS.forEach((resource) => {
             can('view', resource, {
+                organizationUuid: member.organizationUuid,
+            });
+        });
+        ALERTING_SUBJECTS.forEach((resource) => {
+            can('manage', resource, {
                 organizationUuid: member.organizationUuid,
             });
         });

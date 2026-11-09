@@ -1,0 +1,1288 @@
+# Line `alerting` (ENG-1799): progress and conventions
+
+This line builds **Alert Rules, Contact Points and Notification Routes** in Lightdash, replacing Grafana alerting (ADR 0001, `docs/eng-1799/CONTRACTS.md` §4.3). It is *not* Lightdash's existing scheduler "Alerts" — never extend those; Alert Rules have their own tables, services and UI.
+
+Read first, every session: `CONTEXT.md` (glossary — use its terms, never its _Avoid_ terms), `docs/adr/0001`–`0004`, `docs/eng-1799/CONTRACTS.md`. The feature yardstick is today's Grafana in the read-only infra snapshot: `/Users/joseph.fahnestock/Locals/Tinkering/eng-1799-factory/refs/infra@bf3093da/terraform-tooling/grafana_{rule_groups_*,lb_rules,contact_points,notification_policy,alert_message_template}.tf`.
+
+## Status
+
+- Session 1 (init, 2026-11-08): harness, 75 features, acceptance tests. **No feature is built yet.** Every check fails on the initial tree for the expected reason (missing module or export).
+- Later sessions: take features strictly in the order of the feature list, one at a time. Append a line here per feature you finish (id, date, notes).
+
+## How to run
+
+```bash
+bash ./init.sh          # pnpm install --frozen-lockfile (only when manifests change),
+                        # then builds formula, common, warehouses, visualization (only when their src changed).
+                        # Starts no server. ~45 s cold, <1 s warm.
+```
+
+Each feature's `check` is one command from the repo root. Runners (all inside protected folders):
+
+| Package | Runner | Notes |
+|---|---|---|
+| common | `bash packages/common/src/__acceptance__/alerting/run.sh <file> -t '^<id> '` | vitest, node |
+| backend | `bash packages/backend/src/__acceptance__/alerting/support/run.sh <file> -t '^<id> '` | starts a throwaway Postgres (see below), then vitest |
+| cli | `bash packages/cli/src/__acceptance__/alerting/run.sh <file> -t '^<id> '` | spawns the CLI from source (`tsx src/index.ts`) against a mock API |
+| frontend | `bash packages/frontend/src/__acceptance__/alerting/run.sh <file> -t '^<id> '` | the app's vite config + jsdom; one file per run |
+
+`-t '^<id> '` selects one feature's `describe` block; other features in the same file are skipped. Each check is 2–30 s warm.
+
+**Throwaway Postgres (backend).** `support/run.sh` keeps a cluster data dir in `tmp/alerting-pg/` (gitignored), starts `postgres` on a free `127.0.0.1` port with `unix_socket_directories=''`, exports `PGHOST/PGPORT/PGUSER=postgres`, runs vitest, and always stops the server. Tests call the repo's own `createMigratedDatabase()` (`packages/backend/src/testing/migratedDatabase.ts`), which builds a migrated *template* database once per migration fingerprint (~12 s) and clones it per test (~1 s). Adding a migration changes the fingerprint, so the first run after it rebuilds the template. `LIGHTDASH_LICENSE_KEY` is blanked so only core migrations run (the EE ones need pgvector, which this Postgres lacks) — **so alerting migrations must be core migrations** in `packages/backend/src/database/migrations/`. A lock dir (`tmp/alerting-pg/lock`) serialises runs in one clone.
+
+Your own unit tests: put them next to your code as usual (`*.test.ts`), and run single files (`pnpm -F <pkg> test path/to/file.test.ts`, never with `--`). The frontend vitest suite is red before any change: never run it whole.
+
+Machine notes: `/tmp` is not writable in the sandbox — use the repo's `tmp/`. `psql` is blocked. No Docker, no network to HouseRx, no credentials. Node is v26 (the CLI prints a harmless "optimized for v24" warning).
+
+## Rules for later sessions
+
+- **Never edit the protected folders**: `packages/{backend,frontend,common,cli}/src/__acceptance__/alerting/**`. They define "done". If a test seems wrong, stop and say so in this file; don't work around it.
+- Protected files carry `/* eslint-disable */` and `// @ts-nocheck` on purpose (they drive modules that don't exist yet). Package lint, typecheck and format are green with them in place — keep them green with your code.
+- Keep the fork rebase-friendly: new code in new files (`packages/*/src/alerting/**`, `packages/frontend/src/features/alerting/**`); edits to upstream files only as registration lines (exports, a type-union member, a route mount, a task registration, a scope entry). **Never touch `packages/backend/src/ee/**`.**
+- Migrations: read `packages/backend/src/database/migrations/AGENTS.md` first; create with `pnpm -F backend create-migration <name>`.
+- Permissions: follow the `ld-permissions` skill / `packages/common/src/authorization/AGENTS.md` (scopes.ts, role→scope map, ability builders incl. `serviceAccountAbility.ts`, parity test).
+- Don't commit generated `packages/backend/src/generated/*`.
+- Fixtures are synthetic; secret-shaped values look like `test-secret-not-real`. No PHI anywhere.
+
+## Architecture (chosen by session 1; the tests pin it)
+
+### 1. `@lightdash/common` — pure alerting core (`packages/common/src/alerting/**`, exported from `packages/common/src/index.ts`)
+
+| Export | Contract (see `core/routing/templates/ascode-shadow.accept.ts`) |
+|---|---|
+| `parsePrometheusDuration(s) → ms` / `formatPrometheusDuration(ms) → s` | `y w d h m s ms` units, combos (`1h30m`); throws on `''`, `5 minutes`, negatives. Formats largest-unit combos, `0s` for 0. |
+| `ALERT_REDUCERS`, `reduceAlertSeries(values, reducer)` | `last mean max min sum count`; nulls ignored; empty → `null` (count → 0). |
+| `evaluateAlertCondition(value, condition)` | `{operator: '>'|'<'|'>='|'<='|'=='|'!=', threshold}` or `{operator: 'within_range'|'outside_range', min, max}` (exclusive bounds); `null` → false. |
+| `splitAlertSeries(rows, {valueColumn='value'})`, `alertLabelsFingerprint(labels)` | Value column `value` (configurable). Columns `time`/`timestamp` order the values and are not labels. A `labels` column (object or JSON string) gives the label map and the `series` column is then ignored; otherwise every other column is a label (stringified). Fingerprint: 16 lowercase hex, label-order independent (no Node crypto — common runs in the browser). |
+| `transitionAlertInstance(prev, {conditionMet, at}, {forMs, keepFiringForMs}) → {state, stateSince, ...}` | `normal → pending → firing → resolved → normal`; `for` measured from pending start; `keepFiringFor` from the last time the condition held; `resolved` lasts one evaluation. |
+| `buildAlertEvaluatorQueryContext({ruleUuid, projectUuid, description})` | `{sub: 'system:alert-evaluator', sys: true, agent: false, projectUuid, audit: {description, source: 'alert_rule', resource_uuid: ruleUuid}}`; throws on a blank description. Type `AlertRuleQueryContext`. |
+| `ALERTING_SCHEDULER_TASKS` | `{ALERTING_TICK: 'alertingTick', ALERT_RULE_EVALUATE: 'alertRuleEvaluate'}`, spread into `SCHEDULER_TASKS` (and so `ALL_TASK_NAMES`). Add payload types to the task payload map. |
+| Scopes / CASL | Subjects `AlertRule`, `ContactPoint`, `NotificationRoute`; scopes `view:`/`manage:` for each. Project viewer+ (incl. interactive viewer): view all three. Editor: manage `AlertRule`. Developer, admin: manage all three. Conditions on `{organizationUuid, projectUuid}`. |
+| `matchAlertLabelMatchers(labels, matchers)` | `{label, operator: '='|'!='|'=~'|'!~', value}`; regexes anchored (`^(?:v)$`); missing label = `''`; all matchers must hold. |
+| `routeAlert(tree, labels) → ResolvedNotificationRoute[]` | Grafana semantics: root matches all; children in order; deepest match wins; a matching node with no matching child is used itself; `continue: true` keeps checking siblings; no child match → root. Children inherit `contactPoint`, `groupBy`, `groupWait`, `groupInterval`, `repeatInterval`. Default timers are **30s / 5m / 4h** (groupWait / groupInterval / repeatInterval). The default `groupBy` isn't pinned by tests; use `['alertname']`. Each result has a unique `id` (route path). |
+| `alertGroupKey(route, labels)` | Same key ⇔ same aggregation group: route id + `groupBy` label values; `['...']` = all labels; `[]` = one group per route. |
+| `renderAlertTemplate(template, data, {templates?})`, `PORTED_GRAFANA_TEMPLATES` | Go `text/template` subset Grafana uses: fields (`.A.B`, map keys), `range`/`else`/`end`, `if`/`else if`/`else`, `define`/`template`, `len`, `gt lt eq ne ge le`, `index`, parenthesised pipelines, `{{-`/`-}}` trims. Missing map keys render `''`. Unknown template name / parse error → throws naming it. `.Alerts.Firing` / `.Alerts.Resolved` are derived from `Alerts[].Status`. Data shape = Grafana's: `{Receiver, Status, Alerts: [{Status, Labels, Annotations, StartsAt, EndsAt, Fingerprint, GeneratorURL, SilenceURL, DashboardURL, ValueString}], GroupLabels, CommonLabels, CommonAnnotations, ExternalURL}`. `PORTED_GRAFANA_TEMPLATES` holds the 3 infra templates verbatim (`slack.message`, `slack.title`, `__ms_text_alert_fired`, `__ms_text_alert_resolved`, `slack.ms-message`, `test.slack.message`, `test.slack.title`) and is always available. |
+| `buildAlertmanagerWebhookPayload({receiver, groupKey, groupLabels, externalURL, alerts})` | Alertmanager webhook v4: `version: '4'`, `status` (firing if any alert firing), `commonLabels`/`commonAnnotations` (intersection), `truncatedAlerts: 0`, firing alerts get `endsAt: '0001-01-01T00:00:00Z'`. |
+| `validateAlertingAsCode(doc) → {valid, errors: string[]}` + JSON schemas | `packages/common/src/schemas/json/{alert-rule,contact-point,notification-routes}-as-code-1.0.json` (Ajv 2020 compatible, `strict: false`). Secret fields must be `{secretRef: string}`; errors mention `secretRef`. Unknown `type` → invalid. |
+| `compareShadowRun({since, shadow, grafanaHistory, expectedDifferences, toleranceMs = 300000})` | Grafana `/api/v1/rules/history` data frame (`schema.fields` = time, line, labels; `data.values` columns; `line.current` starting with `Alerting` counts, `line.ruleTitle` = rule name). Shadow events `{ruleName, labels, status, at}`, only `firing` counts. Match by rule name within tolerance, one-to-one, events before `since` ignored. Returns `{matched[], missingInLightdash[], extraInLightdash[], unexpectedCount}`; findings `{ruleName, at, labels, expected, reason?}` with `expected` from `expectedDifferences` (`{ruleName, kind: 'missing_in_lightdash'|'extra_in_lightdash', reason}`). |
+
+### 2. Backend (`packages/backend/src/alerting/**`)
+
+Entry `packages/backend/src/alerting/index.ts` exports:
+
+```ts
+createAlertingModule(deps: AlertingModuleDeps): AlertingModule
+createAlertingRouter(module: AlertingModule): express.Router   // full paths, mount at app root
+
+type AlertingModuleDeps = {
+  database: Knex;
+  clock: { now(): Date };
+  warehouseClients: { getWarehouseClient(args: { projectUuid: string; context: AlertRuleQueryContext }): Promise<Pick<WarehouseClient, 'runQuery'>> };
+  secrets: { resolve(name: string): Promise<string | undefined> };
+  email: { sendEmail(m: { to: string[]; subject: string; text: string; html?: string }): Promise<void> };
+  slackApp: { postMessage(a: { organizationUuid: string; channel: string; text: string; blocks?: unknown[] }): Promise<void> }; // throws if the app isn't installed
+  jobQueue: { addJob(taskName: string, payload: object, opts: { jobKey: string; runAt?: Date }): Promise<void> }; // graphile addJob with jobKey
+  heartbeat: { url: string; method: 'GET' | 'POST' } | null;
+  retry: { maxAttempts: number; initialDelayMs: number };   // exponential backoff
+  siteUrl: string;
+};
+AlertingModule = {
+  evaluator: { evaluateRule(ruleUuid, { scheduledAt: Date }): Promise<{ status: 'evaluated' | 'skipped'; reason?: 'paused' | 'overrun' | 'duplicate' | string }> };
+  scheduler: { tick(): Promise<{ enqueued: { ruleUuid: string; scheduledAt: string; jobKey: string }[] }> };
+  notifier: { flush(): Promise<void> };
+  taskHandlers: { alertingTick(payload): Promise<void>; alertRuleEvaluate(payload: { ruleUuid: string; scheduledAt: string }): Promise<void> };
+  close?(): Promise<void>;
+  // plus whatever services the router uses
+};
+```
+
+The test harness (`__acceptance__/alerting/support/harness.ts`) is the reference for how deps are faked. Use the injected `clock` for every "now" (never `Date.now()` in alerting logic); real timers only for retry backoff.
+
+**HTTP API** (express router; JSON; success `{status: 'ok', results}`; errors `{status: 'error', error: {name, statusCode, message}}` — the router must translate `LightdashError`s to their status codes **itself**, tests mount it without Lightdash's error handler; parse JSON bodies itself or rely on the app's `express.json()`). Auth from `req.user` (`SessionUser` with `ability`): none → 401; no ability → 403. Base `/api/v2/projects/:projectUuid/alerting`:
+
+| Method, path | Ability | Notes |
+|---|---|---|
+| `GET /rules?state=&label=k=v&spaceUuid=` | view AlertRule | each rule + `state` (aggregate: firing > error > nodata > pending > normal; never evaluated → normal) |
+| `POST /rules` | manage AlertRule | defaults: `interval 1m` (min 30s), `for 0s`, `keepFiringFor 0s`, `timeRange 10m`, `valueColumn value`, `noDataState nodata`, `errorState error`, `paused/shadow/managed false`, `version 1`, `labels {}`, `annotations {}`, `spaceUuid null`; slug from name, unique per project |
+| `GET /rules/:ruleUuid` | view | + `state`, `instances[]` (`{fingerprint, labels, annotations, state, value, since, ...}`) |
+| `PATCH /rules/:ruleUuid` | manage | partial; bumps `version`; managed → 403 "managed" |
+| `DELETE /rules/:ruleUuid` | manage | managed → 403 |
+| `GET /rules/:ruleUuid/versions` | view | newest first `{version, rule, createdAt, createdByUserUuid}` |
+| `GET /rules/:ruleUuid/history` | view | same entries as `/history?rule=` |
+| `GET /rules/:ruleUuid/notifications` | view | send log for the rule |
+| `POST /rules/preview` | manage AlertRule | body = rule input; runs the query once; `{error: string|null, series: [{labels, fingerprint, value, conditionMet, state}]}`; saves nothing |
+| `GET/POST /contact-points`, `GET/PATCH/DELETE /contact-points/:uuid` | view / manage ContactPoint | integrations below; delete refused (400/409) while the tree uses it; managed → 403 |
+| `POST /contact-points/:uuid/test` | manage ContactPoint | synthetic `TestAlert`; `{ok, results: [{type, ok, error?}]}` |
+| `GET /notification-routes` → tree or `null`; `PUT /notification-routes` | view / manage NotificationRoute | whole tree; validates contact point slugs, operators, regexes, durations; returns tree + `managed`; managed → 403 |
+| `GET /notifications?rule=&contactPoint=` | view AlertRule | newest first `{uuid, ruleUuids[], contactPointUuid, integrationType, status: 'sent'|'failed'|'shadow', alertStatus: 'firing'|'resolved', attempts, error, sentAt}` |
+| `GET /state` | view AlertRule | `{instances: [{ruleUuid, ruleName, state, labels, annotations, value, since}]}` — firing and pending only (AI/MCP API) |
+| `GET /history?rule=&since=` | view AlertRule | newest first; entries `{type: 'transition', ruleUuid, ruleName, fingerprint, labels, previousState, state, value, at}` or `{type: 'evaluation_skipped', ruleUuid, reason, at}` |
+| `POST /shadow-report` | view AlertRule | `{since, grafanaHistory, expectedDifferences}` → `compareShadowRun` over this project's shadow log (event time = when the series started firing); malformed history → 400 |
+| `GET /as-code` → `{documents}`; `POST /as-code` `{documents}` | view; manage on each type uploaded | upsert by slug; uploaded resources become `managed`; download emits documents **exactly** as uploaded (round-trip, no added defaults, no secrets) |
+
+Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale', lastCycleAt, lagSeconds}`, stale when lag > 60 s.
+
+**Rule input / document fields** (API is camelCase; YAML identical): `name, description (required, non-blank), spaceUuid (API) | spaceSlug (YAML), labels, annotations {summary, description, runbook_url, ...}, query, valueColumn, reducer, condition, for, keepFiringFor, interval, timeRange, noDataState ('nodata'|'normal'|'alerting'|'keep_last'), errorState ('error'|'alerting'|'keep_last'), paused, shadow`. Documents add `version: 1, type: 'alert_rule'|'contact_point'|'notification_routes', slug`.
+
+**Contact Point integrations**: `slack_webhook {url: {secretRef}, title?, text?, username?, disableResolveMessage?}` (defaults title `{{ template "slack.title" . }}`, text `{{ template "slack.message" . }}`), `slack_app {channel, title?, text?}`, `incident_io {url, token: {secretRef}}` (Alertmanager v4 + `Authorization: Bearer <secret>`), `email {addresses[], subject?, body?}` (via Lightdash's EmailClient), `webhook {url, httpMethod?, authorization?: {secretRef}}` (Alertmanager v4). A missing secret → failed send naming the secret.
+
+**Evaluation semantics** (pinned by `evaluation/scheduling/notifications.accept.ts`):
+- Query: substitute `${ld.parameters.__from|__to|__interval}` (ISO UTC; `__interval` per CONTRACTS §2 from `timeRange`/1000, floor 15s), call `warehouseClients.getWarehouseClient({projectUuid, context: buildAlertEvaluatorQueryContext(rule)})` then `runQuery`.
+- Instance labels = series labels ∪ rule labels ∪ `{alertname: rule.name}`. Annotations render Grafana's `{{ $labels.x }}`, `{{ $value }}` per instance.
+- No rows → `noDataState`: `nodata` → synthetic instance `alertname=DatasourceNoData, rulename=<name>` in state `nodata` (notifies as firing), existing series resolve; `normal` → series resolve; `alerting` → DatasourceNoData `firing`; `keep_last` → nothing changes. Query error → `errorState` similarly with `alertname=DatasourceError` and annotation `error`. Recovery clears them.
+- Every transition → `alert_state_history`. Skips are history entries too.
+- Scheduling: slot = `floor(now / interval) * interval`; a rule is due once per slot; `tick()` enqueues `alertRuleEvaluate` with `jobKey` containing the rule uuid and slot (`payload.scheduledAt` = slot ISO), then flushes notifications, then records a heartbeat row and calls the heartbeat URL (failure is logged, never thrown). The `alertingTick` task runs `tick()` and re-enqueues itself with `jobKey 'alerting-tick'`, `runAt = now + 15s`.
+- Concurrency: one evaluation per rule per slot across workers (row lock / claim row); a second attempt for the same slot → `skipped` (`duplicate`); a newer slot while an older evaluation still runs → `skipped`, reason `overrun`, recorded in history.
+- Notifications (Alertmanager dispatcher semantics, driven by `notifier.flush()` and the clock): a new group sends once `now ≥ first firing time + groupWait`; a changed group sends again once `now ≥ last send + groupInterval`; an unchanged firing group re-sends after `repeatInterval`; resolved alerts go out with the next group send (`endsAt` = resolve time) unless `disableResolveMessage`; never duplicate. Retries: 5xx/network retried up to `maxAttempts` with backoff, 4xx not. Every attempt outcome lands in `alert_notifications`.
+- Shadow rules: everything as normal, but each would-be send is logged with `status: 'shadow'` and nothing leaves the process.
+
+**Production wiring** (feature `alert-worker-wiring`): construct the module where services are built (e.g. `App`/`SchedulerApp`), adapt `EmailClient`, `SlackClient`, graphile `addJob`, warehouse credentials (`ProjectModel` + `warehouseClientFromCredentials`, passing the query context so the federation client can mint the identity), mount `createAlertingRouter(...)` after session/passport middleware, and pass `alertingModule` in `SchedulerWorker` args so `getFullTaskList()` includes `alertingTick` and `alertRuleEvaluate`; seed the first tick on worker start.
+
+### 3. Frontend (`packages/frontend/src/features/alerting/**`)
+
+- `api.ts`: `getAlertRules(projectUuid, {state?, label?, spaceUuid?})`, `createAlertRule`, `updateAlertRule`, `previewAlertRule`, `getAlertRuleHistory`, `getAlertNotifications(projectUuid, {rule?, contactPoint?})`, `testContactPoint`, `saveNotificationRoutes` (+ the obvious others) over the v2 routes above (use the app's `lightdashApi` with the v2 prefix).
+- Presentational components (data in props, actions as callbacks; tests render them inside `<MantineProvider env="test" forceColorScheme="light">` only, so **no react-query, router or context hooks inside them** — containers/pages do the fetching): `components/AlertRulesList` `{rules, spaces, onOpenRule}` (table rows; badges `Firing Pending Normal Resolved No data Error`; `team=infra` label chips; folder name; `Managed in git`; filters: Select `State` with an `All` option, TextInput `Label` (`k=v`), Select `Folder`), `components/AlertRuleDetail` `{rule, history, notifications, onTestRule, onEdit?}` (heading with name, query text, timeline `Normal → Firing`, `Skipped (overrun)`, notifications table rows showing contact point name, status, error; `Test rule` button rendering a row per series `instance=db-1 | 95 | Firing` or the error; no `Edit` button for managed), `components/AlertRuleEditor` `{rule?, spaces, onSubmit}` (labels `Name Description Query Threshold Reducer For Folder` …, `Save`, "Description is required"; managed → `Managed in git`, all fields disabled), `components/ContactPointsList` `{contactPoints, onSendTest, onOpen}` (`Send test notification` per row → "Test notification sent" or the error), `components/ContactPointEditor` `{contactPoint?, onSubmit}` (`Name`, Select `Integration type` → `Slack webhook`, `Webhook URL secret reference`, `Save`), `components/NotificationRoutesEditor` `{tree, contactPoints, onSave}` (`Default route`, matcher text `team = infra`, `Add route` → `Label`, `Value`, Select `Contact point`, `Save`; managed → read-only).
+- Pages + routes in `AppRoutes`/`Routes.tsx`: `/projects/:projectUuid/alerting/rules`, `.../rules/new`, `.../rules/:ruleUuid`, `.../contact-points`, `.../notification-routes`.
+- Mantine v9 `Select` renders `role=combobox`; the tests pick options by label then `role=option`.
+
+### 4. CLI (`packages/cli`)
+
+- `lightdash download --alerting-only --project <uuid> --path <dir>` → `GET .../alerting/as-code`, writes `<dir>/alert-rules/<slug>.yml`, `<dir>/contact-points/<slug>.yml`, `<dir>/notification-routes/notification-routes.yml`; no chart/dashboard calls.
+- `lightdash upload --alerting-only --project <uuid> --path <dir>` reads the same layout, validates locally (`validateAlertingAsCode`; inline secret → non-zero exit naming the file and `secretRef`, nothing sent), then `POST .../alerting/as-code` with contact points, then the tree, then rules.
+- `lightdash alerting shadow-report --project <uuid> --since <iso> --grafana-history <json> --expected-differences <yml> [--json] [--fail-on-unexpected]` → `POST .../alerting/shadow-report` with `{since, grafanaHistory, expectedDifferences}`; prints JSON with `--json`, otherwise a human summary naming each rule; `--fail-on-unexpected` exits 1 when `unexpectedCount > 0`.
+- The CLI makes `GET /api/v1/health` and `GET /api/v1/projects/<uuid>` first; the mock answers both.
+
+### 5. Docs
+
+`docs/eng-1799/alerting.md` (sections `## Model`, `## Routing semantics`, `## Shadow Run`, `## Cutover`) and `docs/eng-1799/alerting-examples/` (the six Grafana contact points, the tree and ≥3 shadow example rules as uploadable YAML in the CLI layout).
+
+## Contract assumptions (for the integration line)
+
+1. **Evaluator identity seam.** CONTRACTS §4.3 fixes the identity claims but not the Lightdash-side interface. This line passes an `AlertRuleQueryContext` (`@lightdash/common`) to `getWarehouseClient({projectUuid, context})`; the federation line's `FederationWarehouseClient` is expected to mint `sub=system:alert-evaluator, sys=true, audit.source=alert_rule, audit.description=<rule description>, audit.resource_uuid=<rule uuid>` from it. For non-federation projects the context is ignored. `attrs` for the system identity come from config, not from this context.
+2. **Alert Rules run in any project** the user can manage, not only the Operations Project; SQL is passed through unchanged apart from the reserved parameters.
+3. **Secrets.** `secretRef` names resolve through the injected `secrets.resolve(name)`. Production adapter (assumed): env var `ALERTING_SECRET_<NAME>` with the name upper-snake-cased (e.g. `incident-io-grafana` → `ALERTING_SECRET_INCIDENT_IO_GRAFANA`).
+4. **Heartbeat config** (assumed env): `ALERTING_HEARTBEAT_URL`, `ALERTING_HEARTBEAT_METHOD` (`GET`|`POST`, default `POST`).
+5. **API style.** The alerting HTTP API is a plain express router (route mount), not TSOA controllers, to stay rebase-friendly and testable without the full app. The MCP line consumes `GET /api/v2/projects/{uuid}/alerting/state` and `/history` with the shapes above.
+6. **Grafana `$values.<ref>`** in ported annotations maps to `$value` (one query, one reducer per rule).
+7. **Routing bugs (ADR 0003)** — `team=Support`, unlabelled pg_cron `team=engineering`, `slack-sec` — are fixed in the as-code tree during migration and listed as expected differences for the Shadow Run; their target channels are a human decision not made here.
+8. **Rules in no space as code.** An Alert Rule's space is optional (`spaceUuid: null`, the API default), but the alert_rule schema required `spaceSlug`, so a UI rule with no space could not be downloaded as a valid document. `spaceSlug` is now optional in `alert-rule-as-code-1.0.json` and `AlertRuleAsCode`: left out, the rule is in no space (the same as "fields left out take the Alert Rule defaults"). No test or contract required it; added by alert-as-code-download.
+
+## Feature log
+
+(append: `- <id> — <date> — <one line>`)
+- 2026-11-08T16:40:53Z supervisor: initialized: 75 features, run 20261108-093244
+- 2026-11-08T17:26:12Z supervisor: initialized: 75 features, run 20261108-121123
+- alert-durations — 2026-11-08 — `packages/common/src/alerting/durations.ts` (`parsePrometheusDuration`, `formatPrometheusDuration`) + unit tests; new barrel `packages/common/src/alerting/index.ts` re-exported once from `packages/common/src/index.ts` (`export * from './alerting';`). **Later common features: add your exports to `alerting/index.ts`, not to the package index.** Parsing follows Prometheus `model.ParseDuration`: units `y w d h m s ms` each at most once, strictly in descending order (`30m1h` and `1h1h` are rejected), integers only, bare `0` accepted, y=365d, w=7d. Formatting uses the largest units first (`691200000` → `1w1d`) and throws on negative or non-integer ms. Tested: the check passes; the built dist (via `node` from `packages/backend`) gives `1h30m`→5400000, `5 minutes`/`-1m` throw, 3600000→`1h`.
+- 2026-11-08T17:28:11Z supervisor: alert-durations passed the gate in round 1
+- alert-reducers — 2026-11-08 — `packages/common/src/alerting/reducers.ts` (`ALERT_REDUCERS` = last/mean/max/min/sum/count, type `AlertReducer`, `isAlertReducer`, `reduceAlertSeries(series, reducer)`) + unit tests; exported via `alerting/index.ts`. Nulls and undefined are dropped before reducing; an empty or all-null series gives `null` for every reducer except `count`, which gives `0`. NaN is not filtered (the spec only says nulls). Tested: the check and the alert-durations regression pass; the built dist via `node` from `packages/backend` gives last 7, mean 5, max 9, min 1, sum 20, count 4 for `[3,9,null,1,7]`, and null (count 0) for `[]`. Lint is oxlint and formatting is `pnpm exec oxfmt --check` (prettier isn't installed).
+- 2026-11-08T17:29:58Z supervisor: alert-reducers passed the gate in round 1
+- alert-conditions — 2026-11-08 — `packages/common/src/alerting/conditions.ts` (`evaluateAlertCondition(value, condition)`, `AlertCondition` = `{operator: '>'|'<'|'>='|'<='|'=='|'!=', threshold}` or `{operator: 'within_range'|'outside_range', min, max}`, `ALERT_THRESHOLD_OPERATORS`, `ALERT_RANGE_OPERATORS`, `ALERT_CONDITION_OPERATORS`, `isAlertConditionOperator`) + unit tests; exported via `alerting/index.ts`. Grafana semantics: both ranges are exclusive (within: min<v<max; outside: v<min or v>max, so 10 and 20 are neither within nor outside 10..20), a reversed range (min>max) is normalised, and null/undefined is `false` for every operator. The spec does not say how outside_range treats the boundary; I used Grafana's strict comparison. Tested: the check and the durations/reducers regressions pass; the built dist via `node` from `packages/backend` gives 6 `>` 5 → true, 10 within 10..20 → false, 9 outside 10..20 → true, null → false. Run oxlint from `packages/common` (`pnpm exec oxlint src/alerting`); it isn't found from the repo root.
+- 2026-11-08T17:32:18Z supervisor: alert-conditions passed the gate in round 1
+- alert-series-split — 2026-11-08 — `packages/common/src/alerting/series.ts` (`splitAlertSeries(rows, {valueColumn?, timeColumns?, labelsColumn?})` → `AlertSeries[]` = `{labels, fingerprint, values, timestamps}`; `alertLabelsFingerprint(labels)`; types `AlertSeriesLabels`, `AlertQueryRow`, `SplitAlertSeriesOptions`) + unit tests; exported via `alerting/index.ts`. Decisions (the spec doesn't set them): a result is telemetry-shaped if any row has a `labels` column. Then the labels json (string or object) is the label set and every other column, including `series`, is ignored; a labels value that isn't an object throws. Otherwise labels are every column except the value column (default `value`) and time columns (default `time`/`timestamp`, plus any column holding a `Date`). Label values are stringified (Date→ISO, objects→JSON) and null labels are dropped, as Prometheus drops empty labels. Values are coerced with `Number`: null, '' and NaN become `null`, and numeric strings from pg become numbers. Rows keep input order (no sorting by time), and series come out in order of first appearance. Fingerprint = Prometheus model fingerprint: 64-bit FNV-1a (BigInt) over sorted `name 0xff value 0xff` UTF-8 bytes, 16 hex chars zero-padded; `{}` → `cbf29ce484222325`. No node `crypto`, because common is bundled into the frontend. Tested: the check and the durations/reducers/conditions regressions pass, along with unit tests, oxlint, oxfmt and tsc. Ran all 4 steps against the built dist via `node` from `packages/backend`: job_name a/b gave 2 series, promql rows gave 1 series keyed by labels, `{a,b}` and `{b,a}` gave the same fingerprint, and `depth` became the value.
+- 2026-11-08T17:35:08Z supervisor: alert-series-split passed the gate in round 1
+- alert-state-machine — 2026-11-08 — `packages/common/src/alerting/stateMachine.ts` (`transitionAlertInstance(previous|undefined, {conditionMet, at}, {forMs, keepFiringForMs})` → `AlertInstanceSnapshot` = `{state, stateSince, activeAt, lastConditionMetAt, lastEvaluatedAt}` (Dates); `ALERT_INSTANCE_STATES` = normal/pending/firing/resolved/nodata/error per CONTRACTS 4.3; `isAlertInstanceState`; types `AlertInstanceState`, `AlertInstanceTiming`, `AlertInstanceEvaluation`, `AlertTimestamp`) + unit tests; exported via `alerting/index.ts`. Pure function: the caller persists the snapshot and passes it back. Snapshot timestamps may come back as ISO strings (JSON/DB) and are accepted. Decisions: `for` is measured from `activeAt`, the first evaluation that met the condition, and fires when held >= for (for=0 fires at once). keepFiringFor is measured from `lastConditionMetAt`, **not** from when the condition first cleared (Prometheus's KeptFiringSince). The acceptance test needs this: last met at m0, so m1 is firing and m2 resolved. Pending→clear goes to normal. Resolved→clear goes to normal; resolved→met starts a new episode. `stateSince` stays the same while the state doesn't change. `nodata`/`error` are never produced here; a previous nodata/error snapshot is treated as not firing (the evaluator feature owns them). Throws on an invalid `at` or negative/non-finite durations. Out-of-order `at` is not guarded. Tested: the check and the 4 earlier regressions pass, along with vitest (`pnpm exec vitest run src/alerting` in packages/common; jest isn't the runner), oxlint, oxfmt and tsc. Ran the 3 steps against the built dist via `node` from `packages/backend`, with durations from `parsePrometheusDuration`: got `pending, pending, firing, firing`, then `firing, resolved, normal`, then `firing, firing, resolved, normal`.
+- 2026-11-08T17:38:10Z supervisor: alert-state-machine passed the gate in round 1
+- alert-evaluator-identity — 2026-11-08 — `packages/common/src/alerting/evaluatorIdentity.ts` (`buildAlertEvaluatorQueryContext({ruleUuid, projectUuid, description})` → `AlertRuleQueryContext` = `{sub: 'system:alert-evaluator', sys: true, agent: false, projectUuid, audit: {description, ticket: null, source: 'alert_rule', resource_uuid: ruleUuid}}`; constants `ALERT_EVALUATOR_SUBJECT`, `ALERT_RULE_AUDIT_SOURCE`; types `AlertRuleQueryAudit`, `BuildAlertEvaluatorQueryContextArgs`) + unit tests; exported via `alerting/index.ts`. This is the `AlertRuleQueryContext` named in Contract assumption 1; the evaluator (alert-eval-query-identity) should pass it as `context` to the warehouse client. Decisions: `ticket: null` is included because CONTRACTS §3's audit block has a ticket field and a rule has none. The description is kept verbatim (not trimmed), since it is the rule's saved description; a blank or whitespace-only description, ruleUuid or projectUuid throws. `attrs`, `email`, `org`, iat/exp/nonce are not in the context; the token minter adds them (attrs from config). Tested: the check and the 5 earlier regressions pass, along with vitest, oxlint, oxfmt and tsc in packages/common. Via `node` from `packages/backend` against the built dist, a rule gave the expected sub/sys/agent/project/audit, and a description of `'  '` threw "needs a non-blank description".
+- 2026-11-08T17:42:58Z supervisor: alert-evaluator-identity passed the gate in round 1
+- alert-scheduler-task-names — 2026-11-08 — `packages/common/src/types/schedulerTaskList.ts`: `ALERTING_SCHEDULER_TASKS = {ALERTING_TICK: 'alertingTick', ALERT_RULE_EVALUATE: 'alertRuleEvaluate'}`, spread into `SCHEDULER_TASKS` (so in `ALL_TASK_NAMES`/`isSchedulerTaskName`), and the type `AlertingSchedulerTaskName`; payloads `AlertingTickPayload = Record<string, never>` and `AlertRuleEvaluatePayload = Partial<TraceTaskBase> & {ruleUuid, scheduledAt (ISO slot)}`, both added to `TaskPayloadMap`. It has to be `Partial<TraceTaskBase>`: `SchedulerClient` reads `payload.userUuid`/`schedulerUuid` across the whole payload union. The backend needed two non-ee edits to stay type-green. (1) `SchedulerTaskTracer.getTagsForTask` gets entries: tick → `{}`; evaluate → `alert_rule.uuid` plus org/project when present. (2) In `backend/src/scheduler/types.ts`, the alerting handlers are **optional** in `TypedEETaskList` (and so in `TypedTaskList`). Without that, the base and protected ee `getFullTaskList()` would need handlers now. **alert-worker-wiring must** add both handlers to the base `SchedulerWorker.getFullTaskList()`; it may then make them required in types.ts. Until then, the worker has no handler for these names, which is harmless because nothing enqueues them yet. Tested: the check plus all 11 core acceptance tests pass; tsc is clean in common and backend; oxlint and oxfmt are clean; backend vitest passes for SchedulerTaskTracer/SchedulerWorker/parseConfig/agent* (425 tests). Via `node` from packages/backend against the built dist: `ALERTING_SCHEDULER_TASKS` printed both names, `SCHEDULER_TASKS.ALERTING_TICK/ALERT_RULE_EVALUATE` resolved, `ALL_TASK_NAMES` contains both, and `isSchedulerTaskName` is true for both.
+- 2026-11-08T17:51:16Z supervisor: alert-scheduler-task-names passed the gate in round 1
+- alert-permissions-scopes — 2026-11-08 — CASL subjects `AlertRule`, `ContactPoint`, `NotificationRoute` added to `CaslSubjectNames` (`authorization/types.ts`), with the constants `ALERTING_SUBJECTS` (all three) and `EDITOR_ALERTING_SUBJECTS` (`['AlertRule']`). `scopes.ts` gains `view:`/`manage:` for each one (group `PROJECT_MANAGEMENT`, not enterprise, depends on `view:Project`, `addDefaultUuidCondition` → `{projectUuid}` or `{organizationUuid}`). I did not add a new `ScopeGroup`, because the frontend role builder groups by it. Role tiers: viewer (and so interactive_viewer) gets `view:` ×3, editor gets `manage:AlertRule`, developer gets `manage:ContactPoint` and `manage:NotificationRoute` (admin inherits). These are mirrored in `roleToScopeMapping.ts` `BASE_ROLE_SCOPES`, `projectMemberAbility.ts`, `organizationMemberAbility.ts` (org viewer/editor/developer, same tiers) and the legacy service-account scopes in `serviceAccountAbility.ts` (org:read view, org:edit manage AlertRule, org:admin manage all). Two further registrations were needed. (1) `packages/backend/src/auth/oauthScopes/scopeMap.ts` `OAUTH_OPERATIONS`: each subject is `OAUTH_ACTIONS` (view = read, the rest = write); without it `scopeMap.test.ts` fails, since every scope-built rule must be classified. (2) Decision: `TRAINING_PROJECT_EXCLUDED_SCOPES` now lists `manage:AlertRule`, `manage:ContactPoint` and `manage:NotificationRoute` ("alerting notifies contact points"), the same reasoning as the existing outbound-messaging exclusions. Trainees keep `view:` only, and the shared training project locks these subjects automatically via `getTrainingProjectLockedSubjects`. No `scoped_roles` migration: these are brand-new scopes. Backend/frontend enforcement (`createAuditedAbility` + `subject('AlertRule', {organizationUuid, projectUuid})`) belongs to the API features. Tested: the check passes (acceptance 2/2, parity 23/23). All of `src/authorization` + `src/ee` vitest in common (2169) passes. Backend vitest for `src/auth`, `src/controllers/authentication`, `src/logging` and AsyncQueryService (4042) passes. tsc is clean in common, backend and frontend; oxlint and oxfmt are clean; the 7 earlier feature regressions pass. Via `node` from packages/backend against the built dist: the scope list shows the 6 scopes. viewer and interactive_viewer can view all three and manage none. editor can manage AlertRule only, and developer and admin can manage all three. No role can view these subjects in another project.
+- 2026-11-08T17:59:05Z supervisor: alert-permissions-scopes passed the gate in round 1
+- alert-routing-matchers — 2026-11-08 — New `packages/common/src/alerting/routingMatchers.ts` (exported via `alerting/index.ts`). Exports: `ALERT_LABEL_MATCHER_OPERATORS` (`=`, `!=`, `=~`, `!~`), the types `AlertLabelMatcher {label, operator, value}` and `AlertLabels` (values may be null/undefined), `isAlertLabelMatcherOperator`, `compileAlertLabelMatcherRegex` (Alertmanager-style `^(?:p)$`), `getAlertLabelMatcherError` (empty label, unknown operator, or invalid regex → message; else undefined; meant for the tree validation in alert-notification-routes-crud), `matchAlertLabelMatcher` and `matchAlertLabelMatchers` (all must hold; `[]` matches everything). A missing or null label counts as `''`. Decisions: (1) An invalid regex or unknown operator never holds, for `!~` too, so a bad matcher can't route alerts by accident; the CRUD feature should reject it on save using `getAlertLabelMatcherError`. (2) The bare pattern is compiled on its own before it is anchored, so an unbalanced pattern such as `xx)|(front` is rejected instead of escaping the `^(?:…)$` group. (3) JS RegExp without the `u` flag, which is the closest to RE2 leniency for escapes like `\-`; RE2-only syntax (e.g. `(?P<n>…)`) is not translated. Tested: the check (2 passed); unit tests (8 new, 79 in src/alerting); tsc, oxlint and oxfmt are clean in common; the core acceptance tests (11) pass. Via `node` from packages/backend against the built dist: `team=frontend` with `team =~ front.*` → true; with `team =~ front` → false; `{}` with `team = ''` → true. alert-routing-tree should build `routeAlert` on `matchAlertLabelMatchers`.
+- 2026-11-08T18:02:28Z supervisor: alert-routing-matchers passed the gate in round 1
+- alert-routing-tree — 2026-11-08 — New `packages/common/src/alerting/routingTree.ts` (exported via `alerting/index.ts`), with 8 unit tests in `routingTree.test.ts`. Exports: the types `NotificationRoute` (`id?`, `matchers?`, `contactPoint?`, `groupBy?`, `groupWait?`, `groupInterval?`, `repeatInterval?`, `continue?`, `routes?`; all camelCase, the same shape as the acceptance trees and the backend `PUT /notification-routes` body) and `ResolvedNotificationRoute` (`id`, `path`, `contactPoint`, `groupBy`, `groupWait`, `groupInterval`, `repeatInterval`); the constants `DEFAULT_ALERT_ROUTE_GROUP_WAIT` `30s`, `_GROUP_INTERVAL` `5m`, `_REPEAT_INTERVAL` `4h` and `_GROUP_BY` `[]`; and `routeAlert(tree, labels)`, built on `matchAlertLabelMatchers`. Semantics (Grafana/Alertmanager): the root always matches and its matchers are ignored. Children are tried in order and recursed into; a matching route with no matching child is used itself. Siblings stop after the first match unless that route has `continue`. When nothing matches, the root comes back, so the result is never empty. `contactPoint`, `groupBy` and the timers are inherited when unset. Decisions/contract assumptions: (1) `id` is the route's own `id` if it has one, else its path (`root`, `root.1`, `root.0.0`); CONTRACTS.md has no route id, and alert-notify-grouping can key groups on it. (2) If the root sets no `groupBy`, it defaults to `[]` (Alertmanager: one group), not Grafana's `[grafana_folder, alertname]`, because Lightdash has no folders. alert-routing-grouping may revisit this. (3) Timers stay as duration strings; nothing here validates them, which belongs to the CRUD feature (`parseDuration`). (4) If no route names a contact point, `contactPoint` is `undefined`; CRUD validation should require one on the root. Tested: the check passes (4 passed); src/alerting unit tests pass (87); tsc, oxlint and oxfmt are clean in common; the alert-routing-matchers (2) and core (11) acceptance tests pass. Via `node` from packages/backend against the built dist: `{team: database, severity: critical}` → db-pager with group_wait 45s and 5m/4h; `{team: frontend, env: prod}` → frontend, then audit-log; `{team: payments}` → default-slack with 30s/5m/4h; HouseRx tree `{team: infra}` → incident-io (5s/2m/1d, groupBy `...`), and `{team: Support}` → slack-infra-alerts. Next, alert-routing-grouping adds `alertGroupKey(route, labels)`; the 3rd grouping test needs keys to differ per route, so include `route.id`.
+- 2026-11-08T18:05:59Z supervisor: alert-routing-tree passed the gate in round 1
+- alert-routing-grouping — 2026-11-08 — New `packages/common/src/alerting/routingGrouping.ts` (exported via `alerting/index.ts`), with 7 unit tests in `routingGrouping.test.ts`. Exports: `ALERT_GROUP_BY_ALL_LABELS` (`'...'`), `alertGroupLabels(route, labels)` (the group labels sorted by name, for an Alertmanager payload's `groupLabels`), and `alertGroupKey(route, labels)` → a string such as `root.1:{alertname="Disk almost full"}`. `route` only needs `id` and `groupBy`, so any `ResolvedNotificationRoute` works. Semantics: `'...'` anywhere in `groupBy` means every label. `[]` means one group per route (key `<routeId>:{}`). A group_by label that is missing, null or `''` is left out (Alertmanager does this). Values are JSON-escaped, so different label sets can't collide. The key starts with the route id, so one alert on two routes lands in two groups. Decision: the key is a readable string, not a hash; alert-notify-grouping can store it as is or hash it. Route ids are path-based (`root.0`) unless the route sets `id`, so reordering routes in the tree changes the keys of open groups; alert-notify-grouping/CRUD should keep that in mind (e.g. give routes stable ids on save). Tested: the check passes (3 passed); all routing acceptance tests (9) and core (11) pass; src/alerting unit tests (93); tsc, oxlint and oxfmt are clean in common. Via `node` from packages/backend against the built dist: two disk alerts grouped by alertname → 1 key; grouped by `...` → 2 keys; `{team: frontend, env: prod}` on the nested tree → frontend `root.0:{}` and audit-log `root.1:{}`.
+- 2026-11-08T18:09:10Z supervisor: alert-routing-grouping passed the gate in round 1
+- alert-template-engine — 2026-11-08 — Go `text/template` subset for notification templates in `packages/common/src/alerting/`: `templateEngine.ts` (executor + `renderAlertTemplate(template, data, {templates?: string | string[]})`, re-exports `templateTypes.ts`), `templateParser.ts` (lexer/parser → node tree, `parseTemplateSource`), `templateFunctions.ts` (Go value printing/truth/comparison + functions), `templateTypes.ts` (`AlertTemplateError`, `AlertTemplateAlert`, `AlertTemplateData`, `AlertTemplateOptions`). Only `templateEngine` is exported from `alerting/index.ts`; the other modules are internal. The code is split into files because the oxlint rule `max-classes-per-file` allows one class per file. 13 unit tests are in `templateEngine.test.ts`. Supported: fields/map keys (a missing key renders ''; own properties only, so `.constructor` is ''); field access on a string/number throws; `.Alerts.Firing`/`.Resolved` on any list filter by `Status`; `$x :=`/`=`, `$`; if/else if/else, with/else, range (`$i, $e :=`, maps by sorted key, integers, else, break/continue); define/template/block (an empty define doesn't replace a non-empty one, as in Go); comments; `{{-`/`-}}`; pipelines and parens; funcs and, or, not, len (UTF-8 bytes for strings; nil → 0), index, slice, eq (multi-arg), ne, lt, le, gt, ge, print, println, printf (%v %s %q %d %f %e %g %t %x with width/precision/flags), html, js, urlquery, plus the Grafana helpers toUpper, toLower, title, trimSpace, join, stringSlice, safeHtml. Errors: parse errors read `template: <name>:<line>: <msg>`, where the name is `message` for the main template and `templates` (or `templates[i]`) for the option; an unknown template throws `template: no such template "<name>"`. Template recursion is capped at depth 100. Decisions: (1) nil/undefined print as '' instead of Go's `<no value>`/`<nil>`, per CONTRACTS. In comparisons nil counts as the other side's zero value (models map[string]string). (2) JS has one number type, so integral numbers print as ints (`len` → `2`) and others in Go's %v float form. (3) Regex functions (`match`, `reReplaceAll`) and Grafana date/humanize helpers were deliberately left out (ReDoS risk on admin-supplied patterns; the infra templates don't use them); add them only if a ported template needs them. (4) Methods with arguments (e.g. `.StartsAt.Format`) aren't supported, because data is plain JSON. Tested: the check passes (2 passed, 4 skipped). From packages/backend via `require('@lightdash/common')` on the built dist: range over Firing → `web-1;web-3;`; if/else with gt/len → `firing: 2` / `all clear`; define+template inline and via `templates` → `<web-1><web-2><web-3>`, `status=firing`; unknown template → AlertTemplateError naming `slack.nope`. I also rendered the three infra `grafana_message_template` sources verbatim from the snapshot through `templates` and they render correctly (slack.title `2 S`, slack.ms-message with the Silence link only on the silenced function). So alert-templates-ported only needs to add `PORTED_GRAFANA_TEMPLATES` and include it by default in `renderAlertTemplate`'s defines, parsed before `options.templates`. Unit tests in src/alerting: 106 pass. core (11) and routing (9) acceptance pass. tsc, oxlint and oxfmt are clean in common.
+- 2026-11-08T18:22:29Z supervisor: alert-template-engine passed the gate in round 1
+- alert-templates-ported — 2026-11-08 — New `packages/common/src/alerting/portedTemplates.ts` holds the three Grafana `grafana_message_template` sources ("Slack Message Template", "Slack MS Message Template", "Slack Test Message Template"), copied verbatim from infra@bf3093da `terraform-tooling/grafana_alert_message_template.tf`. It exports `PORTED_GRAFANA_TEMPLATE_SOURCES` (frozen record keyed by Grafana name) and `PORTED_GRAFANA_TEMPLATES` (all three joined into one string). Both are re-exported through `templateEngine.ts`. `renderAlertTemplate` now parses `PORTED_GRAFANA_TEMPLATES` first, under the error name `grafana`, so `slack.title`, `slack.message`, `slack.ms-message`, `test.slack.title`, `test.slack.message` and `__ms_text_alert_fired/resolved` are always defined. `options.templates` overrides them, and the main template overrides both. Trap: the sources must stay byte-for-byte as in Grafana, because their whitespace is part of the Slack text. oxfmt leaves template-literal contents alone, but don't hand-reflow them. `portedTemplates.test.ts` (6 tests) pins the exact rendered whitespace, which I traced by hand against Go text/template trim semantics. Tested: the check passes (3 passed, 3 skipped). Regression checks pass: alert-template-engine (2), core (11), routing (9) and src/alerting unit tests (112). tsc, oxlint and oxfmt are clean. From packages/backend via `require('@lightdash/common')` on the built dist, I confirmed the three sources are byte-identical to the infra .tf heredocs. Rendering the built package gave: slack.title on two disk alerts → `2 Disk almost full`; slack.message → each description followed by `- <…|Dashboard>` and `- <…|Runbook>`; slack.ms-message → a fired section with `- fn-a (<url | Silence>)` and `- fn-b`, then a resolved section with `- fn-c`.
+- 2026-11-08T18:30:11Z supervisor: alert-templates-ported passed the gate in round 1
+- alert-alertmanager-payload — 2026-11-08 — New `packages/common/src/alerting/alertmanagerPayload.ts`, exported through `alerting/index.ts`. It adds `buildAlertmanagerWebhookPayload(input)`, the `AlertmanagerWebhookPayload` and `AlertmanagerWebhookAlert` types, and `ALERTMANAGER_ZERO_TIME`. It builds the Alertmanager webhook v4 body for one notification group (incident.io and generic webhooks): `version: '4'`, `groupKey`, `truncatedAlerts`, `status` (`firing` if any alert fires, else `resolved`, and an empty group is `resolved`), `receiver`, `groupLabels`, `commonLabels`/`commonAnnotations` (pairs every alert shares with the same value), `externalURL` and `alerts[]` (status, labels, annotations, startsAt, endsAt, generatorURL, fingerprint). Decisions: (1) a firing alert's `endsAt` is always `0001-01-01T00:00:00Z`, even if the input has one, as the step says; a resolved alert with no endsAt also gets the zero time. (2) Null or empty label/annotation values are dropped, matching alertGroupLabels. (3) `startsAt`/`endsAt` are passed through as given (the caller formats them); fingerprints are passed through, normally the 16-hex series fingerprint. (4) An optional `maxAlerts` (Alertmanager's `max_alerts`; 0 means no limit) truncates `alerts` and sets `truncatedAlerts`. Status and the common labels are still computed over the whole group. (5) Grafana's extra webhook fields (title, message, orgId, state) are left out; CONTRACTS 4.3 only asks for v4. The sender/HTTP side is not part of this feature. Tested: the check passes (1 passed, 5 skipped). The whole templates (6), core (11) and routing (9) acceptance suites pass, src/alerting unit tests pass (116, including 4 new in alertmanagerPayload.test.ts), and tsc, oxlint and oxfmt are clean in common. From packages/backend via `require('@lightdash/common')` on the built dist I built one firing and one resolved alert and saw version 4, status firing, commonLabels {alertname, team}, endsAt zero time on the firing alert and both fingerprints. Trap: in packages/common, `npx` fails on the node engine pin (EBADDEVENGINES), so use `node_modules/.bin/{vitest,tsc,oxlint}` and `../../node_modules/.bin/oxfmt`. Run oxlint from inside packages/common, because from the repo root it rejects the package .oxlintrc.
+- 2026-11-08T18:34:39Z supervisor: alert-alertmanager-payload passed the gate in round 1
+- 2026-11-08T18:35:23Z supervisor: alert-as-code-schemas halted: worker alerting.feature.alert-as-code-schemas.r1 stopped: STOP file present
+- alert-as-code-schemas — 2026-11-08 — I added three hand-written draft 2020-12 JSON schemas in `packages/common/src/schemas/json`: `alert-rule-as-code-1.0.json`, `contact-point-as-code-1.0.json` and `notification-routes-as-code-1.0.json`. I also added `packages/common/src/alerting/asCode.ts`, exported through `alerting/index.ts`. It provides `validateAlertingAsCode(doc) -> {valid, errors: string[]}` (it picks the schema from `type`), `isAlertingAsCodeDocument`, the document types (`AlertRuleAsCode`, `ContactPointAsCode`, `NotificationRoutesAsCode`), `ALERTING_AS_CODE_TYPES`, `ALERT_NO_DATA_STATES` (nodata/normal/alerting/keep_last) and `ALERT_ERROR_STATES` (error/alerting/keep_last).
+  - Schema decisions (narrowest reading; the spec gives no field list, so I took the fields from the acceptance fixtures):
+    - Every document has `version: 1` and `type`, and has `additionalProperties: false` at each level.
+    - A rule requires version, type, slug, name, description (non-blank, pattern `\S`), spaceSlug, query and condition. Everything else is optional and the schema records its CRUD default: reducer last, for/keepFiringFor 0s, interval 1m, timeRange 10m, valueColumn value, nodata/error, paused/shadow false.
+    - The condition is a threshold `{operator, threshold}` or a range `{within_range|outside_range, min, max}`. Durations use the Prometheus pattern from durations.ts.
+    - Label keys must be Prometheus label names. Annotation keys are free.
+    - Integrations are slack_webhook, slack_app, incident_io, email and webhook. Each type has its own `then` schema chosen by `if type`.
+    - Secret fields must be `{secretRef: <name>}`: slack_webhook.url, incident_io.token (required) and webhook.authorization (optional). The incident_io and webhook `url` are plain URIs, as in every fixture. webhook also allows `maxAlerts`.
+    - The routes document is the root route: contactPoint is required, and matchers and continue are not allowed at the root. Child routes follow `NotificationRoute` in routingTree.ts, so `routeAlert(doc, labels)` works on a doc directly.
+  - The validator does not check a minimum rule interval (30s). Rule CRUD and the as-code upload must do that.
+  - Errors:
+    - Each error is `<path>: <message>`, with paths like `integrations[0].url` (`document` for the root). Examples: `description: is required`, `description: must not be empty`, `reducer: must be one of …`, `x: is not allowed`.
+    - An inline secret gives `integrations[0].url: must be a secret reference { secretRef: <name> }; secrets are never written inline`. That message comes from an `errorMessage` keyword on `$defs.SecretRef` (ajv-errors). Plain Ajv with strict false ignores the keyword, which is how the acceptance test compiles the schemas.
+    - After the schema passes, two further checks run: invalid matcher regexes at any depth (via `getAlertLabelMatcherError`) and range min > max.
+  - Ajv is compiled lazily on first use (CSP; see dbt/validation.ts).
+  - Trap for later sessions: when the download, examples or UI need a new field, add it to the schema and the TS type together, because unknown fields are rejected.
+  - Tested:
+    - The check passes (3 passed, 4 skipped).
+    - core (11), routing (9) and templates (6) acceptance pass. In ascode-shadow only alert-shadow-compare fails, because `compareShadowRun` is a later feature.
+    - src/alerting unit tests pass (124, including 8 new in asCode.test.ts). tsc, oxlint and oxfmt are clean in common.
+    - After `init.sh`, from packages/backend via `require('@lightdash/common')`:
+      - A plain Ajv2020 accepted a minimal rule, contact point and route tree against the three files.
+      - `validateAlertingAsCode` returned `description: is required` for a rule with no description, the secretRef message for an inline Slack webhook URL, and `{valid: true, errors: []}` for the three good docs.
+- 2026-11-08T18:41:33Z supervisor: alert-as-code-schemas passed the gate in round 1
+- alert-db-migrations — 2026-11-08 — I added one core knex migration, `packages/backend/src/database/migrations/20261108120000_create_alerting_tables.ts`, that creates the eight alerting tables. It has a real `down()` (drops them in reverse order), `classification` safe and `lock_timeout = '60s'` (per migrations/AGENTS.md, not the old 5s). Every table has a `<table>_uuid` uuid PK and every FK is indexed.
+  - The spec gives no column list, so I took the narrowest set the later features and acceptance tests need. Column names (snake_case) that later sessions should build their models on:
+    - `alert_rules`: project_uuid (FK projects ON DELETE CASCADE), space_uuid (folder; FK spaces **ON DELETE SET NULL**, nullable, so deleting a space keeps its rules; rule CRUD must still require a folder), slug (unique per project), name, description (**NOT NULL plus CHECK `btrim(description) <> ''`**), query, value_column ('value'), reducer ('last'), condition jsonb, for_duration ('0s'; `for` is a reserved word), keep_firing_for ('0s'), interval ('1m'), time_range ('10m'), no_data_state ('nodata'), error_state ('error'), labels/annotations jsonb ('{}'), paused/shadow/managed boolean NOT NULL default false, created_by_user_uuid/updated_by_user_uuid (FK users SET NULL), created_at/updated_at. Durations are stored as the written Prometheus text so as-code documents round-trip unchanged. Parse them in the app, e.g. for scheduling.
+    - `alert_rule_versions`: alert_rule_uuid (CASCADE), version int (unique per rule), definition jsonb snapshot, created_by_user_uuid, created_at.
+    - `alert_instances`: one row per (alert_rule_uuid, fingerprint) (unique), with labels, annotations, state (CHECK in normal/pending/firing/resolved/nodata/error), value double, state_since, active_at, last_condition_met_at, last_evaluated_at. These match `AlertInstanceSnapshot` in common stateMachine.ts.
+    - `alert_state_history`: project_uuid and alert_rule_uuid (both CASCADE), fingerprint (nullable, for rule-level entries such as skipped evaluations), labels, previous_state, state (no CHECK, so `skipped` etc. are allowed), value, reason, at. Indexed on (rule, at) and (project, at).
+    - `contact_points`: project_uuid (CASCADE), slug (unique per project), name, integrations jsonb ('[]'), managed, created_by/updated_by, timestamps.
+    - `notification_routes`: one row per project (project_uuid UNIQUE, CASCADE), tree jsonb, managed, updated_by_user_uuid, timestamps.
+    - `alert_notifications`: project_uuid (CASCADE), alert_rule_uuid and contact_point_uuid (both nullable, **SET NULL**, so the log outlives deleted rules and contact points and test sends have no rule), integration_type, group_key, status (free text: sent/failed/shadow), attempts, alerts jsonb, payload jsonb, error, created_at, sent_at.
+    - `alert_evaluator_heartbeats`: append-only, one row per completed cycle: cycle_started_at, completed_at (indexed), rules_evaluated, heartbeat_status, error. It has no FK.
+  - Later features may add columns in new migrations (for example an evaluation lock or lease for overrun/concurrency, or notifier group state). Don't edit this migration once it has shipped.
+  - Tested:
+    - The check passes (1 passed).
+    - backend `pnpm run typecheck` is clean, and oxfmt/oxlint are clean on the file.
+    - As a user: I created a fresh throwaway cluster in repo tmp/ and ran `pnpm migrate` (with `LIGHTDASH_LICENSE_KEY=` and placeholder S3 env, because parseConfig requires S3). All migrations applied, including the new one.
+    - Through knex: the eight tables exist; description, paused, shadow and managed are NOT NULL (the flags boolean, default false); a null or blank description is refused; a bogus instance state is refused.
+    - I inserted one row in every table, then deleted the project. Every project-owned row was removed, and only the heartbeat row remained.
+    - `pnpm rollback-last` dropped all eight tables, and `pnpm migrate` re-created them. I stopped the cluster and removed it.
+  - Trap: `pnpm rollback-last` (knex CLI) only worked for me with the PG, LIGHTDASH_SECRET, SITE_URL, S3_* and `NODE_ENV=development` variables exported in the shell.
+- 2026-11-08T18:47:59Z supervisor: alert-db-migrations passed the gate in round 1
+- alert-rule-crud — 2026-11-08 — First backend alerting code. `packages/backend/src/alerting/`: `index.ts` (`createAlertingModule(deps)` → `{alertRules, close}`, `createAlertingRouter(module)`, the full `AlertingModuleDeps` type from the contract), `AlertRuleModel.ts` (knex on `alert_rules`/`alert_rule_versions`/`alert_instances`), `AlertRuleService.ts`, `router.ts` (`createAlertingApiRouter`, `ALERTING_PROJECT_API_PATH`). Common gets `packages/common/src/alerting/alertRules.ts` (API types `AlertRule`, `AlertRuleDefinition`, `CreateAlertRule`, `UpdateAlertRule`, `AlertRuleInstance`, `AlertRuleSummary`, `AlertRuleWithInstances`, `ALERT_RULE_DEFAULTS`, `getAlertRuleState`) + `alertRules.test.ts`.
+  - Routes: `GET/POST /rules`, `GET/PATCH/DELETE /rules/:ruleUuid` under `/api/v2/projects/:projectUuid/alerting`. The router parses JSON itself (`express.json`, a no-op when the app already did), answers `{status:'ok', results}`, and translates errors itself (`LightdashError` → its status; malformed JSON → 400; anything else → 500 `UnexpectedServerError`, logged). Later routes: add them in `router.ts` **before** the trailing `router.use(base, handleErrors)`, wrapped in `route(...)`; add services to `AlertingRouterServices` and the module.
+  - Auth: no `req.user` → 401; unknown or non-uuid project → 404; else `user.ability` against `subject('AlertRule', {organizationUuid, projectUuid})` (org looked up from the project): view for reads, manage for writes. Plain `user.ability`, not `createAuditedAbility` (that's a BaseService method; the module isn't a BaseService). The alert-rule-permissions check already passes with this.
+  - Version: `alert_rules` has no version column; a rule's version is `MAX(version)` of its `alert_rule_versions` rows. Create writes version 1; PATCH locks the row (`FOR UPDATE`), merges the change, and writes version n+1 with the full definition snapshot (`AlertRuleDefinition` shape, i.e. the camelCase API fields without uuid/slug/managed/timestamps) — **only if the definition actually changed** (key-order-insensitive compare); a no-op PATCH keeps the version. alert-rule-versions only needs `GET /rules/:ruleUuid/versions` reading those rows (`definition` → `rule`).
+  - Decisions: (1) `spaceUuid` is optional and defaults to `null` (the contract and the test's `ruleInput()` have no folder), contrary to the alert-db-migrations note "rule CRUD must still require a folder". (2) Slug = `generateSlug(name)`, then `-2`, `-3`… when taken in the project; an explicit `slug` on create is accepted (lowercase/digits/single hyphens) and a taken one → 409. The slug never changes on PATCH, and `slug` is not a PATCH field. (3) Unknown body fields → 400 (`Unknown Alert Rule field: x`). (4) `managed` rules → 403 on PATCH/DELETE (as-code will set `managed`). (5) GET single adds `state` + `instances[]` (from `alert_instances`, `{fingerprint, labels, annotations, state, value, since, activeAt, lastEvaluatedAt}`); list adds `state` only; aggregate state firing > error > nodata > pending > normal (resolved counts as normal). List order: name, then created_at. (6) `createdAt`/`updatedAt` come from the injected clock.
+  - **Not done here (alert-rule-validation):** only shape checks exist (`parseRuleBody`: JSON types, required name/description/query/condition on create, non-blank name/description/query, string maps for labels/annotations, booleans). Value checks go in `validateDefinition` in `AlertRuleService.ts`, which runs on both create and the merged PATCH definition: durations via `parsePrometheusDuration`, interval ≥ 30s, reducer in `ALERT_REDUCERS`, operator/threshold/range, `ALERT_NO_DATA_STATES`/`ALERT_ERROR_STATES`, and the folder (spaceUuid must be a space **of this project**; today a non-uuid gives 400 but an unknown uuid hits the FK and gives a 500). Throw `ParameterError` inside `apply` for PATCH so the transaction rolls back.
+  - Tested: the check passes (1 passed, 3 skipped); db-migrations regression passes; backend typecheck, oxlint and oxfmt clean; common tsc/oxlint/oxfmt clean and `alertRules.test.ts` (3) passes. In the full rules file, alert-rule-permissions also passes; validation and versions fail for the expected reason (no value checks, no `/versions` route). As a user: a scratch script (removed afterwards) started its own throwaway Postgres, mounted the router over real HTTP and walked the steps: editor create with only the required fields → slug `disk-almost-full`, 1m/0s/10m, nodata/error, version 1, state normal; same name again → `disk-almost-full-2`; PATCH condition → version 2; identical PATCH → still 2; viewer DELETE → 403; anonymous → 401; outsider → 403; no description → 400; DELETE → 200 then GET → 404; deleting the project removed its rules (and their versions), and the list then gives 404.
+  - Trap: anything that imports `../logging/logger` pulls in `lightdashConfig`, so a standalone `tsx` script needs placeholder `LIGHTDASH_SECRET`, `SITE_URL`, `S3_*` and `NODE_ENV=development` (vitest mocks the config, so the acceptance runner doesn't).
+- 2026-11-08T18:55:48Z supervisor: alert-rule-crud passed the gate in round 1
+- alert-rule-validation (round 1): value checks for Alert Rules, on create and on the merged PATCH definition.
+  - Changed: `validateDefinition` in `packages/backend/src/alerting/AlertRuleService.ts` now refuses (400, `ParameterError`, inside `apply` for PATCH so nothing is written): durations that `parsePrometheusDuration` rejects (`for`, `keepFiringFor`, `interval`, `timeRange`; negatives like `-1m` fail the parser), `interval` under `ALERT_RULE_MIN_INTERVAL` (new constant `'30s'` in `packages/common/src/alerting/alertRules.ts`), `timeRange` of 0, blank `valueColumn`, reducers not in `ALERT_REDUCERS`, unknown operators, a threshold that isn't a finite number, range `min`/`max` that aren't numbers or `min > max` (equal is allowed, like the as-code schema's semantic check), extra condition keys (`{operator:'>', threshold, min}` → 400, like unknown body fields), and states outside `ALERT_NO_DATA_STATES`/`ALERT_ERROR_STATES`. Folder: new `AlertRuleService.assertFolder` + `AlertRuleModel.isProjectSpace` – `spaceUuid` must be null or a non-deleted space **of this project** (an unknown uuid is now a 400, not the FK 500). On PATCH the folder lookup only runs when the body sets `spaceUuid` (outside the transaction, since `apply` is synchronous).
+  - Decisions (narrowest reading; the contract lists no numbers beyond the feature text): interval ≥ 30s inclusive; `timeRange` must be > 0; `for`/`keepFiringFor` may be `0s`; trashed spaces are refused as folders.
+  - Tested: the check passes (1 passed, 3 skipped); alert-rule-crud passes; in the full rules file only alert-rule-versions fails (expected: no `/versions` route yet). Backend and common tsc, oxlint and oxfmt clean. As a user: a scratch vitest file in repo `tmp/` (removed) drove the real HTTP router through the acceptance harness with a copy of run.sh pointed at a scratch config: no description → 400 "Missing required Alert Rule field: description"; interval 15s → 400; all 12 noDataState × errorState combinations → 200 and saved as sent; PATCH interval 10s → 400 and the rule kept 1m at version 1; PATCH 30s → 200; unknown folder on create/PATCH → 400; a project space → 200; reversed range, threshold+min, timeRange 0s → 400; for 1h30m → 200.
+  - Trap: `run.sh` already passes `--config`, so a second `--config` makes vitest fail ("Expected a single value"); for scratch walks copy run.sh into tmp/ and edit its `HERE=` and `--config` lines. The acceptance setup swallows `console.log`, so write output to a file.
+- 2026-11-08T19:01:31Z supervisor: alert-rule-validation passed the gate in round 1
+- alert-rule-versions (round 1): `GET /api/v2/projects/{uuid}/alerting/rules/{ruleUuid}/versions` lists every saved version of a rule, newest first.
+  - Changed: new `AlertRuleVersion` type in `packages/common/src/alerting/alertRules.ts` (`{version, rule: AlertRuleDefinition, createdByUserUuid, createdAt}`); `AlertRuleModel.listVersions` reads `alert_rule_versions` (ordered by `version desc`, snapshot normalised with `getAlertRuleDefinition`); `AlertRuleService.listVersions` needs `view` on the project (viewers may list) and 404s for an unknown rule or a non-uuid; route added in `router.ts`. Versions were already written by alert-rule-crud (version 1 on create, +1 on every PATCH that changes the definition, none for a no-op PATCH), so no write path changed.
+  - Contract assumption: CONTRACTS.md doesn't describe the versions response; this follows the acceptance test's shape (narrowest reading). No pagination.
+  - Tested: the check passes (1 passed, 3 skipped); the full rules file passes (4/4); backend and common tsc, oxlint and oxfmt clean. As a user: a scratch vitest walk in repo `tmp/walk` (removed) using the harness over real HTTP: editor creates, editor PATCHes the query, developer PATCHes the description, an identical PATCH again → viewer GET versions → 200 with versions 3, 2, 1; v1 has the original query and description, v2 the new query with the old description, v3 both changes; v1/v2 by editor, v3 by developer; each snapshot has all 17 definition fields. Anonymous → 401, unknown rule uuid → 404, non-uuid → 404.
+  - Note: the harness clock is fixed, so all versions share one `createdAt` in tests; order is by version number, not time.
+- 2026-11-08T19:04:58Z supervisor: alert-rule-versions passed the gate in round 1
+- alert-rule-permissions (round 1): no code change needed. The permission checks were already in place from alert-rule-crud/alert-rule-versions on top of alert-permissions-scopes: `AlertRuleService.assertAbility` checks CASL `view` (list/get/versions) or `manage` (create/update/delete) on `subject('AlertRule', {organizationUuid, projectUuid})`, and the router answers 401 when there's no session user.
+  - Order matters and is already right: the ability check runs before body parsing and before the rule lookup, so a viewer's invalid body gets 403 (not 400), and an outsider gets 403 for an unknown rule uuid (not 404), so outsiders can't tell whether a rule exists. An unknown *project* is still a 404 for everyone (it comes before the ability check).
+  - Tested: on the untouched tree the check passes (1 passed, 3 skipped). As a user: a scratch walk (repo `tmp/walk`, removed; run.sh copy per the alert-rule-validation trap) over real HTTP through the harness, as viewer, interactive_viewer, editor, developer, admin, outsider (admin of another project) and anonymous, on GET list / GET one / GET versions / GET unknown / POST / PATCH paused / DELETE: viewer and interactive_viewer → 200 on reads, 403 on POST/PATCH/DELETE; editor/developer/admin → 200 on reads and PATCH, 400 on an invalid POST, 404 on unknown uuids; outsider → 403 on every call, including the versions route and unknown uuids; anonymous → 401 on every call. An editor pausing a rule → 200 with `paused: true`. After the denied deletes, 1 rule was still in the database.
+- 2026-11-08T19:07:05Z supervisor: alert-rule-permissions passed the gate in round 1
+- alert-contact-points-crud (round 1): `GET/POST /contact-points`, `GET/PATCH/DELETE /contact-points/:contactPointUuid` under `/api/v2/projects/{uuid}/alerting`.
+  - Changed: common `packages/common/src/alerting/contactPoints.ts` (`ContactPoint`, `ContactPointIntegration` = `ContactPointIntegrationAsCode`, `CreateContactPoint`, `UpdateContactPoint`); backend `ContactPointModel.ts` (knex on `contact_points`), `ContactPointService.ts`, routes in `router.ts`, `contactPoints` on `AlertingModule`. New shared `alertingAccess.ts`: `assertAlertingAbility(lookup, user, action, subject, projectUuid)` (404 unknown/non-uuid project, then CASL 403 on `subject(<AlertRule|ContactPoint|NotificationRoute>, {organizationUuid, projectUuid})`), `findProjectOrganizationUuid`, `isUniqueViolation`, `nextFreeSlug`, `slugPrefixPattern`, `UUID_PATTERN`, `SLUG_PATTERN`. AlertRuleService/AlertRuleModel were refactored onto it (no behaviour change; rules.accept.ts still 4/4). Use it for notification routes too.
+  - Validation: the whole contact point (name, slug, integrations) is checked with `validateAlertingAsCode` against the contact-point as-code JSON schema, so the API and uploads accept exactly the same integrations. Inline secrets give 400 `Invalid Contact Point: integrations[0].url: must be a secret reference { secretRef: <name> }…` (also in `error.data.errors`). Unknown body fields → 400; blank name → 400; unknown type, empty integrations, bad email → 400. PATCH (name and/or integrations) merges and re-validates the whole thing inside the row lock.
+  - Decisions: (1) slug from `generateSlug(name)`, `-2`, `-3`… if taken; explicit `slug` on create allowed, taken → 409; slug never changes on PATCH (routes reference it); `slug` isn't a PATCH field. (2) `managed` → 403 on PATCH/DELETE. (3) List order name, then created_at. (4) No version history for contact points (the contract asks for none).
+  - Contract assumption: CONTRACTS lists optional `username` (slack_webhook), `subject`/`body` (email) and `httpMethod` (webhook), but the as-code schema (alert-as-code-schemas) doesn't, and the API reuses that schema, so those fields are refused (400 "is not allowed") for now. A sending feature that needs one should add it to the schema JSON and the `ContactPointIntegrationAsCode` type together; the API picks it up automatically.
+  - Not done here (belongs to alert-notification-routes-crud): DELETE refusing (400/409) a contact point that the Notification Route tree uses. Add that check in `ContactPointService.delete` once the tree exists (walk `notification_routes.tree` for `contactPoint === slug`).
+  - Tested: the check passes (1 passed, 2 skipped); the other two contact-points tests fail only on the missing `/notification-routes` routes (expected); rules.accept.ts 4/4; backend and common tsc clean; oxlint and oxfmt clean. As a user: scratch vitest walk (repo `tmp/walk`, removed; run.sh copy per the alert-rule-validation trap) over real HTTP through the harness: developer creates 'Infra Slack' (Slack webhook secretRef + email) → 200, slug `infra-slack`, `managed: false`, the reference returned; list and viewer GET show the reference, and neither the API response nor the `contact_points` row contains the secret value; inline Slack URL, inline incident.io token, inline webhook authorization, and a PATCH to an inline URL → 400 naming secretRef; same name again → `infra-slack-2`; explicit taken slug → 409; unknown field → 400; editor create → 403; outsider → 403; anonymous → 401; rename → 200 (slug kept), blank rename → 400; DELETE → 200 then GET → 404; non-uuid → 404.
+- 2026-11-08T19:13:53Z supervisor: alert-contact-points-crud passed the gate in round 1
+- alert-notification-routes-crud (round 1): `GET /notification-routes` (tree or `null`) and `PUT /notification-routes` (save the whole tree) under `/api/v2/projects/{uuid}/alerting`; Contact Point DELETE now refuses one the tree uses.
+  - Changed: common `packages/common/src/alerting/notificationRoutes.ts` (`NotificationRouteTree` = the as-code document minus `version`/`type`, `SavedNotificationRouteTree` = tree + `managed`, `getNotificationRouteContactPoints(tree)` = every slug the tree names). Backend `NotificationRouteModel.ts` (one row per project in `notification_routes`, upsert on `project_uuid`), `NotificationRouteService.ts`, routes in `router.ts`, `notificationRoutes` on `AlertingModule`. `ContactPointModel.delete` now takes `{projectUuid, contactPointUuid, beforeCommit(trx, deleted)}` and runs in a transaction; `ContactPointService` gets `notificationRouteModel` and throws `ConflictError` (409, `data.slug`) from `beforeCommit` when the tree names the slug, which rolls the delete back.
+  - Validation: the body is checked with `validateAlertingAsCode({version: 1, type: 'notification_routes', ...body})`, so the API and uploads accept the same trees (root needs `contactPoint`, no `matchers`/`continue` at the root, operators, durations, anchored regexes via the schema's semantic check). On top of that: `groupInterval`/`repeatInterval` of `0` → 400 (Alertmanager refuses them; the dispatcher would resend on every flush), and every named Contact Point slug must exist in the project → 400 `contactPoint: no Contact Point "<slug>" in this project` (also in `error.data.errors`). `version`/`type` in the body → 400; a non-object body → 400.
+  - Decisions: (1) The PUT response and GET return the tree fields at the top level plus `managed` (CONTRACTS: "returns tree + managed"); no `updatedAt`/`updatedBy` in the response, so a GET result can be PUT back as is: `managed` in a PUT body is accepted and ignored. (2) Managed tree → 403 on PUT. (3) Delete of a used Contact Point → 409 (the test allows 400/409). (4) No version history for the tree (the contract asks for none).
+  - Concurrency: PUT locks the tree row `FOR UPDATE` and the project's `contact_points` rows `FOR SHARE` while it checks slugs; Contact Point DELETE deletes the row first (taking its lock) and then reads the tree in the same transaction. So a delete racing a save either waits and sees the new tree (refused), or commits first and the save then sees the slug missing (400).
+  - Follow-up (cosmetic): an invalid duration's 400 message shows the raw schema regex (`must match pattern "^(?:0|…"`); it comes from `formatAjvError` in common asCode.ts and applies to uploads too. A later session could map the Duration pattern to "must be a duration such as 30s, 5m or 1h30m".
+  - Tested: the check passes (1 passed, 2 skipped); the whole contact-points.accept.ts passes 3/3 (the permissions test there now passes too); rules.accept.ts 4/4; backend and common tsc clean; oxlint and oxfmt clean. As a user: scratch vitest walk (`tmp/walk` + `src/alerting/__walk__`, both removed; run.sh copy per the alert-rule-validation trap) over real HTTP through the harness: GET on a new project → 200 `null`; developer creates three webhook contact points; PUT a nested tree (root slack-infra-alerts, groupBy `...`, a `team=infra` child to incident-io with continue and a `severity=~1|2` grandchild) → 200 with the tree + `managed: false`; viewer GET → same tree; PUT of what GET returned → 200; unknown root slug `nope` and nested `ghost` → 400 naming them; operator `~` → 400; regex `(` → 400; groupWait `later` → 400; repeatInterval `0` → 400; no root contactPoint → 400; root matchers → 400; `type` field → 400; array body → 400; GET afterwards → original tree unchanged; DELETE of incident-io (used only by a child) and of slack-infra-alerts (root) → 409, and GET shows them still there; DELETE of the unused one → 200; editor and outsider PUT → 403, outsider GET → 403, anonymous → 401; admin PUT `{contactPoint: slack-infra-alerts}` → 200 and then deleting incident-io → 200; one `notification_routes` row; after setting `managed` in the db, PUT → 403.
+- 2026-11-08T19:20:10Z supervisor: alert-notification-routes-crud passed the gate in round 1
+- alert-contact-points-routes-permissions (round 1): no code change needed; the behaviour was already built by alert-contact-points-crud and alert-notification-routes-crud.
+  - Why it already works: every Contact Point and Notification Route endpoint goes through `assertAlertingAbility` (`packages/backend/src/alerting/alertingAccess.ts`), which checks CASL `view` (GETs) or `manage` (POST/PATCH/DELETE/PUT) on the `ContactPoint` / `NotificationRoute` subject. The scopes come from alert-permissions-scopes: viewers and editors may view, only developers and admins may manage. An unknown project gives 404; a member of another project gets 403; an anonymous request gets 401.
+  - Tested: the check passes (1 passed, 2 skipped). As a user, a scratch vitest walk over real HTTP through the harness (run.sh copied to tmp/walk per the alert-rule-validation trap; `tmp/walk` and `src/alerting/__walk__` removed afterwards). Developer creates webhook `ops` and PUTs tree `{contactPoint: ops}` → 200. Editor GETs the list, the single contact point and the tree → 200. Editor POST, PATCH, DELETE and tree PUT → 403. Viewer tree GET → 200 and PUT → 403. Developer PATCH name "Ops pager" → 200, and the editor then sees the new name. Admin PUT `groupWait: 10s` → 200, and the editor sees it. Admin POST of a contact point → 200. Outsider GET list, GET one and GET tree, plus POST, PATCH, DELETE and PUT → all 403. Anonymous GET and PUT of the tree → 401. Final tree as the admin left it.
+- 2026-11-08T19:23:13Z supervisor: alert-contact-points-routes-permissions passed the gate in round 1
+- alert-eval-query-identity (round 1) — 2026-11-08
+  - Changed: new `packages/common/src/alerting/queryParameters.ts` (exported via `alerting/index.ts`, 9 unit tests in `queryParameters.test.ts`): `computeAlertQueryIntervalMs(rangeMs, maxDataPoints = 1000)`, `resolveAlertQueryParameters({at, timeRange})` → `{__from, __to, __interval, __range}` and `substituteAlertQueryParameters(sql, params)`. New `packages/backend/src/alerting/AlertEvaluator.ts` (`AlertEvaluator.evaluateRule(ruleUuid, {scheduledAt})`), exposed as `module.evaluator` in `createAlertingModule`. `AlertRuleModel.findByUuid(ruleUuid)` (no project scope; the evaluator has no request). The `warehouseClients` dep type moved to `AlertWarehouseClients` in AlertEvaluator.ts (index.ts re-uses it, no cycle).
+  - Semantics: window = [scheduledAt − timeRange, scheduledAt]; `__from`/`__to` via `toISOString()` (`…:00.000Z`); `__interval` per CONTRACTS §2 = range/1000 rounded **up** to 1s,5s,15s,30s,1m,5m,15m,30m,1h,3h,6h,12h,1d, floor 15s (7d → 15m, 1d → 5m, 10m → 15s); `__range` = range as a Prometheus duration (7d formats as `1w`). Only `${ld.parameters.__from|__to|__interval|__range}` (whitespace inside the braces allowed) are replaced; other `${ld.parameters.*}` are left untouched; values are inserted verbatim, the SQL supplies quotes. Then `getWarehouseClient({projectUuid, context: buildAlertEvaluatorQueryContext(rule)})` and `runQuery(sql, {alert_rule_uuid, project_uuid})`; returns `{status: 'evaluated'}`.
+  - Decisions: (1) past 1d, `__interval` rounds up to whole days (CONTRACTS lists no step above 1d). (2) An unknown/deleted rule uuid → `{status: 'skipped', reason: 'not_found'}`, no query (a queued job can outlive its rule). (3) A failing query currently **throws** out of `evaluateRule`; alert-eval-error owns errorState handling.
+  - For the next session (alert-eval-series-states): the query result's rows are not used yet. `evaluateRule` is where to split series (`splitAlertSeries`), reduce, apply the condition, run `transitionAlertInstance` and persist `alert_instances`; paused/overrun/duplicate skips also go there.
+  - Tested: the check passes (1 passed, 10 skipped); rules.accept.ts 4/4; common unit test 9/9; backend and common tsc, oxlint, oxfmt clean. As a user: a scratch vitest walk (run.sh copy per the alert-rule-validation trap; pass the walk file as an **absolute** path; `tmp/walk` and `src/alerting/__walk__` removed). Editor POSTs a 7d rule using __from/__to/__interval → 200; evaluate at 09:00 → evaluated; one warehouse call with the project uuid, context sub system:alert-evaluator, sys true, agent false, audit {description: the rule's, ticket null, source alert_rule, resource_uuid: the rule}, and SQL `ts >= '2026-11-01T09:00:00.000Z' AND ts < '2026-11-08T09:00:00.000Z' AND step = '15m'`. Editor PATCHes description + timeRange 1d, evaluate at 09:30 → the new description in audit and `2026-11-07T09:30…/2026-11-08T09:30…/5m`. A query with no parameters is sent unchanged; a 10m rule gives `__interval` 15s and `__range` 10m with `${ld.parameters.region}` left alone; an unknown rule uuid → skipped/not_found with no query; a failing warehouse → evaluateRule throws "source unreachable".
+- 2026-11-08T19:28:49Z supervisor: alert-eval-query-identity passed the gate in round 1
+- alert-eval-series-states (round 1) — 2026-11-08
+  - Changed: new `packages/backend/src/alerting/evaluateAlertSeries.ts` (pure; 6 unit tests in `evaluateAlertSeries.test.ts`): `evaluateAlertSeries({rule, rows, previous, at})` → `{instances, removedFingerprints}` and `getAlertInstanceLabels(rule, seriesLabels)`. New `AlertInstanceModel.ts` (`listForRule(ruleUuid)`, `save(ruleUuid, {instances, removedFingerprints})`: one transaction, delete removed, upsert on `(alert_rule_uuid, fingerprint)`). `AlertEvaluator.evaluateRule` now reads the query rows, loads the stored series, evaluates and saves them; `createAlertingModule` passes `alertInstanceModel`. The read side (`GET /rules/:uuid` `instances`, aggregate `state`) already existed in AlertRuleModel.getInstances / AlertRuleService.
+  - Semantics: `splitAlertSeries(rows, {valueColumn: rule.valueColumn})` → per series `reduceAlertSeries(values, rule.reducer)` → `evaluateAlertCondition` → `transitionAlertInstance(previous, {conditionMet, at: scheduledAt}, {for, keepFiringFor parsed})`. The evaluation time is `scheduledAt`, so `since` = the scheduled tick (not the clock). Instance labels = series labels, then rule labels (rule wins on a clash, Prometheus-style), then `alertname` = rule name; the fingerprint is `alertLabelsFingerprint` of those **merged** labels (so changing a rule's labels gives new series). Annotations are stored verbatim from the rule (templating is alert-annotation-templates).
+  - Decisions: (1) a stored series missing from a non-empty result is evaluated as condition-not-met with value null (firing → resolved, honouring keepFiringFor); when it reaches normal while missing, its row is deleted, so stale series don't pile up. (2) An empty result leaves all stored series untouched; alert-eval-nodata owns that path (put its handling before/around `evaluateAlertSeries`, which returns `previous` unchanged for `rows: []`). (3) Synthetic DatasourceNoData/DatasourceError rows, once added, will be treated as "missing" by (1) on the next non-empty result → normal → deleted, which matches "recovery clears them".
+  - For the next sessions: no state history is written yet (alert-eval-state-history: compare `previous` state with the new one inside evaluateRule/the model transaction). No paused/overrun/dedupe skips yet. A failing query still throws before anything is saved.
+  - Tested: the check passes (1 passed, 10 skipped); alert-eval-query-identity still passes; rules.accept.ts 4/4; the new unit file 6/6; backend tsc, oxlint (src/alerting) and oxfmt clean. As a user: a scratch vitest walk over real HTTP through the harness (run.sh + config copied to tmp/walk per the alert-rule-validation trap; `tmp/walk` and `src/alerting/__walk__` removed). Editor POSTs the default disk rule → 200; viewer GET before any evaluation → state normal, 0 instances, 0 rows. Evaluate at 09:00 with db-1 95 / db-2 40 / db-3 99 → evaluated; viewer GET → rule firing, db-1 firing 95 and db-3 firing 99 and db-2 normal 40, all since 09:00, labels `{instance, team: infra, alertname: Disk almost full}`, distinct 16-hex fingerprints; list shows firing; 3 rows in alert_instances. 09:01 with db-1 97, db-2 92, db-3 absent → db-1 firing (since 09:00), db-2 firing since 09:01, db-3 resolved value null; 3 rows. 09:02 db-1 10 → db-1 resolved, db-3 row gone (2 rows). A series with its own `team=payments` gets `team=infra` on the disk rule and keeps `team=payments` on a rule without labels.
+- 2026-11-08T19:34:44Z supervisor: alert-eval-series-states passed the gate in round 1
+- alert-eval-for-pending (round 1) — 2026-11-08
+  - Changed: no production code. The behaviour already worked: `transitionAlertInstance` (common stateMachine.ts, alert-state-machine) handles `for` and pending→normal, and alert-eval-series-states feeds it the stored previous snapshot and `scheduledAt` per series. On the untouched tree the check already passed. I added one unit test in `packages/backend/src/alerting/evaluateAlertSeries.test.ts` (now 7) that pins the feature at series level: for=2m, db-1 at 95 for minutes 0–3 → pending, pending, firing, firing (firing since minute 2); db-2 95 then 10 → pending, normal, normal, normal.
+  - Semantics to know: a series fires when `at - activeSince >= for`, so with for=2m at 1-minute ticks it fires on the third evaluation (minute 2), not the fourth. `since` of a firing series is the tick it started firing, not when it went pending. A pending series that disappears from a non-empty result is evaluated as condition-not-met → normal → its row is deleted (from alert-eval-series-states decision 1).
+  - Tested: the check passes (1 passed, 10 skipped); alert-eval-series-states still passes; the unit file 7/7; backend tsc and oxlint (src/alerting) clean; oxfmt clean on the test file. As a user: a scratch vitest walk over real HTTP through the harness (run.sh + config copied to tmp/walk per the alert-rule-validation trap; `tmp/walk` and `src/alerting/__walk__` removed). Editor POSTs a for=2m disk rule → 200; evaluate at 09:00–09:03 with db-1 95 and db-2 95 then 10; viewer GET each minute → rule pending, pending, firing, firing (the list shows the same); db-1 pending since 09:00, pending, firing since 09:02, firing; db-2 pending 95, then normal 10 since 09:01 and stays normal; 2 rows in alert_instances.
+- 2026-11-08T19:38:44Z supervisor: alert-eval-for-pending passed the gate in round 1
+- alert-eval-keep-firing-for (round 1) — 2026-11-08
+  - Changed: no production code. The behaviour already worked: `transitionAlertInstance` (common stateMachine.ts) keeps a firing series firing while `at - lastConditionMet < keepFiringFor`, then resolves it, and the next evaluation takes resolved → normal. The check already passed on the untouched tree. I added one unit test to `packages/backend/src/alerting/evaluateAlertSeries.test.ts` (now 8 tests) that pins the feature at series level: keepFiringFor=2m, db-1 95, 10, 10, 10 at minutes 0–3 → firing, firing, resolved, normal (normal since minute 3).
+  - Semantics to know: the keepFiringFor window starts at the last tick where the condition held, not at the first tick that recovered. With 2m at 1-minute ticks, the series resolves on the second recovered tick (minute 2). If the condition holds again inside the window, the series stays firing, keeps its original `since`, and the window starts over from that tick. While a series is still firing in the window, its `value` is the current (recovered) value.
+  - Tested: the check passes (1 passed, 10 skipped); alert-eval-for-pending still passes; the unit file passes 8/8; backend tsc is clean; oxlint and oxfmt are clean on the test file. As a user, I ran a scratch vitest walk over real HTTP through the harness (run.sh and the config copied to tmp/walk per the alert-rule-validation trap; `tmp/walk` and `src/alerting/__walk__` removed afterwards). The editor POSTs a keepFiringFor=2m disk rule → 200, `keepFiringFor: 2m`. Evaluations at 09:00–09:06; viewer GET of the rule and the list after each one:
+    - db-1 (95, then 10) → firing since 09:00, firing (value 10), resolved since 09:02, normal since 09:03.
+    - db-2 (95, 10, 96, then 10) → stays firing since 09:00 through 09:03, resolved at 09:04, normal at 09:05.
+    - The rule state (and the list) is firing until 09:03 and normal from 09:04 on.
+    - 2 rows in alert_instances.
+- 2026-11-08T19:42:30Z supervisor: alert-eval-keep-firing-for passed the gate in round 1
+- alert-eval-state-history (round 1) — 2026-11-08
+  - Changed: the evaluator now writes every series state change to `alert_state_history`, in the same transaction as the `alert_instances` upsert. There is a new route `GET /api/v2/projects/{uuid}/alerting/rules/{ruleUuid}/history` that returns the rule's history newest first. It is a view ability, so viewers can read it, outsiders get 403, anonymous requests get 401, and unknown or non-uuid rules get 404.
+    - common `alertRules.ts`: adds `AlertStateTransition` (`type: 'transition'`, uuid, ruleUuid, fingerprint, labels, previousState, state, value, at ISO) and `AlertStateHistoryEntry` (for now just the transition type).
+    - backend `evaluateAlertSeries.ts`: adds the pure `getAlertSeriesTransitions(previous, evaluation)`. It reports every stored series whose state differs from before. A new series counts as previously `normal`, so a new normal series is no entry. A removed series that was not normal yet becomes `→ normal` with value null.
+    - New `AlertStateHistoryModel.ts`: the static `insertTransitions(trx, …)` and `listForRule`. `listForRule` orders by `at desc, fingerprint` and filters `fingerprint IS NOT NULL`.
+    - `AlertInstanceModel.save` now takes `({projectUuid, ruleUuid, at}, {instances, removedFingerprints, transitions})`.
+    - Also changed: `AlertRuleService.listHistory`, the router, and `index.ts` (the service gets `alertStateHistoryModel`).
+  - For the next sessions:
+    - alert-eval-overrun needs `evaluation_skipped` entries. Write them as rows with `fingerprint` null, put the reason in the `reason` column, and set `state` to something non-null (the column is NOT NULL). Then drop the `whereNotNull('fingerprint')` filter in `listForRule`, map such rows to `type: 'evaluation_skipped'` with `reason`, and widen the `AlertStateHistoryEntry` union.
+    - The project-wide `/alerting/history?rule=&since=` route (shadow-ascode-ai.accept.ts) also wants `ruleName` on entries. That is not added yet.
+    - `at` is the scheduled time of the evaluation, not the clock.
+  - Tested:
+    - The check passes (1 passed, 10 skipped). The query-identity, series-states, for-pending and keep-firing-for tests in the same file still pass (4 passed).
+    - The unit file passes 10/10, with 2 new tests for `getAlertSeriesTransitions`.
+    - Backend and common tsc are clean, oxlint (src/alerting) is clean, and oxfmt is clean.
+    - As a user: a scratch vitest walk over real HTTP through the harness (run.sh and the config copied to tmp/walk; `tmp/walk` and `src/alerting/__walk__` removed afterwards).
+      - The editor POSTs the default disk rule → 200. A viewer GET of the history before any evaluation → 200 `[]`.
+      - Evaluations at 09:00–09:05 with db-1 at 95, 96, 10, 10, 10, 10 and db-2 at 40, 40, 40, 93, then absent twice.
+      - A viewer GET then lists, newest first:
+        - db-2 resolved→normal null 09:05
+        - db-2 firing→resolved null 09:04
+        - db-1 resolved→normal 10 09:03
+        - db-2 normal→firing 93 09:03
+        - db-1 firing→resolved 10 09:02
+        - db-1 normal→firing 95 09:00
+      - Every entry has 16-hex fingerprints and labels `{team, instance, alertname}`. Outsider → 403, anonymous → 401, unknown rule → 404.
+- 2026-11-08T19:48:25Z supervisor: alert-eval-state-history passed the gate in round 1
+- 2026-11-08T19:49:38Z supervisor: alert-annotation-templates halted: the worker halted on alert-annotation-templates
+- alert-eval-paused (round 1) — 2026-11-08
+  - Changed: `AlertEvaluator.evaluateRule` returns `{status: 'skipped', reason: 'paused'}` for a paused rule right after the lookup. It opens no WarehouseClient, runs no query, and leaves `alert_instances` and `alert_state_history` alone. Pausing and unpausing already worked through `PATCH /rules/{uuid}` (`paused`), so nothing else changed.
+  - Decision (narrowest reading; the spec says nothing about it): a paused skip writes no history row. A paused rule keeps its stored series as they were (a firing series stays firing while the rule is paused). If alert-eval-overrun or a later feature wants `evaluation_skipped` history rows for paused too, add them there.
+  - Tested:
+    - The check passes (1 passed). query-identity, series-states, for-pending, keep-firing-for, state-history and paused pass together (6 passed).
+    - Backend tsc, oxlint (src/alerting) and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk; removed afterwards, along with `src/alerting/__walk__`).
+      - The editor POSTs a rule with `paused: true`, and a viewer GET shows `paused: true` with instances `[]`.
+      - Evaluations at 09:00 and 09:01 (db-1 at 95) → skipped/paused with 0 warehouse calls. Instances `[]`, history `[]`.
+      - The editor PATCHes `paused: false`. The evaluation at 09:02 → evaluated, 1 call, db-1 firing 95.
+      - The rule is paused again, and the evaluation at 09:03 (db-1 at 10) → skipped/paused, still 1 call, db-1 still firing 95.
+- 2026-11-08T19:52:49Z supervisor: alert-eval-paused passed the gate in round 1
+- alert-rule-list-filters (round 1) — 2026-11-08
+  - Already in place: `GET /rules` already returned each rule's aggregate `state` (`getAlertRuleState` over its instances; a rule never evaluated is `normal`). Only the filters were missing.
+  - Changed:
+    - common `alertRules.ts`: added the `AlertRuleListFilters` type (`state?`, `labels?`, `spaceUuid?`) and `isAlertRuleState`.
+    - backend `AlertRuleService.ts`: added the exported `parseAlertRuleListFilters(req.query)`. `AlertRuleService.list(user, projectUuid, filters = {})` now filters after it computes state. The router passes the parsed query.
+    - New unit file `AlertRuleService.test.ts` (9 tests) for the parser.
+  - Contract assumptions (CONTRACTS.md defines no rule-list query; narrowest reading):
+    - `state=<firing|error|nodata|pending|normal>` may be given at most once. `resolved` and any unknown value → 400.
+    - `spaceUuid=<uuid>` may be given at most once. A malformed uuid → 400. An unknown space returns `[]`, not 404.
+    - `label=<key>=<value>` may repeat and all must match (AND). It splits on the first `=`, so values may contain `=`. Labels match the rule's own `labels` only, not series labels. A missing key or `=` → 400. The same key with two values → 400.
+    - Filters combine with AND. Unknown query parameters are ignored.
+    - Filtering happens in memory after the per-rule state is computed (one instances query per list, as before). If rule counts grow large, move `spaceUuid` and labels into SQL.
+  - Tested:
+    - The check passes (1 passed). The query-identity, series-states, for-pending, keep-firing-for, state-history and paused tests pass (6 passed). rules.accept.ts passes (4 passed).
+    - Backend and common tsc are clean. oxlint (src/alerting) and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk; removed afterwards, along with `src/alerting/__walk__`).
+      - Setup: A (platform space, team=infra), B (rds space, team=db, env=prod, for 5m) and C (no space, team=infra). A and B were evaluated with db-1 at 95. C was never evaluated.
+      - The list showed A firing, B pending and C normal. `state=firing` → A, `state=pending` → B, `state=normal` → C, `state=error` → [].
+      - `label=team=infra` → A and C. `label=team=db&label=env=prod` → B. `env=dev` → [].
+      - `spaceUuid=platform` → A. `spaceUuid=rds&state=pending` → B. `state=normal&label=team=infra` → C.
+      - 400s for `state=resolved`, `state=bogus`, a repeated `state`, `label=team`, `label==x` and `spaceUuid=nope`. Outsider → 403. Anonymous → 401.
+- 2026-11-08T19:58:02Z supervisor: alert-rule-list-filters passed the gate in round 1
+- alert-rule-preview (round 1) — 2026-11-08
+  - Changed:
+    - common `alertRules.ts`: new types `AlertRulePreview` (`{evaluatedAt, series, error}`) and `AlertRulePreviewSeries` (`{labels, value, conditionMet, state}`).
+    - backend `AlertEvaluator.ts`: the query path (resolve `__from/__to/__interval`, open the WarehouseClient as `system:alert-evaluator`, run it) is now the private `runRuleQuery`, shared by `evaluateRule` and the new `previewRule({projectUuid, rule, at})`. `previewRule` runs `evaluateAlertSeries` with `previous: []` and reads or writes no stored state. Any error from the client, the query or the series split is returned as `error` with `series: []`, not thrown.
+    - backend `AlertRuleService.ts`: create's body checks moved into the private `parseNewRule` (required fields, defaults, value rules, folder). The new `preview(user, projectUuid, body)` uses `manage` ability, then `parseNewRule`, then `rulePreviewer.previewRule` at `clock.now()`. The service gets the new dependency `rulePreviewer` (the evaluator). `index.ts` builds the evaluator first.
+    - `router.ts`: `POST .../alerting/rules/preview`, registered before the `:ruleUuid` routes.
+  - Contract assumptions (CONTRACTS.md has no preview endpoint; narrowest reading):
+    - Who may call: editors and above (`manage:AlertRule`), the same as create. Viewers and outsiders get 403, anonymous 401.
+    - The body is a full new-rule body, validated exactly like create (400 on the same errors). `slug` is accepted and ignored, so the editor form can send its create body as it is.
+    - "Would-be state" means the state as a brand-new series at `now`: `for: 0s` → firing, `for > 0` → pending, condition not met → normal. Stored instances of a saved rule are not consulted. A paused rule still previews.
+    - An empty result gives `series: []` with `error: null`. noDataState/errorState handling is not applied (alert-eval-nodata and alert-eval-error are not built yet). If those features add synthetic `DatasourceNoData`/`DatasourceError` series, they may want preview to show them too.
+    - Identity: the preview query runs as `system:alert-evaluator`, as the saved rule would, with the body's description as the audit reason. An unsaved rule has no uuid, so a fresh random uuid per preview is used as `audit.resource_uuid` and `alert_rule_uuid` tag, plus the tag `alert_rule_preview: 'true'`. The integration line may want a distinct audit marker for previews; that would mean changing `AlertRuleQueryAudit`.
+    - The error message is the raw warehouse error message (the editor's own query).
+  - Tested:
+    - The check passes (1 passed). query-identity, series-states, for-pending, keep-firing-for, state-history, paused, list-filters and preview pass together (8 passed). rules.accept.ts passes (4 passed).
+    - Backend tsc, oxlint (src/alerting) and oxfmt are clean. Common builds through init.
+    - As a user: a scratch walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk; removed afterwards, along with `src/alerting/__walk__`).
+      - The editor previewed with db-1 95 and db-2 40 → db-1 95 / conditionMet true / firing, and db-2 40 / false / normal. Labels were instance + team + alertname. 1 warehouse call as system:alert-evaluator.
+      - `for: 5m` → db-1 pending. `within_range 30..50` → db-2 firing and db-1 normal. `paused: true` still previews. An empty result → `[]` with error null.
+      - A failing query → 200 with error `relation "disk_usage" does not exist` and series `[]`.
+      - Viewer and outsider → 403, anonymous → 401. A blank description or `for: soon` → 400. Developer and admin → 200.
+      - Afterwards: alert_rules, alert_instances and alert_state_history all held 0 rows, and the list was `[]`.
+- 2026-11-08T20:04:47Z supervisor: alert-rule-preview passed the gate in round 1
+- alert-scheduler-due (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108130000_add_alert_rules_last_scheduled_at.ts`: a nullable `alert_rules.last_scheduled_at timestamptz`, the last interval slot enqueued for the rule. It is not exposed in the rule API, and ticks don't touch `updated_at`.
+    - New `src/alerting/AlertScheduleModel.ts`: `listSchedulable()` returns unpaused rules with their org/project/interval/last slot. `claimSlot(trx, ruleUuid, slot)` is a conditional `UPDATE … WHERE paused = false AND (last_scheduled_at IS NULL OR last_scheduled_at < slot)`. Concurrent claims of one slot serialize on the row lock, and under READ COMMITTED the loser re-checks the WHERE clause and updates 0 rows.
+    - New `src/alerting/AlertScheduler.ts`: `tick()` → `{enqueued: [{ruleUuid, scheduledAt, jobKey}]}`. slot = `floor(now / interval) * interval` (epoch-aligned, injected clock). Each rule claims and enqueues in one transaction, so a failed `addJob` rolls the claim back and the next tick retries. A failure on one rule (bad stored interval, enqueue error) is logged and doesn't stop the others. Job: `alertRuleEvaluate`, payload `{ruleUuid, scheduledAt (slot ISO), organizationUuid, projectUuid}` (org/project feed the tracer tags), jobKey `alertRuleEvaluate:<ruleUuid>:<slot ISO>`. Also exports `getAlertRuleSlot` and `getAlertRuleEvaluateJobKey`.
+    - `index.ts`: `module.scheduler`. The `jobQueue` dep type is now `AlertJobQueue` (same shape).
+  - Decisions: only the current slot is enqueued, and slots missed while nothing ticked are not caught up. A rule that is unpaused (or newly created) mid-slot is enqueued for the current slot on the next tick. Paused rules are never claimed.
+  - Not done here (next features): `tick()` doesn't yet flush notifications or record or call the heartbeat (alert-cycle-heartbeat). There's no `taskHandlers`/`alertingTick` self-re-enqueue (alert-worker-wiring). The evaluator doesn't yet de-duplicate per slot (alert-eval-concurrency). The scheduler's claim prevents double *enqueueing* only, so a worker-side claim is still needed.
+  - Tested: the check passes (1 passed, 6 skipped). db-migrations (1), rules (4) and evaluation's built features (6) pass. Backend typecheck, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness (copied run.sh/config in tmp/walk, file in src/alerting/__walk__, both removed). The editor created rules via HTTP at 1m, 5m, 30s, and 1m paused. Ticks: 09:00 → 1m, 5m, 30s. 09:00:30 → 30s only. 09:01 → 1m, 30s. 09:02:15 → 1m@09:02, 30s@09:02. 09:05 → 1m, 5m, 30s.
+    - Two schedulers ticked at once at 09:06. Each rule was enqueued by exactly one of them, so jobLog got one entry per rule and slot.
+    - The paused rule never appeared until it was unpaused; after that, 09:06:10 → paused@09:06. Pausing the 1m rule stopped it. A second module ticking the same instant → [].
+- 2026-11-08T20:10:21Z supervisor: alert-scheduler-due passed the gate in round 1
+- alert-eval-concurrency (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108140000_add_alert_rules_last_evaluation_slot.ts` adds a nullable `alert_rules.last_evaluation_slot timestamptz`. It holds the last slot a worker claimed for evaluation. It is not in the rule API and doesn't touch `updated_at`.
+    - `AlertScheduleModel.claimEvaluationSlot(ruleUuid, slot)` → `{claimed, previous}`. It runs in one transaction: `SELECT … FOR UPDATE` on the rule row, then it moves the slot forward only if the stored slot is null or earlier. Concurrent claims serialize on the row lock, and the loser sees the winner's slot. `releaseEvaluationSlot(ruleUuid, slot, previous)` puts `previous` back, but only while the stored slot still equals `slot`.
+    - `AlertEvaluator.evaluateRule` runs the not-found check, then paused, then claims the slot. If the claim fails it returns `{status: 'skipped', reason: 'duplicate'}` without running the query. Otherwise it evaluates, which is now the private `evaluateClaimedRule`. If evaluation throws, it releases the claim and rethrows, so a job retry of a failed slot runs again. A finished slot stays claimed, so its retries skip.
+    - `index.ts`: the evaluator and scheduler now share one `AlertScheduleModel`.
+  - Decisions (the spec doesn't decide these):
+    - The claim is a persisted row-level marker, not a transaction held open across the warehouse query. A slot older than the last claimed one also skips as `duplicate`.
+    - A thrown evaluation gives its slot back.
+    - The claim is committed before the query runs, so a crash in mid-evaluation leaves the slot claimed. That slot is lost, and the next slot runs normally.
+  - For alert-eval-overrun (next): this claim doesn't know whether the previous slot is *still running*. A different-slot evaluation while another is in flight currently just runs. Overrun needs an in-progress marker, for example `evaluation_started_at`/finished, plus a stale timeout, and an `evaluation_skipped` history entry. It can extend `claimEvaluationSlot`.
+  - For alert-eval-error (later): if errors become recorded states rather than throws, the slot stays claimed, which is intended. Only thrown errors release it.
+  - Tested:
+    - The check passes (1 passed, 6 skipped).
+    - Regressions pass: the built evaluation features (8), scheduler-due (1) and db-migrations (1).
+    - Backend tsc, oxlint (src/alerting) and oxfmt are clean.
+    - As a user: a scratch walk through the harness (a copied run.sh/config in tmp/walk and a file in src/alerting/__walk__; both removed). The results:
+      - Three modules evaluated T0 at once → one `evaluated`, two `skipped/duplicate`, with 1 warehouse call.
+      - A retry of T0 → skipped, still 1 call. 09:01 → evaluated (2 calls). T0 again after 09:01 → skipped.
+      - 09:02 with a failing query → threw. A retry of 09:02 → evaluated.
+      - The instance ended firing. `last_evaluation_slot` = 09:02 and `updated_at` was unchanged.
+- 2026-11-08T20:15:17Z supervisor: alert-eval-concurrency passed the gate in round 1
+- alert-eval-overrun (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108150000_add_alert_rules_evaluation_started_at.ts` adds a nullable `alert_rules.evaluation_started_at timestamptz`. It is set to `clock.now()` when a worker claims a slot and cleared when that evaluation ends. It is not in the rule API.
+    - `AlertScheduleModel.claimEvaluationSlot(ruleUuid, slot, {now, staleBefore})` now returns `{claimed: true, previous}` or `{claimed: false, reason: 'duplicate' | 'overrun'}`. Inside the row lock it checks for a duplicate first (this slot or a later one already claimed). It then checks for an overrun: `evaluation_started_at` is set and later than `staleBefore`. An overrun inserts the `evaluation_skipped` history row in the same transaction. A new `finishEvaluationSlot` clears the marker after a successful evaluation. `releaseEvaluationSlot` (on a throw) clears it too.
+    - `AlertStateHistoryModel.insertEvaluationSkipped` writes a rule-level row: `fingerprint` null, `state` `'evaluation_skipped'` (the column is NOT NULL and has no check constraint), the reason in `reason`, and `at` = the skipped slot. `listForRule` no longer filters out null fingerprints. It maps those rows to `{type: 'evaluation_skipped', uuid, ruleUuid, reason, at}` and sorts them before transitions within a slot.
+    - common: there is a new `AlertEvaluationSkipped` type, and `AlertStateHistoryEntry` is now `AlertStateTransition | AlertEvaluationSkipped`.
+    - `AlertEvaluator` takes `clock` (wired from `deps.clock` in index.ts).
+  - Decisions (the spec doesn't decide these):
+    - An in-flight evaluation counts as stale once it has run for `max(10m, 2 × interval)` (`MIN_STALE_EVALUATION_MS`). After that it no longer blocks newer slots, which recovers from a worker that crashed mid-evaluation. Until then, each newer tick after a crash is skipped as an overrun.
+    - Only overrun skips write history. Paused and duplicate skips still write none.
+    - An overrun skip doesn't claim its slot, and it doesn't throw, so the job is not retried.
+  - Known gap for a later session: a stale evaluation that finally returns still saves its (older) result. It can overwrite instances written by a newer slot meanwhile. Seen in the walk: the T+4 evaluation finished after T+15. A fix would guard `alertInstanceModel.save` on `last_evaluation_slot = slot`. The concurrency feature had the same property, so I left it alone.
+  - Tested:
+    - The check passes (1 passed, 6 skipped). Regressions pass: scheduling concurrency + scheduler-due (2), rules (4), db-migrations (1). evaluation.accept.ts: 8 pass. The 3 failures are the unbuilt nodata, error and annotation-templates features, the same as before.
+    - Backend and common tsc are clean, as are oxlint (backend src/alerting + migration) and oxfmt.
+    - As a user: a scratch walk through the harness (tmp/walk + src/alerting/__walk__, both removed). The setup was a T0 evaluation hung on the warehouse. The results:
+      - T+1 from a second module → skipped/overrun. T+2 from a third → skipped/overrun. A T0 retry → skipped/duplicate, still 1 warehouse call.
+      - After release, T0 → evaluated and T+3 → evaluated.
+      - With T+4 hung: T+13 → overrun and T+15 → evaluated (stale after 10m).
+      - A failing T+16 threw. T+17 → evaluated, because the throw cleared the marker.
+      - GET /rules/{uuid}/history as viewer listed evaluation_skipped/overrun at 09:13, 09:02 and 09:01, plus the firing transition at 09:00.
+- 2026-11-08T20:22:19Z supervisor: alert-eval-overrun passed the gate in round 1
+- alert-notify-firing (round 1) — 2026-11-08
+  - Changed:
+    - New migration `20261108160000_create_alert_notification_groups.ts` adds the dispatcher state table `alert_notification_groups`. It has a uuid PK, `project_uuid` (CASCADE), `contact_point_slug`, `group_key`, `last_sent_at` NOT NULL, `sent_alerts` jsonb `{"<ruleUuid>:<fingerprint>": "firing"|"resolved"}` and `created_at`, with unique (project_uuid, contact_point_slug, group_key). A row exists only once a group has been sent.
+    - New `AlertNotificationModel.ts`:
+      - `listActiveAlerts()`: instances in `firing`/`nodata`/`error` of non-shadow rules. `startsAt` = `state_since`.
+      - `listGroups`, `listContactPoints(projectUuid)`, `deleteGroups`.
+      - `claimGroupSend`: an insert-on-conflict-ignore for a new group, or an update guarded on the `last_sent_at` that was read. Only one notifier wins.
+      - `insertNotification`: one `alert_notifications` row per integration send. `alert_rule_uuid` is set only when the group holds one rule; `alerts` jsonb lists `{ruleUuid, fingerprint, status}`.
+    - New `AlertNotifier.ts`, on `module.notifier`, wired in index.ts:
+      - `flush()` routes each project's active alerts with `routeAlert` + `alertGroupKey`. A group is (contact point slug, group key).
+      - `isNotificationGroupDue` decides when a group sends:
+        - new group: once `now ≥ min(startsAt) + groupWait`;
+        - an alert not yet sent as firing: once `now ≥ last_sent_at + groupInterval`;
+        - otherwise: once `now ≥ last_sent_at + repeatInterval`.
+      - The send is claimed **before** anything leaves the process. That is at-most-once: a crash between the claim and the POST loses that notification. That beats a duplicate here; retries (alert-contact-retries) happen inside the send.
+      - Generic `webhook` integrations POST `buildAlertmanagerWebhookPayload`:
+        - receiver = Contact Point name; externalURL = siteUrl;
+        - generatorURL = `<siteUrl>/projects/<projectUuid>/alerting/rules/<ruleUuid>`;
+        - `maxAlerts` is passed through; `authorization.secretRef` → `Authorization: Bearer <secret>`;
+        - 10s timeout. A non-2xx response is logged as `failed` with `attempts: 1`.
+      - Groups that have no alerts any more are deleted at the end of a flush, so a refire waits group_wait again. A project whose flush throws keeps its groups.
+    - Unit tests: `AlertNotifier.test.ts` (4) covers the due rules and grouping.
+  - Decisions / for the next sessions:
+    - grouping, repeat and routing in notifications.accept.ts already pass with this dispatcher, because the timing rules above are the whole Alertmanager decision. Those sessions should verify them and may need only small changes.
+    - alert-notify-resolve:
+      - Today a group with no alerts is deleted silently, and resolved/normal series aren't loaded at all.
+      - Resolve needs to load recently resolved instances (state `resolved`, or a transition to normal), send them with `endsAt` when the group is next due (changed → groupInterval), honour `disableResolveMessage` per integration, and only then drop the group.
+      - `sent_alerts` already has room for a `resolved` status.
+    - alert-contact-retries: wrap `postWebhook` in the backoff loop (`deps.retry`, which isn't wired into the notifier yet) and record the real `attempts`. 4xx is not retried.
+    - alert-notifications-log: rows are already written. It needs the `GET /notifications` and `GET /rules/:uuid/notifications` routes. Map `ruleUuids` from `alerts[].ruleUuid`, and `alertStatus` from the payload status.
+    - Integrations other than `webhook` are skipped (nothing sent, nothing logged) until their alert-contact-* features. alert-contact-incident-io can reuse the same payload.
+    - Shadow rules are excluded from `listActiveAlerts`. alert-shadow-no-notify must add the `status: 'shadow'` log rows.
+    - `notifier.flush()` isn't called from `scheduler.tick()` yet. That belongs to alert-cycle-heartbeat/worker-wiring.
+  - Tested:
+    - The check passes (1 passed, 7 skipped).
+    - notifications.accept.ts: firing, grouping, repeat and routing pass. resolve, log and the two retries tests fail, because their features aren't built.
+    - Regressions: db-migrations 1/1, contact-points 3/3, scheduling 3 pass (the 4 failures are worker-wiring/heartbeat/health, unbuilt), evaluation 8 pass (nodata/error/annotation-templates unbuilt, as before).
+    - tsc (backend) is clean, and oxlint (src/alerting + migration) and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (`tmp/walk` and `src/alerting/__walk__`, both removed; the walk config needs `backendRoot = '../../..'` from `src/alerting/__walk__`):
+      - Setup: developer POSTs webhook `ops` (with an authorization secretRef); admin PUTs the tree `{contactPoint: ops, groupBy: [alertname], groupWait: 30s}` → 200; editor POSTs the disk rule; the rule is evaluated at 09:00 → firing.
+      - Flushes at +0/+10/+29s → 0 POSTs. At +30s, two module instances (workers) flushing at once → exactly 1 POST, with Bearer auth.
+      - The v4 payload has labels, annotations, startsAt 09:00:00, the zero endsAt, generatorURL with the rule uuid, and a 16-hex fingerprint.
+      - Flushes at +31/+45/+120/+299s and after a re-evaluation → still 1.
+      - One `sent` row in alert_notifications.
+      - Recovery → the group row is gone. Refire at 09:03 → nothing at +29s and a second POST at +30s with startsAt 09:03.
+- 2026-11-08T20:31:21Z supervisor: alert-notify-firing passed the gate in round 1
+- alert-notify-grouping (round 1) — 2026-11-08
+  - Changed:
+    - No production code. The dispatcher from alert-notify-firing already does grouping, group_interval and no re-send of unchanged groups. The rules live in `isNotificationGroupDue` and `groupAlerts` in `AlertNotifier.ts`.
+    - `AlertNotifier.test.ts`: one more unit test showing that one route splits its alerts into one group per group_by value (`root:{alertname="…"}` keys). The file now has 5 tests.
+  - How it works (for later sessions):
+    - group_interval is counted from the group's last **send** (`last_sent_at`), not from the time the new alert arrived. So db-2, firing at 09:01 in a group first sent at 09:00:30 with group_interval 5m, goes out at 09:05:30.
+    - A new alertname is its own group with its own group_wait. It doesn't wait for another group's interval.
+  - Tested:
+    - The check passes (1 passed, 7 skipped). The unit file passes 5/5. oxlint and oxfmt are clean on the test file.
+    - As a user: a scratch walk over real HTTP through the harness (`src/alerting/__walk__` plus a copy of run.sh in tmp with HERE pinned; both removed):
+      - Setup: developer POSTs webhook `ops` → 200. Admin PUTs the tree `{groupBy:[alertname], groupWait:30s, groupInterval:5m, repeatInterval:4h}` → 200. Editor creates the rules "Disk almost full" and "Memory high".
+      - db-1 fires at 09:00. One POST at 09:00:30.
+      - db-2 joins at 09:01. Evaluations every minute and flushes up to 09:05:29 → still 1 POST.
+      - At 09:05:30, the 2nd POST holds db-1 and db-2, with groupLabels `{alertname: Disk almost full}`.
+      - "Memory high" fires at 09:06. Nothing at 09:06:29. Its own POST at 09:06:30, with groupKey `root:{alertname="Memory high"}`.
+      - Flushes at 09:07, 09:10, 09:11 and 09:20 → still 3 POSTs, so unchanged groups aren't re-sent. There are 3 `sent` rows in alert_notifications.
+- 2026-11-08T20:34:40Z supervisor: alert-notify-grouping passed the gate in round 1
+- alert-notify-repeat (round 1) — 2026-11-08
+  - Changed:
+    - Nothing. The dispatcher from alert-notify-firing already handles repeat_interval. In `isNotificationGroupDue` (`AlertNotifier.ts`), a group whose alerts were all already sent as firing waits `repeatInterval` from its last send (`last_sent_at`). A group with an unsent alert waits `groupInterval` instead.
+    - The unit test "waits group_interval for changes and repeat_interval otherwise" in `AlertNotifier.test.ts` already covers the rule, so no test was added.
+  - How it works (for later sessions):
+    - Each repeat is counted from the previous send, not from when the alert first fired: 09:00:30, then 09:10:30, then 09:20:30.
+    - Every send goes through `claimGroupSend`, which moves `last_sent_at`. With two workers there is still only one repeat per interval.
+  - Tested:
+    - The check passes after init (1 passed, 7 skipped).
+    - As a user: a scratch walk over real HTTP through the harness (`src/alerting/__walk__` and `tmp/walk/run.sh` with HERE pinned; both removed):
+      - Setup: developer POSTs webhook `ops` → 200. Admin PUTs the tree `{groupBy:[alertname], groupWait:30s, groupInterval:1m, repeatInterval:10m}` → 200. Editor POSTs the disk rule → 200.
+      - The rule is evaluated firing every minute from 09:00 to 09:21. Every 15s, two module instances flush at the same time.
+      - POST #1 at 09:00:30. A flush at 09:10:29 → still 1. POST #2 at 09:10:30, POST #3 at 09:20:30.
+      - All three are `firing` with startsAt 09:00:00 and the same groupKey. There are 3 `sent` rows in alert_notifications.
+- 2026-11-08T20:37:48Z supervisor: alert-notify-repeat passed the gate in round 1
+- alert-notify-resolve (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotificationModel.listResolvedAlerts(keys)`: reads resolved alerts from `alert_state_history`. `endsAt` is the time of the series' last transition out of a notifying state (firing/nodata/error). `startsAt` is the last transition into one before that. Labels come from the history row. Annotations come from the instance, or from the rule if the instance was removed. Shadow rules are left out. Keys are bound as one JSON array (`jsonb_to_recordset`), because knex `raw` expands JS arrays into `?, ?` lists.
+    - `AlertNotifier`:
+      - A key a group sent as `firing` that is no longer active is added back to that same group as a resolved alert (`NotificationAlert = ActiveAlert | ResolvedAlert`, `alertStatus()`). `groupAlerts` takes an optional `sentAlerts(groupId)` lookup so a resolved alert only joins groups that sent it as firing.
+      - A resolved alert counts as a change, so it goes out after `groupInterval` from the last send.
+      - The claim stores only the firing alerts, so a resolved alert leaves the group once sent. An empty group is deleted on the next flush.
+      - Integrations with `disableResolveMessage` drop resolved alerts and post nothing if none are left. The group still claims, so it doesn't retry later.
+      - `flush()` now also visits projects that only have group rows left. Before, a project whose last alert resolved was never flushed again. This was the bug that made the first attempt send nothing.
+    - `AlertNotifier.test.ts`: added 2 tests (a resolved alert is a change; resolved alerts only join groups that sent them as firing). The file has 7 tests.
+  - Why history and not `alert_instances.state_since`: a resolved series goes to `normal` (or is removed) on its next evaluation, which can be before the group's next send. Its `state_since` would then give the wrong `endsAt`.
+  - Tested:
+    - The check passes after init (1 passed, 7 skipped). In the whole notifications file, firing, grouping, repeat, resolve and routing pass. notifications-log and contact-retries still fail with 404 on `/alerting/notifications`; those are later features.
+    - Unit file 7/7. oxlint and oxfmt are clean. Backend tsc is clean.
+    - As a user: a scratch walk over real HTTP through the harness (`src/alerting/__walk__` and `tmp/walk`; both removed):
+      - Setup: developer POSTs webhooks `a` and `b` (b with `disableResolveMessage`) → 200, and the viewer GET shows the flag. Admin PUTs the tree with `a` (continue) and `b` on team=infra, groupWait 30s, groupInterval 5m → 200. Editor POSTs the rule → 200.
+      - Fire at 09:00. One POST to each webhook at 09:00:30.
+      - Recover at 09:02. The series goes normal at 09:03.
+      - Nothing is sent up to 09:05:29. At 09:05:30, `a` gets a `resolved` payload: db-1, startsAt 09:00, endsAt 09:02 (not 09:03). `b` gets nothing.
+      - Flushes at 09:11 and 09:20 → no more POSTs. The log has 3 `sent` rows (firing, firing, resolved), and 0 groups are left.
+  - Next session: a send that fails still drops the resolved alert from the group (same as firing sends today). alert-contact-retries should cover retrying it.
+- 2026-11-08T20:45:38Z supervisor: alert-notify-resolve passed the gate in round 1
+- alert-notify-routing (round 1) — 2026-11-08
+  - Changed: no code. Routing already works: alert-notify-firing built `AlertNotifier.groupAlerts` on `routeAlert` from common, which handles nested routes, `continue` and the default route (unit-tested under alert-routing-tree). This session only checked it.
+  - Tested:
+    - After init, the check passes (1 passed, 7 skipped).
+    - As a user: a scratch walk over real HTTP through the acceptance harness (`tmp/walk`, with its own vitest config and run.sh copy; removed afterwards):
+      - Developer creates webhooks default-cp, infra-cp and critical-cp. Admin PUTs the tree: team=infra → infra-cp (continue), severity=~critical|high → critical-cp, default default-cp, groupWait 0s. The viewer GET returns the tree as saved.
+      - Critical infra rule → infra-cp and critical-cp get it; default-cp gets nothing.
+      - team=Support rule → default-cp only.
+      - team=web, severity=high rule → critical-cp only.
+      - team=infra, severity=low rule → infra-cp only. Its route matched, so the default route is not used, as in Alertmanager.
+  - Next session: if you need a scratch walk, put console output in a file. The harness setup swallows stdout.
+- 2026-11-08T20:47:53Z supervisor: alert-notify-routing passed the gate in round 1
+- alert-notifications-log (round 1) — 2026-11-08
+  - Changed:
+    - common: new `alerting/notifications.ts` with `AlertNotification`, `AlertNotificationStatus` (`sent|failed|shadow`), `AlertNotificationAlert` and `AlertNotificationListFilters`.
+    - backend: new `AlertNotificationService` (`list`, `listForRule`) and `parseAlertNotificationListQuery`. `AlertNotificationModel` gained `listNotifications`, `ruleExists` and `findProjectOrganizationUuid`. Routes: `GET .../alerting/notifications` and `GET .../alerting/rules/{uuid}/notifications`. The module exposes `alertNotifications`.
+    - `queryValues` / `singleQueryValue` moved from `AlertRuleService` to `alertingAccess` so both services share them (no behaviour change).
+    - Unit file `AlertNotificationService.test.ts` (9 tests, query parsing).
+  - Contract assumptions (CONTRACTS.md defines no notification-log API; narrowest reading):
+    - Who may read: anyone with `view:AlertRule` in the project (viewers and up). Outsiders 403, anonymous 401, unknown project 404.
+    - Query: `rule=<uuid>`, `contactPoint=<uuid>`, `limit=<1..1000>` (default 100), each at most once; malformed → 400. Unknown uuids return `[]`. `/rules/{uuid}/notifications` 404s when the rule isn't in the project and also takes `contactPoint` and `limit`.
+    - Order: `created_at` desc, then uuid. `alertStatus` is `firing` if any alert in the entry fires, else `resolved` (Alertmanager's group status). `ruleUuids` comes from `alerts`, so a group spanning rules (null `alert_rule_uuid`) is listed under each of its rules (the rule filter uses `alerts @> [{ruleUuid}]`).
+    - The payload is not returned (it can be large); `alerts`, `error`, `attempts`, `createdAt` and `sentAt` are.
+  - Tested:
+    - The check passes after init (1 passed, 7 skipped). Whole notifications file: 7 passed; only alert-contact-retries' 5xx test fails (the next feature; the 4xx test passes already because sends are single-attempt). rules.accept.ts 4/4. oxlint, oxfmt and backend tsc are clean.
+    - As a user: a scratch walk over real HTTP through the harness (`tmp/walk`, removed). Webhooks `ops` and `audit`; tree default `ops`, team=infra → `audit` (continue), groupWait 0s, groupInterval 1m. Rule A fires at 09:00 and recovers at 09:02; rule B fires at 09:00.
+      - Viewer `?rule=A` → 200, `[resolved, firing]` with contactPointUuid of audit, `integrationType: webhook`, `attempts: 1`, `status: sent`, `error: null`, `sentAt` set. `?rule=B` → its one firing entry. Unfiltered → 3 entries, matching the 3 POSTs `audit` received.
+      - `?contactPoint=audit` → 3; `?rule=A&contactPoint=ops` → 0; `limit=1` → 1. Editor `/rules/A/notifications` → `[resolved, firing]`; unknown rule → 404. `rule=nope` and `limit=0` → 400. Outsider → 403 on both endpoints; no session → 401.
+      - With `groupBy: []` both rules share a group: two entries with `ruleUuids` of both rules; the 09:02 one is `firing` (one resolved + one firing), and both show under `?rule=B`.
+  - Next session (alert-contact-retries): `insertNotification` already writes `status`, `attempts` and `error`; the notifier hardcodes `attempts: 1`. alert-shadow-no-notify should insert `status: 'shadow'` rows; the list already types and returns them (`NotificationLogEntry.status` needs `'shadow'` added).
+- 2026-11-08T20:55:12Z supervisor: alert-notifications-log passed the gate in round 1
+- alert-contact-retries (round 1) — 2026-11-08
+  - Changed:
+    - backend `AlertNotifier.ts`: new exported `sendWithRetry(send, {maxAttempts, initialDelayMs}, sleep?)` and `NotificationSendError(message, retryable)`. The webhook send goes through `sendWithRetry`, and the log row gets the real `attempts`, the final `status` and the last `error`. `AlertNotifier` deps gained `retry`; `createAlertingModule` passes `deps.retry` through.
+    - Unit tests: 6 new `sendWithRetry` cases in `AlertNotifier.test.ts` (13 total).
+  - Contract assumptions (CONTRACTS: "5xx/network retried up to maxAttempts with backoff, 4xx not. Every attempt outcome lands in alert_notifications"):
+    - One `alert_notifications` row per send (per integration), not one per attempt. It has the final outcome, `attempts` and the last error. The acceptance test reads exactly one entry with `attempts: 3`.
+    - Backoff before retry n is `initialDelayMs * 2^(n-1)` in real time (CONTRACTS: "real timers only for retry backoff"). No jitter, no cap. `maxAttempts < 1` still makes one attempt.
+    - Retryable: HTTP 5xx and any error that is not a `NotificationSendError` (connection refused, DNS, the 10s timeout). Not retried: every 4xx, including 429 (the contract says "4xx not"), and an unresolvable secret (a config error).
+    - Retries run inline in `flush()` after the group is claimed. A slow endpoint holds up that flush by at most maxAttempts × 10s plus backoff.
+  - Tested:
+    - The check passes after init (2 passed, 6 skipped). The whole notifications.accept.ts passes 8/8. The unit file passes 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (run.sh and config copied to `tmp/walk`, then removed), with retry `{3, 100ms}`. In each case a webhook contact point `ops` took everything with groupWait 0s, a rule fired, the notifier flushed, and the viewer read `GET /notifications?rule=`.
+      - 500, 503, 200 → 3 POSTs, flush ≈316ms (100+200 backoff), one entry `sent`, attempts 3, error null, sentAt set.
+      - Always 500 → 3 POSTs, one entry `failed`, attempts 3, error "Webhook responded with HTTP 500 Internal Server Error".
+      - 400 → 1 POST, `failed`, attempts 1, no wait. 429 → same. 200 → `sent`, attempts 1.
+  - Next session: other integrations (slack/incident.io/email) should throw `NotificationSendError(msg, retryable)` for their own permanent failures (e.g. Slack app not installed → `false`) and wrap their send in `sendWithRetry(..., this.deps.retry)`.
+- 2026-11-08T20:58:59Z supervisor: alert-contact-retries passed the gate in round 1
+- alert-contact-slack-webhook (round 1) — 2026-11-08
+  - Changed:
+    - New backend `src/alerting/slackMessage.ts`: `buildAlertTemplateData` (Grafana's template data: Receiver, Status, Alerts[], GroupLabels, CommonLabels/CommonAnnotations as the key/values shared by every alert, ExternalURL), `renderSlackMessage(integration, data)` (title/text default to `{{ template "slack.title" . }}` / `{{ template "slack.message" . }}`; a render error is prefixed `Slack title|text template: `), and `buildSlackWebhookPayload` (one Grafana-style attachment: color `#D63232` firing / `#36a64f` resolved, title, text, fallback = title, footer `Lightdash`, ts). 6 unit tests in `slackMessage.test.ts`.
+    - `AlertNotifier.ts`: `sendIntegration` handles `slack_webhook` as well as `webhook`. Slack resolves `url.secretRef` on each attempt and POSTs the payload through `sendWithRetry`; the log row's `payload` is the Slack body (never the URL). Moved the fetch/status handling into a module-level `postJson(what, url, headers, payload)` and the secret lookup into `resolveSecret` (missing → non-retryable `Secret "<name>" could not be resolved`). Both integrations share them. A template that doesn't render is a non-retryable failure: nothing is POSTed, and the row is `failed` with attempts 1.
+  - Contract assumptions:
+    - Payload shape: CONTRACTS doesn't give one, so I used Grafana's Slack notifier shape (`attachments[0]` with title/text). `username` (CONTRACTS lists it) is still not in the as-code schema, so it isn't sent.
+    - DashboardURL, SilenceURL and ValueString are `''` because Lightdash has no rule dashboards, silences or values on ActiveAlert yet, so the ported templates drop the Dashboard link. A firing alert's EndsAt is Go's zero time `0001-01-01T00:00:00Z`, as in Grafana.
+    - Titles and texts are not trimmed. The ported templates' whitespace is kept as in Grafana.
+    - With the default templates, a resolved-only notification posts an empty title and text, because `slack.title`/`slack.message` only range `.Alerts.Firing`. Grafana does the same with these templates. Set `disableResolveMessage` or a custom template to avoid it.
+  - Tested:
+    - The check passes after init (2 passed, 4 skipped). notifications.accept.ts passes 8/8, AlertNotifier.test.ts 13/13 and slackMessage.test.ts 6/6. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (run.sh and config copied to `tmp/walk`, then removed). Five slack_webhook contact points were all routed with continue, and a rule fired on db-1 and db-2:
+      - Default templates → `/slack/infra` got title `2 Disk almost full` and the text had each description plus `- <https://runbooks.example.test/disk|Runbook>`.
+      - Custom templates → `firing: 2 alert(s)` / `<db-1><db-2>`.
+      - Missing secret → log `failed`, attempts 1, `Secret "missing-secret" could not be resolved`. Bad template → `failed`, `Slack text template: template: no such template "nope"`, no POST. Slack 404 → `failed`, attempts 1, `Slack webhook responded with HTTP 404 Not Found`.
+      - Recovery → green attachments; custom `resolved: 2 alert(s)`, and the default templates render blank, as noted above.
+  - Next session (alert-contact-slack-app): reuse `buildAlertTemplateData` and `renderSlackMessage` from `slackMessage.ts`, and add a `slack_app` branch in `sendIntegration` that calls `deps.slackApp.postMessage({organizationUuid, channel, text, blocks?})` inside `sendWithRetry`. "App not installed" should be `NotificationSendError(msg, false)`.
+- 2026-11-08T21:05:15Z supervisor: alert-contact-slack-webhook passed the gate in round 1
+- alert-contact-slack-app (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotifier.ts`: `sendIntegration` now handles `slack_app`. It renders title and text with `renderSlackMessage`, using the same template data and defaults as `slack_webhook`. It sends `{channel, text}` through the new `postSlackApp` inside `sendWithRetry`. `postSlackApp` looks up the project's organization with `alertNotificationModel.findProjectOrganizationUuid`, then calls `deps.slackApp.postMessage({organizationUuid, channel, text})`. The log row's `payload` is `{channel, text}`. New exported `SlackAppClient` type in the notifier deps. `index.ts` passes `deps.slackApp` to the notifier.
+    - `slackMessage.ts`: `buildSlackAppText({title, text})` puts the title in bold (`*…*`) on the first line, with whitespace collapsed because mrkdwn bold can't span lines, then the text. Empty parts are left out. 2 unit tests in `slackMessage.test.ts`.
+  - Contract assumptions:
+    - Message shape: CONTRACTS gives `postMessage({organizationUuid, channel, text, blocks?})` but no layout. We send mrkdwn `text` only, with no `blocks` and no attachment colour.
+    - Retry classification: the harness (and the dep's doc comment) throws a plain `Error` when the app isn't installed. Errors whose message matches `/not installed/i` become `NotificationSendError(msg, false)`: failed, attempts 1. Any other plain error is retried. A `NotificationSendError` thrown by the client passes through as it is. A project with no organization is a non-retryable failure.
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). The slack-webhook check passes 2/2, notifications.accept.ts 8/8, AlertNotifier.test.ts 13/13 and slackMessage.test.ts 8/8. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness over real HTTP. run.sh and the config were copied to `src/__walk__/alerting` and removed afterwards.
+      - Created contact point `infra-app` (slack_app, `#infra-alerts`), routed the root to it, and fired "Disk almost full" on db-1 and db-2. One post went to `#infra-alerts` with the harness org's uuid and text `*2 Disk almost full*` plus both descriptions and runbook links. The log row is `sent`, `slack_app`, attempts 1.
+      - Set `installed = false` and fired "CPU high". No post was made, and the log row is `failed`, attempts 1, error `Slack app is not installed for this organization`.
+  - Next session: the module still isn't wired into the app. Whoever wires `createAlertingModule` must adapt Lightdash's `SlackClient` (`clients/Slack/SlackClient.ts`) to `slackApp.postMessage`. When the org has no installation, the adapter should throw `NotificationSendError(msg, false)`, or an error whose message says "not installed".
+- 2026-11-08T21:10:07Z supervisor: alert-contact-slack-app passed the gate in round 1
+- alert-contact-incident-io (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotifier.ts`: `sendIntegration` now handles `incident_io` on the same path as `webhook`. It builds the Alertmanager v4 payload with `buildAlertmanagerWebhookPayload` (same receiver, groupKey, groupLabels and fingerprints), but without `maxAlerts`, because the incident_io schema has no such field. The new `postIncidentIo` resolves `token.secretRef` with `resolveSecret`, so a missing secret is a non-retryable failure. It then POSTs JSON to `integration.url` with `authorization: Bearer <token>` through `postJson`: a 4xx is not retried, a 5xx or network error is. The log row's `payload` is the v4 body, and the log message prefix is `incident.io responded with HTTP …`.
+  - Contract assumptions: CONTRACTS 4.3 says only "Alertmanager webhook v4", so the body is exactly what the generic webhook sends. There are no incident.io-specific fields such as `deduplication_key` or `metadata`, and the URL is taken as-is from the integration (not a secret).
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). The slack and incident-io checks in integrations.accept.ts pass 4/4, notifications.accept.ts passes 8/8 and AlertNotifier.test.ts passes 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness over real HTTP, using a copy of run.sh and the config in `src/__walk__/alerting`, removed afterwards.
+      - Created the incident.io contact point through the admin API (200), plus `bad-token` (secretRef `nope`) and `rejects` (an endpoint that answers 401), all routed with continue. Fired on db-1 and db-2 at t0, then recovered both at t+2m.
+      - `/incident` got two POSTs, each with `Bearer test-secret-not-real`, `application/json` and `version: "4"`. The first was `firing` with endsAt `0001-01-01T00:00:00Z`; the second was `resolved` with endsAt t+2m and the same fingerprints per instance.
+      - Log rows: `sent` with attempts 1; `failed` with attempts 1 and error `incident.io responded with HTTP 401 Unauthorized`; `failed` with attempts 1 and error `Secret "nope" could not be resolved`.
+  - Next session (alert-contact-email): add an `email` branch in `sendIntegration`. The remaining unsupported types still return early without logging.
+- 2026-11-08T21:14:31Z supervisor: alert-contact-incident-io passed the gate in round 1
+- alert-contact-email (round 1) — 2026-11-08
+  - Changed:
+    - New `alerting/emailMessage.ts` (`buildEmailMessage`) plus `emailMessage.test.ts` (5 tests). It builds the subject, the text body and an HTML body (values HTML-escaped) from the group's template data.
+    - `AlertNotifier.ts`: new dep `email: AlertEmailClient` (`sendEmail({to, subject, text, html?})`, the same shape as `AlertingModuleDeps.email`), wired in `index.ts`. `sendIntegration` has an `email` branch: one `sendEmail` call per group, with every address of the integration in `to`. It goes through `sendWithRetry`, so a thrown error is retried unless it is a non-retryable `NotificationSendError`. An empty address list is a non-retryable failure (the API already rejects it with 400). The log row's `payload` is the message `{to, subject, text, html}`. The early "unsupported type" return is gone, since all five integration types are now handled.
+  - Contract assumptions: there are no ported email templates, and the email integration has no title or text fields, so the format is fixed and shaped like Grafana's default email.
+    - Subject: `[FIRING:n]`, `[FIRING:n, RESOLVED:m]` or `[RESOLVED]`, then the distinct `alertname`s (rule names, joined by ", "), then the other group-label values in parentheses. Line breaks are stripped from the subject.
+    - Body: Firing and Resolved sections, each listing every alert's summary, description, labels, runbook and rule link.
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). The other alert-contact tests in integrations.accept.ts pass, except `alert-contact-test-notification`, a later feature not yet built. notifications.accept.ts passes 8/8 and AlertNotifier.test.ts 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk through the harness over real HTTP, using a copy of the support files in `src/__walk__/alerting`, removed afterwards.
+      - POST /contact-points `oncall-email` with two addresses returned 200; with `addresses: []` it returned 400.
+      - Routed the root to it, then fired "Disk almost full" on db-1 and db-2 at t0. One email went to both addresses, with subject `[FIRING:2] Disk almost full` and both descriptions in the text and html.
+      - Recovered both at t+2m. One email went out with subject `[RESOLVED] Disk almost full`.
+      - /notifications showed two rows: `sent`, `email`, attempts 1.
+  - Next session: whoever wires `createAlertingModule` into the app must adapt Lightdash's `EmailClient` (`clients/EmailClient/EmailClient.ts`) to `email.sendEmail`. The adapter should throw `NotificationSendError(msg, false)` when SMTP isn't configured.
+- 2026-11-08T21:22:24Z supervisor: alert-contact-email passed the gate in round 1
+- alert-contact-test-notification (round 1) — 2026-11-08
+  - Changed:
+    - `AlertNotifier.ts`: the old `sendIntegration` is now two steps. `deliver({group, alerts, contactPoint, integration, now, retry, generatorURL})` builds one integration's message and sends it, returning `{payload, attempts, error}`. `sendIntegration` keeps the `disableResolveMessage` filter and the send-log insert. New `sendTest(projectUuid, contactPoint)` → `ContactPointTestResult` `{ok, results: [{type, ok, error?}]}`, one result per integration in order. New exports: `TEST_ALERT_LABELS` and `TEST_ALERT_ANNOTATIONS`.
+    - `ContactPointService.sendTest` needs the `manage ContactPoint` ability (viewer, interactive_viewer and editor get 403). An unknown uuid returns 404. A new dep, `testNotifier`, is wired in `index.ts`, where the notifier is now built before the services. `router.ts` has `POST /contact-points/:contactPointUuid/test`.
+  - Contract assumptions (PROGRESS API table: "synthetic `TestAlert`; `{ok, results}`"; narrowest reading):
+    - The alert is one firing alert, shaped like Grafana's test alert. Labels: `{alertname: TestAlert, instance: Lightdash}`. Annotations: summary `Notification test` and a fixed description. Its fingerprint comes from the labels, `startsAt` is the clock's now, and `ruleUuid` is `''`. `generatorURL` points to `/projects/<p>/alerting/contact-points/<uuid>`. groupKey is `test:<slug>`, and groupLabels are `{}`.
+    - Each integration gets exactly **one attempt**, with no retry or backoff, so the user gets an answer right away. A failed send is a result (`ok: false` plus the error, such as `Webhook responded with HTTP 500 Internal Server Error` or `Secret "nope" could not be resolved`); the HTTP request still returns 200.
+    - Test sends are **not** written to `alert_notifications` and don't touch notification groups. The send log is for rule notifications, and a log row needs ruleUuids. Managed Contact Points can still be tested, because a test doesn't change them. Shadow mode doesn't apply, because a Contact Point has no shadow flag.
+  - Tested:
+    - The check passes after init (1 passed, 5 skipped). integrations.accept.ts passes 6/6, notifications.accept.ts 8/8 and contact-points.accept.ts 3/3. AlertNotifier.test.ts passes 13/13. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through a copy of the harness in `src/__walk__/alerting`, removed afterwards.
+      - Created contact point `ops` with webhook, slack_webhook, slack_app and email integrations. As admin, POST /test returned 200 `{ok: true}` with 4 ok results in order.
+      - The webhook got an Alertmanager v4 payload with `alertname: TestAlert`. The Slack webhook got one attachment, `1 Notification test`. The Slack app posted to `#ops`. /notifications stayed empty.
+      - With the webhook answering 500, a test as developer returned `ok: false`; the webhook result carried the HTTP 500 error and the other three were ok.
+      - A slack_webhook with secretRef `nope` returned ok false with an error naming the secret.
+      - viewer, interactive_viewer and editor got 403, no user got 401, and an unknown uuid got 404.
+  - Next: the UI's `ContactPointsList` `onSendTest` should call this endpoint and show "Test notification sent", or the failing results' errors.
+- 2026-11-08T21:28:36Z supervisor: alert-contact-test-notification passed the gate in round 1
+- alert-eval-nodata (round 1) — 2026-11-08
+  - Changed:
+    - `evaluateAlertSeries.ts`: new `evaluateAlertNoData({rule, previous, at})`, `getAlertNoDataLabels(rule)` and `DATASOURCE_NO_DATA_ALERTNAME`. The "settle the missing series" loop is now the shared `settleMissingSeries` helper, and `getAlertInstanceTiming` is shared too. `evaluateAlertSeries` itself is unchanged and still returns `previous` for `rows: []`.
+    - `AlertEvaluator.evaluateClaimedRule`: an empty result goes to `evaluateAlertNoData`. Instances, transitions and history are saved the same way as before.
+    - `evaluateAlertSeries.test.ts`: 5 new unit tests (15 in total).
+  - Behaviour (CONTRACTS API notes: "No rows → noDataState"):
+    - `keep_last`: nothing changes, `lastEvaluatedAt` included.
+    - `normal`: every stored series is settled as not meeting the condition, so firing goes to resolved and then normal/removed.
+    - `nodata`: the same as `normal`, plus a synthetic series in state `nodata`. It is notified as firing, because `NOTIFYING_ALERT_STATES` already included nodata. `stateSince` is kept while it stays nodata.
+    - `alerting`: the same, but the synthetic series goes through `transitionAlertInstance` with conditionMet true, so it fires.
+    - The synthetic series is stored like any other series. When rows come back, it is missing from them and gets settled: nodata→normal (removed), or firing→resolved→normal. A resolved notification goes out, because a transition out of a notifying state is in the history.
+  - Contract assumptions (narrowest reading):
+    - (1) Synthetic labels are `{...rule.labels, alertname: DatasourceNoData, rulename: <rule name>}`. The rule labels are kept so the series routes like the rule's own series. There is no datasource_uid or ref_id. Annotations are the rule's annotations, and value is null.
+    - (2) With `alerting`, the existing series resolve as they do with `nodata`. The contract only says "DatasourceNoData firing".
+    - (3) With `alerting`, the synthetic series honours the rule's `for` (pending first) and `keepFiringFor`, as in Grafana. With `nodata`, it goes straight to nodata.
+    - (4) Preview (`previewRule`) is unchanged: an empty result still gives `series: []`. It does not show the synthetic series.
+  - Tested:
+    - After init, the check passes (1 passed, 10 skipped). evaluation.accept.ts: 9 pass. The only failures are alert-eval-error and alert-annotation-templates, which are not built yet. notifications.accept.ts passes 8/8, and the unit file 15/15. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP through the harness (run.sh and config copied to tmp/walk, both removed afterwards). An editor created a rule, PATCHed each noDataState in turn, and evaluated it fired → empty → empty → data → recovered:
+      - nodata: rule state `nodata`, a DatasourceNoData instance in `nodata` (rulename = the rule name), and db-1 resolved and then removed. The webhook got DatasourceNoData `firing`, and `?state=nodata` listed the rule. When data came back, DatasourceNoData was removed and a `resolved` notification was sent.
+      - normal: db-1 resolved, with no synthetic series.
+      - alerting: DatasourceNoData firing (rule firing), notified. When data came back it went resolved and then disappeared.
+      - keep_last: db-1 stayed firing at 95.
+      - The history showed normal→nodata, nodata→normal, normal→firing, firing→resolved and resolved→normal for DatasourceNoData.
+  - Next: alert-eval-error should mirror this. Add `evaluateAlertError`, or generalise it with alertname DatasourceError and annotation `error` = the message. Catch the query error in `evaluateClaimedRule`; today the error is rethrown and the slot is released. Note that `/state` returns 404 (not built yet), and alert-eval-error's test reads it.
+- 2026-11-08T21:35:04Z supervisor: alert-eval-nodata passed the gate in round 1
+- alert-eval-error (round 1) — 2026-11-08
+  - Changed:
+    - `evaluateAlertSeries.ts`: the nodata synthetic-series logic is now the shared `evaluateSyntheticSeries`. Added `evaluateAlertError({rule, previous, at, error})`, `getAlertErrorLabels` and `DATASOURCE_ERROR_ALERTNAME`. `evaluateAlertNoData` behaves as before.
+    - `AlertEvaluator.evaluateClaimedRule`: a throw from `runRuleQuery` (getWarehouseClient or runQuery) is caught and passed to `evaluateAlertError` with `getErrorMessage(error)`. The evaluation finishes as `evaluated`; it no longer rethrows and releases the slot. Errors after the query (e.g. a DB save) still rethrow as before.
+    - `GET /state` (router + `AlertRuleService.listState`, type `AlertStateInstance` in common `alertRules.ts`): `{instances: [{ruleUuid, ruleName, state, labels, annotations, value, since}]}`, firing and pending only, needs view AlertRule. alert-eval-error's test reads it. This is the documented shape from the API table, so alert-ai-state-api should only need to verify it (its check is in shadow-ascode-ai.accept.ts and was not run here).
+    - `evaluateAlertSeries.test.ts`: 4 new unit tests (19 in total).
+  - Behaviour:
+    - `error`: existing series resolve. A synthetic series `{...rule.labels, alertname: DatasourceError, rulename}` in state `error` is added, with annotations `{...rule.annotations, error: <message>}`. It is notified as firing, and the rule state is `error`. While the source stays down, `stateSince` is kept and the `error` annotation follows the latest message.
+    - `alerting`: the same, but DatasourceError goes through the state machine with conditionMet true (honours `for`) and fires.
+    - `keep_last`: nothing changes.
+    - On recovery the synthetic series is missing from the rows and is settled: error→normal (removed), or firing→resolved→normal. A resolved notification goes out.
+  - Contract assumptions: the same narrowest readings as alert-eval-nodata (rule labels kept on the synthetic series; existing series resolve under `error` and `alerting`). Preview is unchanged: a failed query still returns `{error, series: []}`.
+  - Tested:
+    - After init, the check passes (1 passed, 10 skipped). evaluation.accept.ts: 10/11 pass, and the only failure is alert-annotation-templates (not built). notifications.accept.ts: 8/8. scheduling.accept.ts fails only in the unbuilt worker-wiring, heartbeat and health tests. Unit file: 19/19. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk over real HTTP via a copied run.sh/config in tmp/walk (removed afterwards). Fired db-1, then PATCHed errorState to error, alerting and keep_last in turn. For each, the source refused connections (ECONNREFUSED), then recovered. Results:
+      - error: rule `error`, DatasourceError `error` with the message, db-1 resolved, and a webhook DatasourceError firing with the error annotation.
+      - alerting: DatasourceError firing, and it appeared in /state.
+      - keep_last: db-1 stayed firing.
+      - Recovery: DatasourceError left /rules/:uuid and /state, and resolved notifications were sent.
+      - /state without a session gave 401.
+- 2026-11-08T21:41:04Z supervisor: alert-eval-error passed the gate in round 1
+- alert-cycle-heartbeat (round 1) — 2026-11-08
+  - Changed:
+    - New `alerting/AlertHeartbeatModel.ts` (`insert`) for the append-only `alert_evaluator_heartbeats` table.
+    - `AlertScheduler.tick()`: after it enqueues due rules, it now (1) calls `notifier.flush()`, (2) calls the heartbeat URL (`deps.heartbeat`: `{url, method: 'GET'|'POST'}` or null; no body; 10s timeout) and (3) inserts one heartbeat row: `cycle_started_at` = clock at the start of the tick, `completed_at` = clock at the end, `rules_evaluated` = number of rules enqueued this tick, `heartbeat_status` = HTTP status as text, `'failed'` on a network error or timeout, or null without a URL, and `error` = flush/heartbeat failure messages joined with `; `, or null. A failed flush or heartbeat is logged and never thrown, so the tick still resolves. A failed row insert does throw, because the cycle didn't complete.
+    - `index.ts`: the scheduler gets `notifier`, `alertHeartbeatModel` and `heartbeat`. `AlertHeartbeatConfig` is exported from `AlertScheduler.ts`.
+  - Contract assumptions: a "cycle" is one `scheduler.tick()`, since evaluations run as separate `alertRuleEvaluate` jobs. Non-2xx responses are recorded but not retried.
+  - Tested: after init, the check passes (2 passed, 5 skipped). scheduling.accept.ts fails only alert-worker-wiring and alert-health, which aren't built. notifications.accept.ts: 8/8 (flush now also runs from tick). Backend tsc, oxlint and oxfmt are clean. As a user: a scratch harness walk (tmp/walk, removed afterwards) ran these ticks:
+    - POST heartbeat: one POST /heartbeat and row 200.
+    - URL returning 503: the tick resolved and wrote row 503 with error "heartbeat POST returned HTTP 503".
+    - Mock server stopped: the tick resolved and wrote row `failed` with error "fetch failed".
+    - GET config: one GET /ping?x=1.
+    - No URL: a row with null status and no request.
+  - Next:
+    - alert-health can read the latest `completed_at` from this table. Add a `getLatest` to AlertHeartbeatModel; the test expects lastCycleAt = T0 and lag from the clock.
+    - alert-worker-wiring must map env `ALERTING_HEARTBEAT_URL`/`ALERTING_HEARTBEAT_METHOD` (assumption 4) into `deps.heartbeat`.
+- 2026-11-08T21:46:19Z supervisor: alert-cycle-heartbeat passed the gate in round 1
+- alert-health (round 1) — 2026-11-08
+  - Changed:
+    - `AlertHeartbeatModel.getLatestCompletedAt()`: `max(completed_at)` from `alert_evaluator_heartbeats`, or null.
+    - New `alerting/AlertHealthService.ts`: `getHealth()` returns `{status, lastCycleAt, lagSeconds}`. With no rows it returns `never_run` with lastCycleAt and lagSeconds both null. Otherwise lagSeconds = whole seconds from the latest `completed_at` to `clock.now()` (floored, never below 0), and status is `stale` when lagSeconds > 60 (`ALERTING_STALE_AFTER_SECONDS`), else `ok`.
+    - `router.ts`: `GET /api/v1/alerting/health` (`ALERTING_HEALTH_API_PATH`) answers `{status: 'ok', results}` **without a session**. `handleErrors` now covers this path as well as the project base. `index.ts`: the module exposes `alertHealth`, and the scheduler and health service share one AlertHeartbeatModel.
+    - Unit file `AlertHealthService.test.ts` (4 tests: never_run, 60s still ok, 61s stale, flooring and negative clamp).
+  - Contract assumptions:
+    - The endpoint is unauthenticated, like the engine's `/healthz` (CONTRACTS §1.3), because uptime checks have no session. It reveals only the evaluator's lag and last cycle time, nothing about any project.
+    - "Stale after a minute of silence" is read as lag strictly greater than 60s. Exactly 60s is still `ok`.
+    - It always answers HTTP 200: staleness is in the body, not a 503.
+  - Tested:
+    - After init the check passes (1 passed, 6 skipped). The unit file passes 4/4. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch harness walk (tmp/walk, removed afterwards) over real HTTP with real Postgres and no session:
+      - never_run before any tick.
+      - Ticked at wall-clock now, then really waited 20s: `ok`, lagSeconds 20.
+      - Clock moved forward: +60s `ok`, +61s `stale`, +5min `stale` with lag 300.
+      - A new tick: back to `ok` with lag 0.
+      - POST to the health path: 404. Project `/state` without a session: still 401.
+  - Next: alert-worker-wiring mounts `createAlertingRouter` in the app. The health route comes with it, but the app's own auth middleware must not shadow `/api/v1/alerting/health`.
+- 2026-11-08T21:51:31Z supervisor: alert-health passed the gate in round 1
+- alert-worker-wiring (round 1) — 2026-11-08
+  - Changed:
+    - New `alerting/alertingTaskHandlers.ts`, exposed as `module.taskHandlers` and `module.seedTick()` in `alerting/index.ts`:
+      - `alertingTick` runs `scheduler.tick()`, then always queues the next tick at `clock.now() + 15s` with job key `alerting-tick` (`ALERTING_TICK_JOB_KEY`). A failed cycle is logged and not thrown: the next tick is the retry, and health shows it as stale. Only a failure to queue the next tick throws, so graphile retries the job.
+      - `alertRuleEvaluate` calls `evaluator.evaluateRule(ruleUuid, {scheduledAt})` and rejects an invalid `scheduledAt`.
+      - `seedTick()` queues a tick at now under the same key.
+    - `scheduler/SchedulerWorker.ts`:
+      - Optional `alertingModule` arg, plus `setAlertingModule()` for factories that don't pass it. The EE factory is protected, so App and SchedulerApp call the setter before `run()`.
+      - `getFullTaskList()` spreads in both handlers when a module is set; with no module there are no handlers. The EE worker spreads `super.getFullTaskList()`, so it gets them too. `types.ts` keeps the alerting handlers optional.
+      - `run()` seeds the first tick after graphile utils are ready, when `alertingTick` is in the enabled tasks. A seed failure is logged, never thrown.
+    - New `src/createProductionAlertingModule.ts` (at the src root, not `alerting/`: the acceptance test looks for `createAlertingModule(` outside `alerting/`). It builds the module from Lightdash's own clients:
+      - Warehouse: `WarehouseClientFactory.withWarehouseClient`, required by the `lightdash/no-direct-warehouse-client` lint rule. It uses a `resolved` ref with the project's saved credentials (`ProjectModel.getWarehouseCredentialsForProject`) and a system actor: surface `schedule`, `person: null`, `queryContext: QueryExecutionContext.ALERT`. One scoped connection per `runQuery`.
+      - Email: new public `EmailClient.sendPrerenderedEmail({to, subject, text, html?})`. It throws a non-retryable `NotificationSendError` when SMTP isn't set up.
+      - Slack: `SlackClient.postMessage`. `SlackInstallationNotFoundError` and `MissingConfigError` become a non-retryable "Slack app is not installed".
+      - Job queue: graphile `addJob` with `jobKey`, `runAt` and `maxAttempts: 3`.
+      - Env: `ALERTING_HEARTBEAT_URL` and `ALERTING_HEARTBEAT_METHOD` (GET/POST, case-insensitive, default POST). An invalid value throws at startup. Secrets come from `ALERTING_SECRET_<NAME>`: non-alphanumerics become `_`, then upper-cased.
+      - Notification retry: 3 attempts from 1s. Clock: wall clock.
+    - `App.ts`: builds the module lazily, mounts `createAlertingRouter(...)` after the session/JWT/account middlewares and just before `/api/v1` `apiV1Router`, and hands the module to the scheduler worker; `stop()` closes it. `SchedulerApp.ts` builds the module the same way for its worker. The router's only `use` calls are scoped to the alerting base path and the health path, so the app's other routes fall through.
+    - Unit files: `alerting/alertingTaskHandlers.test.ts` (5 tests) and `createProductionAlertingModule.test.ts` (10 tests).
+  - Contract assumptions:
+    - The evaluator queries with the project's shared credentials as a person-less system actor. Projects that require personal credentials fail evaluation and follow errorState. The federation line still has to mint the `system:alert-evaluator` identity, and the `AlertRuleQueryContext` is not passed to the factory yet.
+    - Retry and attempt counts are constants, not config.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped). The full scheduling.accept.ts passes 7/7.
+    - New unit files: 5/5 and 10/10. SchedulerWorker.test.ts: 12/12. SchedulerWorker.quiesce.test.ts: 7/7.
+    - Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk (packages/backend/tmp/walk, removed afterwards) on the throwaway Postgres used real graphile-worker `run()` with the alerting entries of `SchedulerWorker.getFullTaskList()`, the production graphile job queue and the env heartbeat (GET). The fake warehouse returned db-1=95.
+      - Before any tick, health was `never_run`, and a worker with no module had no `alertingTick`.
+      - After `seedTick()`, graphile ran the tick, which queued `alertRuleEvaluate`; graphile ran that, and db-1 was `firing`.
+      - The heartbeat got one GET /hb, health was `ok` with lag 0, and exactly one job `alertingTick`/`alerting-tick` was queued 15s after the seed.
+      - About 18s in, graphile had run the second tick on its own: 2 heartbeat rows, and the next tick queued at +30s. There was still one warehouse call, because the 1m slot was not re-evaluated.
+  - Not verified: booting the full App/SchedulerApp. That needs full config (S3 and others) not available locally. The mount position and the middlewares were checked by reading the code: the JWT, session-account and unverified-session middlewares all pass sessionless requests through.
+- 2026-11-08T22:06:34Z supervisor: alert-worker-wiring passed the gate in round 1
+- alert-ai-state-api (round 1) — 2026-11-08
+  - No code changes. The endpoint already shipped in commit 86c83ec7e (alert-eval-error):
+    - Route: `GET ${ALERTING_PROJECT_API_PATH}/state` in `alerting/router.ts`.
+    - Service: `AlertRuleService.listState`. It checks the `view AlertRule` ability, then lists every rule's instances and keeps `firing` and `pending`.
+    - Shape: `AlertStateInstance` in common `alerting/alertRules.ts`, `{ruleUuid, ruleName, state, labels, annotations, value, since}`, under `results.instances`.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - As a user: a scratch walk (packages/backend/tmp/walk, removed afterwards) went through the harness's real HTTP router on the throwaway Postgres.
+      - An empty project returned `instances: []`.
+      - Rules in the project:
+        - Firing on db-1 and db-4.
+        - Pending (`for: 5m`) on db-2.
+        - Quiet on db-3.
+        - Fired, then recovered (resolved), on db-5.
+        - Failing source (state `error`).
+      - Viewer, editor and admin all got exactly the 3 firing and pending instances. Each had labels (including alertname and instance), annotations, value and since=T0. The resolved, normal and error instances were left out.
+      - Outsider got 403, no session got 401, and an unknown project got 404.
+  - Notes for the next session:
+    - Instances are not sorted (rule list order, then DB order). `error` and `nodata` series are not listed, because the feature says "firing and pending". With errorState/noDataState=alerting they are `firing` and so are listed.
+    - The endpoint has no filters, and shadow and paused rules' instances are listed like any other. Nothing in the spec asks otherwise.
+- 2026-11-08T22:10:00Z supervisor: alert-ai-state-api passed the gate in round 1
+- alert-ai-history-api (round 1) — 2026-11-08
+  - Changed:
+    - Route: `GET ${ALERTING_PROJECT_API_PATH}/history` in `alerting/router.ts`. Query: `rule=<uuid>`, `since=<ISO 8601 time>` (inclusive, `at >= since`) and `limit=<1..1000>` (default 100). The query is parsed by `parseAlertHistoryQuery` in `AlertRuleService.ts`, and bad values give 400.
+    - Service: `AlertRuleService.listProjectHistory`. It checks `view AlertRule` (outsider 403, no session 401, unknown project 404). An unknown `rule` gives 404, the same as the per-rule endpoint.
+    - Model: `AlertStateHistoryModel.listForProject` joins `alert_rules` to get the rule's name. It uses the same newest-first order and row mapping as `listForRule`. Those were moved into module-level `HISTORY_COLUMNS`, `NEWEST_FIRST` and `toHistoryEntry`; `listForRule` behaves the same.
+    - Common: `AlertProjectHistoryEntry` (= `AlertStateHistoryEntry & {ruleName}`) and `AlertHistoryFilters`. Results are a plain array under `results`. It includes `evaluation_skipped` entries as well as `transition` entries, the same as the per-rule history.
+  - Contract assumptions:
+    - CONTRACTS §7 only names the `alert_history` MCP tool. The `limit` parameter (default 100, max 1000, the same as the notification log) is my addition, so that an MCP call can't pull a project's whole history.
+    - `since` must start with `YYYY-MM-DDT`, and a date-only value is refused.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - Regression checks: evaluation.accept.ts alert-eval-state-history and scheduling.accept.ts alert-eval-overrun pass. AlertRuleService.test.ts passes 9/9. Backend tsc, oxlint and oxfmt are clean on the changed files.
+    - As a user: a scratch walk (packages/backend/tmp/walk, removed afterwards) went through the harness's real HTTP router on the throwaway Postgres.
+      - An empty project returned `[]`.
+      - The rule flipped at 09:00, 09:10, 09:11, 09:15 and 09:20. `?rule=&since=09:12` returned exactly 09:20 firing->resolved and 09:15 normal->firing, newest first, with ruleName, labels and value.
+      - Dropping `rule` also showed the Other rule's 09:16 entry, interleaved by time.
+      - `limit=1` returned only the newest entry.
+      - Bad since, bad rule or limit=0 gave 400. An unknown rule gave 404. Outsider got 403, no session got 401, and an unknown project got 404.
+- 2026-11-08T22:14:39Z supervisor: alert-ai-history-api passed the gate in round 1
+- alert-shadow-no-notify (round 1) — 2026-11-08
+  - Changed:
+    - Notifier (`alerting/AlertNotifier.ts`): shadow rules' series are routed, grouped and timed like any other (group_wait, group_interval, repeat_interval, resolved). Each due send is written to the send log with `status: 'shadow'`, `attempts: 0`, `sentAt: null` and the payload that would have gone out, and nothing is sent. `deliver` is split into `buildDelivery` (payload + `post`), and the send path or `sendTest` calls `sendWithRetry` itself. A template that doesn't render is still logged as `shadow`, with `error` set.
+    - Model (`AlertNotificationModel.ts`): `listActiveAlerts` and `listResolvedAlerts` no longer filter out shadow rules. They return `shadow` (the rule's current flag) on every alert. Group state carries `shadow`.
+    - Migration `20261108170000_add_alert_notification_groups_shadow`: adds `alert_notification_groups.shadow` (bool, default false) and makes the unique key `(project_uuid, contact_point_slug, group_key, shadow)`. Shadow alerts never share a group with real ones, so a shadow rule can't delay, repeat or resolve a real send. Group ids in `groupAlerts` include the flag.
+  - Decisions (CONTRACTS has nothing on shadow sends):
+    - Turning shadow off while firing: the alert moves to the real group, so it is sent for real once that group is due (group_wait if new, group_interval if the group already sent). The stale shadow group is dropped without a shadow resolved entry.
+    - Turning shadow on while firing: the real group drops the alert with no resolved message (same as the alert leaving its group).
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - Regressions: notifications.accept.ts (8/8), integrations.accept.ts (6/6), contact-points.accept.ts (3/3) and db-migrations.accept.ts (1/1) pass. AlertNotifier.test.ts passes 15/15, including 2 new shadow grouping tests. Backend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch walk (repo tmp/walk, removed afterwards) went through the harness HTTP API. A shadow rule and a real rule fired in the same group, routed to incident.io, email and the Slack app.
+      - Only the real rule was sent: 1 request, 1 email and 1 Slack post.
+      - The shadow rule logged 3 `shadow` firing entries (attempts 0, sentAt null).
+      - Turning shadow off mid-firing sent the alert to all three at the next group_interval. Its resolve also went out for real.
+  - Next (alert-shadow-report): shadow entries are in `alert_notifications` with `status = 'shadow'`, and `alerts[]` holds the rule uuid, fingerprint and status.
+- 2026-11-08T22:20:27Z supervisor: alert-shadow-no-notify passed the gate in round 1
+- alert-shadow-compare (round 1) — 2026-11-08
+  - Changed:
+    - New `packages/common/src/alerting/shadowRun.ts`, exported from the alerting index. It holds `compareShadowRun` (CONTRACTS 1, as specified) and `parseGrafanaStateHistory`.
+    - The Grafana frame is read by field name: `time` and `line` are required, and the `labels` column is ignored. A firing is a line whose `current` starts with `Alerting`. Finding labels come from `line.labels`. `line` may be an object or a JSON string, and `time` may be epoch ms or an ISO string.
+    - Matching is greedy in time order. Each Grafana firing takes the earliest unmatched shadow `firing` of the same rule name within `toleranceMs`. This gives a one-to-one match and the maximum number of matches. Events before `since` are dropped on both sides.
+    - `expected` and `reason` come from `expectedDifferences`, matched on `(ruleName, kind)`. `unexpectedCount` counts the missing and extra findings that aren't expected.
+    - New unit tests in `shadowRun.test.ts` (9).
+  - Decisions (gaps in CONTRACTS, read narrowly):
+    - Matched entries are findings with `expected: true`, plus `lightdashAt` and `deltaMs`. Their `at` is Grafana's time. Missing findings carry Grafana's time and labels. Extra findings carry the shadow event's time and labels.
+    - A malformed frame, an unparseable time, a bad `since` or a negative tolerance throws `ParameterError` (statusCode 400). alert-shadow-report can let it propagate to get its 400.
+  - Tested:
+    - After init, the check passes (2 passed, 5 skipped), and the whole ascode-shadow.accept.ts passes 7/7. shadowRun.test.ts passes 9/9. common tsc, oxlint and oxfmt are clean.
+    - As a user: from packages/backend, `require('@lightdash/common')` on the built package, I ran a Grafana frame through `compareShadowRun`.
+      - The pg_cron firing matched with a 4.5 min delta.
+      - ALB was missing with expected false.
+      - Security group changed was missing with expected true and its reason. Support queue stuck was extra with expected true.
+      - unexpectedCount was 1.
+      - A frame without `schema` threw ParameterError 400.
+  - Next (alert-shadow-report): set the shadow event `at` to when the series started firing, as CONTRACTS 2 says. Use `ruleName` for the rule's name, because it is matched against Grafana's `ruleTitle`.
+- 2026-11-08T22:24:07Z supervisor: alert-shadow-compare passed the gate in round 1
+- alert-shadow-report (round 1) — 2026-11-08
+  - Changed:
+    - `POST /api/v2/projects/{uuid}/alerting/shadow-report` in `router.ts` calls `AlertNotificationService.shadowReport`. The body is `{since, grafanaHistory, expectedDifferences?, toleranceMs?}` and the response is common's `ShadowRunReport` from `compareShadowRun`.
+    - `parseShadowReportRequest` returns 400 for: a body that isn't an object, a missing or bad `since`, a missing `grafanaHistory`, `expectedDifferences` that aren't `{ruleName, kind, reason}` with kind `missing_in_lightdash|extra_in_lightdash`, or a non-number `toleranceMs`. A malformed frame and a negative tolerance get their 400 from `compareShadowRun` itself.
+    - The body is parsed after the view check, so an outsider always gets 403 and an anonymous caller gets 401. Access is the `view AlertRule` ability (viewer and up), as for the notification log.
+    - New `AlertNotificationModel.listShadowFirings(projectUuid, since)`. It reads `alert_notifications` with `status = 'shadow'` and `created_at >= since`, unnests `alerts[]`, and keeps the `firing` alerts. For each one it takes the series' latest `alert_state_history` row at or before the entry's time, and keeps it only if that row's state is `firing`. Results are deduplicated per history row, which means one event per firing episode.
+    - The event's `at` is when the series started firing (CONTRACTS 2, as alert-shadow-compare asked). Its labels come from that history row, and `ruleName` is the rule's current name.
+    - Parser unit tests were added to `AlertNotificationService.test.ts`.
+  - Decisions (gaps, read narrowly):
+    - One event per firing episode. One episode logs one shadow entry per integration plus one per repeat, and without deduplication each would show up as an extra.
+    - Entries logged while a series was in `nodata`/`error` are left out. Grafana's parser only counts `Alerting*` lines, so the two sides stay symmetric.
+    - `expectedDifferences` defaults to `[]`.
+    - The report is computed on demand from the log. Nothing is stored, and there is no GET or saved report.
+    - `ruleName` is the rule's current name, not the name it had when it fired.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped). alert-shadow-no-notify still passes. notifications.accept.ts passes 8/8. AlertNotificationService.test.ts passes 20/20. Backend typecheck, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest walk in repo tmp/walk (removed afterwards) went through the harness HTTP API. Two webhook contact points, a 5m repeat, shadow rules pg_cron and ALB, and one real rule.
+      - pg_cron fired at 09:00 and repeated, resolved at 09:12, and fired again at 10:00. ALB fired at 09:01.
+      - That made 10 shadow log entries. They became 3 events: pg 09:00, pg 10:00 and ALB 09:01. The real rule was not included.
+      - With a Grafana history of pg Alerting at 09:02 and 10:03, pg Normal at 09:12, and "Security group changed" (listed as expected missing) at 09:30, the report showed 2 pg matches (-2m and -3m), the expected miss with its reason, ALB as an unexpected extra, and unexpectedCount 1.
+      - `since` 09:30 with a 1m tolerance dropped the early events. Each malformed body gave a 400 with a clear message. An outsider got 403 even with a bad body, and an anonymous caller got 401.
+    - Trap: in a walk, fire rules in time order. Moving the harness clock backwards after a later send leaves the group not due, so the earlier alert never gets logged.
+  - Next: as-code features. Nothing here changes the as-code paths.
+- 2026-11-08T22:30:04Z supervisor: alert-shadow-report passed the gate in round 1
+- alert-as-code-upload (round 1) — 2026-11-08
+  - Changed:
+    - New `POST /api/v2/projects/{uuid}/alerting/as-code` with body `{documents: [...]}`, handled by `AlertingAsCodeService.upload` in the new file `packages/backend/src/alerting/AlertingAsCodeService.ts`. It is on `AlertingModule.alertingAsCode` and wired in `index.ts` and `router.ts`.
+    - The result is common's `AlertingAsCodeUploadResult`: `{documents: [{type, slug|null, uuid|null, change: created|updated|unchanged}]}` in upload order.
+    - Permissions are checked first. The caller needs `manage` on each uploaded type (alert_rule → AlertRule, contact_point → ContactPoint, notification_routes → NotificationRoute), or `view AlertRule` when no type can be read. So an outsider gets 403 whatever they send, and an editor gets 403 for contact points but 200 for rules.
+    - Then every document is checked and all problems go into one 400: `Invalid alerting documents: documents[i] (type slug): …`, also listed in `error.data.errors`. The checks are:
+      - `validateAlertingAsCode` (inline secret names secretRef; blank description).
+      - `spaceSlug` must match `spaces.slug` of a non-deleted space in the project.
+      - The rule values go through `validateAlertRuleDefinition`, the old `validateDefinition` now exported from AlertRuleService. For example the 30s minimum interval.
+      - The tree goes through `parseNotificationRouteTree`, the old `parseTree` now exported, for zero timers.
+      - A slug may appear only once per type, and only one notification_routes document is allowed.
+    - Writes are all-or-nothing in one transaction, in the order contact points, then tree, then rules. The tree's Contact Point slugs are checked inside the transaction, so they may come from the same upload.
+    - New model methods take the caller's trx: `ContactPointModel.upsertManaged`, `NotificationRouteModel.saveManaged` (shares the `write` step with `save`), `AlertRuleModel.upsertManaged` (shares `insertRule`/`writeVersion` with create/update) and `AlertRuleModel.findProjectSpaceUuidsBySlug`.
+    - A rule only gets a new version when its definition changes. An identical re-upload is `unchanged` and keeps the version. Fields a rule document leaves out take `ALERT_RULE_DEFAULTS`, so the document is the whole truth.
+    - A unique violation from a concurrent upload becomes a 409. `stableStringify` moved to `alertingAccess.ts`.
+  - Contract change (the test asks for it): `GET`/`PUT /notification-routes` now return the tree as its as-code document plus `managed`, that is `{version: 1, type: 'notification_routes', ...tree, managed}`. Common `SavedNotificationRouteTree` is now `NotificationRoutesAsCode & {managed}`.
+    - PUT now accepts `version`/`type` (it used to give 400) so that a GET result still saves unchanged. Other values fail the schema with a 400.
+    - The stored `tree` jsonb is unchanged (no version/type in it). A no-op PUT no longer touches `updated_at`.
+  - Decisions (gaps, read narrowly):
+    - Upload only upserts. Resources missing from an upload are not deleted or un-managed.
+    - A UI-made resource with the same slug is taken over and becomes managed.
+    - An empty `documents` list is a 200 no-op for viewers and up.
+    - `spaceSlug` is the space's own `slug` column (unique per project), not content-as-code's ltree path.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped). In the whole shadow-ascode-ai.accept.ts only alert-as-code-download fails (next feature), and alert-managed-readonly already passes.
+    - contact-points.accept.ts 3/3, rules.accept.ts 4/4, notifications.accept.ts 8/8, AlertRuleService.test.ts 9/9, AlertNotifier.test.ts 15/15. Backend tsc, oxlint and oxfmt are clean in backend and common.
+    - As a user: a scratch vitest walk over real HTTP through the harness (a copy of run.sh and the config in tmp/walk, the walk in src/alerting/__walk__, both removed afterwards).
+      - Before the upload, GET→PUT of the tree gave 200.
+      - Uploading 2 contact points, the tree and a rule gave 200: incident-io (made earlier in the UI) was `updated`, the rest were `created`. All of them were managed, and the rule was in Platform at v1.
+      - The same upload again was all `unchanged`. A new threshold gave the same uuid at v2, with versions [2,1].
+      - Inline Slack URL, empty description, unknown space, a 10s interval in a mixed good+bad batch, a tree naming `ghost`, a duplicate slug and a missing `documents` each gave 400 with the messages above, and nothing was written.
+      - Editor got 403 for a contact point and 200 for a rule. Outsider got 403 with `{}`, bad docs or good docs. Anonymous got 401. An admin PATCH of the managed rule gave 403. No secret value was in `contact_points`.
+  - Next (alert-as-code-download):
+    - Nothing stores the uploaded document as sent. A download can rebuild it from the columns: the rule's space slug comes from `space_uuid`, contact points are stored verbatim, and the tree GET is already document-shaped.
+    - The rule documents in the test spell out every field, so emitting all fields round-trips them. If "exactly as uploaded" must hold for documents that leave out defaults, the upload has to store the source document, which needs a migration.
+- 2026-11-08T22:40:51Z supervisor: alert-as-code-upload passed the gate in round 1
+- alert-as-code-download (round 1) — 2026-11-08
+  - Built `GET /api/v2/projects/{uuid}/alerting/as-code` → `{documents}` (common type `AlertingAsCodeDownload`). It returns contact points, then the tree (only once one is saved), then rules, each in list order.
+    - It needs view on AlertRule, ContactPoint and NotificationRoute. A viewer gets 200, an outsider 403 and anonymous 401.
+    - `AlertingAsCodeService.download` builds the documents from the columns. Contact points come from stored integrations (secrets are only `secretRef`s). The tree is the saved document minus `managed`. A rule spells out every field, and its `spaceSlug` comes from `AlertRuleModel.findProjectSpaceSlugsByUuid`, which includes trashed spaces (re-uploading one gives the existing "no space" 400).
+  - Decision (Contract assumption 8): `spaceSlug` is optional. Upload maps a missing value to no space, and download leaves it out for a rule with no space. The acceptance test's UI rule has no space and needs this. A unit test for it is in `asCode.test.ts`.
+  - "Exactly as uploaded" holds for documents that spell out every field, as the test's documents do. A document that leaves out defaults downloads with them filled in. Its meaning is the same, and re-uploading it is `unchanged`, but the text is not identical. Making the text identical needs the source document stored (a migration). Key order inside jsonb (integrations, tree) is Postgres's, not the uploader's.
+  - Re-uploading a download makes UI-made resources managed (`updated`, with the version kept). That is the upload's documented takeover rule.
+  - Tested:
+    - After init, the check passes. The whole shadow-ascode-ai.accept.ts passes 7/7, rules.accept.ts 4/4, common ascode-shadow.accept.ts 7/7 and asCode.test.ts 9/9. Backend and common tsc, oxlint and oxfmt are clean on the changed files.
+    - As a user: a scratch vitest walk over real HTTP through the harness (copies of run.sh and the config in src/alerting/__walk__, removed afterwards).
+      - An empty project gave `{documents: []}`.
+      - I uploaded a contact point, a tree, a minimal rule in `platform` and a rule with no `spaceSlug`, then created "UI rule" through the API. The download gave 5 documents, each `validateAlertingAsCode`-valid, with no inline secret, and the rules with no space had no `spaceSlug`.
+      - Re-uploading the download gave 200: everything was `unchanged` except ui-rule, which was `updated` (taken over), with all 3 rules at v1. A second download was byte-identical to the first.
+- 2026-11-08T22:47:47Z supervisor: alert-as-code-download passed the gate in round 1
+- alert-managed-readonly (round 1) — 2026-11-08
+  - No code change was needed. The guards came with the CRUD features: `AlertRuleService` refuses PATCH (inside `apply`) and DELETE, `ContactPointService` refuses PATCH (inside `apply`) and DELETE (before the "tree uses it" 409), and `NotificationRouteService` refuses PUT (inside `check`). Each throws `ForbiddenError` 403 with "... is managed in git ...", for every role including admin. Only `POST /as-code` changes managed resources.
+  - I audited every mutating alerting route in `router.ts`. Create, preview, the contact point test send, as-code and shadow-report don't edit an existing resource, so they have no guard. The test send to a managed contact point is allowed (200).
+  - Known ordering: a PATCH body that fails parsing (for example an unknown field) gives 400 before the managed 403. Nothing is written either way. A managed tree PUT with an invalid body gives 403, because the managed check runs first.
+  - Tested:
+    - After init, the check passes (1 passed, 6 skipped).
+    - As a user: a scratch vitest walk over real HTTP through the harness (copies of run.sh and the config in src/alerting/__walk__, removed afterwards).
+      - Uploading 2 contact points, a tree and a rule gave 200, all `created`, and the rule was managed at v1.
+      - As admin, then as developer: PATCH paused, DELETE of the rule, PATCH and DELETE of the contact point, and PUT of the tree each gave 403 with the managed message. Afterwards the rule was still unpaused at v1, and the tree and contact points were unchanged.
+      - Uploading the rule with `paused: true` was `updated`, and the rule was paused at v2 and still managed. Upload also renamed the contact point and changed the tree root.
+      - A UI-made rule could be PATCHed by an editor and DELETEd by an admin (200).
+- 2026-11-08T22:50:14Z supervisor: alert-managed-readonly passed the gate in round 1
+- alert-cli-download (round 1) — 2026-11-08
+  - Changes:
+    - Added `lightdash download --alerting-only` (`packages/cli/src/index.ts`) and the new module `packages/cli/src/handlers/alertingAsCode.ts`.
+    - The new branch in `downloadHandler` returns early, before any space, chart or dashboard work. It checks the version, loads config and credentials, selects the project, makes one `GET /api/v2/projects/{uuid}/alerting/as-code` call, and writes `alert-rules/<slug>.yml`, `contact-points/<slug>.yml` and `notification-routes/notification-routes.yml` under `--path` (default `./lightdash`).
+    - The YAML keeps the server's key order and doesn't fold long lines (`lineWidth: -1`). It does not sort keys like other content-as-code does, so the files match what the server returned.
+    - Each slug is checked against the schema slug pattern before it becomes a file name. All paths are resolved before anything is written, so a bad document writes nothing.
+    - `--alerting-only` together with `--apps-only`, `--chart-types-only`, `--spaces-only` or `--organization` is a ParameterError.
+  - Common: added `AlertingAsCodeDownload` to the `ApiResults` union in `packages/common/src/types/api.ts`, because `lightdashApi<T>` requires it. The next CLI features (upload, shadow-report) need to add `AlertingAsCodeUploadResult` and the shadow report result the same way.
+  - Fixed something that was already broken: `src/credentialBoundaryInventory.test.ts` "child launcher inventory" was failing because the protected `__acceptance__/alerting/support.ts` imports `child_process`. I added that file to the explicit list with a comment. The protected file is unchanged.
+  - For the next session (alert-cli-upload): `alertingAsCode.ts` exports the folder and file names (`ALERT_RULES_FOLDER`, etc.). Reuse them when reading files. The `--alerting-only` flag is only on `download`; upload still needs its own option.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped). The new `alertingAsCode.test.ts` passes 3/3, `download.test.ts` 103/103 and `credentialBoundaryInventory.test.ts` 6/6. CLI typecheck, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock Lightdash server in tmp/ (removed afterwards) and the real CLI from source.
+      - A rule with a long query, a contact point with a quoted name and a tree gave exit 0 with three files that read back equal. The only requests were `/api/v1/health` and `/alerting/as-code`.
+      - An empty project gave exit 0 and "Downloaded 0 ...".
+      - A slug of `../evil` gave exit 1 with "invalid slug", and no file was written.
+      - `--spaces-only` gave exit 1 with no requests.
+- 2026-11-08T22:55:14Z supervisor: alert-cli-download passed the gate in round 1
+- alert-cli-upload (round 1) — 2026-11-08
+  - Changes:
+    - Added `--alerting-only` to `lightdash upload` (`packages/cli/src/index.ts`). There is a new early branch in `uploadHandler` (`download.ts`), placed before space preflight and drafts/sync-settings work. It checks the version, loads config and credentials, selects the project and calls `uploadAlertingAsCode`. `--path` falls back to `content_as_code.path`, the same way the normal upload does.
+    - `alertingAsCode.ts`: `readAlertingAsCodeFiles(basePath)` reads `contact-points/`, then `notification-routes/`, then `alert-rules/`, with `*.yml`/`*.yaml` files sorted by name within each folder. Missing folders are skipped. Each file must hold one YAML object whose `type` matches its folder, and errors name the file. `uploadAlertingAsCode` sends everything in ONE `POST /api/v2/projects/{uuid}/alerting/as-code` `{documents}` in that order. The server applies the documents in order in one transaction, so a failure changes nothing. No files means a warning, no request, and exit 0. The summary counts created/updated/unchanged from `result.documents`, and it tolerates a result without `documents` (the acceptance mock returns `{created, updated}`).
+    - `--alerting-only` together with `--apps-only`, `--chart-types-only`, `--spaces-only`, `--organization` or `--charts/--dashboards` is a ParameterError.
+    - Common: added `AlertingAsCodeUploadResult` to the `ApiResults` union. Run `init` after changing common, because the CLI build reads common's dist.
+  - Decision: the CLI does not validate documents against the JSON schemas. The server does that and its errors name `documents[i] (type slug)`. The local secret/schema check with file names is the next feature (alert-cli-upload-validation). Hook it into `readAlertingAsCodeFiles` (it already has each file's path) before the POST.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped). The alert-cli-download check still passes. `alertingAsCode.test.ts` passes 7/7 (4 new reader tests) and `download.test.ts` 103/103. CLI tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock server and the real CLI from source via tsx (in the run tmp dir, removed afterwards).
+      - Two contact points, a tree and a rule gave exit 0. The only requests were health and one POST with the documents in this order: contact_point email-ops, contact_point slack-infra, notification_routes, alert_rule. It printed "Uploaded 2 contact points, 1 notification route trees and 1 alert rules ... (3 created, 0 updated, 1 unchanged)".
+      - A server 400 gave exit 1.
+      - `--spaces-only` gave exit 1 with no requests.
+      - A contact_point file in alert-rules/ gave exit 1, naming the file, with no POST.
+      - An empty folder gave exit 0 with a warning and no POST.
+    - Trap: don't run an in-process mock server with `spawnSync` of the CLI. It deadlocks, so use async `spawn`.
+- 2026-11-08T23:06:09Z supervisor: alert-cli-upload passed the gate in round 1
+- alert-cli-upload-validation (round 1) — 2026-11-08
+  - Changes:
+    - `alertingAsCode.ts`: the new `assertValidAlertingAsCodeFiles(files)` runs common's `validateAlertingAsCode` (the as-code JSON schemas plus semantic checks) on every file read by `readAlertingAsCodeFiles`. Problems from all files are collected and thrown as one ParameterError: "Invalid alerting documents; nothing was uploaded:", then one `<file path>: <field path>: <error>` line per problem. `uploadAlertingAsCode` calls it before the POST, so nothing is sent. An inlined secret reads `integrations[0].url: must be a secret reference { secretRef: <name> }; secrets are never written inline`. The message names the field and never prints the secret value.
+    - Decision: the validation is a separate function, not part of `readAlertingAsCodeFiles`. That keeps the reader tests (minimal, schema-incomplete docs) as they were and keeps reading and validating apart.
+    - `alertingAsCode.test.ts`: 3 new tests. One accepts a secretRef. One checks that an inline secret names the file and field and leaves the value out. One checks that problems from several files are all listed.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped), and the alert-cli-upload check still passes. `alertingAsCode.test.ts` passes 10/10. CLI tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock server and the real CLI via tsx, in repo tmp/ and removed afterwards.
+      - A contact-points/leaky.yml with a Slack webhook URL inline gave exit 1. The message named the full path of leaky.yml and `secretRef`, and the URL did not appear. The only request was the health check, with no POST.
+      - After changing the url to `{ secretRef: slack-webhook }`, exit was 0 with one POST to /alerting/as-code.
+- 2026-11-08T23:09:03Z supervisor: alert-cli-upload-validation passed the gate in round 1
+- alert-cli-shadow-report (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/cli/src/handlers/alertingShadowReport.ts` and a `lightdash alerting shadow-report` command in `index.ts`. `alerting` is a new parent command, so later alerting CLI commands can go under it.
+      - Options: `--project` (falls back to the selected project via `selectProject`), `--since` (required, ISO), `--grafana-history` (required, JSON), `--expected-differences` (optional YAML list, where empty means []), `--json`, `--fail-on-unexpected` and `--verbose`.
+      - It reads and parses both files before any request, so a bad file sends nothing. Then it calls checkLightdashVersion and POSTs `{since, grafanaHistory, expectedDifferences}` to `/api/v2/projects/{uuid}/alerting/shadow-report`. The server validates the entries.
+      - Only the report goes to stdout (`--json` gives pretty JSON, otherwise a Matched / Missing / Extra listing with rule names and expected/UNEXPECTED markers). Logs and errors go to stderr, so `--json` output can be piped.
+      - `--fail-on-unexpected` sets `process.exitCode = 1` when `unexpectedCount > 0`. The index successHandler keeps the exit code.
+    - Common: added `ShadowRunReport` to the `ApiResults` union in `types/api.ts`. Run `init` after this, because the CLI reads common's dist.
+    - `alertingShadowReport.test.ts` has 6 tests for the readers and the formatter.
+  - Tested:
+    - After init, the check passes (1 passed, 3 skipped), and the alert-cli-upload check still passes. The unit file passes 6/6. CLI tsc, common tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch node mock server and the real CLI via tsx, in repo tmp/ and removed afterwards.
+      - `--json` printed pure JSON on stdout. The requests were health, then one POST whose body held the history and the expected list from the YAML.
+      - The human output listed pg_cron, the expected "Security group changed" with its reason, and the UNEXPECTED "ALB Unhealthy Hosts".
+      - `--fail-on-unexpected` gave exit 1 with 1 unexpected difference and exit 0 with none.
+      - `--since yesterday` and a missing history file each gave exit 1 with a clear message and no request.
+  - Note: the matched line prints Grafana's time from `ShadowRunMatch.at`. The acceptance mock sends `grafanaAt`, which is not in the contract type, so the CLI ignores it.
+- 2026-11-08T23:13:40Z supervisor: alert-cli-shadow-report passed the gate in round 1
+- alert-ui-api-client (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/frontend/src/features/alerting/api.ts` has one function per route of `/api/v2/projects/{uuid}/alerting`:
+      - rules: list, get, create, update, delete, preview, versions, history, notifications;
+      - project-wide: state, history, notifications;
+      - contact points: list, get, create, update, delete, test;
+      - notification routes: get and PUT save.
+    - Signature: `(projectUuid, ...args, lightdashApi = sharedLightdashApi)`. The acceptance test calls the functions with no client, so the shared one is the default. Embedded SDK components can pass `useLightdashApi()` as the last argument.
+    - Query objects use the server's query parameter names: `{state, label, spaceUuid}`, `{rule, since, limit}` and `{rule, contactPoint, limit}`. `label` is a `key=value` string or an array of them, and an array becomes repeated `label=` parameters. Undefined values are left out.
+    - Common: `ContactPointTestResult` moved from backend `AlertNotifier.ts` to common `alerting/contactPoints.ts`, because the frontend needs it. AlertNotifier imports and re-exports it, so backend importers are unchanged. The alerting result types (rules, preview, history, state, notifications, contact points, test result, route tree) were added to the `ApiResults` union in `types/api.ts`. Run `init` after this.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). Frontend and backend tsc are clean, the frontend oxlint is clean, and oxfmt is clean.
+    - As a user: a scratch vitest file (deleted afterwards) pointed the real client at a local node HTTP server through the SDK instance-URL session key and recorded every request.
+      - `GET .../rules?state=firing&label=team%3Dinfra&label=sev%3D1`
+      - POST, PATCH and preview bodies were JSON with `application/json`.
+      - `GET .../history?rule=r1&since=...`, `GET .../notifications?rule=r1`, `POST .../contact-points/cp1/test` and `PUT .../notification-routes`.
+      - All of them match `packages/backend/src/alerting/router.ts`.
+  - For the next session: the UI pages (alert-ui-*) should import from `features/alerting/api`. There are no React Query hooks yet. Add them with the pages that need them.
+- 2026-11-08T23:18:02Z supervisor: alert-ui-api-client passed the gate in round 1
+- alert-ui-rules-list (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/frontend/src/features/alerting/components/AlertRulesList.tsx` (presentational).
+      - Props: `{ rules: AlertRuleSummary[], spaces: {uuid, name}[], onOpenRule(ruleUuid) }`.
+      - It renders a Mantine table with columns State badge, Name (with "Managed in git", Paused and Shadow badges), `key=value` label badges and Folder (the space name, or "—").
+      - Filters are client-side:
+        - State is a Select with All, Firing, Pending, Normal, No data and Error.
+        - Label is a TextInput with comma- or space-separated terms. `key=value` is an exact match, `key=` means the key exists, and a bare word is a case-insensitive substring of any key or value.
+        - Folder is a Select with All, each space and No folder.
+      - Clicking a row (or Enter on the name button) calls `onOpenRule(uuid)` once.
+    - New `components/AlertBadges.tsx` holds `AlertStateBadge` and `ManagedInGitBadge`, for reuse by the detail and editor pages.
+    - New `features/alerting/utils.ts` holds `ALERT_STATE_LABELS` and `matchesLabelFilter`. The lint rule `only-export-components` forbids non-component exports in .tsx files, so they live in a .ts file. Unit tests are in `utils.test.ts` (5 tests).
+    - New `components/AlertRulesList.module.css` sets the row cursor, because the lint rule `no-inline-style-prop` bans `style`.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). The unit file passes 5/5. Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) rendered the list with four rules and drove it with userEvent.
+      - At first: Disk almost full showed Firing, team=infra and Platform. RDS showed Pending and Managed in git. CPU showed Normal, Shadow and "—".
+      - Picking State: Firing left only Disk.
+      - Typing team=infra in Label left 3 rows. Adding Folder Platform left 2, and No folder left CPU only.
+      - A non-matching label showed "No Alert Rules match these filters."
+      - Enter on the CPU high name called onOpenRule('c') exactly once.
+  - For the next session: no page or React Query hook wraps this list yet. alert-ui-pages should feed it from `listAlertRules` in `features/alerting/api.ts`, plus the project's spaces. Mantine Select labels both the input and the listbox, so look up controls with the INPUT-filtering `field()` from the acceptance support (or `getAllByLabelText` filtered to INPUT).
+- 2026-11-08T23:25:40Z supervisor: alert-ui-rules-list passed the gate in round 1
+- alert-ui-rule-detail (round 1) — 2026-11-08
+  - Changes:
+    - New `packages/frontend/src/features/alerting/components/AlertRuleDetail.tsx` (presentational).
+      - Props: `{ rule: AlertRuleWithInstances, history: AlertStateHistoryEntry[], notifications: AlertRuleNotification[], contactPoints?: {uuid, name}[] }`.
+      - Header: the rule name as an h2, the state badge, and the Managed in git, Paused and Shadow badges; then the description and `key=value` labels.
+      - Query section: the SQL in a code block, the condition as one line (`last(value) > 90`), and the interval, for and time range.
+      - Series table: state, labels, value and since for each current instance.
+      - State history: a Mantine Timeline, newest first as given. Transitions read `Normal → Firing` with labels and value. Skipped slots read `Skipped evaluation (overrun)`.
+      - Notifications table: time (`sentAt ?? createdAt`), Contact Point name plus integration type, alert status, a Sent/Failed/Shadow badge, attempts and the error.
+    - `utils.ts` gained `formatAlertCondition`, `formatLabels` and `describeHistoryEntry`, with unit tests in `utils.test.ts` (8 tests in total).
+  - Contract assumptions:
+    - The notification log API (`AlertNotification`) has no Contact Point name, but the page must show one. `AlertRuleNotification = AlertNotification & { contactPointName?: string | null }` is exported from the component. The name is taken from `contactPointName` first, then looked up by `contactPointUuid` in the optional `contactPoints` prop, then falls back to the uuid, and finally to "Deleted Contact Point". The backend still does not return a name.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). The unit file passes 8/8. Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted afterwards) rendered a firing rule with full, typed API-shaped data. Notification names were resolved through the `contactPoints` prop.
+      - The h2 read "Disk almost full" and the query was shown.
+      - The timeline read "Skipped evaluation (overrun)" and then "Normal → Firing".
+      - The series row read Firing | instance=db-1 | 95.
+      - The notification rows read incident-io | Sent | 1, and slack-infra-alerts | Failed | 3 | HTTP 500. The failed entry, whose sentAt is null, showed its createdAt.
+  - For the next session:
+    - alert-ui-rule-test should add the `onTestRule` prop and the "Test rule" button to this component. The acceptance test already passes `onTestRule`, but this session did not add it to the props.
+    - alert-ui-managed-readonly/editor own the `onEdit` prop and the Edit button. The button must be hidden for managed rules. The header already shows Managed in git.
+    - The pages feature should pass `contactPoints` from `getContactPoints` so that names show.
+- 2026-11-08T23:29:15Z supervisor: alert-ui-rule-detail passed the gate in round 1
+- alert-ui-rule-test (round 1) — 2026-11-08
+  - Changes:
+    - `AlertRuleDetail.tsx` gained the optional prop `onTestRule?: () => Promise<AlertRulePreview>`. When it is given, a "Test rule" section appears under Query with a "Test rule" button, which shows a spinner while the test runs.
+    - The result table (aria-label "Test rule results") has a row per series: labels, value, Condition (Met/Not met) and "Would be" (a state badge). Rows are keyed by labels plus index, because `AlertRulePreviewSeries` has no fingerprint.
+    - A preview with `error` set, or a rejected promise (a network or API error), shows a red Alert "Test rule failed" with the message in monospace. The table goes away. A result with no series and no error reads "The query returned no series."
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). Frontend tsc, oxlint and oxfmt are clean on the file.
+    - The whole rules-ui file: list, detail and rule-test pass. The 3 editor/managed-readonly tests fail only because AlertRuleEditor does not exist yet (later features).
+    - As a user: a scratch vitest file (deleted) rendered the page and clicked Test rule four times.
+      - The rows read instance=db-1 | 95 | Met | Firing, then instance=db-2 | 40 | Not met | Normal.
+      - Next: "Test rule failed: relation "disk_usage" does not exist", and the table was gone.
+      - Next: "The query returned no series."
+      - A rejected call read "Test rule failed: Network down".
+  - For the next session: the pages feature should wire `onTestRule` to `() => previewAlertRule(projectUuid, <the rule as CreateAlertRule>)` from `features/alerting/api.ts`. The preview endpoint takes a CreateAlertRule body, not a rule uuid, so the page must map the saved rule to the create shape. The editor could reuse the same pattern for unsaved rules.
+- 2026-11-08T23:32:00Z supervisor: alert-ui-rule-test passed the gate in round 1
+- alert-ui-rule-editor (round 1) — 2026-11-08
+  - Changes:
+    - New `features/alerting/components/AlertRuleEditor.tsx`, a presentational component with the props `rule?: AlertRule`, `spaces: {uuid, name}[]`, `onSubmit(definition: AlertRuleDefinition)` and `onCancel?`. It uses a `@mantine/form` `useForm`. Save shows a loading spinner while `onSubmit`'s promise runs.
+    - Fields:
+      - Name, Description, Folder (a clearable Select over `spaces`) and Query.
+      - Value column, Reducer, Condition (all 8 operators) and Threshold. A range operator shows Min/Max instead of Threshold.
+      - Evaluate every (`interval`), Time range, For and Keep firing for.
+      - No-data and error state selects.
+      - Labels and Annotations as `key=value` lines.
+      - Paused and Shadow switches.
+    - A new rule starts from `ALERT_RULE_DEFAULTS` with the operator `>`.
+    - Save always submits the whole definition, defaults included. That is a valid CreateAlertRule body and also a valid UpdateAlertRule (PATCH) body.
+    - Validation:
+      - "Name/Description/Query/Value column is required".
+      - "Threshold/Min/Max must be a number", and "Max must be greater than Min".
+      - Durations are checked with `parsePrometheusDuration`, and `interval` must be at least `ALERT_RULE_MIN_INTERVAL` (30s).
+      - A bad label line reads `Expected key=value, got "..."`.
+    - `utils.ts` gained `labelsToText` and `parseLabelsText`, with 3 new unit tests (`utils.test.ts`, 11 in total). There is a new `AlertRuleEditor.module.css`, because lint forbids the `styles` prop.
+  - Traps:
+    - Don't add `withAsterisk` or `required` to the inputs. Mantine appends " *" to the label, and the acceptance `field('Name')` lookup by label then fails.
+    - The labels "For" and "Threshold" must stay exactly as they are.
+  - Tested:
+    - After init, the check passes (2 passed, 4 skipped). The full rules-ui file has 5 passed and 1 failed; the failure is alert-ui-managed-readonly, the next feature. Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) clicked through the editor.
+      - Saving an empty form showed all four required/number errors.
+      - With an outside_range condition, Max below Min, `10s` interval, `For` of "5 minutes" and a bad label line, each error was shown and nothing was submitted.
+      - After fixing them, the rule submitted.
+      - Editing a rule with a range condition, labels, annotations, a folder, paused and shadow, then saving unchanged, submitted exactly the original definition.
+  - For the next session:
+    - alert-ui-managed-readonly should disable every editor field and Save when `rule.managed` is true, and show `ManagedInGitBadge`.
+    - It should also add the `onEdit` prop and Edit button to AlertRuleDetail, hidden for managed rules.
+    - The pages feature should map `onSubmit` to `createAlertRule` or `updateAlertRule` in `api.ts`.
+- 2026-11-08T23:36:29Z supervisor: alert-ui-rule-editor passed the gate in round 1
+- alert-ui-managed-readonly (round 1) — 2026-11-08
+  - Changes:
+    - `AlertRuleEditor`: `readOnly = rule?.managed === true`. When it is set, the title shows `ManagedInGitBadge`, a violet Alert explains that the rule changes only through an as-code upload, every input/select/switch gets `disabled={readOnly}`, and Save is disabled. `handleSubmit` also returns early, so nothing can submit.
+    - `AlertRuleDetail`: new optional prop `onEdit?: () => void`. The header row now uses `justify="space-between"`, with an "Edit" button on the right. The button shows only when `onEdit` is given and the rule is not managed. The managed badge was already there.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped), and the full rules-ui file has 6 of 6 passing. Frontend tsc and oxlint are clean, and oxfmt was applied.
+    - As a user: a scratch vitest file (deleted) used a synthetic managed rule with a range condition.
+      - The editor showed the badge, all 24 inputs were disabled, Save was disabled, and typing into Name left it unchanged. A forced form submit called onSubmit 0 times.
+      - The managed detail page had no Edit button.
+      - The unmanaged detail page showed Edit, and clicking it called onEdit once. The unmanaged editor had enabled fields, no badge, and Save submitted.
+  - For the next session (pages): wire `onEdit` on the rule page to navigate to the editor route. A managed rule opened by URL is still read-only in the editor.
+  - Trap: the acceptance file's `rule()` defaults `managed: false`. Keep the `managed` check on `rule.managed`, not the `version` or `slug`.
+- 2026-11-08T23:39:19Z supervisor: alert-ui-managed-readonly passed the gate in round 1
+- alert-ui-contact-points (round 1) — 2026-11-08
+  - Changes:
+    - New `ContactPointsList` with props `contactPoints`, `onSendTest(uuid) => Promise<ContactPointTestResult>` and `onOpen(uuid)`.
+      - Each row shows the name, `ManagedInGitBadge` and one icon per integration. The icon has `role="img"`, an `aria-label` and a tooltip naming the type.
+      - "Send test notification" shows "Test notification sent", or the failures as `<Type>: <error>`. A rejected promise shows its `error.message` or `Error.message`. Clicks in the Test cell don't open the row.
+      - It has its own `ContactPointsList.module.css`.
+    - New `ContactPointEditor` with props `contactPoint?`, `onSubmit({ name, integrations })` and `onCancel?`. The body is valid for both Create and Update (PATCH).
+      - A new Contact Point starts with one Slack webhook integration. The "Integration type" Select uses `allowDeselect={false}`, because without it, picking the already-selected option clears it.
+      - Each integration has its type-specific fields. Secrets are entered only as "Webhook URL secret reference", "Token secret reference" or "Authorization secret reference" (optional), and are submitted as `{ secretRef }`.
+      - Secret references are checked against the schema's name pattern (`^[A-Za-z0-9][A-Za-z0-9_.-]*$`), so a pasted URL or token is refused. URLs must be http(s). Email addresses, Slack app channel and webhook max alerts are validated too.
+      - "Add integration" and "Remove integration" (only shown when there are 2 or more integrations).
+      - Managed: shows the badge and a violet Alert, all fields and Save are disabled, the add/remove buttons are hidden, and submit returns early.
+    - `utils.ts` adds `CONTACT_POINT_INTEGRATION_LABELS`, `isSecretRefName` and `describeContactPointTestFailure`, with 4 new unit tests (15 in `utils.test.ts`).
+  - Decision / trap: the list shows integration types as icons, not text. The acceptance test calls `within(row).getByText(/slack/i)` and `/incident\.io/i`, and the Contact Point names already match those, so a visible "Slack webhook" or "incident.io" label would be a second match and getByText would throw. Don't add type text to the list rows.
+  - Tested:
+    - After init, the check passes (2 passed, 4 skipped). Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) clicked through the components.
+      - A rejected test request showed the API error message and did not open the row. Clicking the name opened the row.
+      - The icons read `incident.io` and `Email`.
+      - Saving an empty editor showed "Name is required" and "Webhook URL secret reference is required". A pasted `https://hooks.slack.com/...` was refused, and a bad email was refused.
+      - A two-integration contact point submitted `{ name, integrations: [{ type: 'slack_webhook', url: { secretRef } }, { type: 'email', addresses: [..] }] }`.
+      - The managed editor had every input disabled, Save disabled and no Add integration button. Saving an unmanaged contact point unchanged submitted exactly its integrations.
+  - For the next session (routes editor / pages):
+    - The pages feature should map `onSendTest` to `testContactPoint`, `onSubmit` to `createContactPoint` or `updateContactPoint`, and `onOpen` to the editor route.
+- 2026-11-08T23:45:11Z supervisor: alert-ui-contact-points passed the gate in round 1
+- alert-ui-routes-editor (round 1) — 2026-11-08
+  - Changes:
+    - New `NotificationRoutesEditor` with props `tree?` (a `NotificationRouteTree` or saved tree with `managed`, or null for a new tree), `contactPoints` and `onSave(tree: NotificationRouteTree)`.
+      - "Default route" shows its contact point (shown by Contact Point name, or the slug if none matches), group by and timers. The documented root defaults are shown when the tree leaves them unset.
+      - Child routes show each matcher as `<label> <op> <value>` (e.g. `team = infra`), a "Continue matching" badge, the contact point (or "inherited"), timer overrides and nested routes, recursively. Nested routes are kept as they are.
+      - Unmanaged: "Default contact point" Select, "Remove route" on top-level routes, and "Add route", which adds a "New route N" fieldset. That fieldset has Label / Operator / Value matchers (with Add/Remove matcher), an optional "Contact point" Select (by slug, labelled by name), a Continue switch and "Discard route".
+      - Validation: Label is required. Matchers go through common `getAlertLabelMatcherError`, so a bad `=~` regex is refused. The default route needs a contact point.
+      - Save is disabled until something changes. It sends `{ contactPoint, groupBy?, groupWait?, groupInterval?, repeatInterval?, routes }` without `managed`, `version` or `type`, which is a valid PUT body. After a resolved save, the new routes join the tree.
+      - Managed: shows the badge and a violet Alert. There is no Add/Remove route button and no Select, and Save is disabled.
+    - `utils.ts`: `formatAlertLabelMatcher`, plus 1 unit test (16 in `utils.test.ts`).
+  - Decision: the editor keeps a local copy of the tree and has no effect that resyncs it from props. The pages feature should render it with `key` set to the loaded tree (e.g. after the query refetch), or remount it some other way.
+  - Trap: the default route's Select is labelled "Default contact point", not "Contact point". The acceptance `field('Contact point')` takes the first matching input, so a second "Contact point" label above the new route would break it.
+  - Tested:
+    - After init, the check passes (2 passed, 4 skipped). Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) clicked through the editor.
+      - Nested `sev =~ crit|page` and "Continue matching" showed. Save started disabled.
+      - Saving an empty new route showed "Label is required". `a)|(b` with `=~` showed "Invalid regex". Neither called onSave.
+      - Removing the existing route and adding `sev =~ crit|page` saved `{contactPoint, groupWait, routes:[that route]}`. The new route then showed in the tree and Save was disabled again.
+      - With `tree={null}`, picking a default contact point saved `{contactPoint:'incident-io', routes:[]}`.
+      - The managed tree had no Add or Remove route, no Select, and Save was disabled.
+  - For the next session (pages): map `onSave` to `saveNotificationRoutes`, and `tree` to `getNotificationRoutes` (null before the first save). Key the editor on the loaded tree.
+- 2026-11-08T23:48:47Z supervisor: alert-ui-routes-editor passed the gate in round 1
+- alert-ui-pages (round 1) — 2026-11-08
+  - Changes:
+    - `Routes.tsx`: new `ALERTING_ROUTES` inside `PROJECT_LAYOUT_ROUTES` (so under `ProjectRoute` and `ProjectLayout`). The paths are `alerting/rules`, `alerting/rules/new`, `alerting/rules/:ruleUuid`, `alerting/rules/:ruleUuid/edit`, `alerting/contact-points`, `alerting/contact-points/new`, `alerting/contact-points/:contactPointUuid` and `alerting/notification-routes`. Each one lazy-loads a default-exported page from `features/alerting/pages/`.
+    - `features/alerting/hooks.ts`: React Query hooks over `api.ts`. Every key starts with `['alerting', projectUuid]`. `useAlertingMutation` invalidates that prefix on success. It also adds `apiErrorMessage` and `toAlertRuleDefinition`, which picks a rule's definition fields as the preview body.
+    - `features/alerting/utils.ts`: `alertingUrl(projectUuid, path)`. It lives here, not in a page file, because of oxlint's react/only-export-components rule.
+    - Pages: `AlertingPage` is the shared frame (Page, an "Alerting" title, tabs for Alert Rules / Contact Points / Notification Routes that navigate, a loader, and an error Alert). The others are `AlertRulesPage` (with a "New rule" button), `AlertRulePage` (detail; Test rule calls `previewAlertRule`; Edit goes to `.../edit`), `AlertRuleEditPage` (new or edit; opens the rule page after saving), `ContactPointsPage` ("New contact point"; test calls `testContactPoint`; open goes to the editor route), `ContactPointEditPage` (uses `getContactPoint`; returns to the list after saving) and `NotificationRoutesPage` (the editor is keyed on `dataUpdatedAt`, as the routes-editor session asked).
+    - `NotificationRoutesEditor`: it now catches a rejected `onSave`. Before, Mantine's `form.onSubmit` turned the rethrow into an unhandled rejection. The edits stay unsaved and the page shows the error toast. The prop doc says so.
+  - Decisions:
+    - Folders come from `useSpaceSummaries(projectUuid, true)`.
+    - A refused rule or contact-point save shows an error toast and keeps the editor's input.
+    - Errors from Test rule are rethrown as `Error(message)`, because `AlertRuleDetail` shows only an Error's message.
+    - No NavBar entry links to the alerting pages yet. Adding one is a product decision, so it was left out of scope.
+  - Tested:
+    - After init, the check passes (1 passed, 5 skipped). The full contact-routes-ui file passes (6) and `AppRoutes.test.ts` passes (5). Frontend tsc, oxlint and oxfmt are clean.
+    - As a user: a scratch vitest file (deleted) took each URL's leaf route from `matchRoutes(APP_ROUTES, url)`. All 8 URLs reached `alerting/...` leaves, not `*`. It then ran those routes' real `lazy()` in a memory router with the app providers and a nock API.
+      - Rules list, then a click on the rule, showed the detail page with the query. Test rule showed the API's SQL error. Edit showed "Edit Disk almost full".
+      - On rules/new, filling the editor and saving POSTed the definition and navigated to `rules/r-new`.
+      - On contact-points, Send test showed "Test notification sent". Opening the row showed the editor, and renaming and saving PATCHed and returned to the list.
+      - On notification-routes, adding `team = infra` and saving with the PUT refused kept the route fieldset and its value. A second save PUT again.
+      - The tabs navigated from rules to notification-routes, which showed "Default route" for a null tree.
+- 2026-11-08T23:56:17Z supervisor: alert-ui-pages passed the gate in round 1
+- alert-grafana-port-examples (round 1) — 2026-11-08
+  - Changes: new `docs/eng-1799/alerting-examples/`. It uses the CLI layout, so `lightdash upload --alerting-only --path docs/eng-1799/alerting-examples` reads it as is.
+    - `contact-points/`: the six Grafana contact points. `incident-io` is `incident_io`, with token `{secretRef: incident-io-alert-source-token}` and a placeholder alert source id in its URL. `slack-infra-alerts`, `slack-alerts` (`disableResolveMessage: true`), `slack-alerts-swat`, `slack-sec` and `test-alerts` are `slack_webhook`, with `url: {secretRef: <slug>-webhook}` and the ported `slack.title`/`slack.message` templates.
+    - `notification-routes/notification-routes.yml`: the HouseRx tree from `routing.accept.ts` (`grafana_notification_policy.tf`), route for route. The default is `slack-infra-alerts`, with group_by `...` and timers 5s/2m/1h. The routes are test, engineering+#alerts, infra, swat (all `continue`), then the sweep.
+    - `alert-rules/`: three example rules, all `shadow: true`. They are `alb-unhealthy-hosts` (cloudwatch, team=infra), `pg-cron-job-failed` (platform_query, team=engineering channel=#alerts) and `platform-environment-sweep-errors` (logql_metric, system=platform-environment-sweep).
+    - `README.md`: tables for the contact points, routes and rules, plus the known differences. All files were formatted with oxfmt.
+  - Decisions (contract assumptions):
+    - ADR 0003's routing-bug fixes are NOT applied. The spec doesn't say where `team=Support` and unlabelled `team=engineering` should go, or what should route to `slack-sec`. They keep today's behaviour (the default route, and no route for slack-sec), and the README lists them as a follow-up for the owners. The check also requires unmatched labels to reach `slack-infra-alerts` only.
+    - Annotations are static text, because the template engine has no `$labels` annotation templating.
+  - Tested:
+    - The check passes after init (1 passed, 1 skipped).
+    - As a user: a scratch tsx script (deleted) ran the real CLI, `lightdash upload --alerting-only --project ... --path docs/eng-1799/alerting-examples`, against the mock Lightdash from the CLI acceptance support.
+      - It exited 0 and printed "Uploaded 6 contact points, 1 notification route trees and 3 alert rules".
+      - There was one POST, with contact points first, then the tree, then the rules. Each contact point carried only its secretRef, and every rule had shadow=true.
+    - `routeAlert` on the YAML tree gave these results:
+      - infra → incident-io (5s/2m/1d)
+      - test → test-alerts
+      - swat → slack-alerts-swat
+      - engineering+#alerts → slack-alerts (1m/1m)
+      - sweep → slack-infra-alerts (1d)
+      - Support, engineering and nobody → slack-infra-alerts (1h)
+    - Intervals and timers pass the backend `validateAlertRuleDefinition` limits (interval ≥ 30s).
+- 2026-11-08T23:59:46Z supervisor: alert-grafana-port-examples passed the gate in round 1
+- alert-docs (round 1) — 2026-11-08
+  - Changes: new `docs/eng-1799/alerting.md`, formatted with oxfmt. It has four sections:
+    - Model: the Alert Rule fields and defaults from `ALERT_RULE_DEFAULTS`, series states, nodata/error, Contact Points and `secretRef` (the env var `ALERTING_SECRET_<NAME>`), the Notification Route tree, Managed and the as-code layout, `lightdash download/upload --alerting-only`, role permissions, the 15s tick and heartbeat, the `system:alert-evaluator` identity, and `GET /api/v1/alerting/health` (ok/stale/never_run, stale after 60s).
+    - Routing semantics: the root always matches, children are tried in order, the first match wins unless `continue`, the root is the fallback. It covers inherited timers, the root defaults 30s/5m/4h, `groupBy` `'...'` and `[]`, `groupWait`/`groupInterval`/`repeatInterval`, and resolve messages.
+    - Shadow Run: upload with `shadow: true`, export Grafana's state history, write an expected-differences YAML, run `lightdash alerting shadow-report` (5 min tolerance, `--fail-on-unexpected`), and repeat until `unexpectedCount` is 0.
+    - Cutover: ADR 0003's preconditions, then turn shadow off through upload, check health and the heartbeat, turn Grafana's notifications off, and scale Grafana to zero for 30 days.
+  - Every fact comes from CONTRACTS.md, CONTEXT.md, ADR 0001/0003, earlier progress entries or the code. The doc avoids the glossary's banned words (dry run, parallel run, go-live, switchover, canary). The check rejects them, so later doc edits must avoid them too.
+  - The Cutover section describes the procedure only. Per the `no_prod` decision, this program carries none of it out.
+  - Tested:
+    - After init, the check passes (1 passed, 1 skipped). The whole docs.accept.ts passes 2/2.
+    - As a user, I read the doc and checked each CLI command and flag against the real CLI's `--help` (via tsx): `alerting shadow-report` (`--project`, `--since`, `--grafana-history`, `--expected-differences`, `--json`, `--fail-on-unexpected`), and `upload`/`download --alerting-only`. They match.
+- 2026-11-09T00:02:35Z supervisor: alert-docs passed the gate in round 1
+- alert-annotation-templates (round 1) — 2026-11-08
+  - Changes:
+    - common `templateEngine.ts` / `templateTypes.ts`: a new `AlertTemplateOptions.variables` option defines extra top-level variables besides `$`. It is keyed without the `$`, so `{ labels }` defines `$labels`.
+    - New common `annotationTemplates.ts` (exported from `alerting/index.ts`, not from templateEngine, which avoids a circular import):
+      - `renderAlertAnnotation(template, { labels, value })` renders `$labels` / `.Labels` and `$value` / `.Value`.
+      - `renderAlertAnnotations` renders every annotation of a rule.
+      - Text with no `{{` is returned as it is.
+      - Unit test: `annotationTemplates.test.ts`.
+    - backend `evaluateAlertSeries.ts`:
+      - Each series' annotations are rendered with its instance labels (series, rule and `alertname`) and its reduced value.
+      - The DatasourceNoData and DatasourceError synthetic series are rendered too, with their labels and an empty `$value`. The `error` annotation is added after rendering, so it is never templated.
+      - Instances store the rendered text, so `/state`, the instance and the webhook payload all carry it.
+  - Decisions (contract assumptions; the spec says nothing about annotation templating):
+    - `$value` is the numeric reduced value (Prometheus style), so `gt $value 98.0` works and `95` prints as `95`. It is not Grafana's `[ var='A' ... ]` string. The acceptance test requires this.
+    - If an annotation's template fails to parse or run, the annotation keeps its original text, as Grafana does. The alert is never dropped.
+    - `$values` (per-refId map) is not supported, because rules have one query.
+    - A series that goes missing keeps the annotations from its last render. The settle path doesn't re-render them.
+  - Follow-up: `docs/eng-1799/alerting-examples/README.md` (alert-grafana-port-examples) says annotations are static because there was no `$labels` templating. That is no longer true, so the ported rules could now use templated summaries. I left the docs unchanged (out of scope).
+  - Tested:
+    - After init, the check passes (1 passed, 10 skipped). The whole `evaluation.accept.ts` passes 11/11.
+    - Unit tests pass: common `annotationTemplates.test.ts` 6/6 and `templateEngine.test.ts` 13/13, backend `evaluateAlertSeries.test.ts` 19/19.
+    - Backend typecheck is clean, and oxfmt/oxlint are clean on the changed files.
+    - As a user: the acceptance harness runs the real express app on 127.0.0.1:0 against a throwaway Postgres.
+      - I created a rule with summary `Disk on {{ $labels.instance }} is {{ $value }}%` and fired it for db-1 at 95 (and db-3 at 99).
+      - The instance, `GET /state` and the webhook POST all carried `Disk on db-1 is 95%`.
+      - The `{{ if gt $value 98.0 }}` description gave `warning` for db-1 and `critical` for db-3.
+- 2026-11-09T00:08:04Z supervisor: alert-annotation-templates passed the gate in round 1

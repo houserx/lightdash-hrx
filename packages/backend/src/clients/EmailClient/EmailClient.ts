@@ -400,6 +400,24 @@ export default class EmailClient {
         return this.deliverMail(options);
     }
 
+    /**
+     * Sends a message the caller has already rendered (alerting Contact
+     * Points), with the default sender and no Lightdash template.
+     */
+    public async sendPrerenderedEmail(message: {
+        to: string[];
+        subject: string;
+        text: string;
+        html?: string;
+    }): Promise<void> {
+        return this.deliverMail({
+            to: message.to,
+            subject: message.subject,
+            text: message.text,
+            ...(message.html ? { html: message.html } : {}),
+        });
+    }
+
     public canSendEmail() {
         return !!this.transporter;
     }

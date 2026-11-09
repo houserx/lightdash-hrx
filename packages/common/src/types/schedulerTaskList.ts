@@ -253,6 +253,27 @@ export const EE_SCHEDULER_TASKS = {
     SWEEP_MOBILE_PUSH_LIVE_ACTIVITIES: 'sweepMobilePushLiveActivities',
 } as const;
 
+/**
+ * Graphile-worker tasks owned by the alerting module (ENG-1799).
+ * `alertingTick` finds due Alert Rules and enqueues one `alertRuleEvaluate`
+ * job per rule per interval slot.
+ */
+export const ALERTING_SCHEDULER_TASKS = {
+    ALERTING_TICK: 'alertingTick',
+    ALERT_RULE_EVALUATE: 'alertRuleEvaluate',
+} as const;
+
+export type AlertingSchedulerTaskName =
+    (typeof ALERTING_SCHEDULER_TASKS)[keyof typeof ALERTING_SCHEDULER_TASKS];
+
+export type AlertingTickPayload = Record<string, never>;
+
+export type AlertRuleEvaluatePayload = Partial<TraceTaskBase> & {
+    ruleUuid: string;
+    /** ISO timestamp of the interval slot this evaluation belongs to. */
+    scheduledAt: string;
+};
+
 export const SCHEDULER_TASKS = {
     HANDLE_SCHEDULED_DELIVERY: 'handleScheduledDelivery',
     // Legacy individual notification tasks (deprecated, kept for backwards compatibility)
@@ -302,6 +323,7 @@ export const SCHEDULER_TASKS = {
     RECONCILE_PLAYGROUND_BUNDLES: 'reconcilePlaygroundBundles',
     BACKFILL_DEFAULT_USER_SPACES: 'backfillDefaultUserSpaces',
     LEARN_SANDBOX_COMMAND: 'learnSandboxCommand',
+    ...ALERTING_SCHEDULER_TASKS,
     ...EE_SCHEDULER_TASKS,
 } as const;
 
@@ -362,6 +384,8 @@ export interface TaskPayloadMap {
     [SCHEDULER_TASKS.RECONCILE_PLAYGROUND_BUNDLES]: TraceTaskBase;
     [SCHEDULER_TASKS.BACKFILL_DEFAULT_USER_SPACES]: BackfillDefaultUserSpacesPayload;
     [SCHEDULER_TASKS.LEARN_SANDBOX_COMMAND]: LearnSandboxCommandPayload;
+    [SCHEDULER_TASKS.ALERTING_TICK]: AlertingTickPayload;
+    [SCHEDULER_TASKS.ALERT_RULE_EVALUATE]: AlertRuleEvaluatePayload;
     [SCHEDULER_TASKS.AI_AGENT_EVAL_RESULT]: AiAgentEvalRunJobPayload;
     [SCHEDULER_TASKS.AI_AGENT_REVIEW_CLASSIFIER]: AiAgentReviewClassifierJobPayload;
     [SCHEDULER_TASKS.AI_AGENT_REVIEW_WRITEBACK]: AiAgentReviewWritebackJobPayload;

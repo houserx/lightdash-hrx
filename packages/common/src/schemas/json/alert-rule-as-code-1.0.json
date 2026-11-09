@@ -1,0 +1,180 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://schemas.lightdash.com/lightdash/alert-rule-as-code.json",
+    "title": "Lightdash Alert Rule as Code",
+    "description": "One Alert Rule (ENG-1799), stored as alert-rules/<slug>.yml. Fields left out take the Alert Rule defaults.",
+    "type": "object",
+    "required": [
+        "version",
+        "type",
+        "slug",
+        "name",
+        "description",
+        "query",
+        "condition"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "version": {
+            "const": 1,
+            "description": "Document format version"
+        },
+        "type": {
+            "const": "alert_rule"
+        },
+        "slug": {
+            "$ref": "#/$defs/Slug",
+            "description": "Stable identifier of the rule within the project; uploads upsert by slug"
+        },
+        "name": {
+            "$ref": "#/$defs/NonBlankString",
+            "description": "Rule name, used as the alertname label"
+        },
+        "description": {
+            "$ref": "#/$defs/NonBlankString",
+            "description": "Why the rule exists. Required: it is the audit description of every query the rule runs"
+        },
+        "spaceSlug": {
+            "$ref": "#/$defs/Slug",
+            "description": "Slug of the space the rule belongs to; left out, the rule is in no space"
+        },
+        "labels": {
+            "type": "object",
+            "description": "Labels added to every series of the rule; used by Notification Routes",
+            "propertyNames": {
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "annotations": {
+            "type": "object",
+            "description": "Annotations (summary, description, runbook_url, ...) available to message templates",
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "query": {
+            "$ref": "#/$defs/NonBlankString",
+            "description": "SQL run against the project on every evaluation"
+        },
+        "valueColumn": {
+            "type": "string",
+            "minLength": 1,
+            "default": "value",
+            "description": "Column holding the value to reduce"
+        },
+        "reducer": {
+            "enum": ["last", "mean", "max", "min", "sum", "count"],
+            "default": "last",
+            "description": "How each series is reduced to one value"
+        },
+        "condition": {
+            "$ref": "#/$defs/Condition"
+        },
+        "for": {
+            "$ref": "#/$defs/Duration",
+            "default": "0s",
+            "description": "How long the condition must hold before the series fires"
+        },
+        "keepFiringFor": {
+            "$ref": "#/$defs/Duration",
+            "default": "0s",
+            "description": "How long a series keeps firing after the condition clears"
+        },
+        "interval": {
+            "$ref": "#/$defs/Duration",
+            "default": "1m",
+            "description": "Evaluation interval"
+        },
+        "timeRange": {
+            "$ref": "#/$defs/Duration",
+            "default": "10m",
+            "description": "Time range the query covers on each evaluation"
+        },
+        "noDataState": {
+            "enum": ["nodata", "normal", "alerting", "keep_last"],
+            "default": "nodata",
+            "description": "State to take when the query returns no rows"
+        },
+        "errorState": {
+            "enum": ["error", "alerting", "keep_last"],
+            "default": "error",
+            "description": "State to take when the query fails"
+        },
+        "paused": {
+            "type": "boolean",
+            "default": false
+        },
+        "shadow": {
+            "type": "boolean",
+            "default": false,
+            "description": "Shadow Run: evaluate and log notifications without sending them"
+        }
+    },
+    "$defs": {
+        "Slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "NonBlankString": {
+            "type": "string",
+            "pattern": "\\S"
+        },
+        "Duration": {
+            "type": "string",
+            "description": "Prometheus duration such as 30s, 5m or 1h30m",
+            "pattern": "^(?:0|(?=\\d)(?:\\d+y)?(?:\\d+w)?(?:\\d+d)?(?:\\d+h)?(?:\\d+m)?(?:\\d+s)?(?:\\d+ms)?)$"
+        },
+        "Condition": {
+            "type": "object",
+            "description": "Check of the reduced value: a threshold, or a range (exclusive at both ends)",
+            "required": ["operator"],
+            "properties": {
+                "operator": {
+                    "enum": [
+                        ">",
+                        "<",
+                        ">=",
+                        "<=",
+                        "==",
+                        "!=",
+                        "within_range",
+                        "outside_range"
+                    ]
+                }
+            },
+            "if": {
+                "properties": {
+                    "operator": {
+                        "enum": ["within_range", "outside_range"]
+                    }
+                }
+            },
+            "then": {
+                "required": ["operator", "min", "max"],
+                "additionalProperties": false,
+                "properties": {
+                    "operator": true,
+                    "min": {
+                        "type": "number"
+                    },
+                    "max": {
+                        "type": "number"
+                    }
+                }
+            },
+            "else": {
+                "required": ["operator", "threshold"],
+                "additionalProperties": false,
+                "properties": {
+                    "operator": true,
+                    "threshold": {
+                        "type": "number"
+                    }
+                }
+            }
+        }
+    }
+}

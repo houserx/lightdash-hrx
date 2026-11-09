@@ -36,6 +36,8 @@ it('keeps the child launcher inventory explicit', async () => {
             .map(({ name }) => name)
             .sort(),
     ).toEqual([
+        // Test-only: the alerting acceptance harness spawns the CLI from source.
+        '__acceptance__/alerting/support.ts',
         'dbt/models.ts',
         'handlers/apps/createApp.ts',
         'handlers/apps/preview.ts',

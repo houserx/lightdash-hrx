@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import pLimit from 'p-limit';
 import type { PoolClient } from 'pg';
+import { type AlertingModule } from '../alerting';
 import { UsageEventsCompactor } from '../analytics/eventStream/UsageEventsCompactor';
 import { UsageHistoryBackfill } from '../analytics/eventStream/UsageHistoryBackfill';
 import { DEFAULT_DB_MAX_CONNECTIONS } from '../knexfile';
@@ -73,6 +74,8 @@ export type SchedulerWorkerArguments = SchedulerTaskArguments & {
     prometheusMetrics?: PrometheusMetrics;
     dailyJobRetryBackoffMs?: readonly [number, number];
     approvalRequestCleanupMaxBatches?: number;
+    // When omitted, the worker has no alerting handlers and seeds no tick.
+    alertingModule?: AlertingModule;
 };
 
 const DEFAULT_DAILY_JOB_RETRY_BACKOFF_MS = [2_000, 5_000] as const;
@@ -215,6 +218,8 @@ export class SchedulerWorker extends SchedulerTask {
 
     private readonly approvalRequestCleanupMaxBatches: number;
 
+    private alertingModule: AlertingModule | undefined;
+
     constructor(schedulerWorkerArgs: SchedulerWorkerArguments) {
         super(schedulerWorkerArgs);
         this.agentActionLogModel = schedulerWorkerArgs.agentActionLogModel;
@@ -237,6 +242,7 @@ export class SchedulerWorker extends SchedulerTask {
         this.usageDimensionsModel = schedulerWorkerArgs.usageDimensionsModel;
         this.usageHistoryModel = schedulerWorkerArgs.usageHistoryModel;
         this.usageProcessingModel = schedulerWorkerArgs.usageProcessingModel;
+        this.alertingModule = schedulerWorkerArgs.alertingModule;
         this.dailyJobRetryBackoffMs =
             schedulerWorkerArgs.dailyJobRetryBackoffMs ??
             DEFAULT_DAILY_JOB_RETRY_BACKOFF_MS;
@@ -356,6 +362,33 @@ export class SchedulerWorker extends SchedulerTask {
         }
     }
 
+    /**
+     * Wires the alerting module in after construction, for worker factories
+     * (such as the EE one) that don't pass it. Call it before `run()`.
+     */
+    setAlertingModule(alertingModule: AlertingModule) {
+        this.alertingModule = alertingModule;
+    }
+
+    /** Starts the self-rescheduling `alertingTick` chain. Never throws. */
+    private async seedAlertingTick() {
+        if (
+            !this.alertingModule ||
+            !this.enabledTasks.includes(SCHEDULER_TASKS.ALERTING_TICK)
+        ) {
+            return;
+        }
+        try {
+            await this.alertingModule.seedTick();
+        } catch (error) {
+            Logger.error(
+                `Could not queue the first alerting tick: ${getErrorMessage(
+                    error,
+                )}`,
+            );
+        }
+    }
+
     async run() {
         this.prometheusMetrics?.usageProcessing?.setEnabled(
             !!this.lightdashConfig.usageEvents?.enabled &&
@@ -366,6 +399,7 @@ export class SchedulerWorker extends SchedulerTask {
         );
         // Wait for graphile utils to finish migration and prevent race conditions
         await this.schedulerClient.graphileUtils;
+        await this.seedAlertingTick();
         // Run a worker to execute jobs:
         Logger.info('Running scheduler');
 
@@ -2447,6 +2481,24 @@ export class SchedulerWorker extends SchedulerTask {
             },
             [SCHEDULER_TASKS.INGEST_PROJECT_CONTEXT]: async () => {
                 // EE-only: implemented in CommercialSchedulerWorker
+            },
+            ...this.getAlertingTaskList(),
+        };
+    }
+
+    private getAlertingTaskList(): Pick<
+        TypedTaskList,
+        | typeof SCHEDULER_TASKS.ALERTING_TICK
+        | typeof SCHEDULER_TASKS.ALERT_RULE_EVALUATE
+    > {
+        if (!this.alertingModule) return {};
+        const { taskHandlers } = this.alertingModule;
+        return {
+            [SCHEDULER_TASKS.ALERTING_TICK]: async (payload) => {
+                await taskHandlers.alertingTick(payload);
+            },
+            [SCHEDULER_TASKS.ALERT_RULE_EVALUATE]: async (payload) => {
+                await taskHandlers.alertRuleEvaluate(payload);
             },
         };
     }

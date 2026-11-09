@@ -1,3 +1,23 @@
+import {
+    type AlertProjectHistoryEntry,
+    type AlertRulePreview,
+    type AlertRuleSummary,
+    type AlertRuleVersion,
+    type AlertRuleWithInstances,
+    type AlertStateHistoryEntry,
+    type AlertStateInstance,
+} from '../alerting/alertRules';
+import {
+    type AlertingAsCodeDownload,
+    type AlertingAsCodeUploadResult,
+} from '../alerting/asCode';
+import {
+    type ContactPoint,
+    type ContactPointTestResult,
+} from '../alerting/contactPoints';
+import { type SavedNotificationRouteTree } from '../alerting/notificationRoutes';
+import { type AlertNotification } from '../alerting/notifications';
+import { type ShadowRunReport } from '../alerting/shadowRun';
 import { type ExploreWarningReport } from '../compiler/compilationReport';
 // Note: EE types removed from direct import to avoid circular module resolution
 // They are still available via the re-export below: export * from './ee';
@@ -1426,6 +1446,21 @@ export type ApiFlashResults = Record<string, string[]>;
 
 type ApiResults =
     | ApiQueryCostEstimateResponse['results']
+    | AlertingAsCodeDownload
+    | AlertingAsCodeUploadResult
+    | ShadowRunReport
+    | AlertRuleSummary[]
+    | AlertRuleWithInstances
+    | AlertRuleVersion[]
+    | AlertRulePreview
+    | AlertStateHistoryEntry[]
+    | AlertProjectHistoryEntry[]
+    | { instances: AlertStateInstance[] }
+    | AlertNotification[]
+    | ContactPoint
+    | ContactPoint[]
+    | ContactPointTestResult
+    | SavedNotificationRouteTree
     | ReleaseHighlightsResult
     | AgentConnectionApprovalReviewResponse['results']
     | AgentConnectionApprovalDecisionResponse['results']

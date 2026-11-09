@@ -23,6 +23,7 @@ import {
 } from './clients/ClientRepository';
 import { setGithubRateLimitObserver } from './clients/github/Github';
 import { LightdashConfig } from './config/parseConfig';
+import { createProductionAlertingModule } from './createProductionAlertingModule';
 import { createDatabase } from './database/createDatabase';
 import Logger from './logging/logger';
 import { flush as flushFeatureFlagChecks } from './models/FeatureFlagModel/flagCheckAggregator';
@@ -356,6 +357,19 @@ export default class SchedulerApp {
             workerHealth,
             prometheusMetrics: this.prometheusMetrics,
         });
+        worker.setAlertingModule(
+            createProductionAlertingModule({
+                database: this.database,
+                siteUrl: this.lightdashConfig.siteUrl,
+                projectModel: this.models.getProjectModel(),
+                getWarehouseClientFactory: () =>
+                    this.serviceRepository.getProjectService()
+                        .warehouseClientFactory,
+                emailClient: this.clients.getEmailClient(),
+                slackClient: this.clients.getSlackClient(),
+                schedulerClient: this.clients.getSchedulerClient(),
+            }),
+        );
         await worker.run();
         return { worker, workerHealth };
     }

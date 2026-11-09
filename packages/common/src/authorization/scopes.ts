@@ -1938,6 +1938,56 @@ const scopes: Scope[] = [
         dependencies: [{ name: 'view:Project' }],
         getConditions: addDefaultUuidCondition,
     },
+
+    // Alerting Scopes
+    {
+        name: 'view:AlertRule',
+        description: 'View alert rules, their state and history',
+        isEnterprise: false,
+        group: ScopeGroup.PROJECT_MANAGEMENT,
+        dependencies: [{ name: 'view:Project' }],
+        getConditions: addDefaultUuidCondition,
+    },
+    {
+        name: 'manage:AlertRule',
+        description: 'Create, edit, pause, and delete alert rules',
+        isEnterprise: false,
+        group: ScopeGroup.PROJECT_MANAGEMENT,
+        dependencies: [{ name: 'view:Project' }],
+        getConditions: addDefaultUuidCondition,
+    },
+    {
+        name: 'view:ContactPoint',
+        description: 'View alert contact points',
+        isEnterprise: false,
+        group: ScopeGroup.PROJECT_MANAGEMENT,
+        dependencies: [{ name: 'view:Project' }],
+        getConditions: addDefaultUuidCondition,
+    },
+    {
+        name: 'manage:ContactPoint',
+        description: 'Create, edit, test, and delete alert contact points',
+        isEnterprise: false,
+        group: ScopeGroup.PROJECT_MANAGEMENT,
+        dependencies: [{ name: 'view:Project' }],
+        getConditions: addDefaultUuidCondition,
+    },
+    {
+        name: 'view:NotificationRoute',
+        description: 'View the alert notification routing tree',
+        isEnterprise: false,
+        group: ScopeGroup.PROJECT_MANAGEMENT,
+        dependencies: [{ name: 'view:Project' }],
+        getConditions: addDefaultUuidCondition,
+    },
+    {
+        name: 'manage:NotificationRoute',
+        description: 'Edit the alert notification routing tree',
+        isEnterprise: false,
+        group: ScopeGroup.PROJECT_MANAGEMENT,
+        dependencies: [{ name: 'view:Project' }],
+        getConditions: addDefaultUuidCondition,
+    },
 ] as const;
 
 const isOrganizationOnlyScopeDefinition = (scope: Scope): boolean =>

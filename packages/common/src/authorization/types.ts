@@ -34,6 +34,18 @@ export const DEVELOPER_EMBED_SUBJECTS = [
     'EmbedCompiledSql',
 ] as const satisfies readonly CaslSubjectNames[];
 
+/** Alerting subjects: project viewers view all of them; developers manage all. */
+export const ALERTING_SUBJECTS = [
+    'AlertRule',
+    'ContactPoint',
+    'NotificationRoute',
+] as const satisfies readonly CaslSubjectNames[];
+
+/** Alerting subjects editors manage (rules only; contact points and routes stay developer-level). */
+export const EDITOR_ALERTING_SUBJECTS = [
+    'AlertRule',
+] as const satisfies readonly CaslSubjectNames[];
+
 interface Project {
     organizationUuid: string;
     projectUuid: string;
@@ -61,11 +73,13 @@ export type CaslSubjectNames =
     | 'AiAgentThread'
     | 'AiAgentThreadContext'
     | 'AiDeepResearch'
+    | 'AlertRule'
     | 'Analytics'
     | 'SystemAnalytics'
     | 'ChangeCsvResults'
     | 'CompiledSql'
     | 'CompileProject'
+    | 'ContactPoint'
     | 'ContentAsCode'
     | 'ContentVerification'
     | 'VerifiedContent'
@@ -104,6 +118,7 @@ export type CaslSubjectNames =
     | 'Job'
     | 'JobStatus'
     | 'MetricsTree'
+    | 'NotificationRoute'
     | 'Organization'
     | 'OrganizationAiAgent'
     | 'OrganizationColorPalette'

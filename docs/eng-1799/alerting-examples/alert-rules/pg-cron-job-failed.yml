@@ -1,0 +1,32 @@
+# Posts to #alerts (team=engineering, channel=#alerts) when a pg_cron job
+# failed in the last 15 minutes. One series per job.
+version: 1
+type: alert_rule
+slug: pg-cron-job-failed
+name: pg_cron job failed
+description: Tells engineering in #alerts when a pg_cron job run failed in the last 15 minutes
+labels:
+  team: engineering
+  channel: '#alerts'
+annotations:
+  summary: A pg_cron job failed; the jobname label names it
+query: |
+  SELECT jobname, failures AS value
+  FROM platform_query($$
+      SELECT j.jobname, count(*) AS failures
+      FROM cron.job_run_details d
+      JOIN cron.job j USING (jobid)
+      WHERE d.status = 'failed'
+        AND d.start_time >= now() - interval '15 minutes'
+      GROUP BY j.jobname
+  $$)
+reducer: last
+condition:
+  operator: '>'
+  threshold: 0
+interval: 5m
+timeRange: 15m
+keepFiringFor: 15m
+noDataState: normal
+errorState: error
+shadow: true

@@ -1,0 +1,11 @@
+version: 1
+type: contact_point
+slug: slack-alerts-swat
+name: slack-alerts-swat
+integrations:
+  - type: slack_webhook
+    url:
+      secretRef: slack-alerts-swat-webhook
+    title: '{{ template "slack.title" . }}'
+    text: '{{ template "slack.message" . }}'
+    disableResolveMessage: false

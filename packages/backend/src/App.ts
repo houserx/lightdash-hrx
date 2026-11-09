@@ -32,6 +32,7 @@ import path from 'path';
 import qs from 'qs';
 import reDoc from 'redoc-express';
 import { URL } from 'url';
+import { createAlertingRouter, type AlertingModule } from './alerting';
 import {
     createAiUsageLedgerSink,
     registerAiUsageLedger,
@@ -76,6 +77,7 @@ import {
 import { databricksPassportStrategy } from './controllers/authentication/strategies/databricksStrategy';
 import { slackPassportStrategy } from './controllers/authentication/strategies/slackStrategy';
 import { snowflakePassportStrategy } from './controllers/authentication/strategies/snowflakeStrategy';
+import { createProductionAlertingModule } from './createProductionAlertingModule';
 import { createDatabase } from './database/createDatabase';
 import { MigrationLeaseManager } from './database/migrationLease';
 import { errorHandler, scimErrorHandler } from './errors';
@@ -241,6 +243,8 @@ export default class App {
     private readonly environment: 'production' | 'development';
 
     private schedulerWorker: SchedulerWorker | undefined;
+
+    private alertingModule: AlertingModule | undefined;
 
     private pgWireServer: PgWireServerInstance | undefined;
 
@@ -872,6 +876,9 @@ export default class App {
             next();
         });
 
+        // Alerting API (after auth so routes see req.user; its health route
+        // needs no session)
+        expressApp.use(createAlertingRouter(this.getAlertingModule()));
         // api router
         expressApp.use('/api/v1', apiV1Router);
         RegisterRoutes(expressApp);
@@ -1198,6 +1205,21 @@ export default class App {
         slackService.setupEventListeners();
     }
 
+    private getAlertingModule(): AlertingModule {
+        this.alertingModule ??= createProductionAlertingModule({
+            database: this.database,
+            siteUrl: this.lightdashConfig.siteUrl,
+            projectModel: this.models.getProjectModel(),
+            getWarehouseClientFactory: () =>
+                this.serviceRepository.getProjectService()
+                    .warehouseClientFactory,
+            emailClient: this.clients.getEmailClient(),
+            slackClient: this.clients.getSlackClient(),
+            schedulerClient: this.clients.getSchedulerClient(),
+        });
+        return this.alertingModule;
+    }
+
     private initSchedulerWorker() {
         this.schedulerWorker = this.schedulerWorkerFactory({
             lightdashConfig: this.lightdashConfig,
@@ -1208,6 +1230,7 @@ export default class App {
             utils: this.utils,
             prometheusMetrics: this.prometheusMetrics,
         });
+        this.schedulerWorker.setAlertingModule(this.getAlertingModule());
 
         this.schedulerWorker.run().catch((e) => {
             Logger.error('Error starting scheduler worker', e);
@@ -1254,6 +1277,7 @@ export default class App {
                 Logger.error('Error stopping scheduler worker', e);
             }
         }
+        await this.alertingModule?.close();
     }
 
     getServiceRepository() {

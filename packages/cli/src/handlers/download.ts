@@ -99,6 +99,7 @@ import {
     toAgentAsCodeFile,
     writeAgentKnowledgeDocuments,
 } from './aiAgentKnowledgeDocuments';
+import { downloadAlertingAsCode, uploadAlertingAsCode } from './alertingAsCode';
 import {
     applySdkMirrorToTemplateDeps,
     attachDependenciesToCode,
@@ -250,6 +251,7 @@ export type DownloadHandlerOptions = {
     includeAll: boolean;
     appsOnly?: boolean; // download: implies skipCharts + skipDashboards + skipSpaces; upload: apps-only filtered run
     chartTypesOnly?: boolean; // download: implies skipCharts + skipDashboards + skipSpaces; upload: chart-types-only filtered run
+    alertingOnly?: boolean; // download/upload: only Alert Rules, Contact Points and the Notification Route tree (alerting as code)
     stripPivotSeries: boolean; // Strip per-value pivot series config for portable chart YAML
     validate?: boolean; // Validate charts and dashboards after upload
     concurrency: number;
@@ -2105,6 +2107,41 @@ export const downloadHandler = async (
         throw new ParameterError(
             '--apps-only cannot be combined with --chart-types-only.',
         );
+    }
+
+    if (options.alertingOnly) {
+        const conflicting = [
+            options.appsOnly && '--apps-only',
+            options.chartTypesOnly && '--chart-types-only',
+            options.spacesOnly && '--spaces-only',
+            isOrganizationDownload && '--organization',
+        ].filter(Boolean);
+        if (conflicting.length > 0) {
+            throw new ParameterError(
+                `--alerting-only cannot be combined with ${conflicting.join(', ')}.`,
+            );
+        }
+        await checkLightdashVersion();
+        const alertingConfig = await (getAgentConnectionSelection() === null
+            ? getConfig()
+            : getConfig({ readOnly: true }));
+        await resolveCredential(alertingConfig);
+        const alertingProject = await selectProject(
+            alertingConfig,
+            options.project,
+        );
+        if (!alertingProject) {
+            throw new LightdashError({
+                message:
+                    'No project selected. Run lightdash config set-project',
+                name: 'Not Found',
+                statusCode: 404,
+                data: {},
+            });
+        }
+        logSelectedProject(alertingProject, alertingConfig, 'Downloading from');
+        await downloadAlertingAsCode(alertingProject.projectUuid, options.path);
+        return;
     }
 
     // Bare --apps-only means "all apps": imply --include-apps.
@@ -4061,6 +4098,48 @@ export const uploadHandler = async (
         throw new ParameterError(
             '--chart-types-only cannot be combined with --charts or --dashboards.',
         );
+    }
+    if (options.alertingOnly) {
+        const conflicting = [
+            options.appsOnly && '--apps-only',
+            options.chartTypesOnly && '--chart-types-only',
+            options.spacesOnly && '--spaces-only',
+            options.organization === true && '--organization',
+            (options.charts.length > 0 || options.dashboards.length > 0) &&
+                '--charts or --dashboards',
+        ].filter(Boolean);
+        if (conflicting.length > 0) {
+            throw new ParameterError(
+                `--alerting-only cannot be combined with ${conflicting.join(', ')}.`,
+            );
+        }
+        if (options.gzip) {
+            setGzipEnabled(true);
+        }
+        await checkLightdashVersion();
+        const alertingConfig = await (getAgentConnectionSelection() === null
+            ? getConfig()
+            : getConfig({ readOnly: true }));
+        await resolveCredential(alertingConfig);
+        const alertingProject = await selectProject(
+            alertingConfig,
+            options.project,
+        );
+        if (!alertingProject) {
+            throw new LightdashError({
+                message:
+                    'No project selected. Run lightdash config set-project',
+                name: 'Not Found',
+                statusCode: 404,
+                data: {},
+            });
+        }
+        logSelectedProject(alertingProject, alertingConfig, 'Uploading to');
+        await uploadAlertingAsCode(
+            alertingProject.projectUuid,
+            contentPathOption,
+        );
+        return;
     }
     // Bare --apps-only means "all apps": imply --include-apps.
     if (
