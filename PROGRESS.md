@@ -536,3 +536,24 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   cloudwatch-metrics 5/5, panel-targets 3/3, datasources 6/6, variables 6/6, time-macros 5/5, prometheus 5/5,
   loki 5/5, legend-format 2/2. tsc clean, oxlint clean, oxfmt applied.
 - 2026-11-09T02:13:18Z supervisor: imp-query-cloudwatch-expressions passed the gate in round 1
+
+### imp-query-cloudwatch-logs (2026-11-08)
+
+- `grafanaQuery.ts`: a CloudWatch target with `queryMode: 'Logs'` goes to `translateCloudWatchLogsTarget` and becomes
+  `SELECT * FROM cloudwatch_logs('<group>,<group>', '<Logs Insights query>', ${ld.parameters.__from},
+  ${ld.parameters.__to}[, '<source>'])` (CONTRACTS §1.1). Log groups come from `logGroups` (`name`, else the name
+  parsed from the `arn`), else the legacy `logGroupNames`; blanks dropped, repeats kept once, joined with `,`.
+  Variables resolve in both the log groups and the query (same `queryExpressionSql` as PromQL/LogQL).
+- TODO + warning cases: no log group → `query-cloudwatch-log-groups-missing` ("…has no log group…"); empty
+  `expression` → `query-empty`; `queryLanguage` other than `CWLI` (OpenSearch SQL / PPL) →
+  `query-cloudwatch-unsupported`. A non-default `region` → `query-region-unsupported` (as Metrics mode).
+- New `ResultShape` `'log-events'` (`timestamp, message, fields`), so Logs targets UNION with each other only, never
+  with series or Loki log lines (`panel-targets-not-combined`). `statsGroups` is ignored: the engine returns stats
+  rows through the same columns. Annotations mode stays TODO + `query-cloudwatch-unsupported`.
+- Tested: rebuilt common via init.sh, drove the built `dist/cjs` translator from node: two `logGroups` (one by ARN
+  only) → `cloudwatch_logs('/aws/lambda/fills-a,/aws/lambda/fills-b', …, 'cloudwatch-production')`; legacy
+  `logGroupNames` + `$env` in the query + region us-west-2 → parameter concatenated + region warning; no group → TODO
+  naming the missing log group; PPL → TODO; a panel with two Logs targets → UNION ALL. Acceptance:
+  cloudwatch-logs 3/3; cloudwatch-metrics 5/5, cloudwatch-expressions 3/3, panel-targets 3/3, datasources 6/6,
+  variables 6/6. tsc clean, oxlint clean, oxfmt applied.
+- 2026-11-09T02:15:35Z supervisor: imp-query-cloudwatch-logs passed the gate in round 1

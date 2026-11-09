@@ -81,7 +81,9 @@ type ResultShape =
     /** `timestamp, value, labels, series`: promql, promql_instant, logql_metric, cloudwatch. */
     | 'series'
     /** `timestamp, line, labels, stream`: logql. */
-    | 'log-lines';
+    | 'log-lines'
+    /** `timestamp, message, fields`: cloudwatch_logs. */
+    | 'log-events';
 
 /** A target's translation plus the shape of its result, when it has SQL. */
 type TargetTranslation = GrafanaQueryTranslation & { shape?: ResultShape };
@@ -1122,6 +1124,124 @@ const cloudWatchPanelMath = (
     };
 };
 
+/** A log group ARN (`arn:aws:logs:<region>:<account>:log-group:<name>[:*]`) → its name. */
+const LOG_GROUP_ARN = /^arn:[^:]+:logs:[^:]*:[^:]*:log-group:(.+?)(?::\*)?$/;
+
+/**
+ * The log group names of a Logs target: `logGroups` (`{name, arn}` objects, Grafana 10+;
+ * the name read from the ARN when it has none), else the legacy `logGroupNames` list. Blank
+ * entries are dropped and repeats kept once.
+ */
+const cloudWatchLogGroups = (target: GrafanaTarget): string[] => {
+    const fromGroups = (
+        Array.isArray(target.logGroups) ? target.logGroups : []
+    ).map((group: unknown) => {
+        if (typeof group === 'string') return group;
+        if (group === null || typeof group !== 'object') return '';
+        const { name, arn } = group as { name?: unknown; arn?: unknown };
+        if (typeof name === 'string' && name.trim() !== '') return name;
+        return typeof arn === 'string'
+            ? (LOG_GROUP_ARN.exec(arn)?.[1] ?? '')
+            : '';
+    });
+    const legacy = (
+        Array.isArray(target.logGroupNames) ? target.logGroupNames : []
+    ).map((name: unknown) => (typeof name === 'string' ? name : ''));
+    const names = (
+        fromGroups.some((n) => n.trim() !== '') ? fromGroups : legacy
+    )
+        .map((n) => n.trim())
+        .filter((n) => n !== '');
+    return [...new Set(names)];
+};
+
+/** The Logs query languages Grafana offers; only Logs Insights QL has a translation. */
+const LOGS_INSIGHTS_LANGUAGE = 'CWLI';
+
+/**
+ * A Logs-mode target becomes `cloudwatch_logs(log_groups, query, from, to[, source])`
+ * (CONTRACTS §1.1): the log group names comma-separated and the Logs Insights query as
+ * written, with dashboard variables resolved in both. No log group, no query, or another
+ * query language (OpenSearch SQL or PPL) is a TODO with a warning.
+ */
+const translateCloudWatchLogsTarget = (
+    target: GrafanaTarget,
+    source: string | undefined,
+    variables: GrafanaTemplatingVariable[],
+    warnings: ImportWarning[],
+): TargetTranslation => {
+    const what = `CloudWatch Logs ${targetLabel(target)}`;
+    const language =
+        typeof target.queryLanguage === 'string' &&
+        target.queryLanguage.trim() !== ''
+            ? target.queryLanguage.trim()
+            : LOGS_INSIGHTS_LANGUAGE;
+    if (language !== LOGS_INSIGHTS_LANGUAGE) {
+        warnings.push({
+            code: 'query-cloudwatch-unsupported',
+            message: `${what} is written in ${language}; only Logs Insights queries have a translation`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: translate the ${language} query of ${what} by hand`,
+            warnings,
+        };
+    }
+    const expression =
+        typeof target.expression === 'string' ? target.expression.trim() : '';
+    if (expression === '') {
+        warnings.push({
+            code: 'query-empty',
+            message: `${what} has no Logs Insights query`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: ${what} has no Logs Insights query to translate`,
+            warnings,
+        };
+    }
+    const logGroups = cloudWatchLogGroups(target);
+    if (logGroups.length === 0) {
+        warnings.push({
+            code: 'query-cloudwatch-log-groups-missing',
+            message: `${what} names no log group (logGroups and logGroupNames are empty); cloudwatch_logs() needs at least one`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: ${what} has no log group; add the log groups to query by hand`,
+            warnings,
+        };
+    }
+    const region =
+        typeof target.region === 'string' ? target.region.trim() : '';
+    if (region !== '' && region !== 'default') {
+        warnings.push({
+            code: 'query-region-unsupported',
+            message: `${what} reads region ${region}; cloudwatch_logs() has no region, so the region of the Telemetry Source ${source ?? '(default)'} is used`,
+        });
+    }
+    return {
+        sql: tableFunctionSql(
+            'cloudwatch_logs',
+            [
+                queryExpressionSql(
+                    logGroups.join(','),
+                    `The log groups of ${what}`,
+                    variables,
+                    warnings,
+                ),
+                queryExpressionSql(expression, what, variables, warnings),
+                TELEMETRY_SQL_FROM,
+                TELEMETRY_SQL_TO,
+            ],
+            source,
+        ),
+        todo: null,
+        warnings,
+        shape: 'log-events',
+    };
+};
+
 const translateCloudWatchTarget = (
     target: GrafanaTarget,
     source: string | undefined,
@@ -1131,6 +1251,14 @@ const translateCloudWatchTarget = (
 ): TargetTranslation => {
     const queryMode =
         typeof target.queryMode === 'string' ? target.queryMode : 'Metrics';
+    if (queryMode === 'Logs') {
+        return translateCloudWatchLogsTarget(
+            target,
+            source,
+            variables,
+            warnings,
+        );
+    }
     const metricsKind: CloudWatchMetricsKind =
         queryMode === 'Metrics'
             ? cloudWatchMetricsKind(target)
