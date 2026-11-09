@@ -80,6 +80,7 @@ report() {
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     echo "up.sh: Lightdash: $(json_url "$STACK_JSON" lightdash) (backend with the scheduler and alert worker in-process; results S3 (fake) $(json_url "$STACK_JSON" lightdashS3))"
+    "$NODE" -e 'const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`up.sh: sign in as ${s.demoUser.email} (password in .state/stack.json demoUser); Operations Project: ${s.lightdash.url}/projects/${s.lightdash.projectUuid}/home`)' "$STACK_JSON"
 }
 
 # A live stack (every recorded pid running, the scenario clock answering) is kept as it is.
@@ -314,15 +315,27 @@ LIGHTDASH_UI_HTML="$(curl -fsS -m 10 "$LIGHTDASH_URL/login" 2>/dev/null || true)
 [[ "$LIGHTDASH_UI_HTML" == *'<div id="root"'* ]] ||
     { echo "up.sh: the Lightdash backend does not serve the UI at $LIGHTDASH_URL/login (frontend build missing? run bash ./init.sh)" >&2; exit 1; }
 
+# Seed (through Lightdash's HTTP API; the database is new on every fresh up.sh): the demo user and its organization,
+# the Operations Project on the Federation Engine flavour, and the user attributes platform_read/platform_write.
+rm -f "$RUN/seed.json"
+(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/seed.ts" --lightdash-url "$LIGHTDASH_URL" \
+    --engine-file "$RUN/engine-config.json" --ready-file "$RUN/seed.json") >>"$LOGS/seed.log" 2>&1 || {
+    echo "up.sh: seeding Lightdash failed; last lines of ${LOGS#"$DEMO"/}/seed.log:" >&2
+    tail -20 "$LOGS/seed.log" >&2
+    exit 1
+}
+echo "up.sh: Lightdash seeded (demo user, Operations Project on the Federation Engine flavour)"
+
 # Later demo features start telemetry-mcp here (on ephemeral ports: MCP_PORT and ENGINE_PG_PORT must be set,
 # their defaults are 8080 and 5433) and add it to stack.json below.
 
 "$NODE" -e '
-const [file, telemetryFile, telemetryPid, platformFile, platformPid, engineFile, enginePid, lightdashFile, lightdashDbPid, lightdashPid] =
-    process.argv.slice(1);
+const [file, telemetryFile, telemetryPid, platformFile, platformPid, engineFile, enginePid, lightdashFile, lightdashDbPid, lightdashPid,
+    seedFile] = process.argv.slice(1);
 const fs = require("fs");
 const telemetry = JSON.parse(fs.readFileSync(telemetryFile, "utf8"));
 const lightdash = JSON.parse(fs.readFileSync(lightdashFile, "utf8"));
+const seeded = JSON.parse(fs.readFileSync(seedFile, "utf8"));
 const stack = {
     scenario: telemetry.scenario,
     prometheus: telemetry.prometheus,
@@ -335,7 +348,8 @@ const stack = {
     incidentIo: telemetry.incidentIo,
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
     engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
-    lightdash: lightdash.lightdash,
+    lightdash: { ...lightdash.lightdash, projectUuid: seeded.lightdash.projectUuid },
+    demoUser: seeded.demoUser,
     lightdashDb: lightdash.lightdashDb,
     lightdashS3: telemetry.lightdashS3,
     processes: [
@@ -349,7 +363,7 @@ const stack = {
 fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n", { mode: 0o600 });
 fs.renameSync(file + ".tmp", file);
 ' "$STACK_JSON" "$RUN/telemetry-fakes.json" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID" \
-    "$RUN/lightdash.json" "$LIGHTDASH_DB_PID" "$LIGHTDASH_PID"
+    "$RUN/lightdash.json" "$LIGHTDASH_DB_PID" "$LIGHTDASH_PID" "$RUN/seed.json"
 
 echo "up.sh: demo stack is up (state: ${STATE#"$DEMO"/}, stop with demo/eng-1799/down.sh)"
 report

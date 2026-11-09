@@ -2002,3 +2002,32 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   build moved aside up.sh stopped with the "no frontend production build" message and started nothing. Checks
   lightdash-frontend and lightdash-backend (--stack) pass; no demo process left.
 - 2026-11-09T08:04:44Z supervisor: demo-lightdash-frontend passed the gate in round 1
+
+### demo-seed-project (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/seed.ts`, run by up.sh right after the UI check and before stack.json is written
+  (log `.state/logs/seed.log`, ready file `.state/run/seed.json`). It seeds **only through Lightdash's public HTTP
+  API** on the session cookie registration returns: `POST /api/v1/user` (first user; refuses to run unless
+  `/api/v1/health` says `requiresOrgRegistration`), `PUT /api/v1/org` ("HouseRx Demo (synthetic)"), `PATCH
+  /api/v1/user/me/complete`, `POST /api/v1/org/projects` (`dbtConnection: none`, `type: postgres, flavor:
+  federation`, identitySigningSecret = engine.identitySecret, httpBaseUrl = engine.httpUrl, from
+  `.state/run/engine-config.json`), then `POST /api/v1/org/attributes` for `platform_read` and `platform_write` =
+  `"true"` on the demo user, and verifies `GET /api/v2/projects/<uuid>/federation/access` before writing.
+- Pinned values: demo user `demo.operator@example.com` (Demo Operator, an org **admin** as the registering user),
+  password `test-demo-password-1-not-real`; project name `Operations Project` (slug `operations-project`).
+- stack.json gains `demoUser: {email, password, userUuid}` and `lightdash.projectUuid`. up.sh's report (also on the
+  "already running" path) prints the demo user's email and the project home URL.
+- No personal access token, space or CLI yet: the next seed features (upload, alerting, portal scripts, MCP) add
+  what they need; reuse the `Session` class in seed.ts or log in with `POST /api/v1/login`. The session cookie is
+  enough for `org/projects` and `org/attributes` (no PAT needed).
+- The project home shows the "Welcome, Demo!" onboarding panel (no content yet). AI-agent/credits endpoints answer
+  422 (licence-gated ee), harmless. up.sh warm: ~18 s including the seed (~1 s).
+- Since a user now exists, `/` redirects to `/login` (not `/register`); lightdash-frontend's spec accepts both.
+- Tested as a user: up.sh; in Playwright Chromium opened the printed URL → `/login`, typed the stack.json email
+  and password into the sign-in form → `/projects/operations-project/home` with "Operations Project" in the
+  project switcher and the welcome panel, no page errors; `GET /api/v1/projects/<uuid>` → postgres/federation,
+  no `password`/`identitySigningSecret` keys returned; `GET /api/v2/.../federation/access` → `isFederation: true`,
+  platform_read/platform_write true. Re-ran up.sh → "already running" with the sign-in line; down.sh. Checks
+  seed-project, lightdash-frontend, lightdash-backend (--stack) pass; `tsc --ignoreConfig ... stack/*.ts` clean;
+  no demo process left.
+- 2026-11-09T08:12:06Z supervisor: demo-seed-project passed the gate in round 1
