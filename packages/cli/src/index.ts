@@ -1468,6 +1468,10 @@ importProgram
         'slug of the space the dashboards and charts go to',
         DEFAULT_GRAFANA_DASHBOARD_SPACE,
     )
+    .option(
+        '--no-tabs',
+        'turn collapsed rows into headings with their panels below, instead of dashboard tabs',
+    )
     .option('--verbose', undefined, false)
     .action(importGrafanaDashboardHandler);
 

@@ -18,6 +18,8 @@ export const DEFAULT_GRAFANA_DASHBOARD_SPACE = 'operations';
 type ImportGrafanaDashboardOptions = {
     out: string;
     space: string;
+    /** false with --no-tabs. */
+    tabs: boolean;
     verbose: boolean;
 };
 
@@ -86,6 +88,7 @@ export const importGrafanaDashboardHandler = async (
             spaceSlug,
             takenDashboardSlugs,
             takenChartSlugs,
+            noTabs: options.tabs === false,
         }),
     );
 

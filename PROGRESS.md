@@ -798,3 +798,34 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   are valid. Acceptance: dashboard-rows 2/2, dashboard-layout 3/3, dashboard-command 4/4, dashboard-charts 4/4,
   dashboard-panel-kinds 3/3, dashboard-dropped-panels 4/4. tsc (common) and oxlint are clean, and oxfmt was applied.
 - 2026-11-09T02:53:47Z supervisor: imp-dashboard-rows passed the gate in round 1
+
+### imp-dashboard-collapsed-rows (2026-11-08)
+
+- packages/common/src/eng1799/grafanaDashboardImport.ts: new `layoutPanels` decides where each panel goes before
+  tiles are built. If the dashboard has a collapsed row (and `noTabs` is not set), each collapsed row becomes a tab
+  (name = row title, or `Row <n>` if blank) holding its panels, rebased so the top panel sits at y 0. Every panel
+  outside collapsed rows (including expanded-row headings) goes on a first tab named `Overview`
+  (`GRAFANA_FIRST_TAB_NAME`), which is left out if it would be empty. Tabs get slugs (`uniqueSlug`) and order 0..n-1,
+  and every tile gets `tabSlug`. If there's no collapsed row, there are no tabs and tiles get no `tabSlug`, so
+  earlier output is unchanged.
+- With `noTabs` (CLI `--no-tabs`; commander sets `options.tabs = false`), a collapsed row becomes a heading tile (the
+  same code path as expanded rows: any `type: 'row'` in the layout becomes a heading; blank title = no heading). Its
+  panels go right below it, and everything after the row moves down by the height of the row's content, the way
+  Grafana does when you expand a row.
+- `resolveTileOverlaps` now resolves overlaps per tab (grouped by `tabSlug`) and is still the last step.
+  `flattenPanels` now keeps every row (collapsed rows are only flattened in the no-tabs path).
+- Rows are never passed to `droppedPanelOptions`, so `collapsed` causes no warning.
+- Follow-up for whoever owns docs/eng-1799/grafana-panel-mapping.md (docs-panel-mapping.test.ts checks it against
+  the mapping module): the `row.collapsed` reason says the panels are "imported expanded below the heading". That's
+  only true with --no-tabs now, and by default collapsed rows become tabs. I didn't edit it because the doc is tied
+  to the mapping module. The `--no-tabs` flag also still needs to go in the importer docs (docs.test.ts lists it,
+  which is a later feature).
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard with a top panel and the
+  collapsed rows Database (2 panels) and Queues (1 stat). Default: tabs overview/database/queues with order 0/1/2,
+  Overview chart on overview, Connections and Replica lag on database at y 0 (x 0 and 18), Queue depth on queues at
+  y 0. With --no-tabs: tabs [], heading Database at y 8, Connections and Replica lag at y 9, heading Queues at y 17,
+  Queue depth at y 18, and 4 charts. `lightdash lint -p` said all files are valid for both outputs. Acceptance:
+  dashboard-collapsed-rows 2/2, dashboard-rows 2/2, dashboard-layout 3/3, dashboard-command 4/4, dashboard-charts
+  4/4, dashboard-panel-kinds 3/3, dashboard-dropped-panels 4/4. tsc (common) and oxlint are clean, and oxfmt was
+  applied.
+- 2026-11-09T02:59:03Z supervisor: imp-dashboard-collapsed-rows passed the gate in round 1

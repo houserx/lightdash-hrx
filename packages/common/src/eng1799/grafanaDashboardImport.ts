@@ -7,6 +7,7 @@ import type { SqlChartAsCode } from '../types/contentAsCode/charts';
 import { ContentAsCodeType } from '../types/contentAsCode/core';
 import type {
     DashboardAsCode,
+    DashboardTabAsCode,
     DashboardTileAsCode,
 } from '../types/contentAsCode/dashboards';
 import { DashboardTileTypes } from '../types/dashboard';
@@ -109,6 +110,8 @@ export type GrafanaDashboardImportOptions = {
     /** Slugs already used in this run; the conversion adds its own so they stay unique. */
     takenDashboardSlugs?: Set<string>;
     takenChartSlugs?: Set<string>;
+    /** Collapsed rows become headings with their panels below, instead of tabs. */
+    noTabs?: boolean;
 };
 
 export type GrafanaDashboardImport = {
@@ -255,21 +258,26 @@ const lowestFreeRect = (placed: TileRect[], rect: TileRect): TileRect => {
 };
 
 /**
- * Moves tiles down until no two overlap. Rounding odd widths, overlapping Grafana gridPos and
- * the panels of collapsed rows can all put two tiles on the same cells. Tiles are placed top to
- * bottom, left to right; a tile that hits a placed tile moves to just below it. Tile order in the
+ * Moves tiles down until no two on the same tab overlap. Rounding odd widths and overlapping
+ * Grafana gridPos can put two tiles on the same cells. Tiles are placed top to bottom, left to
+ * right; a tile that hits a placed tile on its tab moves to just below it. Tile order in the
  * array is kept.
  */
-const resolveTileOverlaps = <T extends TileRect>(tiles: T[]): T[] => {
+const resolveTileOverlaps = <T extends TileRect & { tabSlug?: string | null }>(
+    tiles: T[],
+): T[] => {
     const order = tiles
         .map((tile, index) => ({ tile, index }))
         .sort(
             (a, b) =>
                 a.tile.y - b.tile.y || a.tile.x - b.tile.x || a.index - b.index,
         );
-    const placed: TileRect[] = [];
+    const placedByTab = new Map<string | null, TileRect[]>();
     const moved = new Map<number, T>();
     order.forEach(({ tile, index }) => {
+        const tab = tile.tabSlug ?? null;
+        const placed = placedByTab.get(tab) ?? [];
+        placedByTab.set(tab, placed);
         const rect = lowestFreeRect(placed, {
             x: tile.x,
             y: tile.y,
@@ -361,16 +369,111 @@ const isExpandedRow = (panel: GrafanaDashboardPanel) =>
 
 /**
  * Panels in dashboard order. An expanded row stays in the list (it becomes a heading); its
- * panels follow it in the export. A collapsed row is replaced by the panels it holds.
+ * panels follow it in the export.
  */
 const flattenPanels = (
     panels: GrafanaDashboardPanel[],
 ): GrafanaDashboardPanel[] =>
-    panels.flatMap((panel) => {
-        if (panel.type !== 'row') return [panel];
-        const held = flattenPanels(panel.panels ?? []);
-        return isExpandedRow(panel) ? [panel, ...held] : held;
+    panels.flatMap((panel) =>
+        panel.type === 'row'
+            ? [panel, ...flattenPanels(panel.panels ?? [])]
+            : [panel],
+    );
+
+const gridNumber = (value: unknown, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+const gridY = (panel: GrafanaDashboardPanel) =>
+    gridNumber(panel.gridPos?.y, DEFAULT_GRID.y);
+const gridBottom = (panel: GrafanaDashboardPanel) =>
+    gridY(panel) + gridNumber(panel.gridPos?.h, DEFAULT_GRID.h);
+const atY = (
+    panel: GrafanaDashboardPanel,
+    y: number,
+): GrafanaDashboardPanel => ({
+    ...panel,
+    gridPos: { ...panel.gridPos, y },
+});
+
+/** The name of the first tab, which holds the panels outside collapsed rows. */
+export const GRAFANA_FIRST_TAB_NAME = 'Overview';
+
+type PanelLayout = {
+    tabs: DashboardTabAsCode[];
+    /** Panels in dashboard order with their y on their tab, and the tab they go on. */
+    panels: { panel: GrafanaDashboardPanel; tabSlug?: string }[];
+};
+
+/**
+ * Where each panel goes. A collapsed row holds its panels inside it, and becomes a tab holding
+ * them, its top panel at y 0; the panels outside collapsed rows go on a first tab (left out if
+ * it would be empty). With `noTabs`, or with no collapsed rows, there are no tabs: a collapsed
+ * row stays in the list (it becomes a heading) with its panels expanded right below it, and
+ * everything below the row moves down to make room, as when the row is expanded in Grafana.
+ */
+const layoutPanels = (
+    top: GrafanaDashboardPanel[],
+    noTabs: boolean,
+): PanelLayout => {
+    const isCollapsedRow = (panel: GrafanaDashboardPanel) =>
+        panel.type === 'row' && !isExpandedRow(panel);
+    const heldPanels = (row: GrafanaDashboardPanel) =>
+        flattenPanels(row.panels ?? []);
+
+    if (noTabs || !top.some(isCollapsedRow)) {
+        let offset = 0;
+        const panels = top.flatMap((panel) => {
+            if (!isCollapsedRow(panel)) {
+                return flattenPanels([panel]).map((p) => ({
+                    panel: offset ? atY(p, gridY(p) + offset) : p,
+                }));
+            }
+            const rowY = gridY(panel) + offset;
+            const held = heldPanels(panel);
+            const contentTop = rowY + gridNumber(panel.gridPos?.h, 1);
+            const minY = Math.min(...held.map(gridY));
+            const placed = held.map((p) => ({
+                panel: atY(p, gridY(p) - minY + contentTop),
+            }));
+            if (held.length > 0) {
+                offset += Math.max(...held.map(gridBottom)) - minY;
+            }
+            return [{ panel: atY(panel, rowY) }, ...placed];
+        });
+        return { tabs: [], panels };
+    }
+
+    const takenTabSlugs = new Set<string>();
+    const tabs: DashboardTabAsCode[] = [];
+    const addTab = (name: string) => {
+        const tab = {
+            slug: uniqueSlug(name, 'tab', takenTabSlugs),
+            name,
+            order: tabs.length,
+        };
+        tabs.push(tab);
+        return tab.slug;
+    };
+    const outside = flattenPanels(top.filter((p) => !isCollapsedRow(p)));
+    const firstTab =
+        outside.length > 0 ? addTab(GRAFANA_FIRST_TAB_NAME) : undefined;
+    const panels: PanelLayout['panels'] = outside.map((panel) => ({
+        panel,
+        tabSlug: firstTab,
+    }));
+    top.filter(isCollapsedRow).forEach((row, index) => {
+        const name =
+            typeof row.title === 'string' && row.title.trim()
+                ? row.title.trim()
+                : `Row ${index + 1}`;
+        const tabSlug = addTab(name);
+        const held = heldPanels(row);
+        const minY = Math.min(...held.map(gridY));
+        held.forEach((panel) =>
+            panels.push({ panel: atY(panel, gridY(panel) - minY), tabSlug }),
+        );
     });
+    return { tabs, panels };
+};
 
 /** Converts one Grafana dashboard into dashboard and SQL chart content as code. */
 export const convertGrafanaDashboard = (
@@ -396,7 +499,8 @@ export const convertGrafanaDashboard = (
     const charts: SqlChartAsCode[] = [];
     const tiles: DashboardTileAsCode[] = [];
 
-    flattenPanels(source.panels).forEach((panel) => {
+    const layout = layoutPanels(source.panels, options.noTabs === true);
+    layout.panels.forEach(({ panel, tabSlug }) => {
         const type = typeof panel.type === 'string' ? panel.type : '';
         const panelTitle =
             typeof panel.title === 'string' ? panel.title.trim() : '';
@@ -410,8 +514,11 @@ export const convertGrafanaDashboard = (
                 dashboard: title,
                 panel: panelName,
             });
-        const position = tilePosition(panel);
-        if (isExpandedRow(panel)) {
+        const position = {
+            ...tilePosition(panel),
+            ...(tabSlug === undefined ? {} : { tabSlug }),
+        };
+        if (panel.type === 'row') {
             // A row with no title shows nothing in Grafana, so it gets no heading.
             if (!panelTitle) return;
             tiles.push({
@@ -537,7 +644,7 @@ export const convertGrafanaDashboard = (
             name: title,
             slug,
             spaceSlug: options.spaceSlug,
-            tabs: [],
+            tabs: layout.tabs,
             tiles: resolveTileOverlaps(tiles),
         },
         charts,
