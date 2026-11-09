@@ -1333,3 +1333,29 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   oxfmt applied. Pre-existing: oxlint flags packages/common/src/index.ts duplicate `formatPrometheusDuration`
   export (present before this session; see integration notes).
 - 2026-11-09T04:35:46Z supervisor: imp-cli-grafana-alerts passed the gate in round 1
+
+## imp-alert-rule-conditions (2026-11-09, round 1)
+- Changed `convertCondition` in packages/common/src/eng1799/grafanaAlertImport.ts:
+  - Thresholds: gt/lt -> `>`/`<` (one param); `within_range`/`outside_range` -> `{operator, min: params[0],
+    max: params[1]}`. `*_included` ranges, eq/ne/ge/le and anything else stay `rule-needs-review` (paused).
+    **Decision**: spec lists only `>`/`<` and the two exclusive ranges; `_included` is not mapped to exclusive.
+  - reduce + threshold: reducers last/mean/max/min/sum/count (Grafana median etc. -> review). Threshold directly on
+    the query -> reducer last (unchanged).
+  - `classic_conditions` (as the rule's condition): exactly one condition reading the rule's query; reducer
+    avg->mean, last/max/min/sum/count, count_non_null->count; evaluator as above. Several conditions, another
+    query, or other reducers (median, diff...) -> review.
+  - Null handling: reduce `settings.mode = replaceNN` -> new warning code `rule-null-handling-changed` (message
+    names replaceNN and the replacement value). Classic `count` gets the same code (Grafana counts nulls; the
+    alert reducer ignores them). Strict (default) and dropNN give no warning, matching the dashboard decision in
+    imp-query-expressions (avoids one warning per rule on the usual chain).
+  - Threshold `unloadEvaluator` (hysteresis) -> `expression-hysteresis-dropped` warning; the condition is imported.
+- New code in importWarnings.ts: `rule-null-handling-changed`.
+- Unit tests: grafanaAlertImport.test.ts now 6 (new: classic avg/count with outside_range, two-condition and median
+  classic -> review, hysteresis warning). The 'Ranged' rule there now uses `within_range_included` to keep the
+  "emitted paused with review" coverage.
+- Tested as a user: ran `node --import tsx packages/cli/src/index.ts import grafana-alerts` on a synthetic group of
+  7 rules (reduce last>75000, mean<0.5, count>3, classic avg lt 3, min within/outside 0..7200, sum replaceNN >10):
+  alert-rules/*.yml show those reducers/conditions, all unpaused; IMPORT-REPORT.md has a
+  rule-null-handling-changed row for the replaceNN rule. Acceptance: alerts-rule-conditions 4/4, alerts-command 3/3.
+  tsc (common) clean, oxlint clean on changed files, oxfmt applied.
+- 2026-11-09T04:40:01Z supervisor: imp-alert-rule-conditions passed the gate in round 1

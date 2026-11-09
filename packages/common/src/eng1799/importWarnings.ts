@@ -56,6 +56,7 @@ export type ImportWarningCode =
     | 'label-invalid'
     | 'rule-needs-review'
     | 'rule-description-generated'
+    | 'rule-null-handling-changed'
     | 'contact-point-integration-unsupported'
     | 'contact-point-skipped'
     | (string & {});

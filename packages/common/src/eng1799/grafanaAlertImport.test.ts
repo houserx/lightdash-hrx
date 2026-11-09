@@ -54,7 +54,7 @@ resource "grafana_rule_group" "api" {
   interval_seconds = 60
 ${rule('API down', promData('A', 'up{job="api"}') + reduceThreshold('lt', 1), 'annotations = { summary = "The API is down" }\n    labels = { team = "infra", "bad-name" = "x" }')}
 ${rule('API down', promData('A', 'up') + reduceThreshold('gt', 5, 'mean'))}
-${rule('Ranged', promData('A', 'up') + exprData('C', 'type = "threshold"\n        expression = "A"\n        conditions = [{ evaluator = { type = "within_range", params = [0, 1] } }]'), 'is_paused = false')}
+${rule('Ranged', promData('A', 'up') + exprData('C', 'type = "threshold"\n        expression = "A"\n        conditions = [{ evaluator = { type = "within_range_included", params = [0, 1] } }]'), 'is_paused = false')}
 }
 `;
 
@@ -127,9 +127,9 @@ const DATASOURCES = [
     { uid: 'tmTXpZC4k', name: 'Prometheus-Production', type: 'prometheus' },
 ];
 
-const convert = (policy = POLICY) =>
+const convert = (policy = POLICY, rules = RULES) =>
     convertGrafanaAlerting({
-        rules: [{ file: 'rules.tf', text: RULES }],
+        rules: [{ file: 'rules.tf', text: rules }],
         contactPoints: { file: 'contact_points.tf', text: CONTACT_POINTS },
         policy: { file: 'policy.tf', text: policy },
         locals: [{ file: 'locals.tf', text: LOCALS }],
@@ -180,6 +180,60 @@ describe('convertGrafanaAlerting', () => {
         );
         expect(codes('API down')).toContain('label-invalid');
         expect(ranged.query).not.toBe(PLACEHOLDER_ALERT_QUERY);
+    });
+
+    it('turns classic conditions and ranges into the reducer and condition', () => {
+        const classic = (reducer: string, evaluator: string, extra = '') =>
+            exprData(
+                'C',
+                `type = "classic_conditions"\n        conditions = [{ evaluator = ${evaluator}, operator = { type = "and" }, query = { params = ["A"] }, reducer = { type = "${reducer}", params = [] }, type = "query" }${extra}]`,
+            );
+        const lt3 = '{ type = "lt", params = [3] }';
+        const rules = `
+resource "grafana_rule_group" "conditions" {
+  name             = "conditions"
+  folder_uid       = grafana_folder.this["Platform"].uid
+  interval_seconds = 60
+${rule('Classic avg', promData('A', 'up') + classic('avg', lt3))}
+${rule('Classic count', promData('A', 'up') + classic('count', '{ type = "outside_range", params = [1, 5] }'))}
+${rule('Classic two', promData('A', 'up') + classic('avg', lt3, `, { evaluator = ${lt3}, operator = { type = "or" }, query = { params = ["A"] }, reducer = { type = "max", params = [] }, type = "query" }`))}
+${rule('Classic median', promData('A', 'up') + classic('median', lt3))}
+${rule('Hysteresis', promData('A', 'up') + exprData('C', 'type = "threshold"\n        expression = "A"\n        conditions = [{ evaluator = { type = "gt", params = [5] }, unloadEvaluator = { type = "lt", params = [2] } }]'))}
+}
+`;
+        const result = convert(POLICY, rules);
+        result.alertRules.forEach((doc) =>
+            expect(validateAlertingAsCode(doc).errors).toEqual([]),
+        );
+        const [avg, count, two, median, hysteresis] = result.alertRules;
+        expect(avg).toMatchObject({
+            reducer: 'mean',
+            condition: { operator: '<', threshold: 3 },
+            paused: false,
+        });
+        expect(count).toMatchObject({
+            reducer: 'count',
+            condition: { operator: 'outside_range', min: 1, max: 5 },
+            paused: false,
+        });
+        expect(two.paused).toBe(true);
+        expect(median.paused).toBe(true);
+        expect(hysteresis).toMatchObject({
+            reducer: 'last',
+            condition: { operator: '>', threshold: 5 },
+            paused: false,
+        });
+        const codes = (ruleName: string) =>
+            result.warnings
+                .filter((w) => w.rule === ruleName)
+                .map((w) => w.code);
+        expect(codes('Classic avg')).not.toContain(
+            'rule-null-handling-changed',
+        );
+        expect(codes('Classic count')).toContain('rule-null-handling-changed');
+        expect(codes('Classic two')).toContain('rule-needs-review');
+        expect(codes('Classic median')).toContain('rule-needs-review');
+        expect(codes('Hysteresis')).toContain('expression-hysteresis-dropped');
     });
 
     it('turns contact points into integrations with secret references only', () => {

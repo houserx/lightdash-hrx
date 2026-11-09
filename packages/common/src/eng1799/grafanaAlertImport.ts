@@ -15,6 +15,7 @@ import type {
 } from '../alerting/asCode';
 import type {
     AlertCondition,
+    AlertRangeOperator,
     AlertThresholdOperator,
 } from '../alerting/conditions';
 import type { AlertReducer } from '../alerting/reducers';
@@ -79,18 +80,36 @@ export class GrafanaAlertingImportError extends Error {
     }
 }
 
-const ALERT_REDUCERS: readonly AlertReducer[] = [
-    'last',
-    'mean',
-    'max',
-    'min',
-    'sum',
-    'count',
-];
+/** Grafana `reduce` expression reducers the alert rule reducer covers. */
+const REDUCE_REDUCERS: Record<string, AlertReducer> = {
+    last: 'last',
+    mean: 'mean',
+    max: 'max',
+    min: 'min',
+    sum: 'sum',
+    count: 'count',
+};
+
+/** Grafana classic condition reducers the alert rule reducer covers. */
+const CLASSIC_REDUCERS: Record<string, AlertReducer> = {
+    last: 'last',
+    avg: 'mean',
+    max: 'max',
+    min: 'min',
+    sum: 'sum',
+    count: 'count',
+    count_non_null: 'count',
+};
 
 const THRESHOLD_OPERATORS: Record<string, AlertThresholdOperator> = {
     gt: '>',
     lt: '<',
+};
+
+/** Exclusive ranges only: the `_included` variants have no alert rule operator. */
+const RANGE_OPERATORS: Record<string, AlertRangeOperator> = {
+    within_range: 'within_range',
+    outside_range: 'outside_range',
 };
 
 const DURATION_PATTERN =
@@ -369,11 +388,123 @@ const queryText = (
         (q): q is string => typeof q === 'string' && q.trim() !== '',
     );
 
+/** A warning the imported condition carries: it runs, but not exactly as in Grafana. */
+type ConditionNote = { code: ImportWarning['code']; message: string };
+
 type ConvertedCondition =
-    | { reducer: AlertReducer; condition: AlertCondition }
+    | {
+          reducer: AlertReducer;
+          condition: AlertCondition;
+          notes: ConditionNote[];
+      }
     | { review: string };
 
-/** The rule's condition expression: reduce + threshold (gt, lt), or a threshold on an instant query. */
+type GrafanaEvaluator = { type?: unknown; params?: unknown };
+
+/** A Grafana evaluator: gt/lt with one param, within_range/outside_range with two. */
+const convertEvaluator = (
+    evaluator: GrafanaEvaluator | undefined,
+): AlertCondition | { review: string } => {
+    const type =
+        typeof evaluator?.type === 'string' ? evaluator.type : undefined;
+    const params = Array.isArray(evaluator?.params)
+        ? (evaluator.params as unknown[])
+        : [];
+    const [first, second] = params;
+    const thresholdOperator =
+        type === undefined ? undefined : THRESHOLD_OPERATORS[type];
+    if (thresholdOperator !== undefined && typeof first === 'number') {
+        return { operator: thresholdOperator, threshold: first };
+    }
+    const rangeOperator =
+        type === undefined ? undefined : RANGE_OPERATORS[type];
+    if (
+        rangeOperator !== undefined &&
+        typeof first === 'number' &&
+        typeof second === 'number'
+    ) {
+        return { operator: rangeOperator, min: first, max: second };
+    }
+    return { review: `its threshold ${type ?? '(none)'} is not imported yet` };
+};
+
+/** A classic_conditions expression with one condition: reducer and evaluator of the rule's query. */
+const convertClassicConditions = (
+    ref: string,
+    expr: Record<string, unknown>,
+    queryRef: string | undefined,
+): ConvertedCondition => {
+    const conditions = Array.isArray(expr.conditions)
+        ? (expr.conditions as Array<{
+              evaluator?: GrafanaEvaluator;
+              query?: { params?: unknown };
+              reducer?: { type?: unknown };
+          }>)
+        : [];
+    if (conditions.length !== 1) {
+        return {
+            review: `its classic condition ${ref} has ${conditions.length} conditions, which is not imported yet`,
+        };
+    }
+    const [classic] = conditions;
+    const input = Array.isArray(classic.query?.params)
+        ? (classic.query.params as unknown[])[0]
+        : undefined;
+    if (input === undefined || input !== queryRef) {
+        return {
+            review: `its classic condition ${ref} reads ${String(input)}, not the rule's query`,
+        };
+    }
+    const reducerType =
+        typeof classic.reducer?.type === 'string'
+            ? classic.reducer.type
+            : undefined;
+    const reducer =
+        reducerType === undefined ? undefined : CLASSIC_REDUCERS[reducerType];
+    if (reducer === undefined) {
+        return {
+            review: `its classic condition reducer ${reducerType ?? '(none)'} is not imported yet`,
+        };
+    }
+    const condition = convertEvaluator(classic.evaluator);
+    if ('review' in condition) return condition;
+    const notes: ConditionNote[] =
+        reducerType === 'count'
+            ? [
+                  {
+                      code: 'rule-null-handling-changed',
+                      message: `The classic condition ${ref} counts null values too; the imported count reducer ignores null values.`,
+                  },
+              ]
+            : [];
+    return { reducer, condition, notes };
+};
+
+/** Null handling of a reduce expression: strict and dropNN match the reducer closely; replaceNN does not. */
+const reduceModeNotes = (
+    ref: string,
+    reduce: Record<string, unknown>,
+    reducer: AlertReducer,
+): ConditionNote[] => {
+    const settings = (reduce.settings ?? {}) as {
+        mode?: unknown;
+        replaceWithValue?: unknown;
+    };
+    if (settings.mode !== 'replaceNN') return [];
+    return [
+        {
+            code: 'rule-null-handling-changed',
+            message: `The reduce expression ${ref} uses mode replaceNN (null values replaced with ${String(
+                settings.replaceWithValue ?? 0,
+            )}); the imported ${reducer} reducer ignores null values instead.`,
+        },
+    ];
+};
+
+/**
+ * The rule's condition expression: reduce + threshold, a threshold on an instant query, or
+ * classic conditions. Thresholds are gt/lt or within/outside range.
+ */
 const convertCondition = (
     conditionRef: string | undefined,
     expressions: Map<string, Record<string, unknown>>,
@@ -386,42 +517,47 @@ const convertCondition = (
             review: `its condition ${conditionRef} is not a threshold expression`,
         };
     }
+    if (expr.type === 'classic_conditions') {
+        return convertClassicConditions(conditionRef, expr, queryRef);
+    }
     if (expr.type !== 'threshold') {
         return {
             review: `its condition is a ${String(expr.type)} expression, which is not imported yet`,
         };
     }
-    const evaluator = (
+    const first = (
         expr.conditions as
-            | Array<{ evaluator?: { type?: unknown; params?: unknown } }>
+            | Array<{ evaluator?: GrafanaEvaluator; unloadEvaluator?: unknown }>
             | undefined
-    )?.[0]?.evaluator;
-    const operator =
-        typeof evaluator?.type === 'string'
-            ? THRESHOLD_OPERATORS[evaluator.type]
-            : undefined;
-    const threshold: unknown = Array.isArray(evaluator?.params)
-        ? (evaluator.params as unknown[])[0]
-        : undefined;
-    if (operator === undefined || typeof threshold !== 'number') {
-        return {
-            review: `its threshold ${String(evaluator?.type ?? '(none)')} is not imported yet`,
-        };
-    }
+    )?.[0];
+    const condition = convertEvaluator(first?.evaluator);
+    if ('review' in condition) return condition;
+    const notes: ConditionNote[] =
+        first?.unloadEvaluator !== undefined && first.unloadEvaluator !== null
+            ? [
+                  {
+                      code: 'expression-hysteresis-dropped',
+                      message: `The threshold ${conditionRef} has a recovery threshold (unloadEvaluator); the imported rule resolves when the condition is no longer met.`,
+                  },
+              ]
+            : [];
     const input =
         typeof expr.expression === 'string' ? expr.expression : undefined;
     if (input !== undefined && input === queryRef) {
-        return { reducer: 'last', condition: { operator, threshold } };
+        return { reducer: 'last', condition, notes };
     }
     const reduce = input === undefined ? undefined : expressions.get(input);
-    if (
+    const reducer =
         reduce?.type === 'reduce' &&
         reduce.expression === queryRef &&
-        ALERT_REDUCERS.includes(reduce.reducer as AlertReducer)
-    ) {
+        typeof reduce.reducer === 'string'
+            ? REDUCE_REDUCERS[reduce.reducer]
+            : undefined;
+    if (reduce !== undefined && input !== undefined && reducer !== undefined) {
         return {
-            reducer: reduce.reducer as AlertReducer,
-            condition: { operator, threshold },
+            reducer,
+            condition,
+            notes: [...reduceModeNotes(input, reduce, reducer), ...notes],
         };
     }
     return {
@@ -512,6 +648,7 @@ const convertRule = (
     const conditionRef = asString(tf.attribute(body, 'condition', hcl));
     const converted = convertCondition(conditionRef, expressions, queryRef);
     if ('review' in converted) review.push(converted.review);
+    else converted.notes.forEach((note) => ruleWarn(note));
 
     const labels = stringMap(
         tf.attribute(body, 'labels', hcl),
