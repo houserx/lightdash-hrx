@@ -33,8 +33,10 @@ import {
     type GrafanaTarget,
 } from './grafanaQuery';
 import {
+    addNotifyRoutes,
     addSeverityRoutes,
     findUnhandledSeverities,
+    findUnreachedContactPoints,
     fixUnreachableRoutes,
     type GrafanaRoutingDecisions,
     type GrafanaRoutingFixes,
@@ -1765,14 +1767,29 @@ export const convertGrafanaAlerting = (
         unhandled,
         notifySlugs.size,
     );
+    // Unreached contact points: one notify=<slug> route (continue: true) each, right after the
+    // severity routes. A severity route a decision adds counts as reaching its contact point.
+    const withNotifyRoutes = addNotifyRoutes(
+        withSeverityRoutes.fixed,
+        findUnreachedContactPoints(
+            withSeverityRoutes.fixed,
+            contactPoints.map((c) => c.slug),
+        ),
+        NOTIFY_LABEL,
+        notifySlugs.size +
+            withSeverityRoutes.unhandledSeverities.filter(
+                (u) => u.route !== undefined,
+            ).length,
+    );
     const { fixed, unreachableRoutes } = fixUnreachableRoutes(
-        applyRoutingFixes ? withSeverityRoutes.fixed : notificationRoutes,
+        applyRoutingFixes ? withNotifyRoutes.fixed : notificationRoutes,
         policyRouted,
     );
     const routingFixes: GrafanaRoutingFixes = {
         applied: applyRoutingFixes,
         unreachableRoutes,
         unhandledSeverities: withSeverityRoutes.unhandledSeverities,
+        unreachedContactPoints: withNotifyRoutes.unreachedContactPoints,
     };
 
     return {

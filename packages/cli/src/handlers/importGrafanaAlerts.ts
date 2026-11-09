@@ -265,8 +265,12 @@ export const importGrafanaAlertsHandler = async (
             `See ${path.join(options.out, 'IMPORT-REPORT.md')} for every warning.`,
         );
     }
-    const { unreachableRoutes, unhandledSeverities, applied } =
-        result.routingFixes;
+    const {
+        unreachableRoutes,
+        unhandledSeverities,
+        unreachedContactPoints,
+        applied,
+    } = result.routingFixes;
     const decided = unhandledSeverities.filter(
         (u) => u.contactPoint !== undefined,
     ).length;
@@ -288,6 +292,14 @@ export const importGrafanaAlertsHandler = async (
                       unhandledSeverities.length - decided,
                       'unhandled severity value',
                   )} needing a routing decision`,
+              ]
+            : []),
+        ...(unreachedContactPoints.length > 0
+            ? [
+                  `${plural(
+                      unreachedContactPoints.length,
+                      'unreached contact point',
+                  )} ${fixedOrFound}`,
               ]
             : []),
     ];

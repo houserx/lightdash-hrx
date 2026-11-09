@@ -1,7 +1,9 @@
 import { routeAlert, type NotificationRoute } from '../alerting/routingTree';
 import {
+    addNotifyRoutes,
     addSeverityRoutes,
     findUnhandledSeverities,
+    findUnreachedContactPoints,
     fixUnreachableRoutes,
     renderGrafanaRoutingFixes,
 } from './grafanaRoutingFixes';
@@ -163,6 +165,7 @@ describe('renderGrafanaRoutingFixes', () => {
             applied: true,
             unreachableRoutes,
             unhandledSeverities: [],
+            unreachedContactPoints: [],
         });
         expect(md).toMatch(/## Unreachable routes/);
         expect(md).toContain('team = platform');
@@ -178,10 +181,12 @@ describe('renderGrafanaRoutingFixes', () => {
             applied: false,
             unreachableRoutes: [],
             unhandledSeverities: [],
+            unreachedContactPoints: [],
         });
         expect(md).toContain('--no-routing-fixes');
         expect(md).toContain('No route is unreachable');
         expect(md).toContain('Every severity value');
+        expect(md).toContain('Every imported contact point');
     });
 
     it('lists unhandled severities with their fix or the decision they need', () => {
@@ -197,6 +202,7 @@ describe('renderGrafanaRoutingFixes', () => {
             applied: true,
             unreachableRoutes: [],
             unhandledSeverities,
+            unreachedContactPoints: [],
         });
         expect(md).toMatch(/## Unhandled severities/);
         expect(md).toContain('`severity = 1`');
@@ -279,5 +285,73 @@ describe('addSeverityRoutes', () => {
             'pager',
         ]);
         expect(sent(fixed, { team: 'web', severity: '1' })).toContain('pager');
+    });
+});
+
+describe('unreached contact points', () => {
+    const SLUGS = [
+        'default',
+        'pager',
+        'slack-platform',
+        'slack-alerts',
+        'slack-sec',
+        'sms',
+    ];
+
+    it('lists the contact points no route names, the root included, in order', () => {
+        expect(findUnreachedContactPoints(TREE, SLUGS)).toEqual([
+            'slack-sec',
+            'sms',
+        ]);
+        expect(
+            findUnreachedContactPoints({ contactPoint: 'default' }, [
+                'default',
+            ]),
+        ).toEqual([]);
+    });
+
+    it('adds a continue notify route for each, so rules opt in and others route as before', () => {
+        const before = JSON.stringify(TREE);
+        const { fixed, unreachedContactPoints } = addNotifyRoutes(
+            TREE,
+            ['slack-sec', 'sms'],
+            'notify',
+            1,
+        );
+        expect(JSON.stringify(TREE)).toBe(before);
+        expect(fixed.routes![1]).toEqual({
+            matchers: [eq('notify', 'slack-sec')],
+            contactPoint: 'slack-sec',
+            continue: true,
+        });
+        expect(
+            unreachedContactPoints.map((u) => [u.contactPoint, u.route.path]),
+        ).toEqual([
+            ['slack-sec', [1]],
+            ['sms', [2]],
+        ]);
+        expect(sent(fixed, { notify: 'slack-sec' })).toEqual(['slack-sec']);
+        expect(sent(fixed, { notify: 'sms', team: 'web' })).toEqual(['sms']);
+        expect(sent(fixed, { team: 'infra' })).toEqual(['pager']);
+        expect(sent(fixed, { team: 'web' })).toEqual(['default']);
+    });
+
+    it('renders them with their fix', () => {
+        const { unreachedContactPoints } = addNotifyRoutes(
+            TREE,
+            ['slack-sec'],
+            'notify',
+            0,
+        );
+        const md = renderGrafanaRoutingFixes({
+            applied: true,
+            unreachableRoutes: [],
+            unhandledSeverities: [],
+            unreachedContactPoints,
+        });
+        expect(md).toMatch(/## Unreached contact points/);
+        expect(md).toContain(
+            '| `slack-sec` | route `notify = slack-sec` -> slack-sec (route root.0), continue: true |',
+        );
     });
 });

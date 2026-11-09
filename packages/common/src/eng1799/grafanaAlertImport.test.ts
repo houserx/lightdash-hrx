@@ -479,7 +479,7 @@ ${rule('Math of reduces', promData('A', 'up') + exprData('B', 'type = "reduce"\n
     });
 
     it('turns the notification policy into the route tree', () => {
-        const { notificationRoutes, warnings } = convert();
+        const { notificationRoutes, routingFixes, warnings } = convert();
         expect(notificationRoutes).toEqual({
             version: 1,
             type: 'notification_routes',
@@ -489,6 +489,14 @@ ${rule('Math of reduces', promData('A', 'up') + exprData('B', 'type = "reduce"\n
             groupInterval: '2m',
             repeatInterval: '1h',
             routes: [
+                // No policy names the hook contact point: the fix adds a notify route for it.
+                {
+                    matchers: [
+                        { label: 'notify', operator: '=', value: 'hook' },
+                    ],
+                    contactPoint: 'hook',
+                    continue: true,
+                },
                 {
                     matchers: [
                         { label: 'team', operator: '=', value: 'infra' },
@@ -509,6 +517,9 @@ ${rule('Math of reduces', promData('A', 'up') + exprData('B', 'type = "reduce"\n
                 },
             ],
         });
+        expect(
+            routingFixes.unreachedContactPoints.map((u) => u.contactPoint),
+        ).toEqual(['hook']);
         expect(warnings.map((w) => w.path)).toContain(
             'grafana_notification_policy.policy.policy[0].policy[0]',
         );

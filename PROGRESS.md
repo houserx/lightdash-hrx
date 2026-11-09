@@ -1602,3 +1602,33 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   alerts-notification-settings 2/2, -routes 3/3, -full-ruleset 3/3, -command 3/3, -contact-points 4/4.
   grafanaRoutingFixes.test.ts 11/11, grafanaAlertImport.test.ts 10/10. common and cli tsc clean, oxlint and oxfmt clean.
 - 2026-11-09T05:28:20Z supervisor: imp-routing-unhandled-severity passed the gate in round 1
+
+## imp-routing-unreached-contact-points (2026-11-09, round 1)
+- grafanaRoutingFixes.ts: findUnreachedContactPoints(tree, slugs) returns the imported contact point slugs that no route
+  in the tree names (the root's default and nested routes count), in contact point import order.
+  addNotifyRoutes(tree, slugs, label, insertAt) inserts `notify = <slug>` -> <slug>, continue: true, for each.
+  GrafanaRoutingFixes gains unreachedContactPoints: {contactPoint, route}. renderGrafanaRoutingFixes adds
+  "## Unreached contact points" (slug and the route the fix adds).
+- convertGrafanaAlerting: unreached is computed on the tree after the decided severity routes, so a severity
+  decision that names a contact point counts as reaching it. The notify routes go right after the severity routes
+  (order now: notification_settings notify routes, severity routes, unreached notify routes, policies), and
+  fixUnreachableRoutes runs last. With --no-routing-fixes they are listed but the tree is unchanged.
+- Decision (the spec doesn't say): unreached notify routes have continue: true, so a rule that opts in keeps the rest
+  of its routing (it doesn't lose pager). notification_settings notify routes stay without continue (exclusive, as
+  Grafana does). The same notify label means "only" for one and "also" for the other. That can't collide, because a
+  contact point named in notification_settings already has a route and so is never unreached.
+- CLI console: "N unreached contact points fixed / found and not fixed (--no-routing-fixes)".
+- grafanaAlertImport.test.ts "route tree" expectation now includes the notify=hook route (the unit fixture's hook
+  contact point is unreached).
+- Full fixtures: only slack-sec is unreached (route root.2, after the two notification_settings routes), as ADR 0003
+  says. The warning count is still 78 because no warning was added.
+- Tested as a user: generated the test's Terraform, ran the CLI and routed alerts through the output with routeAlert.
+  ROUTING-FIXES.md lists slack-alerts, slack-platform and slack-sec but not pager or slack-infra-alerts.
+  notify=slack-sec -> slack-sec, notify=slack-alerts -> slack-alerts, team=infra -> pager, team=web ->
+  slack-infra-alerts. With --no-routing-fixes, notify=slack-sec -> slack-infra-alerts (tree unchanged) and the console
+  says "found and not fixed".
+- Checks: routing-unreached-contact-points 2/2 after init. Regression: routing-unhandled-severity 2/2,
+  -unreachable-routes 3/3, alerts-notification-settings 2/2, -routes 3/3, -contact-points 4/4, -command 3/3,
+  -full-ruleset 3/3. grafanaRoutingFixes.test.ts 14/14, grafanaAlertImport.test.ts 10/10. common and cli tsc clean,
+  oxlint and oxfmt clean.
+- 2026-11-09T05:33:53Z supervisor: imp-routing-unreached-contact-points passed the gate in round 1

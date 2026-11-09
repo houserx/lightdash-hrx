@@ -15,6 +15,10 @@
  * the routing decisions name a contact point for the value, the fix adds a severity route for it
  * (continue: true, so the alerts still follow the rest of the tree); otherwise the value needs a
  * decision.
+ *
+ * Unreached contact points: an imported contact point that no route in the tree (the root's
+ * default included) names, so no alert reaches it. The fix adds a notify=<contact point slug> route
+ * for it (continue: true), so a rule can opt in with that label and keep the rest of its routing.
  */
 import type { AlertRuleAsCode } from '../alerting/asCode';
 import {
@@ -66,6 +70,15 @@ export type GrafanaRoutingFixes = {
     applied: boolean;
     unreachableRoutes: UnreachableRoute[];
     unhandledSeverities: UnhandledSeverity[];
+    unreachedContactPoints: UnreachedContactPoint[];
+};
+
+/** A contact point no route names, so no alert reaches it. */
+export type UnreachedContactPoint = {
+    /** The contact point's slug. */
+    contactPoint: string;
+    /** The notify=<slug> route the fix adds. */
+    route: RoutingFixRoute;
 };
 
 const describeRoute = (
@@ -259,6 +272,63 @@ export const addSeverityRoutes = <T extends NotificationRoute>(
     return { fixed, unhandledSeverities };
 };
 
+/** The contact point slugs some route in the tree names, the root included. */
+const namedContactPoints = (
+    route: NotificationRoute,
+    into = new Set<string>(),
+): Set<string> => {
+    if (route.contactPoint !== undefined) into.add(route.contactPoint);
+    (route.routes ?? []).forEach((child) => namedContactPoints(child, into));
+    return into;
+};
+
+/** The contact point slugs, in the given order, that no route in the tree names. */
+export const findUnreachedContactPoints = (
+    tree: NotificationRoute,
+    contactPoints: readonly string[],
+): string[] => {
+    const named = namedContactPoints(tree);
+    return contactPoints.filter(
+        (slug, index) =>
+            !named.has(slug) && contactPoints.indexOf(slug) === index,
+    );
+};
+
+/**
+ * The fix for unreached contact points: a `<label> = <slug>` route (continue: true) for each,
+ * inserted in order at `insertAt` among the root's routes. `tree` itself is not changed.
+ */
+export const addNotifyRoutes = <T extends NotificationRoute>(
+    tree: T,
+    unreached: readonly string[],
+    label: string,
+    insertAt: number,
+): { fixed: T; unreachedContactPoints: UnreachedContactPoint[] } => {
+    const fixed = JSON.parse(JSON.stringify(tree)) as T;
+    const added = unreached.map(
+        (slug): NotificationRoute => ({
+            matchers: [{ label, operator: '=', value: slug }],
+            contactPoint: slug,
+            continue: true,
+        }),
+    );
+    if (added.length > 0) {
+        const routes = fixed.routes ?? [];
+        fixed.routes = [
+            ...routes.slice(0, insertAt),
+            ...added,
+            ...routes.slice(insertAt),
+        ];
+    }
+    return {
+        fixed,
+        unreachedContactPoints: added.map((route, index) => ({
+            contactPoint: unreached[index],
+            route: describeRoute(route, [insertAt + index]),
+        })),
+    };
+};
+
 export const formatRouteMatchers = (matchers: readonly AlertLabelMatcher[]) =>
     matchers.length === 0
         ? '(every alert)'
@@ -333,6 +403,24 @@ export const renderGrafanaRoutingFixes = (
                 `| ${cell(`\`${SEVERITY_LABEL} = ${u.value}\``)} | ${cell(
                     u.rules.join(', '),
                 )} | ${cell(fix)} |`,
+            );
+        });
+    }
+    lines.push('', '## Unreached contact points', '');
+    if (fixes.unreachedContactPoints.length === 0) {
+        lines.push('Every imported contact point is named by a route.');
+    } else {
+        lines.push(
+            'No route names these contact points, so no alert reaches them; each is an unreached contact point. The fix adds a route on its slug with continue: true, so a rule opts in by carrying that label and keeps the rest of its routing.',
+            '',
+            '| Contact point | Fix |',
+            '| --- | --- |',
+        );
+        fixes.unreachedContactPoints.forEach((u) => {
+            lines.push(
+                `| ${cell(`\`${u.contactPoint}\``)} | ${cell(
+                    `route ${formatRoute(u.route)}, continue: true`,
+                )} |`,
             );
         });
     }
