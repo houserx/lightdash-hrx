@@ -1152,3 +1152,36 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - The evaluator's engine identity (system:alert-evaluator, attrs, audit as assertion) was not checked here.
     That is int-fix-alert-evaluator-identity's job; this unrestricted telemetry rule worked without it.
 - 2026-11-09T05:08:05Z supervisor: int-alert-promql-evaluates passed the gate in round 1
+- 2026-11-09 int-fix-alert-evaluator-identity (round 1): the alert evaluator now queries the engine as
+  `system:alert-evaluator` (`sys: true`, `agent: false`), with the attrs from `ALERTING_EVALUATOR_ATTRS` and the
+  rule's audit block (description, `source: alert_rule`, `resource_uuid` = rule uuid). The engine audits it as `assertion`.
+  Changed and why:
+  - `services/FederationIdentity/federationQueryIdentity.ts`: `FederationQueryIdentity` is now a union of the
+    existing user identity and a new `FederationSystemQueryIdentity` (`{system: {sub, email, attrs}, organizationUuid,
+    projectUuid, audit}`; guard `isFederationSystemQueryIdentity`). Existing user call sites are unchanged.
+  - `FederationIdentityService.createScopedTokenProvider`: for a system identity in scope, it mints `sys: true`,
+    `agent: false` (whatever the client reports) with the given sub, email and attrs. It needs no userModel.
+  - `createProductionAlertingModule.ts`: `getAlertEvaluatorAttrs(env)` parses `ALERTING_EVALUATOR_ATTRS`
+    (comma-separated claim names; unset or empty means none; an unknown name throws at module build, like the
+    heartbeat config). `createProjectAlertWarehouseClients` takes `evaluatorAttrs` and runs every rule query
+    (evaluation and "Test rule" preview) inside `withFederationQueryIdentity` built from the evaluator's
+    `AlertRuleQueryContext`. Before this, the context was dropped and alert queries reached the engine with no
+    identity.
+  - Unit tests: a system-identity token test in federationQueryIdentity.test.ts, and getAlertEvaluatorAttrs tests.
+  Decision (contract gap, narrowest reading): the engine refuses a token with a blank `email`, and §3/§4.3 name
+  none for the system identity. The token's email is therefore the subject `system:alert-evaluator` (also the audit's
+  `executedByEmail`), so no address is invented. int-contracts-amended should record this alongside the
+  `ALERTING_EVALUATOR_ATTRS` amendment in §4.3.
+  Tested as a user (`../tmp/manual-alert-identity/try.mts`, run from e2e/eng-1799 with `pnpm exec node --import tsx`,
+  TZ=UTC and absolute `E2E_REPO_ROOT`/`E2E_ENGINE_BINARY`). With `ALERTING_EVALUATOR_ATTRS=telemetry_restricted`,
+  a preview of a rule over `prometheus-restricted` gave `firing`. The rule was created (200), and after one cycle it
+  was `firing` with value 500. The audit store held 2 items (preview and evaluation): sub/email
+  `system:alert-evaluator`, action `assertion`, mode read, status success, description = the rule's description.
+  With it unset, the preview returned the engine error "... is Restricted Telemetry and needs telemetry_restricted".
+  After a cycle the rule was `error` with a DatasourceError instance whose annotation `error` gave the same text,
+  and the audit store held 0 items. Checks: this one 2/2 (and 1 failed / 1 passed with the change stashed);
+  int-alert-promql-evaluates 1/1; int-fix-query-path-identity 1/1. The two unit files pass, backend tsc is clean,
+  and oxfmt was applied.
+  Next sessions must know: a deployment whose rules read Restricted Telemetry or the Platform Database must set
+  `ALERTING_EVALUATOR_ATTRS` on both the app and the scheduler worker (both build the module from process.env).
+- 2026-11-09T05:14:42Z supervisor: int-fix-alert-evaluator-identity passed the gate in round 1

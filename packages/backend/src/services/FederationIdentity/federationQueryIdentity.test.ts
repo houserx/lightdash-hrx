@@ -101,4 +101,48 @@ describe('FederationIdentityService.createScopedTokenProvider', () => {
             ),
         ).toBeNull();
     });
+
+    it('mints a sys token with the given attrs for a system identity', async () => {
+        const provider = createService({}).createScopedTokenProvider({
+            secret: SECRET,
+            projectUuid: PROJECT_UUID,
+        });
+        const token = await withFederationQueryIdentity(
+            {
+                system: {
+                    sub: 'system:alert-evaluator',
+                    email: 'system:alert-evaluator',
+                    attrs: {
+                        telemetry_restricted: true,
+                        platform_read: false,
+                        platform_write: false,
+                        platform_explain: false,
+                    },
+                },
+                organizationUuid: ORG_UUID,
+                projectUuid: PROJECT_UUID,
+                audit: {
+                    description: 'Queue depth above 100',
+                    ticket: null,
+                    source: 'alert_rule',
+                    resource_uuid: USER_UUID,
+                },
+            },
+            () => provider({ agent: true }),
+        );
+        expect(verifyIdentityToken(token!, { secret: SECRET })).toMatchObject({
+            sub: 'system:alert-evaluator',
+            email: 'system:alert-evaluator',
+            org: ORG_UUID,
+            project: PROJECT_UUID,
+            agent: false,
+            sys: true,
+            attrs: { telemetry_restricted: true, platform_read: false },
+            audit: {
+                description: 'Queue depth above 100',
+                source: 'alert_rule',
+                resource_uuid: USER_UUID,
+            },
+        });
+    });
 });

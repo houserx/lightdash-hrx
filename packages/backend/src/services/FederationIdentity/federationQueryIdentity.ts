@@ -13,18 +13,43 @@ import {
     type QueryAudit,
 } from '@lightdash/common';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { IdentityAudit } from './identityToken';
+import type { IdentityAttrs, IdentityAudit } from './identityToken';
 
 export type FederationQueryAudit = Partial<IdentityAudit> &
     Pick<IdentityAudit, 'source'>;
 
-export type FederationQueryIdentity = {
+/** A Lightdash user: the token carries their email and current user attributes. */
+export type FederationUserQueryIdentity = {
     userUuid: string;
     organizationUuid: string;
     /** The project the query runs on; a token is only minted for this project's connection. */
     projectUuid: string;
     audit: FederationQueryAudit;
 };
+
+/**
+ * A system identity (`sys = true`, never an agent), such as the alert evaluator
+ * (CONTRACTS §4.3). It has no Lightdash user, so its subject, email and attrs are given.
+ */
+export type FederationSystemQueryIdentity = {
+    system: {
+        sub: string;
+        email: string;
+        attrs: IdentityAttrs;
+    };
+    organizationUuid: string;
+    /** The project the query runs on; a token is only minted for this project's connection. */
+    projectUuid: string;
+    audit: FederationQueryAudit;
+};
+
+export type FederationQueryIdentity =
+    | FederationUserQueryIdentity
+    | FederationSystemQueryIdentity;
+
+export const isFederationSystemQueryIdentity = (
+    identity: FederationQueryIdentity,
+): identity is FederationSystemQueryIdentity => 'system' in identity;
 
 const scope = new AsyncLocalStorage<FederationQueryIdentity>();
 

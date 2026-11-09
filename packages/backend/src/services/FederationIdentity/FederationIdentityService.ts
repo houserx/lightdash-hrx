@@ -6,7 +6,10 @@ import type { IdentityTokenProvider } from '@lightdash/warehouses';
 import type { UserAttributesModel } from '../../models/UserAttributesModel';
 import type { UserModel } from '../../models/UserModel';
 import { agentExecutionContext } from '../AiAccessService/agentExecutionContext';
-import { getFederationQueryIdentity } from './federationQueryIdentity';
+import {
+    getFederationQueryIdentity,
+    isFederationSystemQueryIdentity,
+} from './federationQueryIdentity';
 import {
     identityAttrsFromUserAttributes,
     mintIdentityToken,
@@ -109,8 +112,9 @@ export class FederationIdentityService {
      * The `getIdentityToken` option for a shared (cached) federation-flavour client of
      * `projectUuid`: each call mints a token for the query identity in scope
      * (`withFederationQueryIdentity`), with that user's current attributes and the query's
-     * audit block. With no identity in scope, or one for another project, it returns null and
-     * the query runs with no identity.
+     * audit block. A system identity in scope (the alert evaluator) gets a `sys = true`,
+     * `agent = false` token with its own subject, email and attrs. With no identity in scope, or
+     * one for another project, it returns null and the query runs with no identity.
      */
     createScopedTokenProvider({
         secret,
@@ -121,13 +125,26 @@ export class FederationIdentityService {
     }): IdentityTokenProvider {
         return async ({ agent }) => {
             const identity = getFederationQueryIdentity();
-            if (
-                !identity ||
-                identity.projectUuid !== projectUuid ||
-                !this.userModel
-            ) {
+            if (!identity || identity.projectUuid !== projectUuid) {
                 return null;
             }
+            if (isFederationSystemQueryIdentity(identity)) {
+                return mintIdentityToken(
+                    {
+                        iss: 'lightdash',
+                        sub: identity.system.sub,
+                        email: identity.system.email,
+                        org: identity.organizationUuid,
+                        project: projectUuid,
+                        agent: false,
+                        sys: true,
+                        attrs: identity.system.attrs,
+                        audit: identity.audit,
+                    },
+                    { secret, now: this.clock() },
+                );
+            }
+            if (!this.userModel) return null;
             const { email } = await this.userModel.getUserDetailsByUuid(
                 identity.userUuid,
             );
