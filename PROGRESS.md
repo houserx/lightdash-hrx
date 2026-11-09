@@ -545,3 +545,17 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Note: the helper script stayed at `../tmp/manual-identity/try.ts` (outside the repo) because
   the sandbox refused `rm`; it is safe to delete.
 - 2026-11-09T03:01:43Z supervisor: int-identity-backend-token passed the gate in round 1
+- 2026-11-09 int-identity-refused-tokens: **no code change needed.** The check passed on the first
+  run after `init.sh` (1/1, ~4 s).
+  Tested by hand with a tsx script outside the repo (`../tmp/manual-refused/try.ts`: real engine +
+  throwaway Platform Database + fake Prometheus, synthetic identity). It made each bad token itself
+  with the backend's `mintIdentityToken`: tampered (platform_read flipped false→true, old signature
+  kept), expired (minted 10 min ago, ttl 300 s), wrong secret, future-dated (iat now+120 s, beyond the
+  60 s skew). For each one: `platform_query('SELECT id FROM widgets')` → 42501 `source "platform" is
+  the Platform Database and needs platform_read`; `promql('up', <last hour>, '1m')` → 61 rows;
+  `verifyIdentityToken` rejected it (bad signature / expired / bad signature / issued in the future).
+  Audit store: 0 items after the four. A good token then got count 200 and exactly 1 audit item.
+  Trap: the harness fake servers stop with `close()`, not `stop()` (engine and Platform Database use
+  `stop()`). My first run threw on `prom.stop` and left the Postgres running; I stopped it with
+  pg_ctl and removed its tmp/e2e dir. No engine or Postgres left running, `tmp/e2e` empty.
+- 2026-11-09T03:04:07Z supervisor: int-identity-refused-tokens passed the gate in round 1
