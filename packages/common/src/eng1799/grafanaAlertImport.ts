@@ -140,6 +140,43 @@ const uniqueSlug = (slug: string, taken: Set<string>): string => {
 const asString = (value: HclValue | undefined): string | undefined =>
     typeof value === 'string' ? value : undefined;
 
+type Warn = (warning: ImportWarning) => void;
+
+/** A block body with the variables (each, dynamic iterators) it is evaluated with. */
+type ExpandedBlock = { body: HclBody; variables: Record<string, HclValue> };
+
+/**
+ * The `{key, value}` instances of a for_each: a map gives one per key in lexical order; a list
+ * gives one per element. Sets and lists are both arrays once evaluated, so `listKey` says which
+ * Terraform means: a resource for_each only takes sets (key = value), a dynamic block is usually
+ * given a list (key = index). Undefined when the value can't be iterated or holds unknowns.
+ */
+const forEachInstances = (
+    value: HclValue,
+    listKey: 'value' | 'index',
+): { key: HclValue; value: HclValue }[] | undefined => {
+    if (hclHasUnknown(value)) return undefined;
+    if (Array.isArray(value)) {
+        return value.map((v, i) => ({
+            key: listKey === 'value' ? v : i,
+            value: v,
+        }));
+    }
+    if (isHclObject(value)) {
+        return Object.keys(value)
+            .sort()
+            .map((key) => ({ key, value: value[key] }));
+    }
+    return undefined;
+};
+
+/** Seconds as the shortest whole duration: 60 -> 1m, 300 -> 5m, 90 -> 90s. */
+const secondsToDuration = (seconds: number): string => {
+    if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+    if (seconds % 60 === 0) return `${seconds / 60}m`;
+    return `${seconds}s`;
+};
+
 // The import's own error type sits next to the Terraform context it reads with.
 /* eslint-disable max-classes-per-file */
 
@@ -215,7 +252,6 @@ class TerraformContext {
         if (
             root === 'grafana_data_source' &&
             typeof steps[0] === 'string' &&
-            steps[1] === 'uid' &&
             this.datasources
         ) {
             const wanted = telemetrySourceName(steps[0]);
@@ -223,7 +259,14 @@ class TerraformContext {
                 (ds) =>
                     ds.uid !== '' && telemetrySourceName(ds.name) === wanted,
             );
-            if (found) return found.uid;
+            // `grafana_data_source.x` alone (e.g. a local map of them) is the resource object.
+            if (found) {
+                return traverseHclValue(
+                    { uid: found.uid, name: found.name, type: found.type },
+                    steps.slice(1),
+                    text,
+                );
+            }
         }
         // An attribute of a resource in the files read (`grafana_contact_point.x.name`).
         if (typeof steps[0] === 'string' && typeof steps[1] === 'string') {
@@ -257,11 +300,77 @@ class TerraformContext {
     }
 
     /** An attribute's value, or `undefined` when the body doesn't set it. */
-    attribute(body: HclBody, name: string, hcl: HclFile): HclValue | undefined {
+    attribute(
+        body: HclBody,
+        name: string,
+        hcl: HclFile,
+        variables: Record<string, HclValue> = {},
+    ): HclValue | undefined {
         const attribute = getHclAttribute(body, name);
         return attribute === undefined
             ? undefined
-            : this.evaluate(attribute.expr, hcl);
+            : this.evaluate(attribute.expr, hcl, variables);
+    }
+
+    /**
+     * The `type` blocks of `body` in source order, with `dynamic "<type>"` blocks expanded: each
+     * element of the dynamic block's for_each gives its `content` body, with the iterator (the
+     * `iterator` attribute, else the block type) bound to `{key, value}`. A for_each the importer
+     * can't evaluate is warned and gives no blocks.
+     */
+    blocks(
+        body: HclBody,
+        type: string,
+        hcl: HclFile,
+        variables: Record<string, HclValue>,
+        warn: Warn,
+        where: Partial<ImportWarning>,
+    ): ExpandedBlock[] {
+        const out: ExpandedBlock[] = [];
+        body.blocks.forEach((block) => {
+            if (block.type === type) {
+                out.push({ body: block.body, variables });
+                return;
+            }
+            if (block.type !== 'dynamic' || block.labels[0] !== type) return;
+            const content = getHclBlocks(block.body, 'content')[0];
+            const forEach = this.attribute(
+                block.body,
+                'for_each',
+                hcl,
+                variables,
+            );
+            const instances =
+                forEach === undefined
+                    ? undefined
+                    : forEachInstances(forEach, 'index');
+            if (content === undefined || instances === undefined) {
+                warn({
+                    code: 'terraform-unresolved',
+                    message: `A dynamic "${type}" block can't be expanded: ${
+                        content === undefined
+                            ? 'it has no content block'
+                            : `its for_each ${
+                                  isHclUnknown(forEach)
+                                      ? `(${forEach.text}) is unknown: ${forEach.reason}`
+                                      : 'is not a list or map'
+                              }`
+                    }. Its blocks are not imported.`,
+                    ...where,
+                });
+                return;
+            }
+            const iteratorExpr = getHclAttribute(block.body, 'iterator')?.expr;
+            const iterator =
+                iteratorExpr?.kind === 'variable' ? iteratorExpr.name : type;
+            instances.forEach((instance) =>
+                out.push({
+                    body: content.body,
+                    variables: { ...variables, [iterator]: instance },
+                }),
+            );
+        });
+        return out;
     }
 
     /** `resource "<type>" "<name>"` blocks of one file, in order. */
@@ -272,8 +381,6 @@ class TerraformContext {
         );
     }
 }
-
-type Warn = (warning: ImportWarning) => void;
 
 /** Warns once for the attributes and blocks of `body` the importer doesn't read. */
 const warnDropped = (
@@ -570,13 +677,15 @@ const convertRule = (
     hcl: HclFile,
     group: string,
     index: number,
-    block: HclBlock,
+    rule: ExpandedBlock,
+    interval: string | undefined,
     datasources: GrafanaDatasource[] | undefined,
     takenSlugs: Set<string>,
     warn: Warn,
 ): AlertRuleAsCode => {
-    const { body } = block;
-    const nameValue = tf.attribute(body, 'name', hcl);
+    const { body, variables } = rule;
+    const read = (key: string) => tf.attribute(body, key, hcl, variables);
+    const nameValue = read('name');
     const readable = typeof nameValue === 'string' && nameValue.trim() !== '';
     const name = readable ? nameValue.trim() : `${group} rule ${index + 1}`;
     if (!readable) {
@@ -589,11 +698,17 @@ const convertRule = (
     const ruleWarn: Warn = (w) => warn({ ...w, rule: w.rule ?? name });
     const review: string[] = [];
 
-    const data: RuleData[] = getHclBlocks(body, 'data').map((d) => ({
-        refId: asString(tf.attribute(d.body, 'ref_id', hcl)) ?? '',
-        datasourceUid: tf.attribute(d.body, 'datasource_uid', hcl),
-        model: readModel(tf.attribute(d.body, 'model', hcl)),
-    }));
+    const data: RuleData[] = tf
+        .blocks(body, 'data', hcl, variables, ruleWarn, {})
+        .map((d) => {
+            const readData = (key: string) =>
+                tf.attribute(d.body, key, hcl, d.variables);
+            return {
+                refId: asString(readData('ref_id')) ?? '',
+                datasourceUid: readData('datasource_uid'),
+                model: readModel(readData('model')),
+            };
+        });
     data.filter((d) => d.model === undefined).forEach((d) =>
         review.push(
             `the model of query ${d.refId || '(no ref_id)'} can't be read`,
@@ -645,20 +760,20 @@ const convertRule = (
         );
     }
 
-    const conditionRef = asString(tf.attribute(body, 'condition', hcl));
+    const conditionRef = asString(read('condition'));
     const converted = convertCondition(conditionRef, expressions, queryRef);
     if ('review' in converted) review.push(converted.review);
     else converted.notes.forEach((note) => ruleWarn(note));
 
     const labels = stringMap(
-        tf.attribute(body, 'labels', hcl),
+        read('labels'),
         'label',
         ruleWarn,
         name,
         LABEL_NAME_PATTERN,
     );
     const annotations = stringMap(
-        tf.attribute(body, 'annotations', hcl),
+        read('annotations'),
         'annotation',
         ruleWarn,
         name,
@@ -676,7 +791,7 @@ const convertRule = (
         });
     }
 
-    const isPaused = tf.attribute(body, 'is_paused', hcl) === true;
+    const isPaused = read('is_paused') === true;
     if (review.length > 0) {
         ruleWarn({
             code: 'rule-needs-review',
@@ -693,6 +808,7 @@ const convertRule = (
         ...(labels ? { labels } : {}),
         ...(annotations ? { annotations } : {}),
         query: query ?? PLACEHOLDER_ALERT_QUERY,
+        ...(interval !== undefined ? { interval } : {}),
         ...('review' in converted
             ? { condition: { operator: '>', threshold: 0 } }
             : { reducer: converted.reducer, condition: converted.condition }),
@@ -1084,38 +1200,87 @@ export const convertGrafanaAlerting = (
         const hcl = hclOf(source);
         tf.resourcesOf(source.file, 'grafana_rule_group').forEach((group) => {
             const label = `grafana_rule_group.${group.labels[1]}`;
-            if (getHclAttribute(group.body, 'for_each') !== undefined) {
-                warn({
-                    code: 'terraform-unsupported',
-                    message: `${label} uses for_each, which the importer doesn't expand yet; its rules are not imported.`,
-                    path: label,
-                });
-                return;
+            const where = { path: label };
+            // for_each: one rule group per instance, with `each` bound to it.
+            let instances: Record<string, HclValue>[] = [{}];
+            const forEach = tf.attribute(group.body, 'for_each', hcl);
+            if (forEach !== undefined) {
+                const each = forEachInstances(forEach, 'value');
+                if (each === undefined) {
+                    warn({
+                        code: 'terraform-unresolved',
+                        message: `The for_each of ${label} can't be evaluated${
+                            isHclUnknown(forEach)
+                                ? ` (${forEach.text}: ${forEach.reason})`
+                                : ': it is not a set or map'
+                        }; its rules are not imported.`,
+                        ...where,
+                    });
+                    return;
+                }
+                instances = each.map((instance) => ({ each: instance }));
             }
-            getHclBlocks(group.body, 'dynamic').forEach((dynamic) =>
-                warn({
-                    code: 'terraform-unsupported',
-                    message: `${label} has a dynamic "${dynamic.labels[0] ?? ''}" block, which the importer doesn't expand yet; its rules are not imported.`,
-                    path: label,
-                }),
-            );
-            const groupName =
-                asString(tf.attribute(group.body, 'name', hcl)) ??
-                group.labels[1];
-            getHclBlocks(group.body, 'rule').forEach((rule, index) =>
-                alertRules.push(
-                    convertRule(
-                        tf,
-                        hcl,
-                        groupName,
-                        index,
-                        rule,
-                        input.datasources,
-                        ruleSlugs,
-                        warn,
+            getHclBlocks(group.body, 'dynamic')
+                .filter((dynamic) => dynamic.labels[0] !== 'rule')
+                .forEach((dynamic) =>
+                    warn({
+                        code: 'terraform-unsupported',
+                        message: `${label} has a dynamic "${dynamic.labels[0] ?? ''}" block, which is not a rule; it is not imported.`,
+                        ...where,
+                    }),
+                );
+            instances.forEach((variables) => {
+                const groupName =
+                    asString(
+                        tf.attribute(group.body, 'name', hcl, variables),
+                    ) ?? group.labels[1];
+                const intervalSeconds = tf.attribute(
+                    group.body,
+                    'interval_seconds',
+                    hcl,
+                    variables,
+                );
+                let interval: string | undefined;
+                if (
+                    typeof intervalSeconds === 'number' &&
+                    Number.isInteger(intervalSeconds) &&
+                    intervalSeconds > 0
+                ) {
+                    interval = secondsToDuration(intervalSeconds);
+                } else if (intervalSeconds !== undefined) {
+                    warn({
+                        code: 'option-dropped',
+                        message: `The interval_seconds of the rule group ${groupName} ${
+                            isHclUnknown(intervalSeconds)
+                                ? `(${intervalSeconds.text})`
+                                : JSON.stringify(intervalSeconds)
+                        } is not a whole number of seconds the importer can read; its rules use the default interval.`,
+                        ...where,
+                    });
+                }
+                tf.blocks(
+                    group.body,
+                    'rule',
+                    hcl,
+                    variables,
+                    warn,
+                    where,
+                ).forEach((rule, index) =>
+                    alertRules.push(
+                        convertRule(
+                            tf,
+                            hcl,
+                            groupName,
+                            index,
+                            rule,
+                            interval,
+                            input.datasources,
+                            ruleSlugs,
+                            warn,
+                        ),
                     ),
-                ),
-            );
+                );
+            });
         });
     });
 

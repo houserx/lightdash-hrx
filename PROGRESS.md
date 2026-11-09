@@ -1359,3 +1359,30 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   rule-null-handling-changed row for the replaceNN rule. Acceptance: alerts-rule-conditions 4/4, alerts-command 3/3.
   tsc (common) clean, oxlint clean on changed files, oxfmt applied.
 - 2026-11-09T04:40:01Z supervisor: imp-alert-rule-conditions passed the gate in round 1
+
+## imp-alerts-hcl (2026-11-09, round 1)
+- packages/common/src/eng1799/grafanaAlertImport.ts (terraformHcl.ts already evaluated locals, toset, for/if,
+  jsonencode, merge, tolist, conditionals, arithmetic, interpolation and heredocs; the importer just didn't use it):
+  - Rule groups with `for_each` are expanded: one group per instance with `each = {key, value}` bound (map: keys in
+    lexical order; set/list: key = value). An unevaluable for_each -> `terraform-unresolved` on the group path,
+    rules skipped.
+  - New `TerraformContext.blocks(body, type, ...)`: static blocks plus `dynamic "<type>"` blocks expanded (iterator
+    from `iterator =` or the block type, bound to `{key, value}`; list key = index, map key = key). Used for group
+    `rule` blocks and rule `data` blocks. Dynamic blocks of other types on a group stay `terraform-unsupported`.
+    **Trap**: sets and lists are both JS arrays after evaluation, so a dynamic block over `toset(...)` gets index
+    keys, not values (`.value` is right). No fixture uses `rule.key`; fix needs set tracking in terraformHcl.ts.
+  - `tf.attribute(...)` takes the variables; convertRule takes an ExpandedBlock and evaluates everything with them.
+  - `grafana_data_source.<name>` with no attribute resolves to `{uid, name, type}` (via --datasources), so
+    `local.prom_by_env[each.key].uid` works.
+  - `interval` is now set from the group's `interval_seconds` (60 -> 1m, 300 -> 5m, 90 -> 90s; non-whole/unknown ->
+    option-dropped). The acceptance test needed it; imp-alert-rule-fields adds the other fields (for, timeRange...).
+- Unit test: grafanaAlertImport.test.ts 'expands for_each and dynamic blocks' (map for_each, dynamic rule with
+  iterator, nested dynamic data, unknown for_each).
+- Tested as a user: CLI on the acceptance's latency.tf with fixture contact points/policy/locals/datasources ->
+  4 rule files; prod interval 1m / staging 5m; staging promql(..., 'prometheus-staging'); max reducer > 0.5;
+  dynamic rules > 2000 and > 10000 (very slow paused); heredoc description + interpolated summaries. Full fixture
+  rule set now gives 84 rules (was 15), no crash; 1 terraform-unresolved: `var.pg_cron_duration_threshold`
+  (input variables are not supported; relevant to imp-alerts-full-ruleset).
+- Acceptance: alerts-hcl 4/4, alerts-command 3/3, alerts-rule-conditions 4/4. tsc (common) clean, oxlint clean on
+  changed files, oxfmt applied.
+- 2026-11-09T04:45:17Z supervisor: imp-alerts-hcl passed the gate in round 1

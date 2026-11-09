@@ -182,6 +182,59 @@ describe('convertGrafanaAlerting', () => {
         expect(ranged.query).not.toBe(PLACEHOLDER_ALERT_QUERY);
     });
 
+    it('expands for_each and dynamic blocks', () => {
+        const rules = `
+locals {
+  sources = { prod = grafana_data_source.prometheus-production }
+}
+resource "grafana_rule_group" "by_env" {
+  for_each         = { prod = 2, dev = 1 }
+  name             = "by_env_\${each.key}"
+  folder_uid       = "x"
+  interval_seconds = each.value * 90
+  dynamic "rule" {
+    for_each = [for n in ["a", "b"] : n if each.key == "prod" || n == "a"]
+    iterator = r
+    content {
+      name      = "\${r.value} \${each.key} (\${r.key})"
+      condition = "C"
+      dynamic "data" {
+        for_each = ["A"]
+        content {
+          ref_id         = data.value
+          datasource_uid = local.sources[each.key].uid
+          model          = jsonencode({ expr = "up", refId = "A", instant = true })
+        }
+      }
+${reduceThreshold('gt', 1)}
+      annotations = { summary = "s" }
+    }
+  }
+}
+resource "grafana_rule_group" "unknown" {
+  for_each   = data.x.y
+  name       = "u"
+  folder_uid = "x"
+}
+`;
+        const result = convert(POLICY, rules);
+        expect(
+            result.alertRules.map((r) => [r.name, r.interval, r.paused]),
+        ).toEqual([
+            ['a dev (0)', '90s', true],
+            ['a prod (0)', '3m', false],
+            ['b prod (1)', '3m', false],
+        ]);
+        // local.sources has no dev entry, so the dev rule (paused above) needs review; the prod
+        // rules resolve the datasource through the local map of grafana_data_source resources.
+        expect(result.alertRules[1].query).toContain("'prometheus-production'");
+        expect(
+            result.warnings.filter(
+                (w) => w.path === 'grafana_rule_group.unknown',
+            ),
+        ).toEqual([expect.objectContaining({ code: 'terraform-unresolved' })]);
+    });
+
     it('turns classic conditions and ranges into the reducer and condition', () => {
         const classic = (reducer: string, evaluator: string, extra = '') =>
             exprData(
