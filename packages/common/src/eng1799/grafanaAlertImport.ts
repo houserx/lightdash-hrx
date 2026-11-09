@@ -888,6 +888,67 @@ const readRuleState = <T extends string>(
     return undefined;
 };
 
+/**
+ * Grafana simplified routing (`notification_settings { contact_point }`) sends a rule to one contact
+ * point, bypassing the policy tree. The import labels the rule notify=<contact point slug> and the
+ * tree gets a matching route ahead of the policies, without continue, so the rule reaches it only.
+ */
+const NOTIFY_LABEL = 'notify';
+
+/** Resolves a notification_settings contact_point to an imported contact point's slug, and records it. */
+type NotifyResolver = (value: HclValue | undefined) => string | undefined;
+
+/** The slug of the contact point the rule's notification_settings names, if it has one. */
+const readNotificationSettings = (
+    tf: TerraformContext,
+    hcl: HclFile,
+    rule: ExpandedBlock,
+    notify: NotifyResolver,
+    warn: Warn,
+): string | undefined => {
+    const settings = tf.blocks(
+        rule.body,
+        'notification_settings',
+        hcl,
+        rule.variables,
+        warn,
+        {},
+    );
+    if (settings.length === 0) return undefined;
+    if (settings.length > 1) {
+        warn({
+            code: 'terraform-unsupported',
+            message: `The rule has ${settings.length} notification_settings blocks; only the first is imported.`,
+        });
+    }
+    const [first] = settings;
+    warnDropped(
+        first.body,
+        ['contact_point'],
+        warn,
+        "The rule's notification_settings",
+        {},
+    );
+    const value = tf.attribute(
+        first.body,
+        'contact_point',
+        hcl,
+        first.variables,
+    );
+    const slug = notify(value);
+    if (slug === undefined) {
+        warn({
+            code: 'terraform-unresolved',
+            message: `The contact point of the rule's notification_settings ${
+                isHclUnknown(value)
+                    ? `(${value.text})`
+                    : JSON.stringify(value ?? null)
+            } is not an imported contact point; the rule is routed by the notification policy.`,
+        });
+    }
+    return slug;
+};
+
 const convertRule = (
     tf: TerraformContext,
     hcl: HclFile,
@@ -896,6 +957,7 @@ const convertRule = (
     rule: ExpandedBlock,
     datasources: GrafanaDatasource[] | undefined,
     takenSlugs: Set<string>,
+    notify: NotifyResolver,
     warn: Warn,
 ): AlertRuleAsCode => {
     const { body, variables } = rule;
@@ -999,13 +1061,29 @@ const convertRule = (
         }
     }
 
-    const labels = stringMap(
+    let labels = stringMap(
         read('labels'),
         'label',
         ruleWarn,
         name,
         LABEL_NAME_PATTERN,
     );
+    const notifySlug = readNotificationSettings(
+        tf,
+        hcl,
+        rule,
+        notify,
+        ruleWarn,
+    );
+    if (notifySlug !== undefined) {
+        if (labels?.[NOTIFY_LABEL] !== undefined) {
+            ruleWarn({
+                code: 'option-dropped',
+                message: `The rule's ${NOTIFY_LABEL} label "${labels[NOTIFY_LABEL]}" is replaced by ${NOTIFY_LABEL}=${notifySlug} from its notification_settings.`,
+            });
+        }
+        labels = { ...labels, [NOTIFY_LABEL]: notifySlug };
+    }
     const annotations = stringMap(
         read('annotations'),
         'annotation',
@@ -1484,6 +1562,17 @@ export const convertGrafanaAlerting = (
         contactPoint: root.contactPoint,
     };
 
+    // Contact points rules name in notification_settings, in order of first use.
+    const importedSlugs = new Set(contactPoints.map((cp) => cp.slug));
+    const notifySlugs = new Set<string>();
+    const notify: NotifyResolver = (value) => {
+        const name = asString(value)?.trim();
+        const slug = name === undefined ? undefined : slugByName.get(name);
+        if (slug === undefined || !importedSlugs.has(slug)) return undefined;
+        notifySlugs.add(slug);
+        return slug;
+    };
+
     // Rule groups, in file and block order.
     const ruleSlugs = new Set<string>();
     const alertRules: AlertRuleAsCode[] = [];
@@ -1581,6 +1670,7 @@ export const convertGrafanaAlerting = (
                             rule,
                             input.datasources,
                             ruleSlugs,
+                            notify,
                             warn,
                         ),
                     ),
@@ -1588,6 +1678,22 @@ export const convertGrafanaAlerting = (
             });
         });
     });
+
+    // One notify=<slug> route per contact point named in notification_settings, ahead of the
+    // policies and without continue: those rules reach their contact point and nothing else.
+    if (notifySlugs.size > 0) {
+        notificationRoutes.routes = [
+            ...[...notifySlugs].map(
+                (slug): NotificationRoute => ({
+                    matchers: [
+                        { label: NOTIFY_LABEL, operator: '=', value: slug },
+                    ],
+                    contactPoint: slug,
+                }),
+            ),
+            ...(notificationRoutes.routes ?? []),
+        ];
+    }
 
     return { alertRules, contactPoints, notificationRoutes, warnings };
 };

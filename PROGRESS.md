@@ -1514,3 +1514,28 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   engineering/#alerts -> slack-alerts; system=platform-environment-sweep -> slack-infra-alerts.
 - Note: --no-routing-fixes still prints "Routing fixes are not implemented ..."; the imp-routing-* features own that.
 - 2026-11-09T05:10:23Z supervisor: imp-alert-notification-routes passed the gate in round 1
+
+## imp-alert-notification-settings (2026-11-09, round 1)
+- Changed packages/common/src/eng1799/grafanaAlertImport.ts: a rule's `notification_settings { contact_point }`
+  (dynamic blocks expanded too) resolves the contact point by name (a `grafana_contact_point.x.name` reference or a
+  literal) to the slug of an imported contact point. The rule gets the label notify=<slug>. After all rules are
+  converted, the tree gets one route per such contact point `{matchers: [notify = <slug>], contactPoint: <slug>}`.
+  These routes are prepended to root.routes in order of first use, with no continue, so those rules reach only
+  that contact point.
+- Edge cases: if the name isn't an imported contact point, the rule gets terraform-unresolved and no label, and the
+  policy routes it. Other notification_settings attributes (group_by, group_wait, mute_timings, ...) are
+  option-dropped. If the rule already has a notify label, the label is replaced and an option-dropped warning
+  says so. If a rule has more than one block, only the first is used (terraform-unsupported).
+- Tested as a user: generated scratch Terraform with alertsupport (../tmp/notify-manual, outside the repo), then ran
+  the CLI `import grafana-alerts` on it. direct-to-slack.yml has labels team=infra and notify=slack-platform.
+  direct-by-name.yml has notify=pager. policy-routed.yml has only team=infra. notification-routes.yml routes:
+  notify=slack-platform -> slack-platform, notify=pager -> pager, then team=infra -> pager. IMPORT-REPORT lists
+  the dropped group_wait and the unknown contact point "nope".
+- Acceptance: alerts-notification-settings 2/2 after init. Regression: alerts-notification-routes,
+  alerts-full-ruleset, alerts-command and alerts-rule-fields 3/3 each; common grafanaAlertImport.test.ts 10/10;
+  oxlint clean.
+- Trap: the CLI loads the built @lightdash/common. After you edit common, run `bash ./init.sh` before the
+  acceptance check, or the check runs the old code.
+- For imp-routing-unreached-contact-points: it also adds notify=<slug> routes. Don't add a second route for a
+  slug that already has one from notification_settings.
+- 2026-11-09T05:14:48Z supervisor: imp-alert-notification-settings passed the gate in round 1
