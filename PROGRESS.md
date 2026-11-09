@@ -586,3 +586,27 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Leftover: `work/importers/tmp/pgcheck/` (throwaway cluster data dir, stopped) could not be deleted (rm denied);
   safe to remove.
 - 2026-11-09T02:21:19Z supervisor: imp-query-postgres passed the gate in round 1
+
+### imp-query-ops-marts (2026-11-08)
+
+- `grafanaQuery.ts`: datasource types `grafana-github-datasource` and `grafana-sentry-datasource` are handled
+  before the telemetry translators (`OPS_MART_DATASOURCES` → `translateOpsMartTarget`), since they read the
+  engine's `ops_marts` catalog, not a Telemetry Source. The target's `queryType` is looked up in
+  `ctx.opsMarts.github|sentry`. If it maps to a table, the SQL is `SELECT * FROM <table>`, with no shape, so it never UNIONs.
+  If not (no mapping, a type the mapping lacks, or no queryType), the result is a TODO naming the datasource, the
+  query type and the missing Ops Mart, plus a `no-ops-mart` warning.
+- **Decisions** (the spec does not say): a mapped table must match `ops_marts(.<ident>){1,2}`
+  (CONTRACTS §1.1 names `ops_marts.<dataset>.<table>`; the §3 allowlist example has 2 segments). Anything else
+  becomes a TODO + `ops-mart-invalid`, so a mapping file can never inject SQL. The mart's columns are unknown,
+  so the target's own filters (owner, repository, options, projectIds, …) are not applied. Instead an
+  `ops-mart-filters-dropped` warning names those fields. No time filter is added, for the same reason. Codes
+  were added to `ImportWarningCode`.
+- Tested: init.sh rebuilt common, then I drove the built `dist/cjs` translator from node. GitHub Pull_Requests without a
+  mapping → TODO "…needs an Ops Mart: map github.Pull_Requests…" + no-ops-mart. With the mapping →
+  `SELECT * FROM ops_marts.github.pull_requests` + filters-dropped. Workflow_Usage → TODO + no-ops-mart. A table
+  name like `x; drop table y` → TODO + ops-mart-invalid. In a mixed panel after a Prometheus target, the mart is
+  left out with panel-targets-not-combined. Acceptance: query-ops-marts 3/3; datasources 6/6, panel-targets 3/3.
+  tsc clean, oxlint clean (run from packages/common), oxfmt applied.
+- Next: imp-dashboard-datasources reads `--ops-marts ops-marts.yml` (YAML `github: {Pull_Requests: table}`) into
+  `opsMarts`; imp-dashboard-todo-tiles expects the TODO text to mention the Ops Mart (it does).
+- 2026-11-09T02:23:41Z supervisor: imp-query-ops-marts passed the gate in round 1

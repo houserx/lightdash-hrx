@@ -1593,6 +1593,85 @@ const translatePostgresTarget = (
     };
 };
 
+/**
+ * Datasources whose data the engine cannot query directly. Their targets read the BigQuery Ops
+ * Mart (CONTRACTS §1.1: `ops_marts.<dataset>.<table>`) that `GrafanaQueryContext.opsMarts` maps
+ * their query type to, or become a TODO with a `no-ops-mart` warning.
+ */
+const OPS_MART_DATASOURCES: ReadonlyMap<
+    string,
+    { key: 'github' | 'sentry'; name: string }
+> = new Map([
+    ['grafana-github-datasource', { key: 'github', name: 'GitHub' }],
+    ['grafana-sentry-datasource', { key: 'sentry', name: 'Sentry' }],
+]);
+
+/** A table in the engine's `ops_marts` catalog, written as a plain dotted identifier. */
+const OPS_MART_TABLE = /^ops_marts(\.[A-Za-z_][A-Za-z0-9_]*){1,2}$/;
+
+/** Target fields that say how Grafana draws or names the query, not what data it selects. */
+const OPS_MART_META_FIELDS = new Set([
+    'refId',
+    'datasource',
+    'queryType',
+    'hide',
+    'key',
+    'hidden',
+]);
+
+const translateOpsMartTarget = (
+    target: GrafanaTarget,
+    datasource: { key: 'github' | 'sentry'; name: string },
+    ctx: GrafanaQueryContext,
+    warnings: ImportWarning[],
+): TargetTranslation => {
+    const queryType =
+        typeof target.queryType === 'string' && target.queryType.trim() !== ''
+            ? target.queryType.trim()
+            : undefined;
+    const what = `${datasource.name} ${queryType ?? '(no query type)'} ${targetLabel(target)}`;
+    const table =
+        queryType === undefined
+            ? undefined
+            : ctx.opsMarts?.[datasource.key]?.[queryType]?.trim();
+    if (table === undefined || table === '') {
+        warnings.push({
+            code: 'no-ops-mart',
+            message: `${what} has no Ops Mart mapped; map ${datasource.key}.${queryType ?? '<query type>'} to an ops_marts table`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: ${what} needs an Ops Mart: map ${datasource.key}.${queryType ?? '<query type>'} to an ops_marts table, or rebuild the query by hand`,
+            warnings,
+        };
+    }
+    if (!OPS_MART_TABLE.test(table)) {
+        warnings.push({
+            code: 'ops-mart-invalid',
+            message: `The Ops Mart mapped for ${what} (${table}) is not an ops_marts.<dataset>.<table> name`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: ${what} maps to ${table}, which is not an ops_marts table; fix the Ops Mart mapping`,
+            warnings,
+        };
+    }
+    const dropped = Object.keys(target).filter(
+        (field) =>
+            !OPS_MART_META_FIELDS.has(field) &&
+            target[field] !== undefined &&
+            target[field] !== null &&
+            target[field] !== '',
+    );
+    if (dropped.length > 0) {
+        warnings.push({
+            code: 'ops-mart-filters-dropped',
+            message: `${what} reads all of ${table}; its ${dropped.join(', ')} settings are not applied, filter the table in SQL by hand`,
+        });
+    }
+    return { sql: `SELECT * FROM ${table}`, todo: null, warnings };
+};
+
 /** The datasource types with a translation; anything else is `datasource-unsupported`. */
 const TARGET_TRANSLATORS = new Map<
     string,
@@ -1637,6 +1716,11 @@ const translateTarget = (
             todo: `TODO: ${targetLabel(target)} uses a datasource that could not be resolved (${resolved.label})`,
             warnings,
         };
+    }
+    const opsMartDatasource = OPS_MART_DATASOURCES.get(resolved.type);
+    if (opsMartDatasource !== undefined) {
+        // The Ops Mart is read through the engine's own catalog, not a Telemetry Source.
+        return translateOpsMartTarget(target, opsMartDatasource, ctx, warnings);
     }
     const translator = TARGET_TRANSLATORS.get(resolved.type);
     if (translator === undefined) {
