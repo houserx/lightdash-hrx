@@ -14,7 +14,7 @@ describe('int-harness-fake-bigquery', () => {
         const engine = track(await h.startEngine({ bigquery }));
 
         const tables = await pgRun(engine, [
-            `SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'ops_marts' ORDER BY table_name`,
+            `SELECT table_catalog, table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'ops_marts' AND table_schema <> 'information_schema' ORDER BY table_name`,
         ]);
         expect(tables.error).toBeUndefined();
         expect(tables.rows).toEqual([
