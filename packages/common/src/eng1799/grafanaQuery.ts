@@ -241,6 +241,8 @@ type ReferenceOptions = {
     escapeInline?: (value: string) => string;
     /** Undefined names that are part of the query language, kept without a warning. */
     nativeNames?: ReadonlySet<string>;
+    /** Further `$__` macros that map to a reserved parameter in this query language. */
+    macroParameters?: ReadonlyMap<string, string>;
 };
 
 const replaceReference = (
@@ -255,7 +257,8 @@ const replaceReference = (
         // An interval variable's auto option follows the dashboard interval.
         const mapped = name.startsWith(AUTO_INTERVAL_PREFIX)
             ? '__interval'
-            : TIME_MACRO_PARAMETERS.get(name);
+            : (options.macroParameters?.get(name) ??
+              TIME_MACRO_PARAMETERS.get(name));
         const parameter = format === undefined ? mapped : undefined;
         if (parameter === undefined) {
             addOnce(findings.unmappedMacros, text);
@@ -1360,6 +1363,236 @@ const translateCloudWatchTarget = (
     return cloudWatchSql(target, metricDataQuery, source, variables, warnings);
 };
 
+/**
+ * The reserved parameters a rewritten Postgres macro reads, as the `${__from}` and `${__to}`
+ * placeholders it leaves for the reference pass (`${__interval}` is a time macro already).
+ * Every reference to Grafana's own `$__from` and `$__to` is rewritten before that pass, so the
+ * only ones left are these placeholders.
+ */
+const POSTGRES_MACRO_PARAMETERS: ReadonlyMap<string, string> = new Map([
+    ['__from', '__from'],
+    ['__to', '__to'],
+]);
+
+/** The start and end of the time range as SQL timestamp literals, as Grafana writes them. */
+const POSTGRES_FROM = "'${__from}'";
+const POSTGRES_TO = "'${__to}'";
+
+/**
+ * Grafana's `$__from`, `$__to` and `$__interval_ms` global variables: `$__from` and `$__to`
+ * are epoch milliseconds, `${__from:date}` and `${__from:date:iso}` the ISO-8601 text and
+ * `${__from:date:seconds}` epoch seconds. Other formats are left for the reference pass, which
+ * reports them.
+ */
+const rewritePostgresTimeVariables = (sql: string): string =>
+    sql.replace(
+        VARIABLE_REFERENCE,
+        (
+            ref: string,
+            plain?: string,
+            braced?: string,
+            bracedFormat?: string,
+            bracketed?: string,
+            bracketedFormat?: string,
+        ) => {
+            const name = plain ?? braced ?? bracketed;
+            const format = bracedFormat ?? bracketedFormat;
+            if (name === '__interval_ms' && format === undefined) {
+                return "(extract(epoch from '${__interval}'::interval) * 1000)::bigint";
+            }
+            if (name !== '__from' && name !== '__to') return ref;
+            const literal = name === '__from' ? POSTGRES_FROM : POSTGRES_TO;
+            if (format === undefined) {
+                return `(extract(epoch from ${literal}::timestamptz) * 1000)::bigint`;
+            }
+            if (format === 'date' || format === 'date:iso')
+                return `\${${name}}`;
+            if (format === 'date:seconds') {
+                return `floor(extract(epoch from ${literal}::timestamptz))::bigint`;
+            }
+            return ref;
+        },
+    );
+
+/**
+ * The arguments of the macro call whose `(` is at `open`, split at top-level commas and
+ * trimmed, and the index after its `)`; undefined when the call is not closed.
+ */
+const macroCallArguments = (
+    text: string,
+    open: number,
+): { args: string[]; end: number } | undefined => {
+    const args: string[] = [];
+    let current = '';
+    let depth = 0;
+    let quoted = false;
+    for (let i = open + 1; i < text.length; i += 1) {
+        const c = text[i];
+        if (c === "'") quoted = !quoted;
+        if (!quoted && c === ')' && depth === 0) {
+            args.push(current.trim());
+            return {
+                args: args.length === 1 && args[0] === '' ? [] : args,
+                end: i + 1,
+            };
+        }
+        if (!quoted && c === ',' && depth === 0) {
+            args.push(current.trim());
+            current = '';
+        } else {
+            if (!quoted && c === '(') depth += 1;
+            if (!quoted && c === ')') depth -= 1;
+            current += c;
+        }
+    }
+    return undefined;
+};
+
+/**
+ * The bucket width of `$__timeGroup` in seconds, as SQL: a duration (`5m`, `'1h'`) is
+ * computed here; anything else (`$__interval`, an interval variable) is read by Postgres as
+ * an interval once its reference resolves.
+ */
+const postgresIntervalSeconds = (arg: string): string => {
+    const text = arg.replace(/^'(.*)'$/s, '$1').trim();
+    try {
+        const ms = parseTimeRangeDuration(text);
+        if (ms % 1000 === 0) return String(ms / 1000);
+    } catch {
+        // Not a plain duration: Postgres reads it below.
+    }
+    return `extract(epoch from '${text}'::interval)`;
+};
+
+/** A Grafana Postgres macro call as SQL, or undefined when it has no translation. */
+const postgresMacroSql = (
+    name: string,
+    args: string[],
+    what: string,
+    warnings: ImportWarning[],
+): string | undefined => {
+    switch (name) {
+        case 'time':
+            return args.length === 1 ? `${args[0]} AS "time"` : undefined;
+        case 'timeEpoch':
+            return args.length === 1
+                ? `extract(epoch from ${args[0]}) AS "time"`
+                : undefined;
+        case 'timeFilter':
+            return args.length === 1
+                ? `${args[0]} BETWEEN ${POSTGRES_FROM} AND ${POSTGRES_TO}`
+                : undefined;
+        case 'timeFrom':
+            return args.length === 0 ? POSTGRES_FROM : undefined;
+        case 'timeTo':
+            return args.length === 0 ? POSTGRES_TO : undefined;
+        case 'timeGroup':
+        case 'timeGroupAlias': {
+            if (args.length !== 2 && args.length !== 3) return undefined;
+            if (args.length === 3) {
+                warnings.push({
+                    code: 'query-macro-fill-dropped',
+                    message: `${what} fills the gaps of $__${name} with ${args[2]}; the SQL has no gap filling, so empty buckets are missing`,
+                });
+            }
+            const seconds = postgresIntervalSeconds(args[1]);
+            const bucket = `to_timestamp(floor(extract(epoch from ${args[0]}) / ${seconds}) * ${seconds})`;
+            return name === 'timeGroupAlias' ? `${bucket} AS "time"` : bucket;
+        }
+        default:
+            return undefined;
+    }
+};
+
+/** A Grafana SQL macro call: `$__timeFilter(`, `$__timeGroupAlias(`… */
+const MACRO_CALL = /\$__([A-Za-z]\w*)\(/g;
+
+/**
+ * Grafana's Postgres macros rewritten as SQL over the time placeholders, arguments first.
+ * A macro without a translation, or with the wrong number of arguments, stays as written for
+ * the reference pass to report.
+ */
+const rewritePostgresMacroCalls = (
+    sql: string,
+    what: string,
+    warnings: ImportWarning[],
+): string => {
+    let out = '';
+    let last = 0;
+    for (const match of sql.matchAll(MACRO_CALL)) {
+        if (match.index >= last) {
+            const call = macroCallArguments(
+                sql,
+                match.index + match[0].length - 1,
+            );
+            const expansion =
+                call === undefined
+                    ? undefined
+                    : postgresMacroSql(
+                          match[1],
+                          call.args.map((arg) =>
+                              rewritePostgresMacroCalls(arg, what, warnings),
+                          ),
+                          what,
+                          warnings,
+                      );
+            if (call !== undefined && expansion !== undefined) {
+                out += sql.slice(last, match.index) + expansion;
+                last = call.end;
+            }
+        }
+    }
+    return out + sql.slice(last);
+};
+
+/**
+ * A Postgres target's raw SQL becomes `platform_query('<sql>')` (CONTRACTS §1.1), the one
+ * Platform Database function, so the datasource's name picks no source. Grafana's macros
+ * become SQL over the reserved parameters, as Grafana expands them: `$__timeFilter(col)` is
+ * `col BETWEEN '<from>' AND '<to>'`, `$__timeFrom()`/`$__timeTo()` the quoted bounds, `$__from`
+ * and `$__to` epoch milliseconds, and `$__timeGroup(col, interval)` the bucket start as a
+ * timestamptz (Grafana returns epoch seconds and converts them itself). Dashboard variables
+ * resolve as in PromQL; any other macro stays as written with a warning.
+ */
+const translatePostgresTarget = (
+    target: GrafanaTarget,
+    _source: string | undefined,
+    variables: GrafanaTemplatingVariable[],
+    warnings: ImportWarning[],
+): TargetTranslation => {
+    const what = `Postgres ${targetLabel(target)}`;
+    const rawSql = typeof target.rawSql === 'string' ? target.rawSql : '';
+    if (rawSql.trim() === '') {
+        warnings.push({
+            code: 'query-empty',
+            message: `${what} has no SQL`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: ${what} has no SQL to translate`,
+            warnings,
+        };
+    }
+    const sql = rewritePostgresMacroCalls(
+        rewritePostgresTimeVariables(rawSql),
+        what,
+        warnings,
+    );
+    return {
+        sql: tableFunctionSql(
+            'platform_query',
+            [
+                queryExpressionSql(sql, what, variables, warnings, {
+                    macroParameters: POSTGRES_MACRO_PARAMETERS,
+                }),
+            ],
+            undefined,
+        ),
+        todo: null,
+        warnings,
+    };
+};
+
 /** The datasource types with a translation; anything else is `datasource-unsupported`. */
 const TARGET_TRANSLATORS = new Map<
     string,
@@ -1374,6 +1607,9 @@ const TARGET_TRANSLATORS = new Map<
     ['prometheus', translatePrometheusTarget],
     ['loki', translateLokiTarget],
     ['cloudwatch', translateCloudWatchTarget],
+    // The current Postgres plugin id and the legacy one.
+    ['grafana-postgresql-datasource', translatePostgresTarget],
+    ['postgres', translatePostgresTarget],
 ]);
 
 const translateTarget = (

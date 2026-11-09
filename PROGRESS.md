@@ -557,3 +557,32 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   cloudwatch-logs 3/3; cloudwatch-metrics 5/5, cloudwatch-expressions 3/3, panel-targets 3/3, datasources 6/6,
   variables 6/6. tsc clean, oxlint clean, oxfmt applied.
 - 2026-11-09T02:15:35Z supervisor: imp-query-cloudwatch-logs passed the gate in round 1
+
+### imp-query-postgres (2026-11-08)
+
+- `grafanaQuery.ts`: datasource types `grafana-postgresql-datasource` and legacy `postgres` go to
+  `translatePostgresTarget`: `rawSql` becomes `SELECT * FROM platform_query('<sql>')` (one argument, no source:
+  CONTRACTS §1.1 has one Platform Database). No shape is set, so Postgres targets never UNION with other targets.
+  Empty `rawSql` (e.g. a legacy builder target without SQL) → TODO + `query-empty`.
+- Macros are expanded the way Grafana expands them, over placeholders `'${__from}'`/`'${__to}'` that the existing
+  reference pass turns into `' || ${ld.parameters.__from} || '` (new `ReferenceOptions.macroParameters`):
+  `$__timeFilter(c)` → `c BETWEEN '<from>' AND '<to>'`; `$__timeFrom()`/`$__timeTo()` → quoted bounds;
+  `$__time(c)` → `c AS "time"`; `$__timeEpoch(c)`; `$__timeGroup(c, iv[, fill])`/`$__timeGroupAlias` →
+  `to_timestamp(floor(extract(epoch from c) / S) * S)` [AS "time"], where S is seconds computed here for a literal
+  duration (`5m`, `'1h'`) or `extract(epoch from '<iv>'::interval)` for `$__interval`/a variable. **Decision**: the
+  bucket is a timestamptz, not Grafana's epoch-seconds number, since Lightdash does not convert epochs. A fill
+  argument is dropped with `query-macro-fill-dropped`.
+  Grafana's global `$__from`/`$__to` are epoch **milliseconds** → `(extract(epoch from '<from>'::timestamptz) *
+  1000)::bigint`; `${__from:date}`/`:date:iso` → the bare ISO text; `:date:seconds` → epoch seconds; `$__interval_ms`
+  → ms of `__interval`. Other formats, `$__unixEpoch*` macros and unknown macros stay as written with
+  `query-macro-unsupported` naming them. Dashboard variables resolve as for PromQL (bare text, as Grafana does).
+- Tested: init.sh, drove the built `dist/cjs` translator from node with seven targets (plain SQL, timeFilter,
+  timeGroupAlias with `$__interval`, timeGroup '5m' with fill + `$env`, `$__from`/`${__to:date:iso}`/
+  `$__interval_ms`, `$__unixEpochGroupAlias`, empty SQL, legacy `postgres` type by name). Then ran the generated SQL
+  on a throwaway local Postgres 18 (127.0.0.1:54329, synthetic `cron.job_run_details`), letting Postgres fold the
+  parameter concatenation as the engine would: all queries ran, with 1m/15s/1h/1d intervals bucketing correctly
+  (1h → 6 rows, 1d → 1). Server stopped. Acceptance: query-postgres 5/5; time-macros 5/5, variables 6/6,
+  datasources 6/6, panel-targets 3/3, prometheus 5/5. tsc clean, oxlint clean, oxfmt applied.
+- Leftover: `work/importers/tmp/pgcheck/` (throwaway cluster data dir, stopped) could not be deleted (rm denied);
+  safe to remove.
+- 2026-11-09T02:21:19Z supervisor: imp-query-postgres passed the gate in round 1
