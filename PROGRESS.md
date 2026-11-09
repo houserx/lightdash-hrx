@@ -1873,3 +1873,23 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   it the same way, or roundtrip-warning-snapshot fails.
 - Checks: roundtrip-warning-snapshot 3/3 after init.
 - 2026-11-09T06:17:10Z supervisor: imp-roundtrip-warning-snapshot passed the gate in round 1
+
+## imp-docs (2026-11-09)
+
+- Added docs/eng-1799/importers.md: Usage (the three `lightdash import` commands, every option from
+  packages/cli/src/index.ts, and the outputs IMPORT-REPORT.md, ROUTING-FIXES.md, import-summary.json), Mapping
+  (dashboards, Perses, alerting; links to grafana-panel-mapping.md for per-panel/option detail), Warning catalogue
+  (every ImportWarningCode from packages/common/src/eng1799/importWarnings.ts, with per-importer fixture counts
+  copied from importers-warning-counts.json) and Routing fixes (the four defect classes, the notify label,
+  --routing-decisions, ADR 0003, the Shadow Run, determinism, and what today's fixtures produce). No code change.
+- Written from the code, not memory: option texts from index.ts, warning meanings from the emitting code, routing
+  text from grafanaRoutingFixes.ts. Glossary terms from CONTEXT.md; avoided terms (dry run, go-live, switchover,
+  parallel run, federation proxy) do not appear.
+- Tested as a user: ran `import grafana-alerts` on the full fixture rule set (84 rules, 6 contact points, 79
+  warnings), `import grafana-dashboard` on one fixture dashboard and `import perses-dashboard` on node-overview.yaml,
+  and checked the output folders, ROUTING-FIXES.md sections and the shapes of rules/routes against what the doc says.
+  Scratch output deleted.
+- Trap for later sessions: the catalogue counts are copied from importers-warning-counts.json. If a warning code is
+  added or renamed, update importWarnings.ts, the snapshot and this doc's catalogue together.
+- Checks: docs 5/5 after init.
+- 2026-11-09T06:21:45Z supervisor: imp-docs passed the gate in round 1
