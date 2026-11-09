@@ -1119,3 +1119,36 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     is outside this feature's steps and needs an audit-description decision for saved charts (they carry none).
   - `runAlertingCycle` is still not built.
 - 2026-11-09T05:01:52Z supervisor: int-lightdash-sql-chart passed the gate in round 1
+- 2026-11-09 int-alert-promql-evaluates (round 1): one alerting scheduler cycle evaluates a promql() Alert
+  Rule through the real engine, and the alerting API shows it firing.
+  Changed and why:
+  - **Backend fix** (`packages/backend/src/App.ts`): the alerting router (`/api/v2/projects/:projectUuid/alerting/*`)
+    never ran Lightdash's API-key authentication. That auth is a per-route tsoa middleware, so a personal access token
+    got 401 "You don't have authorization" even for an org admin. App.ts now mounts `allowApiKeyAuthenticationIfPresent`
+    on `ALERTING_PROJECT_API_PATH` just before the alerting router. With no Authorization header, the session user is
+    used as before. A bad token gives 401. The health route (`/api/v1/alerting/health`) is untouched and needs no auth.
+    PAT, service-account and OAuth bearers now work there exactly as on tsoa routes. The MCP's alert_state/history
+    calls with `ApiKey` (int-fix-mcp-real-lightdash) need this too.
+  - Harness: `startLightdash(...).runAlertingCycle()` is built. lightdashServer.ts now answers IPC ops after `ready`
+    (`{type:'op', id, op}` → `{type:'op-result', id, ok, result|error}`; lightdash.ts `callChildOp`). The
+    `runAlertingCycle` op builds the alerting module with `createProductionAlertingModule` from the App's public
+    getters, exactly as SchedulerApp does. It calls `seedTick()`, which queues an `alertingTick` for now with job key
+    `alerting-tick` and replaces the self-rescheduled tick 15 s out. It then runs graphile-worker `runOnce` with a
+    task list of only `alertingTick` + `alertRuleEvaluate`, which runs the tick and every evaluate job it enqueued
+    until none is due. Last, it calls `notifier.flush()`. Any task that throws rejects the cycle with its error
+    (graphile would only log and retry it). Cycles are serialised.
+  Tested as a user (`../tmp/manual-alert-promql/try.mts`, run from e2e/eng-1799 with `pnpm exec node --import tsx`,
+  with absolute `E2E_ENGINE_BINARY`/`E2E_REPO_ROOT` and TZ=UTC). Rules GET with no auth gave 401, and with a bogus PAT
+  also 401. Health with no auth gave `never_run`. Creating the rule with the PAT gave 200, state normal. One cycle
+  took about 40 ms. The fake Prometheus got one `query_range` for `db_cpu` with end - start = 300 s, step 15. The
+  rule was `firing`: db-1 firing, value 95, labels with alertname/team/instance, summary "db-1 CPU is 95"; db-2
+  normal, 10. `/state` listed only [rule, db-1, firing]. Health was `ok`, lag 0. A second cycle in the same 30 s
+  slot made no new Prometheus call (the slot was already claimed). Checks: this one 1/1; int-lightdash-boot 1/1;
+  backend and e2e typecheck clean; prettier check clean on the three files.
+  Next sessions must know:
+  - `runAlertingCycle()` evaluates a rule only once per interval slot. Within the same slot, a later cycle only
+    flushes notifications (which is what the incident.io/engine-down checks rely on with groupWait 1s). To
+    evaluate again, wait for the next slot (`nextSlot(seconds)` in acceptance/support.ts).
+  - The evaluator's engine identity (system:alert-evaluator, attrs, audit as assertion) was not checked here.
+    That is int-fix-alert-evaluator-identity's job; this unrestricted telemetry rule worked without it.
+- 2026-11-09T05:08:05Z supervisor: int-alert-promql-evaluates passed the gate in round 1

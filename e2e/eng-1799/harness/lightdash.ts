@@ -78,6 +78,12 @@ export type Lightdash = {
         sql: string;
         limit?: number;
     }): Promise<string>;
+    /**
+     * Runs one alerting scheduler cycle in the backend, as the (disabled) scheduler worker
+     * would: the `alertingTick` task, then every `alertRuleEvaluate` job it enqueued, then a
+     * notification flush. Rejects when any of those tasks fails.
+     */
+    runAlertingCycle(): Promise<void>;
     /** Stops the backend (SIGTERM, SIGKILL after a grace period), its Postgres and the fake S3. Idempotent. */
     close(): Promise<void>;
 };
@@ -238,6 +244,38 @@ async function createSqlChart(
     return savedSqlUuid;
 }
 
+/** Sends `{ type: 'op', id, op }` to the backend child and waits for its `op-result`. */
+function callChildOp(child: ChildProcess, op: string): Promise<unknown> {
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+        const onMessage = (message: any) => {
+            if (message?.type !== 'op-result' || message.id !== id) return;
+            settle();
+            if (message.ok) resolve(message.result);
+            else reject(new Error(`${op}: ${message.error}`));
+        };
+        const onExit = (code: number | null, signal: string | null) => {
+            settle();
+            reject(
+                new Error(
+                    `${op}: backend exited (${signal ?? `exit ${code}`})`,
+                ),
+            );
+        };
+        const settle = () => {
+            child.off('message', onMessage);
+            child.off('exit', onExit);
+        };
+        if (child.exitCode !== null || child.signalCode !== null) {
+            reject(new Error(`${op}: backend is not running`));
+            return;
+        }
+        child.on('message', onMessage);
+        child.once('exit', onExit);
+        child.send({ type: 'op', id, op });
+    });
+}
+
 function waitForExit(child: ChildProcess, ms: number): Promise<boolean> {
     if (child.exitCode !== null || child.signalCode !== null) {
         return Promise.resolve(true);
@@ -377,6 +415,9 @@ export async function startLightdash(
                     seeded.spaceUuid,
                     chart,
                 ),
+            runAlertingCycle: async () => {
+                await callChildOp(started, 'runAlertingCycle');
+            },
             close,
         };
     } catch (error) {

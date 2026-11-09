@@ -10,7 +10,9 @@
  *   argv[2] = 'serve'    Seeds the Operations Project fixtures (E2E_SEED, JSON) into the freshly
  *                        cloned database, starts the App on PORT and sends
  *                        `{ type: 'ready', seeded }` over IPC (or `{ type: 'error', message }`).
- *                        SIGTERM stops the App and exits.
+ *                        SIGTERM stops the App and exits. Afterwards it answers
+ *                        `{ type: 'op', id, op }` messages with `{ type: 'op-result', id,
+ *                        ok, result | error }`; the only op is `runAlertingCycle`.
  *
  * Nothing here talks to anything but the throwaway Postgres, the fake S3 and the engine.
  */
@@ -211,7 +213,91 @@ async function serve(): Promise<void> {
     process.on('disconnect', stop);
 
     await app.start();
+    const ops: Record<string, () => Promise<unknown>> = {
+        runAlertingCycle: await alertingCycleRunner(app),
+    };
+    process.on('message', (message: any) => {
+        if (message?.type !== 'op') return;
+        const op = ops[message.op];
+        const reply = (result: object) =>
+            send({ type: 'op-result', id: message.id, ...result });
+        if (!op) {
+            void reply({ ok: false, error: `unknown op ${message.op}` });
+            return;
+        }
+        op().then(
+            (result) => reply({ ok: true, result }),
+            (error: unknown) => reply({ ok: false, error: errorText(error) }),
+        );
+    });
     await send({ type: 'ready', seeded });
+}
+
+/**
+ * One alerting scheduler cycle, as the scheduler worker runs it (the worker itself is off):
+ * the alerting module is built exactly as SchedulerApp builds it, an `alertingTick` is queued
+ * for now (replacing the self-rescheduled one, which is 15 s out), and graphile's `runOnce`
+ * runs every due job of the two alerting tasks, so the tick and each `alertRuleEvaluate` job
+ * it enqueued, until none is due. Notifications the evaluations queued are then flushed.
+ * Any task failure (which graphile would only log and retry later) rejects the cycle.
+ */
+async function alertingCycleRunner(app: any): Promise<() => Promise<unknown>> {
+    const { createProductionAlertingModule } = await import(
+        path.join(BACKEND_SRC, 'createProductionAlertingModule')
+    );
+    const common = requireBackend('@lightdash/common');
+    const { runOnce } = requireBackend('graphile-worker');
+    const tasks = common.ALERTING_SCHEDULER_TASKS;
+    const module = createProductionAlertingModule({
+        database: app.getDatabase(),
+        siteUrl: process.env.SITE_URL,
+        projectModel: app.getModels().getProjectModel(),
+        getWarehouseClientFactory: () =>
+            app.getServiceRepository().getProjectService()
+                .warehouseClientFactory,
+        emailClient: app.getClients().getEmailClient(),
+        slackClient: app.getClients().getSlackClient(),
+        schedulerClient: app.getClients().getSchedulerClient(),
+    });
+    let running: Promise<unknown> = Promise.resolve();
+    const cycle = async () => {
+        const failures: string[] = [];
+        const ran: string[] = [];
+        const task =
+            (name: string) =>
+            async (payload: any): Promise<void> => {
+                ran.push(name);
+                try {
+                    await module.taskHandlers[name](payload);
+                } catch (error) {
+                    failures.push(`${name}: ${errorText(error)}`);
+                    throw error;
+                }
+            };
+        await module.seedTick();
+        await runOnce(
+            {
+                connectionString: process.env.PGCONNECTIONURI,
+                concurrency: 1,
+                noHandleSignals: true,
+            },
+            {
+                [tasks.ALERTING_TICK]: task(tasks.ALERTING_TICK),
+                [tasks.ALERT_RULE_EVALUATE]: task(tasks.ALERT_RULE_EVALUATE),
+            },
+        );
+        await module.notifier.flush();
+        if (failures.length > 0) {
+            throw new Error(`alerting cycle failed: ${failures.join('; ')}`);
+        }
+        return { tasks: ran };
+    };
+    // One cycle at a time, like the single queued tick.
+    return () => {
+        const next = running.then(cycle, cycle);
+        running = next.catch(() => undefined);
+        return next;
+    };
 }
 
 const mode = process.argv[2];
