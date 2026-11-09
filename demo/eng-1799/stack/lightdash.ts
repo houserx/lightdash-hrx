@@ -34,6 +34,12 @@ const DATABASE = 'lightdash';
 const ADMIN = { user: 'lightdash', password: 'demo-lightdash-db-password-not-real' } as const;
 /** Fixed, non-secret demo value: it only encrypts the throwaway database's stored credentials. */
 const LIGHTDASH_SECRET = 'eng-1799-demo-lightdash-secret-not-real';
+/**
+ * The incident.io Contact Point's bearer token (demo/eng-1799/alerting/contact-points/incident-io.yml refers to it as
+ * `secretRef: demo-incident-io-token`; the alerting module reads ALERTING_SECRET_<NAME>). The fake receiver accepts any
+ * non-empty token, so this is a fixed, non-secret demo value.
+ */
+const ALERTING_SECRETS = { ALERTING_SECRET_DEMO_INCIDENT_IO_TOKEN: 'demo-incident-io-token-not-real' } as const;
 const S3 = { bucket: RESULTS_BUCKET, region: 'us-east-1', accessKey: 'AKIDDEMOLIGHTDASHNOTREAL', secretKey: 'demo-s3-secret-not-real' };
 
 const PG_BIN = process.env.DEMO_PG_BIN ?? (existsSync('/opt/homebrew/bin/initdb') ? '/opt/homebrew/bin' : '');
@@ -178,6 +184,7 @@ async function prepare(dir: string, s3Url: string, readyFile: string): Promise<v
                 SITE_URL: url,
                 PGCONNECTIONURI: connectionUri(dbPort),
                 SCHEDULER_ENABLED: 'true',
+                ...ALERTING_SECRETS,
                 ...s3Env(s3Url),
             }),
         ),

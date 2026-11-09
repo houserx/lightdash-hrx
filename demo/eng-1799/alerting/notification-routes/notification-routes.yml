@@ -1,0 +1,16 @@
+# The Operations Project's Notification Route tree: pharmacy ops alerts (team=pharmacy-ops) go to incident.io,
+# and so does anything else (the default route). Short timers so the demo's notifications arrive within seconds.
+version: 1
+type: notification_routes
+contactPoint: incident-io
+groupBy: ['alertname']
+groupWait: 5s
+groupInterval: 30s
+repeatInterval: 4h
+routes:
+  - matchers:
+      - { label: team, operator: '=', value: pharmacy-ops }
+    contactPoint: incident-io
+    groupBy: ['alertname']
+    groupWait: 1s
+    groupInterval: 15s

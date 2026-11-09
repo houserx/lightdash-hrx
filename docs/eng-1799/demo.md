@@ -122,6 +122,28 @@ To run it: in the SQL Runner, switch to **Investigate**. **Saved SQL** lists the
 Database**, paste the script's SQL into **Platform SQL**, add a Description, and press **Run**. Investigate wraps the
 SQL in `platform_query(...)`, so it runs on the Platform Database as an Audited Query, and the audit browser lists it.
 
+## Alerting as code
+
+`demo/eng-1799/alerting/` holds the demo's alerting, in the layout `lightdash download --alerting-only` writes:
+
+| File | What it is |
+| --- | --- |
+| `alert-rules/fill-queue-backlog-high.yml` | **Fill queue backlog high**: PromQL `hrx_fill_queue_backlog{queue="fill"}`, last value `> 100` (the dashboard's threshold line), every 30s over 5m |
+| `alert-rules/fill-service-error-log-rate.yml` | **Fill service error log rate**: LogQL `sum(count_over_time({app="fill-service"} \|= "level=error" [1m]))`, last value `> 10`, every 30s over 5m |
+| `contact-points/incident-io.yml` | **incident.io (demo receiver)**: an `incident_io` integration on the fake receiver's `/webhook` |
+| `notification-routes/notification-routes.yml` | The route tree: `team=pharmacy-ops` (both rules) and the default route both go to the incident.io Contact Point |
+
+Both rules are unpaused and not in Shadow Run, so they notify for real. Their annotations render the value, for
+example "Fill queue backlog is 173 (threshold 100)". On every fresh start, the seed copies the folder to
+`.state/run/alerting`. It replaces `__DEMO_INCIDENT_IO_URL__` with the receiver's URL, because the port is ephemeral,
+and uploads the copy with `lightdash upload --alerting-only`. The Contact Point's token is only a reference,
+`secretRef: demo-incident-io-token`. The backend reads it from `ALERTING_SECRET_DEMO_INCIDENT_IO_TOKEN`, a fixed
+non-secret value in `.state/lightdash/lightdash.env`. Everything uploaded is **Managed in git**, so it's read-only
+in the UI. To change it, edit the files and run `up.sh` again on a stopped stack.
+
+Open it at `/projects/<Operations Project uuid>/alerting/rules`. The navbar has no Alerting entry yet. The page
+has the tabs Alert Rules, Contact Points and Notification Routes.
+
 ## Known limits
 
 - **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's

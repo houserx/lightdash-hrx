@@ -1,0 +1,34 @@
+# Fires when the fill queue's backlog (the fake Prometheus gauge hrx_fill_queue_backlog, queue="fill") is above
+# 100, the threshold line of the Pharmacy Ops overview's "Fill queue backlog" chart. Baseline is 18..48; the
+# incident ramps it to 140..175 within 15 s, and it is back under 100 within a minute of recovery.
+version: 1
+type: alert_rule
+slug: fill-queue-backlog-high
+name: Fill queue backlog high
+description: Pages pharmacy ops through incident.io when the fill queue backlog is above 100
+labels:
+  team: pharmacy-ops
+  severity: critical
+  service: fill-service
+annotations:
+  summary: 'Fill queue backlog is {{ $value }} (threshold 100)'
+  description: 'The {{ $labels.queue }} queue has {{ $value }} fills waiting; the backlog alert threshold is 100.'
+query: |
+  SELECT timestamp, value, labels
+  FROM promql(
+      'hrx_fill_queue_backlog{queue="fill"}',
+      ${ld.parameters.__from},
+      ${ld.parameters.__to},
+      '15s'
+  )
+reducer: last
+condition:
+  operator: '>'
+  threshold: 100
+for: 0s
+interval: 30s
+timeRange: 5m
+noDataState: nodata
+errorState: error
+paused: false
+shadow: false

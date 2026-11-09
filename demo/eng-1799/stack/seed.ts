@@ -2,7 +2,8 @@
 //
 //   node --import tsx stack/seed.ts --lightdash-url <url> --engine-file <.state/run/engine-config.json> \
 //       --content-dir <demo/eng-1799/content> --cli-home <.state/cli-home> --cli-node <node> \
-//       --ready-file <.state/run/seed.json>
+//       --ready-file <.state/run/seed.json> --alerting-dir <demo/eng-1799/alerting> \
+//       --alerting-out <.state/run/alerting> --incident-io-url <fake incident.io receiver url>
 //
 // Every up.sh starts Lightdash on an empty database, so the seed always runs against a new instance:
 //   1. registers the demo user (POST /api/v1/user; the first user of an instance with no organization),
@@ -22,12 +23,18 @@
 //      there with each chart Tile resolving to its saved chart and each SQL chart Tile to its saved SQL chart.
 //      The CLI runs with HOME=<cli-home> (it writes ~/.config/lightdash) and stack/no-network.mjs preloaded (it
 //      would post usage analytics and check GitHub for upgrades).
+//   6. uploads the demo's alerting code (--alerting-dir: the Alert Rules "Fill queue backlog high" and "Fill service
+//      error log rate", the incident.io Contact Point and the Notification Route tree) with `lightdash upload
+//      --alerting-only`, from a copy under --alerting-out in which the Contact Point's URL placeholder is the fake
+//      incident.io receiver's (--incident-io-url, ephemeral port); its token stays a `secretRef` that the backend
+//      resolves from its environment (stack/lightdash.ts). Then it checks both rules are unpaused and not in
+//      Shadow Run, the Contact Point points at the receiver and the route tree routes to it.
 // Then it writes the ready file atomically (mode 0600):
 //   {"lightdash": {"projectUuid", "apiToken"}, "demoUser": {email, password, userUuid}, "organizationUuid"}.
 // `apiToken` is the demo user's personal access token on this throwaway instance, for later seed steps.
 // All values are synthetic: the email is @example.com and the password a fake `test-...-not-real` value.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { PINNED_TRACE_ID } from './tempo.js';
@@ -47,6 +54,10 @@ const CONTENT_DASHBOARDS = [
     { name: 'Platform DB', chartTiles: 0, sqlChartTiles: 3 },
     { name: 'Service health', chartTiles: 3, sqlChartTiles: 0 },
 ] as const;
+/** Alert Rules the alerting upload must produce (names pinned in PROGRESS.md). */
+const ALERT_RULES = ['Fill queue backlog high', 'Fill service error log rate'] as const;
+/** Stands for the fake incident.io receiver's URL (an ephemeral port) in demo/eng-1799/alerting/contact-points. */
+const INCIDENT_IO_URL_PLACEHOLDER = '__DEMO_INCIDENT_IO_URL__';
 /**
  * Project parameters (PUT /api/v2/projects/<uuid>/parameters, as lightdash.config.yml would declare them). They must
  * exist before the upload: a virtual view may only reference defined parameters. `trace_id` picks the trace the
@@ -104,35 +115,75 @@ class Session {
 }
 
 type Content = { dir: string; cliHome: string; node: string };
+/** Alerting code: the templates in `dir`, rendered to `out` with the fake incident.io receiver's URL. */
+type Alerting = { dir: string; out: string; incidentIoUrl: string };
 
-/** `lightdash upload` from the CLI's source, as a user would run it, against the demo's Lightdash. */
-function uploadContent(lightdashUrl: string, apiToken: string, projectUuid: string, content: Content) {
+/** The Lightdash CLI from source, as a user would run it, against the demo's Lightdash. */
+function runCli(lightdashUrl: string, apiToken: string, content: Content, args: string[]) {
     mkdirSync(content.cliHome, { recursive: true, mode: 0o700 });
     const nodeOptions = [process.env.NODE_OPTIONS, `--import ${NO_NETWORK}`].filter(Boolean).join(' ');
     // `pnpm -F @lightdash/cli exec tsx src/index.ts` without pnpm: pnpm itself reads HOME (its pinned version), so
     // the CLI's own tsx runs on the workspace's pinned Node, from packages/cli, with HOME moved under .state.
-    const r = spawnSync(
-        content.node,
-        [CLI_TSX, 'src/index.ts', 'upload', '--project', projectUuid, '--path', content.dir],
-        {
-            cwd: CLI_DIR,
-            env: {
-                ...process.env,
-                HOME: content.cliHome,
-                LIGHTDASH_URL: lightdashUrl,
-                LIGHTDASH_API_KEY: apiToken,
-                CI: 'true',
-                NODE_OPTIONS: nodeOptions,
-            },
-            encoding: 'utf8',
-            timeout: 180_000,
+    const r = spawnSync(content.node, [CLI_TSX, 'src/index.ts', ...args], {
+        cwd: CLI_DIR,
+        env: {
+            ...process.env,
+            HOME: content.cliHome,
+            LIGHTDASH_URL: lightdashUrl,
+            LIGHTDASH_API_KEY: apiToken,
+            CI: 'true',
+            NODE_OPTIONS: nodeOptions,
         },
-    );
+        encoding: 'utf8',
+        timeout: 180_000,
+    });
     // the CLI prints progress and per-file warnings; keep them in seed.log
     process.stdout.write(r.stdout ?? '');
     process.stderr.write(r.stderr ?? '');
     if (r.error || r.status !== 0) {
-        throw new Error(`lightdash upload failed (exit ${r.status}${r.error ? `, ${r.error.message}` : ''})`);
+        throw new Error(`lightdash ${args[0]} failed (exit ${r.status}${r.error ? `, ${r.error.message}` : ''})`);
+    }
+}
+
+/**
+ * Writes the alerting code of --alerting-dir to --alerting-out with the fake incident.io receiver's URL filled in
+ * (INCIDENT_IO_URL_PLACEHOLDER), for `lightdash upload --alerting-only`.
+ */
+function renderAlerting(alerting: Alerting) {
+    rmSync(alerting.out, { recursive: true, force: true });
+    cpSync(alerting.dir, alerting.out, { recursive: true });
+    const walk = (dir: string): string[] =>
+        readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+            e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)],
+        );
+    for (const file of walk(alerting.out)) {
+        const text = readFileSync(file, 'utf8');
+        if (text.includes(INCIDENT_IO_URL_PLACEHOLDER)) {
+            writeFileSync(file, text.split(INCIDENT_IO_URL_PLACEHOLDER).join(alerting.incidentIoUrl));
+        }
+    }
+}
+
+/** The Alert Rules, the incident.io Contact Point and the Notification Route tree are there as uploaded. */
+async function checkAlerting(session: Session, projectUuid: string, incidentIoUrl: string) {
+    const base = `/api/v2/projects/${projectUuid}/alerting`;
+    const rules = await session.call<{ name: string; paused: boolean; shadow: boolean }[]>('GET', `${base}/rules`);
+    for (const name of ALERT_RULES) {
+        const rule = rules.find((r) => r.name === name);
+        if (!rule) throw new Error(`alerting upload: no Alert Rule "${name}"`);
+        if (rule.paused || rule.shadow) throw new Error(`alerting upload: Alert Rule "${name}" is paused or in Shadow Run`);
+    }
+    const contactPoints = await session.call<{ slug: string; integrations: { type: string; url?: unknown }[] }[]>(
+        'GET',
+        `${base}/contact-points`,
+    );
+    const incidentIo = contactPoints.find((c) =>
+        c.integrations.some((i) => i.type === 'incident_io' && i.url === `${incidentIoUrl}/webhook`),
+    );
+    if (!incidentIo) throw new Error('alerting upload: no incident_io Contact Point on the fake receiver');
+    const tree = await session.call<{ contactPoint: string } | null>('GET', `${base}/notification-routes`);
+    if (!tree || !JSON.stringify(tree).includes(`"contactPoint":"${incidentIo.slug}"`)) {
+        throw new Error('alerting upload: the Notification Route tree does not route to the incident.io Contact Point');
     }
 }
 
@@ -172,7 +223,7 @@ async function checkContent(session: Session, projectUuid: string) {
     }
 }
 
-async function seed(lightdashUrl: string, engine: Engine, content: Content) {
+async function seed(lightdashUrl: string, engine: Engine, content: Content, alerting: Alerting) {
     const session = new Session(lightdashUrl);
 
     const health = await session.call<{ requiresOrgRegistration: boolean }>('GET', '/api/v1/health');
@@ -245,8 +296,13 @@ async function seed(lightdashUrl: string, engine: Engine, content: Content) {
         expiresAt: null,
         autoGenerated: false,
     });
-    uploadContent(lightdashUrl, pat.token, projectUuid, content);
+    runCli(lightdashUrl, pat.token, content, ['upload', '--project', projectUuid, '--path', content.dir]);
     await checkContent(session, projectUuid);
+
+    // 6. Alerting as code: the Alert Rules, the incident.io Contact Point and the Notification Route tree.
+    renderAlerting(alerting);
+    runCli(lightdashUrl, pat.token, content, ['upload', '--alerting-only', '--project', projectUuid, '--path', alerting.out]);
+    await checkAlerting(session, projectUuid, alerting.incidentIoUrl);
 
     return {
         lightdash: { projectUuid, apiToken: pat.token },
@@ -263,6 +319,9 @@ const { values: args } = parseArgs({
         'cli-home': { type: 'string' },
         'cli-node': { type: 'string' },
         'ready-file': { type: 'string' },
+        'alerting-dir': { type: 'string' },
+        'alerting-out': { type: 'string' },
+        'incident-io-url': { type: 'string' },
     },
 });
 const lightdashUrl = args['lightdash-url'];
@@ -271,9 +330,13 @@ const contentDir = args['content-dir'];
 const cliHome = args['cli-home'];
 const cliNode = args['cli-node'] ?? process.execPath;
 const readyFile = args['ready-file'];
-if (!lightdashUrl || !engineFile || !contentDir || !cliHome || !readyFile) {
+const alertingDir = args['alerting-dir'];
+const alertingOut = args['alerting-out'];
+const incidentIoUrl = args['incident-io-url'];
+if (!lightdashUrl || !engineFile || !contentDir || !cliHome || !readyFile || !alertingDir || !alertingOut || !incidentIoUrl) {
     console.error(
-        'usage: seed.ts --lightdash-url <url> --engine-file <engine-config.json> --content-dir <dir> --cli-home <dir> [--cli-node <node>] --ready-file <file>',
+        'usage: seed.ts --lightdash-url <url> --engine-file <engine-config.json> --content-dir <dir> --cli-home <dir> [--cli-node <node>] --ready-file <file> ' +
+            '--alerting-dir <dir> --alerting-out <dir> --incident-io-url <url>',
     );
     process.exit(2);
 }
@@ -282,6 +345,10 @@ seed(lightdashUrl, (JSON.parse(readFileSync(engineFile, 'utf8')) as { engine: En
     dir: path.resolve(contentDir),
     cliHome: path.resolve(cliHome),
     node: cliNode,
+}, {
+    dir: path.resolve(alertingDir),
+    out: path.resolve(alertingOut),
+    incidentIoUrl: incidentIoUrl.replace(/\/+$/, ''),
 })
     .then((result) => {
         writeFileSync(`${readyFile}.tmp`, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });

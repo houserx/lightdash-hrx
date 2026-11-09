@@ -2287,3 +2287,37 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - Checks: `run.sh --stack portal-script.spec.ts` passes (1 test). Regression with --stack: seed-project,
   dashboard-platform-db and grafana-fixture all pass. Typecheck is clean. Stack is down.
 - 2026-11-09T09:38:55Z supervisor: demo-portal-script passed the gate in round 1
+
+### demo-alerting-seed (2026-11-09, run 20261109-013019, round 1)
+
+- New `demo/eng-1799/alerting/` (alerting as code, the `--alerting-only` layout): the Alert Rules **Fill queue backlog
+  high** (`promql('hrx_fill_queue_backlog{queue="fill"}', __from, __to, '15s')`, last > 100) and **Fill service error
+  log rate** (`logql_metric('sum(count_over_time({app="fill-service"} |= "level=error" [1m]))', …, '30s')`, last > 10).
+  Both have interval 30s, timeRange 5m, `for` 0s, labels team=pharmacy-ops/service/severity, annotations that render
+  `{{ $value }}`, and are `paused: false` and `shadow: false`. Also the Contact Point `incident-io` (incident_io type,
+  url `__DEMO_INCIDENT_IO_URL__/webhook`, token `secretRef: demo-incident-io-token`) and a route tree (default →
+  incident-io; child team=pharmacy-ops → incident-io with groupWait 1s, groupInterval 15s).
+- `stack/seed.ts` step 6: copies `alerting/` to `.state/run/alerting` (new args `--alerting-dir`, `--alerting-out`,
+  `--incident-io-url`), fills in the receiver URL, runs `lightdash upload --alerting-only` (the CLI runner is now one
+  `runCli()` shared with the content upload), then checks both rules unpaused and not in Shadow Run, the Contact Point
+  on the receiver, and the tree routing to it. `up.sh` passes the new args. `stack/lightdash.ts` adds
+  `ALERTING_SECRET_DEMO_INCIDENT_IO_TOKEN=demo-incident-io-token-not-real` to lightdash.env (the fake accepts any
+  bearer). `docs/eng-1799/demo.md` gets an "Alerting as code" section.
+- **Trap:** everything is uploaded as code, so it is **Managed** and read-only (the API returns 403 on PATCH/DELETE).
+  Later features that need a rule changed must edit the YAML, not call the API. The spec forbids the strings
+  `test-secret-not-real` and `Bearer ` in the Contact Point JSON, so keep the token a secretRef.
+- **Follow-up (alerting line's UI, not done here):** the navbar has no Alerting entry. Users (and the scene-03
+  walkthrough) open `/projects/<uuid>/alerting/rules` directly. The page heading is "Alerting" with tabs Alert Rules /
+  Contact Points / Notification Routes.
+- For demo-alert-fires/resolves: already verified once by hand. With the scenario shifted into the incident, both rules were
+  `firing` on the first poll (≤10 s), and within ~30 s the receiver had 2 firing notifications with rendered summaries
+  ("Fill queue backlog is 173 (threshold 100)", "fill-service logged 23 errors in the last minute (threshold 10)"),
+  so the secretRef resolves. Resolve was not tried.
+- Tested as a user: fresh up.sh (seed.log: "Uploaded 1 contact points, 1 notification route trees and 2 alert rules …
+  4 created"). In Chromium (throwaway script in the run's tmp/alerting-ui/) I signed in through /login and opened
+  Alerting → Alert Rules: both rules Normal, "Managed in git", with their labels. Contact Points shows "incident.io (demo
+  receiver)". Notification Routes shows the default route and the team = pharmacy-ops route, both to it. No page
+  errors. Scenario reset to baseline, stack down.
+- Checks: `run.sh --stack alerting-seed.spec.ts` passes (1 test). Regression with --stack: portal-script and seed-project
+  pass. Typecheck clean. No demo process left.
+- 2026-11-09T09:52:18Z supervisor: demo-alerting-seed passed the gate in round 1

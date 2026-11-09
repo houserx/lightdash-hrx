@@ -318,7 +318,9 @@ LIGHTDASH_UI_HTML="$(curl -fsS -m 10 "$LIGHTDASH_URL/login" 2>/dev/null || true)
 # Seed (through Lightdash's HTTP API; the database is new on every fresh up.sh): the demo user and its organization,
 # the Operations Project on the Federation Engine flavour, the user attributes platform_read/platform_write, then
 # the dashboards in content/ and the imported portal scripts through `lightdash upload` (the CLI from source; see
-# stack/seed.ts).
+# stack/seed.ts). Then the alerting code in alerting/ (two Alert Rules, the incident.io Contact Point on the fake
+# receiver, the Notification Route tree) through `lightdash upload --alerting-only`, from a copy under
+# .state/run/alerting with the receiver's URL filled in.
 # The upload reads a copy of content/ under .state/run/content, to which `lightdash import portal-scripts` adds one SQL
 # chart per saved script of the synthetic db-query-portal export seed/portal-scripts.json (SQL kept verbatim, in the
 # space platform-saved-sql). The CLI runs from source on the pinned Node, with HOME under .state and no network.
@@ -340,12 +342,13 @@ rm -f "$RUN/seed.json"
 (cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/seed.ts" --lightdash-url "$LIGHTDASH_URL" \
     --engine-file "$RUN/engine-config.json" --content-dir "$SEED_CONTENT" --cli-home "$STATE/cli-home" \
     --cli-node "$LIGHTDASH_NODE" \
+    --alerting-dir "$DEMO/alerting" --alerting-out "$RUN/alerting" --incident-io-url "$INCIDENT_IO_URL" \
     --ready-file "$RUN/seed.json") >>"$LOGS/seed.log" 2>&1 || {
     echo "up.sh: seeding Lightdash failed; last lines of ${LOGS#"$DEMO"/}/seed.log:" >&2
     tail -20 "$LOGS/seed.log" >&2
     exit 1
 }
-echo "up.sh: Lightdash seeded (demo user, Operations Project on the Federation Engine flavour, dashboards uploaded)"
+echo "up.sh: Lightdash seeded (demo user, Operations Project on the Federation Engine flavour, dashboards and alerting uploaded)"
 
 # Later demo features start telemetry-mcp here (on ephemeral ports: MCP_PORT and ENGINE_PG_PORT must be set,
 # their defaults are 8080 and 5433) and add it to stack.json below.
