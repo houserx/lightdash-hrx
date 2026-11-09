@@ -1,0 +1,24 @@
+# The fill-service log lines (fake Loki, both level streams) of the last 30 minutes, read through the Federation
+# Engine's logql() table function. Explore charts get no reserved time parameters, so the window is fixed here.
+# The level comes from the logfmt `level=` key of the line; labels (json) are cast to text for the log stream.
+columns:
+  - reference: ts
+    type: timestamp
+  - reference: level
+    type: string
+  - reference: line
+    type: string
+  - reference: labels
+    type: string
+contentType: virtual_view
+name: Fill service logs (Loki)
+parameters: null
+slug: hrx_fill_service_logs
+sql: |-
+  SELECT
+    "timestamp" AS ts,
+    regexp_replace(line, '^.*level=([a-z]+).*$', '\1') AS level,
+    line,
+    CAST(labels AS VARCHAR) AS labels
+  FROM logql('{app="fill-service"}', now() - INTERVAL '30 minutes', now(), 500)
+version: 1

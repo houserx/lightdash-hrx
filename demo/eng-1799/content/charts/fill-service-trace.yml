@@ -1,0 +1,50 @@
+chartConfig:
+  config:
+    attributesFieldId: hrx_fill_service_trace_attributes
+    durationMsFieldId: hrx_fill_service_trace_duration_ms
+    nameFieldId: hrx_fill_service_trace_name
+    parentSpanIdFieldId: hrx_fill_service_trace_parent_span_id
+    serviceFieldId: hrx_fill_service_trace_service
+    spanIdFieldId: hrx_fill_service_trace_span_id
+    startFieldId: hrx_fill_service_trace_start_raw
+    statusFieldId: hrx_fill_service_trace_status
+    traceIdFieldId: hrx_fill_service_trace_trace_id
+  type: trace_waterfall
+contentType: chart
+description: The spans of the trace in the Trace ID parameter (default the pinned example trace of the incident's slow shipping-label-api call), as Grafana's traces panel shows them.
+metricQuery:
+  additionalMetrics: []
+  dimensions:
+    - hrx_fill_service_trace_trace_id
+    - hrx_fill_service_trace_span_id
+    - hrx_fill_service_trace_parent_span_id
+    - hrx_fill_service_trace_service
+    - hrx_fill_service_trace_name
+    - hrx_fill_service_trace_start_raw
+    - hrx_fill_service_trace_duration_ms
+    - hrx_fill_service_trace_status
+    - hrx_fill_service_trace_attributes
+  exploreName: hrx_fill_service_trace
+  filters: {}
+  limit: 500
+  metrics: []
+  sorts:
+    - descending: false
+      fieldId: hrx_fill_service_trace_start_raw
+  tableCalculations: []
+name: Slow trace waterfall
+slug: fill-service-trace
+spaceSlug: service-health
+tableConfig:
+  columnOrder:
+    - hrx_fill_service_trace_trace_id
+    - hrx_fill_service_trace_span_id
+    - hrx_fill_service_trace_parent_span_id
+    - hrx_fill_service_trace_service
+    - hrx_fill_service_trace_name
+    - hrx_fill_service_trace_start_raw
+    - hrx_fill_service_trace_duration_ms
+    - hrx_fill_service_trace_status
+    - hrx_fill_service_trace_attributes
+tableName: hrx_fill_service_trace
+version: 1

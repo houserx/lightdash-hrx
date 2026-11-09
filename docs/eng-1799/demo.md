@@ -75,3 +75,34 @@ their own. Lightdash therefore sends the **saved chart's description** as the Au
 saved SQL chart and for a dashboard SQL chart Tile (the Tile's uuid goes in as the resource). That is why every
 chart here has a description. Each Tile run leaves two audit records, one for the column-discovery probe and one
 for the run.
+
+**Service health** shows the fill-service's logs and traces from the fake Loki and Tempo. Every Tile is a built-in
+or native Lightdash chart over a virtual view, with no chart registry:
+
+| Tile | Chart | Virtual view (Federation Engine) |
+|---|---|---|
+| Log level heatmap | custom (Vega-Lite `rect`), minute × level, coloured by lines per minute | `hrx_fill_service_log_rate`: `logql_metric('sum by (level) (count_over_time({app="fill-service"}[1m]))', now() - 30 minutes, now(), '1m')` |
+| Fill service logs | native `log_stream`, newest first | `hrx_fill_service_logs`: `logql('{app="fill-service"}', now() - 30 minutes, now(), 500)`, the level taken from the line's `level=` key |
+| Slow trace waterfall | native `trace_waterfall` | `hrx_fill_service_trace`: `trace(${ld.parameters.trace_id})` |
+
+During the incident the heatmap's error row turns hot, error lines lead the log stream, and the waterfall shows the
+slow `shipping-label-api` span (over 2 s). The log windows are fixed at 30 minutes because explore charts get no
+reserved time parameters.
+
+The waterfall shows the trace in the project parameter **`trace_id`** ("Trace ID" on the dashboard). The seed
+defines that parameter (`PUT /api/v2/projects/<uuid>/parameters`) before the upload, because a virtual view may only
+reference defined parameters. Its default is the fake Tempo's **pinned example trace**
+`de300000000000000000000000000001` (`PINNED_TRACE_ID` in `demo/eng-1799/stack/tempo.ts`, the one place the id is
+written; the seed reads it from there). That trace is a slow, successful "ship fill" request that starts 1 s after
+the incident begins and looks like the incident's other slow traces. `trace(<id>)` returns it at any time, and
+`traceql()` search lists it once the incident is running. The id never changes with the scenario clock or a
+restart. To look at another trace, open the Trace ID parameter, paste the id (for example one from
+`traceql('{ duration > 2s }', ...)`) and pick "Add ...". The waterfall then reruns with that trace, like a Grafana
+trace-id variable.
+
+## Known limits
+
+- **ENG-1799 follow-up: no "latest slow trace" waterfall.** Table-function arguments must be constants in the
+  Federation Engine, so `trace((SELECT trace_id FROM traceql(...) LIMIT 1))` is refused. A Tile can't follow the
+  newest slow trace by itself. Service health uses a pinned example trace with a `trace_id` parameter instead (see
+  above). Lifting this needs an engine change: evaluate a scalar subquery argument, or add a lateral `trace()` join.

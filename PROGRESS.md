@@ -2184,3 +2184,50 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   `.state/probe` and `out/probe.mp4` → `.gitignore:185/186`; each stub with extra args prints its message and fails.
   Check `bash demo/eng-1799/acceptance/run.sh package.spec.ts`: 1 passed.
 - 2026-11-09T09:01:31Z supervisor: demo-package-workspace passed the gate in round 1
+
+### demo-dashboard-service-health (2026-11-09, run 20261109-013019, redo after the controls-engineer decision)
+
+- **Pinned example trace** (as decided): `PINNED_TRACE_ID = 'de300000000000000000000000000001'` exported from
+  `stack/tempo.ts`, the only place the id is written. The fake's trace builder was split into `slot()` +
+  `shipTrace(key, …)` (slot traces keep their exact hash keys, so they are unchanged). `pinnedTrace(tl)` is a slow,
+  successful 5-span trace starting at `incidentAt + 1 s` (shipping-label-api span 2000–4999 ms). `traceById()`
+  returns it at any time; `fillServiceTraces()` inserts it by start time, so `/api/search` (and `traceql()`) lists it
+  once the incident is running. Its first 8 hex digits are a 2088 slot second, so it never collides with a slot trace.
+- **Seed**: before the upload, `PUT /api/v2/projects/<uuid>/parameters` defines the project parameter `trace_id`
+  (label "Trace ID", default = PINNED_TRACE_ID, `options: [id]`, `allow_custom_values: true`). **Trap:** a virtual
+  view may only reference *defined* project parameters (`validateVirtualViewParameterReferences`), so the definition
+  must come before `lightdash upload`. `CONTENT_DASHBOARDS` gains `Service health` (3 chart Tiles).
+- **Content**: three virtual views and three explore charts in space `service-health`. Dashboard `Service health` has
+  no Dashboard Time Range, so the windows are fixed:
+  - `hrx_fill_service_log_rate`: `logql_metric('sum by (level) (count_over_time({app="fill-service"}[1m]))', now()-30m,
+    now(), '1m')` → chart `Log level heatmap` (`type: custom`, a Vega-Lite `rect` heatmap, minute × level; **built in,
+    no chart registry**);
+  - `hrx_fill_service_logs`: `logql('{app="fill-service"}', now()-30m, now(), 500)`, with the level parsed from the
+    line's `level=` and `CAST(labels AS VARCHAR)` → `Fill service logs` (native `log_stream`, newest first);
+  - `hrx_fill_service_trace`: `trace(${ld.parameters.trace_id})` (bare reference; Lightdash writes it as a quoted
+    literal), `CAST(attributes AS VARCHAR)` → `Slow trace waterfall` (native `trace_waterfall`).
+- **Traps found:**
+  - SQL chart Tiles (`DashboardSqlChartTile`) only render table, big number, cartesian and pie charts, so log_stream
+    and trace_waterfall must be **explore charts** over virtual views.
+  - Virtual-view timestamp columns get `_raw/_day/_week/_month/_quarter/_year` only, **no `_minute`**. That is why
+    the heatmap has its own per-minute view. Use `<view>_<col>_raw` as the field id (by-name binding misses `_raw`).
+  - Charts as code need `version: 1`, or the upload fails with "'version' is required".
+  - Vega-Lite `timeUnit` must be `utchoursminutes`, or the axis shows the browser's local time.
+- Docs: `docs/eng-1799/demo.md` gains a Service health paragraph (Tiles, the trace_id parameter, how to paste an id)
+  and a new **"Known limits"** section with the ENG-1799 follow-up: table-function args must be constants, so there
+  is no "latest slow trace" subquery.
+- Tested as a user: fresh up.sh, then the scenario restarted at incident −180 s. In Chromium (throwaway scripts in
+  the run's tmp/) I signed in through the /login form and went to Browse → dashboards → Service health. The header
+  shows "Trace ID is de30…0001". The heatmap's error row turns dark red in the last 3 minutes (about 30/min against a
+  pale baseline), and the x axis is in UTC, matching the log timestamps. The log stream shows "500 of 500 lines",
+  newest first, with mostly red error rows ("create shipping label failed …"). The waterfall shows 5 spans: root
+  4.9 s, `POST /v1/labels` on shipping-label-api 4.86 s, in two service colours. No tile errors, no page errors.
+  Pasting another slow trace id from `/api/search?q={ duration > 2s }` into the Trace ID parameter ("Add …") reran
+  the waterfall with that trace (4 spans, 3.21 s, a failed one). The fake Tempo search lists the pinned id, and
+  `/api/traces/<pinned>` returns 200.
+- Checks: `run.sh --stack dashboard-service-health.spec.ts` passes (1 test). Regression, each with --stack:
+  fake-tempo, seed-project, dashboard-platform-db, dashboard-pharmacy-ops (2 tests) pass. `pnpm -F eng-1799-demo
+  typecheck` is clean. Stack down afterwards.
+- **Next:** `demo-grafana-fixture` was blocked only by this feature, so redo it now. Scene 4 can open the waterfall
+  through the parameter default (no URL parameter needed).
+- 2026-11-09T09:18:21Z supervisor: demo-dashboard-service-health passed the gate in round 1

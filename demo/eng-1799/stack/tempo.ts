@@ -16,6 +16,8 @@
 //
 // The trace id is the slot's epoch second as 8 hex digits followed by 24 hex digits of hash, so trace(id) finds
 // the trace without a time range; an id whose hash does not match its slot is unknown (404, as Tempo).
+// One more trace is pinned: PINNED_TRACE_ID, a slow incident trace starting 1 s after incidentAt, whose id never
+// changes, so dashboards can default a trace_id parameter to it.
 //
 // API (GET), errors as Tempo's plain-text 400s:
 //   /api/search          q (TraceQL), start, end (unix s; default the last hour), limit (20), minDuration,
@@ -78,16 +80,36 @@ const RESOURCE: Record<string, Record<string, AttrValue>> = {
 
 const hasTrace = (s: number) => s % TRACE_EVERY_S === 0 || hash(`tempo|has|${s}`, 8) === 0;
 
+/**
+ * The pinned example trace id: the incident's slow shipping-label-api call under an id that never changes with
+ * the scenario clock or a restart. The Service health dashboard's `trace_id` parameter defaults to it (stack/seed.ts).
+ * Its first 8 hex digits are a slot second far in the future (2088), so it never collides with a slot trace.
+ */
+export const PINNED_TRACE_ID = 'de300000000000000000000000000001';
+
 const traceIdOf = (s: number) => s.toString(16).padStart(8, '0') + hex(`tempo|trace|${s}`, 24);
 
 /** The trace in the slot of second `s`, if any. */
 function slot(s: number, tl: Timeline): Trace | undefined {
     if (s < 0 || s > 0xffffffff || !hasTrace(s)) return undefined;
-    const traceId = traceIdOf(s);
-    const spanId = (i: number) => hex(`tempo|span|${s}|${i}`, 16);
     const start = s * 1000 + hash(`tempo|offset|${s}`, 1000);
     const incident = start >= tl.incidentAt && start < tl.recoveryAt;
     const failed = incident && hash(`tempo|failed|${s}`, 2) === 0;
+    return shipTrace(String(s), traceIdOf(s), start, incident, failed);
+}
+
+/**
+ * The pinned example trace (PINNED_TRACE_ID): one slow, successful "ship fill" request that starts 1 s after the
+ * incident begins, shaped like the incident's other slow traces. trace(id) finds it at any time; search lists
+ * it once its start is in the searched range, as for any other trace.
+ */
+function pinnedTrace(tl: Timeline): Trace {
+    return shipTrace('pinned', PINNED_TRACE_ID, tl.incidentAt + 1000, true, false);
+}
+
+/** A fill-service "ship fill" trace; the key `s` seeds every hashed id and timing. */
+function shipTrace(s: string, traceId: string, start: number, incident: boolean, failed: boolean): Trace {
+    const spanId = (i: number) => hex(`tempo|span|${s}|${i}`, 16);
     const fillId = `demo-fill-${100_000 + hash(`tempo|fill|${s}`, 900_000)}`;
     const labelMs = incident ? 2000 + hash(`tempo|slow|${s}`, 3000) : 120 + hash(`tempo|fast|${s}`, 360);
 
@@ -183,12 +205,18 @@ export function fillServiceTraces(fromMs: number, toMs: number, tl: Timeline): T
         const t = slot(s, tl);
         if (t && t.startMs >= fromMs && t.startMs < toMs) out.push(t);
     }
+    const pinned = pinnedTrace(tl);
+    if (pinned.startMs >= fromMs && pinned.startMs < toMs) {
+        const at = out.findIndex((t) => t.startMs > pinned.startMs);
+        out.splice(at < 0 ? out.length : at, 0, pinned);
+    }
     return out;
 }
 
 /** The trace with this id (hex, case-insensitive, leading zeros optional), or undefined. */
 export function traceById(id: string, tl: Timeline): Trace | undefined {
     const canonical = id.toLowerCase().padStart(32, '0');
+    if (canonical === PINNED_TRACE_ID) return pinnedTrace(tl);
     const t = slot(parseInt(canonical.slice(0, 8), 16), tl);
     return t && t.traceId === canonical ? t : undefined;
 }

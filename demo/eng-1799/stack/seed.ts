@@ -14,7 +14,8 @@
 //   3. grants the demo user the user attributes platform_read and platform_write = "true" (POST
 //      /api/v1/org/attributes), which the engine reads from the identity token for the Platform Database;
 //   4. checks the result as the user sees it: GET /api/v2/projects/<uuid>/federation/access;
-//   5. uploads the demo's content as code (demo/eng-1799/content: virtual views, charts, dashboards) with the
+//   5. defines the project parameters the content references (PROJECT_PARAMETERS: trace_id), then
+//      uploads the demo's content as code (demo/eng-1799/content: virtual views, charts, dashboards) with the
 //      Lightdash CLI from source (`lightdash upload`, on the Node given by --cli-node: the workspace's pinned Node),
 //      on a personal access token of the demo user, then checks that every dashboard in CONTENT_DASHBOARDS is
 //      there with each chart Tile resolving to its saved chart and each SQL chart Tile to its saved SQL chart.
@@ -28,6 +29,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { PINNED_TRACE_ID } from './tempo.js';
 
 const DEMO_USER = {
     firstName: 'Demo',
@@ -42,7 +44,23 @@ const PLATFORM_ATTRIBUTES = ['platform_read', 'platform_write'] as const;
 const CONTENT_DASHBOARDS = [
     { name: 'Pharmacy Ops overview', chartTiles: 4, sqlChartTiles: 0 },
     { name: 'Platform DB', chartTiles: 0, sqlChartTiles: 3 },
+    { name: 'Service health', chartTiles: 3, sqlChartTiles: 0 },
 ] as const;
+/**
+ * Project parameters (PUT /api/v2/projects/<uuid>/parameters, as lightdash.config.yml would declare them). They must
+ * exist before the upload: a virtual view may only reference defined parameters. `trace_id` picks the trace the
+ * Service health waterfall shows; it defaults to the fake Tempo's pinned example trace and takes any pasted id.
+ */
+const PROJECT_PARAMETERS = {
+    trace_id: {
+        label: 'Trace ID',
+        description: 'Tempo trace id for the trace waterfall (defaults to the pinned example trace of the incident)',
+        type: 'string',
+        default: PINNED_TRACE_ID,
+        options: [PINNED_TRACE_ID],
+        allow_custom_values: true,
+    },
+} as const;
 const CLI_DIR = path.resolve(__dirname, '..', '..', '..', 'packages', 'cli');
 const CLI_TSX = path.join(CLI_DIR, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const NO_NETWORK = path.join(__dirname, 'no-network.mjs');
@@ -219,7 +237,8 @@ async function seed(lightdashUrl: string, engine: Engine, content: Content) {
         throw new Error(`federation access is not as seeded: ${JSON.stringify(access)}`);
     }
 
-    // 5. The demo's dashboards, through the real upload path.
+    // 5. The demo's dashboards, through the real upload path, after the parameters their views reference.
+    await session.call('PUT', `/api/v2/projects/${projectUuid}/parameters`, PROJECT_PARAMETERS);
     const pat = await session.call<{ token: string }>('POST', '/api/v1/user/me/personal-access-tokens', {
         description: 'ENG-1799 demo seed (lightdash upload)',
         expiresAt: null,
