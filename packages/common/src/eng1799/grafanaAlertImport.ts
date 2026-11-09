@@ -28,7 +28,7 @@ import {
 import type { NotificationRoute } from '../alerting/routingTree';
 import {
     telemetrySourceName,
-    translateGrafanaTarget,
+    translateGrafanaPanelQueries,
     type GrafanaDatasource,
     type GrafanaTarget,
 } from './grafanaQuery';
@@ -612,6 +612,31 @@ const isExpression = (data: RuleData) =>
     (data.model?.datasource as { type?: unknown } | undefined)?.type ===
         '__expr__';
 
+/**
+ * A rule's query or expression as a Grafana target. The datasource uid comes from the model, else
+ * from the data block; expressions get Grafana's expression datasource.
+ */
+const ruleTarget = (data: RuleData): GrafanaTarget => {
+    const model = data.model ?? {};
+    const datasource = (model.datasource ?? {}) as {
+        type?: string;
+        uid?: unknown;
+    };
+    return {
+        ...model,
+        refId: data.refId,
+        datasource: isExpression(data)
+            ? { type: '__expr__', uid: '__expr__' }
+            : {
+                  ...datasource,
+                  uid:
+                      typeof datasource.uid === 'string'
+                          ? datasource.uid
+                          : asString(data.datasourceUid),
+              },
+    } as GrafanaTarget;
+};
+
 /** The query text of a model, for messages and generated descriptions. */
 const queryText = (
     model: Record<string, unknown> | undefined,
@@ -623,13 +648,30 @@ const queryText = (
 /** A warning the imported condition carries: it runs, but not exactly as in Grafana. */
 type ConditionNote = { code: ImportWarning['code']; message: string };
 
-type ConvertedCondition =
+/**
+ * The rule's condition: its reducer and threshold, and `source`, the ref of the query or
+ * expression the reducer reads (the rule's query). A condition that can't be imported says why,
+ * with the source when it is known.
+ */
+type ConvertedCondition = { source?: string } & (
     | {
           reducer: AlertReducer;
           condition: AlertCondition;
           notes: ConditionNote[];
       }
-    | { review: string };
+    | { review: string }
+);
+
+/** `A`, `$A` or `${A}` -> `A`, as Grafana expressions name their inputs. */
+const inputRef = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') return undefined;
+    const ref = value
+        .trim()
+        .replace(/^\$\{(.*)\}$/, '$1')
+        .replace(/^\$/, '')
+        .trim();
+    return ref === '' ? undefined : ref;
+};
 
 type GrafanaEvaluator = { type?: unknown; params?: unknown };
 
@@ -664,7 +706,6 @@ const convertEvaluator = (
 const convertClassicConditions = (
     ref: string,
     expr: Record<string, unknown>,
-    queryRef: string | undefined,
 ): ConvertedCondition => {
     const conditions = Array.isArray(expr.conditions)
         ? (expr.conditions as Array<{
@@ -679,13 +720,13 @@ const convertClassicConditions = (
         };
     }
     const [classic] = conditions;
-    const input = Array.isArray(classic.query?.params)
-        ? (classic.query.params as unknown[])[0]
-        : undefined;
-    if (input === undefined || input !== queryRef) {
-        return {
-            review: `its classic condition ${ref} reads ${String(input)}, not the rule's query`,
-        };
+    const source = inputRef(
+        Array.isArray(classic.query?.params)
+            ? (classic.query.params as unknown[])[0]
+            : undefined,
+    );
+    if (source === undefined) {
+        return { review: `its classic condition ${ref} reads no query` };
     }
     const reducerType =
         typeof classic.reducer?.type === 'string'
@@ -695,11 +736,12 @@ const convertClassicConditions = (
         reducerType === undefined ? undefined : CLASSIC_REDUCERS[reducerType];
     if (reducer === undefined) {
         return {
+            source,
             review: `its classic condition reducer ${reducerType ?? '(none)'} is not imported yet`,
         };
     }
     const condition = convertEvaluator(classic.evaluator);
-    if ('review' in condition) return condition;
+    if ('review' in condition) return { source, ...condition };
     const notes: ConditionNote[] =
         reducerType === 'count'
             ? [
@@ -709,7 +751,7 @@ const convertClassicConditions = (
                   },
               ]
             : [];
-    return { reducer, condition, notes };
+    return { source, reducer, condition, notes };
 };
 
 /** Null handling of a reduce expression: strict and dropNN match the reducer closely; replaceNN does not. */
@@ -734,13 +776,14 @@ const reduceModeNotes = (
 };
 
 /**
- * The rule's condition expression: reduce + threshold, a threshold on an instant query, or
- * classic conditions. Thresholds are gt/lt or within/outside range.
+ * The rule's condition expression: a threshold on a reduce, a threshold read directly (reducer
+ * last), or classic conditions. Thresholds are gt/lt or within/outside range. The reduced input,
+ * the condition's `source`, is a query or an expression over queries (math); the caller
+ * translates it.
  */
 const convertCondition = (
     conditionRef: string | undefined,
     expressions: Map<string, Record<string, unknown>>,
-    queryRef: string | undefined,
 ): ConvertedCondition => {
     if (conditionRef === undefined) return { review: 'it has no condition' };
     const expr = expressions.get(conditionRef);
@@ -750,20 +793,27 @@ const convertCondition = (
         };
     }
     if (expr.type === 'classic_conditions') {
-        return convertClassicConditions(conditionRef, expr, queryRef);
+        return convertClassicConditions(conditionRef, expr);
     }
     if (expr.type !== 'threshold') {
         return {
             review: `its condition is a ${String(expr.type)} expression, which is not imported yet`,
         };
     }
+    const input = inputRef(expr.expression);
+    if (input === undefined) {
+        return { review: `its threshold ${conditionRef} reads no input` };
+    }
+    const reduce = expressions.get(input);
+    const isReduce = reduce?.type === 'reduce';
+    const source = isReduce ? inputRef(reduce.expression) : input;
     const first = (
         expr.conditions as
             | Array<{ evaluator?: GrafanaEvaluator; unloadEvaluator?: unknown }>
             | undefined
     )?.[0];
     const condition = convertEvaluator(first?.evaluator);
-    if ('review' in condition) return condition;
+    if ('review' in condition) return { source, ...condition };
     const notes: ConditionNote[] =
         first?.unloadEvaluator !== undefined && first.unloadEvaluator !== null
             ? [
@@ -773,27 +823,27 @@ const convertCondition = (
                   },
               ]
             : [];
-    const input =
-        typeof expr.expression === 'string' ? expr.expression : undefined;
-    if (input !== undefined && input === queryRef) {
-        return { reducer: 'last', condition, notes };
+    if (!isReduce) return { source, reducer: 'last', condition, notes };
+    if (source === undefined) {
+        return { review: `the reduce expression ${input} reads no input` };
     }
-    const reduce = input === undefined ? undefined : expressions.get(input);
     const reducer =
-        reduce?.type === 'reduce' &&
-        reduce.expression === queryRef &&
         typeof reduce.reducer === 'string'
             ? REDUCE_REDUCERS[reduce.reducer]
             : undefined;
-    if (reduce !== undefined && input !== undefined && reducer !== undefined) {
+    if (reducer === undefined) {
         return {
-            reducer,
-            condition,
-            notes: [...reduceModeNotes(input, reduce, reducer), ...notes],
+            source,
+            review: `the reduce expression ${input} uses the reducer ${String(
+                reduce.reducer ?? '(none)',
+            )}, which is not imported yet`,
         };
     }
     return {
-        review: `the threshold's input ${String(input)} is not a supported reduce of the query`,
+        source,
+        reducer,
+        condition,
+        notes: [...reduceModeNotes(input, reduce, reducer), ...notes],
     };
 };
 
@@ -894,47 +944,60 @@ const convertRule = (
             .map((d) => [d.refId, d.model as Record<string, unknown>]),
     );
 
-    let query: string | undefined;
-    const queryRef = queries.length === 1 ? queries[0].refId : undefined;
-    if (queries.length === 1) {
-        const [only] = queries;
-        const model = only.model as Record<string, unknown>;
-        const datasource = (model.datasource ?? {}) as {
-            type?: string;
-            uid?: unknown;
-        };
-        const target = {
-            ...model,
-            refId: only.refId,
-            datasource: {
-                ...datasource,
-                uid:
-                    typeof datasource.uid === 'string'
-                        ? datasource.uid
-                        : asString(only.datasourceUid),
-            },
-        } as GrafanaTarget;
-        const translated = translateGrafanaTarget(target, { datasources });
-        translated.warnings.forEach((w) => ruleWarn({ ...w, rule: name }));
-        if (translated.sql) {
-            query = translated.sql;
-        } else {
-            review.push(
-                translated.todo ?? `query ${only.refId} can't be translated`,
-            );
-        }
-    } else if (queries.length === 0) {
-        review.push('it has no query');
-    } else {
-        review.push(
-            `it combines ${queries.length} queries, which is not imported yet`,
-        );
-    }
-
     const conditionRef = asString(read('condition'));
-    const converted = convertCondition(conditionRef, expressions, queryRef);
+    const converted = convertCondition(conditionRef, expressions);
     if ('review' in converted) review.push(converted.review);
     else converted.notes.forEach((note) => ruleWarn(note));
+
+    // The rule's query: what the condition reduces, else the rule's only query. An expression
+    // (math over queries) is translated over the rule's other data, as a panel's expression is.
+    let query: string | undefined;
+    const sourceRef =
+        converted.source ??
+        (queries.length === 1 ? queries[0].refId : undefined);
+    const source =
+        sourceRef === undefined
+            ? undefined
+            : data.find((d) => d.refId === sourceRef);
+    if (queries.length === 0) {
+        review.push('it has no query');
+    } else if (sourceRef !== undefined && source === undefined) {
+        review.push(
+            `its condition reads ${sourceRef}, which is not in the rule`,
+        );
+    } else if (source?.model !== undefined) {
+        const sourceIsExpression = isExpression(source);
+        const translated = translateGrafanaPanelQueries(
+            {
+                targets: data
+                    .filter((d) => d.model !== undefined)
+                    .map((d) => ({
+                        ...ruleTarget(d),
+                        hide: d !== source,
+                    })),
+            },
+            { datasources },
+        );
+        translated.warnings.forEach((w) => ruleWarn({ ...w, rule: name }));
+        if (
+            translated.sql &&
+            (!sourceIsExpression || translated.shape === 'series')
+        ) {
+            query = translated.sql;
+        } else if (sourceIsExpression) {
+            review.push(
+                `its ${String(source.model.type ?? 'untyped')} expression ${sourceRef} ${
+                    translated.sql
+                        ? 'returns one number per series, not a series to reduce'
+                        : "can't be translated"
+                }`,
+            );
+        } else {
+            review.push(
+                translated.todo ?? `query ${sourceRef} can't be translated`,
+            );
+        }
+    }
 
     const labels = stringMap(
         read('labels'),

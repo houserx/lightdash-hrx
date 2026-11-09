@@ -1436,3 +1436,28 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: alerts-rule-queries 2/2, alerts-rule-fields 3/3, alerts-hcl 4/4, alerts-rule-conditions 4/4,
   alerts-command 3/3, dashboard-datasources 3/3. tsc (common) clean, oxlint clean, oxfmt check clean.
 - 2026-11-09T04:57:45Z supervisor: imp-alert-rule-queries passed the gate in round 1
+
+## imp-alert-rule-math (2026-11-09, round 1)
+- packages/common/src/eng1799/grafanaAlertImport.ts: convertCondition no longer checks the chain against "the
+  rule's single query"; it returns `source`, the ref the condition reduces (threshold -> reduce -> source,
+  threshold -> source with reducer last, classic condition -> query.params[0]; `$A`/`${A}` refs normalised by
+  `inputRef`). convertRule translates that source with translateGrafanaPanelQueries over all the rule's data as
+  targets (only the source visible; `ruleTarget` builds each target, expressions get the `__expr__` datasource), so
+  math over several queries reuses the dashboard expression translator (joins on timestamp and labels). With no
+  source (no/unsupported condition) the rule's only query is still translated as before.
+  - An expression source must translate to shape `series`; otherwise rule-needs-review naming the expression type
+    and ref ("its resample expression B can't be translated", or "returns one number per series" for math over
+    reduces). The translator's expression-unsupported warning carries the detail. Rule stays valid, shadow, paused.
+  - Unused queries (2 queries, condition reads only A) no longer force review; only the reduced source matters.
+  - The old "it combines N queries, which is not imported yet" review is gone.
+- Unit test: grafanaAlertImport.test.ts 'evaluates math over queries in the SQL and pauses untranslatable
+  expressions' (math+reduce, math read directly, resample, math of reduces).
+- Tested as a user: CLI `import grafana-alerts` on a synthetic group -> error-percentage.yml query joins two
+  promql_instant calls with `"A"."value" / "B"."value" * 100`, reducer last, condition > 5, not paused;
+  resampled.yml placeholder query, paused, shadow, IMPORT-REPORT rows expression-unsupported + rule-needs-review
+  naming resample. Full fixture set: still 84 rules / 11 to review; one PA Renewal math rule (G) uses `>`/`=` in
+  math, which the shared translator does not evaluate, so it stays paused with the reason.
+- Scratch output of the manual runs is in ../tmp/math-manual and ../tmp/math-full (outside the repo; rm was denied).
+- Acceptance: alerts-rule-math 2/2, alerts-rule-queries 2/2, alerts-rule-conditions 4/4, alerts-rule-fields 3/3,
+  alerts-hcl 4/4, alerts-command 3/3, alerts-rule-description 2/2. tsc (common) clean, oxlint clean, oxfmt applied.
+- 2026-11-09T05:03:29Z supervisor: imp-alert-rule-math passed the gate in round 1

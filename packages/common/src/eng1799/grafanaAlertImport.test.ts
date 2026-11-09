@@ -385,6 +385,64 @@ ${rule('Hysteresis', promData('A', 'up') + exprData('C', 'type = "threshold"\n  
         expect(codes('Hysteresis')).toContain('expression-hysteresis-dropped');
     });
 
+    it('evaluates math over queries in the SQL and pauses untranslatable expressions', () => {
+        const threshold = (input: string) =>
+            exprData(
+                'C',
+                `type = "threshold"\n        expression = "${input}"\n        conditions = [{ evaluator = { type = "gt", params = [5] } }]`,
+            );
+        const twoQueries =
+            promData('A', 'errors') +
+            promData('B', 'requests') +
+            exprData(
+                'M',
+                'type = "math"\n        expression = "$A / $B * 100"',
+            );
+        const rules = `
+resource "grafana_rule_group" "math" {
+  name             = "math"
+  folder_uid       = grafana_folder.this["Platform"].uid
+  interval_seconds = 60
+${rule('Math', twoQueries + exprData('D', 'type = "reduce"\n        expression = "$M"\n        reducer = "max"') + threshold('D'))}
+${rule('Math direct', twoQueries + threshold('M'))}
+${rule('Resample', promData('A', 'up') + exprData('D', 'type = "resample"\n        expression = "A"\n        window = "1m"') + threshold('D'))}
+${rule('Math of reduces', promData('A', 'up') + exprData('B', 'type = "reduce"\n        expression = "A"\n        reducer = "last"') + exprData('D', 'type = "math"\n        expression = "$B * 2"') + threshold('D'))}
+}
+`;
+        const result = convert(POLICY, rules);
+        result.alertRules.forEach((doc) =>
+            expect(validateAlertingAsCode(doc).errors).toEqual([]),
+        );
+        const [math, direct, resample, ofReduces] = result.alertRules;
+        expect(math).toMatchObject({
+            reducer: 'max',
+            condition: { operator: '>', threshold: 5 },
+            paused: false,
+        });
+        expect(math.query).toContain("promql_instant('errors'");
+        expect(math.query).toContain("promql_instant('requests'");
+        expect(math.query).toContain('"A"."value" / "B"."value" * 100');
+        expect(direct).toMatchObject({ reducer: 'last', paused: false });
+        expect(direct.query).toBe(math.query);
+        [resample, ofReduces].forEach((doc) =>
+            expect(doc).toMatchObject({
+                query: PLACEHOLDER_ALERT_QUERY,
+                paused: true,
+                shadow: true,
+            }),
+        );
+        const reviews = result.warnings
+            .filter((w) => w.code === 'rule-needs-review')
+            .map((w) => [w.rule, w.message]);
+        expect(reviews).toEqual([
+            ['Resample', expect.stringContaining('resample expression D')],
+            [
+                'Math of reduces',
+                expect.stringContaining('one number per series'),
+            ],
+        ]);
+    });
+
     it('turns contact points into integrations with secret references only', () => {
         const result = convert();
         expect(result.contactPoints.map((c) => c.slug)).toEqual([
