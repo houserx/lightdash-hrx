@@ -246,3 +246,27 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   tree as handed off.
 - 2026-11-09T01:12:48Z supervisor: initialized: 50 features, run 20261108-192705
 - 2026-11-09T01:57:13Z supervisor: initialized: 50 features, run 20261108-203649
+- 2026-11-09 int-harness-engine: added `e2e/eng-1799/vitest.base.ts` (the backend's aliases:
+  `@`, `@lightdash/common/src`, `@lightdash/common`, `@lightdash/formula`, `@lightdash/warehouses`;
+  nothing else), `e2e/eng-1799/tsconfig.json` (so the package's `typecheck` script works; covers
+  `harness/` and `vitest.base.ts`, not the protected acceptance files) and the harness:
+  `harness/index.ts` (re-exports only), `harness/engine.ts` (`ENGINE_BINARY`, `startEngine`),
+  `harness/util.ts` (`scratchDir` under `tmp/e2e/`, `freePort(s)`, `tcpOpen`, `sleep`).
+  `startEngine` spawns the binary with the Harness API's cleared env and config, waits for pg TCP +
+  any `/healthz` answer (60 s, fails fast with stderr if the process exits), and `stop()` SIGTERMs,
+  SIGKILLs after 10 s, then removes its scratch dir (idempotent). Tested by hand with a tsx script
+  (start, `SELECT version()` = `PostgreSQL 16.0 (hrx-federation-engine 0.1.0)`, `/healthz` 200,
+  stop twice, pid gone, pg port closed, `tmp/e2e` empty) and with the check (2/2 pass, ~3 s).
+  Next sessions must know:
+  - `startEngine` **throws** for the not-yet-built options (`prometheus`, `loki`, `cloudwatch`,
+    `cloudwatchLogs`, `tempo`, `bigquery`, `platform`, `auditStore`, `restricted*`): remove each from
+    `NOT_YET_SUPPORTED` in `engine.ts` as its feature renders the `[[sources]]` block.
+  - `[audit]` is **not** configured yet (the engine config treats it as optional). Feature
+    `int-harness-audit-store` must add it always (own fake store when `auditStore` is not given,
+    returned as `engine.auditStore`, closed by `stop()`), per the Harness API.
+  - Lazy-loading rule (written at the top of `harness/index.ts`): telemetry-mcp and the Lightdash
+    backend app are loaded only with `await import(...)` inside `startTelemetryMcp`/`startLightdash`,
+    never statically from `index.ts` or anything it imports statically.
+  - Format new harness files with `node_modules/.bin/oxfmt <files>` (the repo's formatter; there is no
+    prettier config).
+- 2026-11-09T02:03:31Z supervisor: int-harness-engine passed the gate in round 1
