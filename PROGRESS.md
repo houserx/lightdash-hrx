@@ -1729,3 +1729,38 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   3/3. persesDashboardImport.test.ts 10/10. common and cli tsc clean, oxlint and oxfmt clean on changed files.
 - 2026-11-09T05:52:16Z supervisor: imp-cli-perses-dashboard passed the gate in round 1
 - 2026-11-09T05:52:24Z supervisor: imp-perses-panels halted: worker importers.feature.imp-perses-panels.r1 stopped: STOP file present
+
+## imp-perses-panels (2026-11-09)
+
+- persesDashboardImport.ts now restates each Perses plugin spec as the Grafana `options`/`fieldConfig`
+  the panel mapping already understands, so legend, stacking, units, thresholds etc. are carried (and warned
+  about) by the same grafanaChartDisplay code as Grafana:
+  - TimeSeriesChart: legend.position/mode/values -> options.legend placement/displayMode/calcs; visual.stack
+    all/percent -> custom.stacking.mode normal/percent; yAxis.format unit/decimalPlaces, min/max, label, show;
+    visual display/lineWidth/areaOpacity/pointRadius/connectNulls; thresholds (+ thresholdsStyle line, since
+    Perses draws them, so line charts get thresholds-unsupported).
+  - StatChart/GaugeChart: calculation -> reduceOptions.calcs, format, thresholds (defaultColor is the base
+    step, percent mode -> percentage), gauge max (min 0). Stat gets graphMode none unless `sparkline` is set
+    (Perses shows no sparkline by default). Stats still get chart-kind-fallback (stat-sparkline -> big_number),
+    same as Grafana stats, which the acceptance test expects.
+  - BarChart: format only. Table: nothing. Markdown: text.
+  - Perses units map to Grafana units (decimal->none, percent->percent, percent-decimal->percentunit, bytes,
+    seconds->s, ...); unknown units pass through and get unit-unsupported downstream.
+  - Any other set plugin option (e.g. BarChart `calculation`, Table `density`, legend.size) is an
+    `option-dropped` warning with path `spec.plugin.spec.<path>` (CARRIED_OPTIONS lists what is carried).
+- Unknown plugins: new `perses-plugin-unsupported` code in importWarnings.ts. convertGrafanaDashboard takes a
+  new optional `unsupportedPanelType(type)` option ({code, message, todo}); Perses passes one, so HeatmapChart
+  is one perses-plugin-unsupported warning + a "TODO: rebuild the Perses "HeatmapChart" panel" tile and no
+  panel-type-unsupported. Grafana output unchanged (default keeps panel-type-unsupported).
+- Trap: Perses colour names (`red`) go through resolveGrafanaColor, so they become Grafana's palette red
+  (#f2495c), not CSS red. Hex colours are exact.
+- Not done (on purpose, not in this feature): a TimeSeriesChart with no `legend` hides it in Perses; we don't
+  warn legend-unsupported for that. Docs catalogue entry for perses-plugin-unsupported belongs to imp-docs.
+- Tested as a user: `lightdash import perses-dashboard node-overview.yaml --out tmp/...` from source: 1 dashboard,
+  5 charts (line, big_number x2, table, vertical_bar), About markdown tile, CPU usage legend right + stack,
+  Targets up conditionalFormatting >=1, Memory used >=90/>=80, report lists perses-plugin-unsupported for
+  Latency heatmap and the TODO tile. With api-latency.json too: 17 warnings, 1 TODO.
+- Checks: perses-panels 4/4 after init. Regression: perses-command 3/3, perses-layout 2/2, dashboard-command 4/4,
+  dashboard-panel-kinds 3/3, dashboard-todo-tiles 2/2, dashboard-legend-stacking 4/4, dashboard-thresholds-units
+  3/3. persesDashboardImport.test.ts 13/13. common builds (tsc) via init; oxlint/oxfmt clean on changed files.
+- 2026-11-09T05:59:22Z supervisor: imp-perses-panels passed the gate in round 1

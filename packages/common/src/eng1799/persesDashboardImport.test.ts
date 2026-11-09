@@ -214,3 +214,120 @@ describe('convertPersesDashboard', () => {
         );
     });
 });
+
+describe('Perses panel options', () => {
+    const convert = (panels: Record<string, unknown>) =>
+        convertPersesDashboard(
+            {
+                dashboard: dashboard({
+                    panels,
+                    layouts: [
+                        {
+                            kind: 'Grid',
+                            spec: {
+                                items: Object.keys(panels).map((id, i) =>
+                                    item(id, 0, i * 8, 24, 8),
+                                ),
+                            },
+                        },
+                    ],
+                }),
+            },
+            { spaceSlug: 'ops' },
+        );
+    const withSpec = (name: string, kind: string, spec: object) => ({
+        kind: 'Panel',
+        spec: {
+            display: { name },
+            plugin: { kind, spec },
+            queries: [promQuery('up', 'prom')],
+        },
+    });
+
+    it('carries the time series legend, stacking and y axis unit', () => {
+        const { dashboard: grafana } = persesToGrafanaDashboard(
+            dashboard({
+                panels: {
+                    cpu: withSpec('CPU', 'TimeSeriesChart', {
+                        legend: { position: 'right', mode: 'table' },
+                        yAxis: { format: { unit: 'percent-decimal' }, max: 1 },
+                        visual: { stack: 'all', areaOpacity: 0.5 },
+                    }),
+                },
+                layouts: [
+                    {
+                        kind: 'Grid',
+                        spec: { items: [item('cpu', 0, 0, 24, 8)] },
+                    },
+                ],
+            }),
+        );
+        expect(grafana.panels[0]).toMatchObject({
+            options: {
+                legend: { placement: 'right', displayMode: 'table' },
+            },
+            fieldConfig: {
+                defaults: {
+                    unit: 'percentunit',
+                    max: 1,
+                    custom: { stacking: { mode: 'normal' }, fillOpacity: 50 },
+                },
+            },
+        });
+        const chart = convert({
+            cpu: withSpec('CPU', 'TimeSeriesChart', {
+                legend: { position: 'right' },
+                visual: { stack: 'all' },
+            }),
+        }).charts[0];
+        expect(chart.config.display).toMatchObject({
+            legend: { position: 'right' },
+            stack: 'stack',
+        });
+    });
+
+    it('turns stat thresholds into conditional formatting', () => {
+        const result = convert({
+            up: withSpec('Up', 'StatChart', {
+                calculation: 'last-number',
+                thresholds: {
+                    defaultColor: '#00ff00',
+                    steps: [{ value: 1, color: '#ff0000' }],
+                },
+            }),
+        });
+        expect(result.charts[0].chartKind).toBe('big_number');
+        expect(result.charts[0].config.display).toMatchObject({
+            conditionalFormatting: [
+                { operator: 'greaterThanOrEqual', value: 1, color: '#ff0000' },
+            ],
+        });
+    });
+
+    it('reports options with no counterpart and unknown plugins', () => {
+        const result = convert({
+            table: withSpec('Table', 'Table', { density: 'compact' }),
+            heat: withSpec('Heat', 'HeatmapChart', { yAxis: { min: 0 } }),
+        });
+        expect(
+            result.warnings.map((w) => [w.code, w.panel, w.path ?? null]),
+        ).toEqual(
+            expect.arrayContaining([
+                ['option-dropped', 'Table', 'spec.plugin.spec.density'],
+                ['perses-plugin-unsupported', 'Heat', null],
+            ]),
+        );
+        expect(result.warnings.map((w) => w.code)).not.toContain(
+            'panel-type-unsupported',
+        );
+        expect(result.warnings.filter((w) => w.panel === 'Heat')).toHaveLength(
+            1,
+        );
+        expect(result.todos).toEqual([
+            {
+                panel: 'Heat',
+                text: expect.stringContaining('Perses "HeatmapChart"'),
+            },
+        ]);
+    });
+});

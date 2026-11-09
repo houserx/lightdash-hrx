@@ -9,8 +9,12 @@
  *
  * - Panels become Grafana panels of the matching type (TimeSeriesChart → timeseries, BarChart →
  *   barchart, StatChart → stat, GaugeChart → gauge, Table → table, Markdown → text). Any other
- *   plugin keeps its Perses kind as the panel type, which the panel mapping reports and turns
- *   into a TODO tile.
+ *   plugin keeps its Perses kind as the panel type, which becomes a `perses-plugin-unsupported`
+ *   warning and a TODO tile.
+ * - Plugin options become the Grafana options they correspond to (legend position and mode,
+ *   stacking, units and decimals, thresholds, y axis bounds, the stat and gauge calculation, the
+ *   gauge max), so the panel mapping carries them as far as the chart kind supports and warns
+ *   about the rest. A set option with no Grafana counterpart is an `option-dropped` warning.
  * - PrometheusTimeSeriesQuery queries become Prometheus targets. A query's datasource name is
  *   both the Grafana datasource uid and name, so it resolves to the Telemetry Source of that
  *   name; other query plugins keep their kind as the datasource type and are reported.
@@ -26,6 +30,7 @@ import {
     type GrafanaDashboardImportOptions,
     type GrafanaDashboardJson,
     type GrafanaDashboardPanel,
+    type UnsupportedPanelType,
 } from './grafanaDashboardImport';
 import type { GrafanaDatasource, GrafanaTarget } from './grafanaQuery';
 import type { ImportWarning } from './importWarnings';
@@ -113,9 +118,289 @@ const QUERY_DATASOURCE_TYPES: Record<string, string> = {
     PrometheusTimeSeriesQuery: 'prometheus',
 };
 
+/** A lookup table's own entry for a key (never an inherited property). */
+const lookup = <T>(table: Record<string, T>, key: unknown): T | undefined =>
+    typeof key === 'string' && Object.prototype.hasOwnProperty.call(table, key)
+        ? table[key]
+        : undefined;
+
+/** Perses unit → the Grafana unit with the same meaning; other units are passed on as they are. */
+const UNITS: Record<string, string> = {
+    decimal: 'none',
+    percent: 'percent',
+    'percent-decimal': 'percentunit',
+    bytes: 'bytes',
+    decbytes: 'decbytes',
+    nanoseconds: 'ns',
+    microseconds: 'µs',
+    milliseconds: 'ms',
+    seconds: 's',
+    minutes: 'm',
+    hours: 'h',
+    days: 'd',
+    'bits/sec': 'bps',
+    'bytes/sec': 'Bps',
+    'counts/sec': 'cps',
+    'ops/sec': 'ops',
+    'requests/sec': 'reqps',
+    'reads/sec': 'rps',
+    'writes/sec': 'wps',
+};
+
+/** Perses time series `visual.stack` → the Grafana stacking mode. */
+const STACKING: Record<string, string> = {
+    all: 'normal',
+    percent: 'percent',
+};
+
+/** Perses calculation → the Grafana reducer. */
+const CALCULATIONS: Record<string, string> = {
+    first: 'first',
+    last: 'last',
+    'first-number': 'firstNotNull',
+    'last-number': 'lastNotNull',
+    mean: 'mean',
+    sum: 'sum',
+    min: 'min',
+    max: 'max',
+};
+
+/**
+ * The plugin spec paths each panel kind carries into the Grafana panel (a path covers
+ * everything under it). Any other set option is an `option-dropped` warning.
+ */
+const CARRIED_OPTIONS: Record<string, string[]> = {
+    TimeSeriesChart: [
+        'legend.position',
+        'legend.mode',
+        'legend.values',
+        'yAxis.format.unit',
+        'yAxis.format.decimalPlaces',
+        'yAxis.label',
+        'yAxis.show',
+        'yAxis.min',
+        'yAxis.max',
+        'visual.stack',
+        'visual.display',
+        'visual.lineWidth',
+        'visual.areaOpacity',
+        'visual.pointRadius',
+        'visual.connectNulls',
+        'thresholds',
+    ],
+    BarChart: ['format.unit', 'format.decimalPlaces'],
+    StatChart: [
+        'calculation',
+        'format.unit',
+        'format.decimalPlaces',
+        'thresholds',
+        'sparkline',
+    ],
+    GaugeChart: [
+        'calculation',
+        'format.unit',
+        'format.decimalPlaces',
+        'thresholds',
+        'max',
+    ],
+    Table: [],
+    Markdown: ['text'],
+};
+
+const finite = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+/** The set option paths of a plugin spec that the panel kind does not carry. */
+const droppedOptions = (kind: string, spec: Record<string, unknown>) => {
+    const carried = lookup(CARRIED_OPTIONS, kind) ?? [];
+    const dropped: string[] = [];
+    const visit = (path: string, value: unknown) => {
+        if (value === undefined || value === null) return;
+        if (carried.some((c) => path === c || path.startsWith(`${c}.`))) {
+            return;
+        }
+        if (isRecord(value)) {
+            Object.entries(value).forEach(([key, child]) =>
+                visit(`${path}.${key}`, child),
+            );
+            return;
+        }
+        dropped.push(path);
+    };
+    Object.entries(spec).forEach(([key, value]) => visit(key, value));
+    return dropped;
+};
+
+/** Perses `format` → the Grafana field unit and decimals. */
+const formatDefaults = (format: unknown): Record<string, unknown> => {
+    const unit = text(record(format).unit);
+    const decimals = finite(record(format).decimalPlaces);
+    return {
+        ...(unit === undefined ? {} : { unit: lookup(UNITS, unit) ?? unit }),
+        ...(decimals === undefined ? {} : { decimals }),
+    };
+};
+
+/**
+ * Perses thresholds → Grafana thresholds: the default colour is the base step (Grafana's
+ * default green when unset) and `percent` mode is Grafana's `percentage`.
+ */
+const thresholdDefaults = (thresholds: unknown): Record<string, unknown> => {
+    const source = record(thresholds);
+    const steps = (Array.isArray(source.steps) ? source.steps : [])
+        .filter(isRecord)
+        .map((step) => ({
+            value: finite(step.value) ?? null,
+            color: step.color,
+        }))
+        .filter((step) => step.value !== null);
+    if (steps.length === 0) return {};
+    return {
+        thresholds: {
+            mode: source.mode === 'percent' ? 'percentage' : 'absolute',
+            steps: [
+                { value: null, color: text(source.defaultColor) ?? 'green' },
+                ...steps,
+            ],
+        },
+    };
+};
+
+const reduceOptions = (calculation: unknown) => {
+    const calc = text(calculation);
+    return calc === undefined
+        ? {}
+        : { reduceOptions: { calcs: [lookup(CALCULATIONS, calc) ?? calc] } };
+};
+
+/** A Perses chart plugin's spec as the Grafana panel `options` and `fieldConfig`. */
+const panelOptions = (
+    kind: string,
+    spec: Record<string, unknown>,
+): Pick<GrafanaDashboardPanel, 'options' | 'fieldConfig'> => {
+    const withDefaults = (
+        options: Record<string, unknown>,
+        defaults: Record<string, unknown>,
+    ) => ({
+        ...(Object.keys(options).length > 0 ? { options } : {}),
+        ...(Object.keys(defaults).length > 0
+            ? { fieldConfig: { defaults, overrides: [] } }
+            : {}),
+    });
+    switch (kind) {
+        case 'TimeSeriesChart': {
+            const legend = record(spec.legend);
+            const yAxis = record(spec.yAxis);
+            const visual = record(spec.visual);
+            const thresholds = thresholdDefaults(spec.thresholds);
+            const stacking = lookup(STACKING, visual.stack);
+            const areaOpacity = finite(visual.areaOpacity);
+            const custom: Record<string, unknown> = {
+                ...(stacking === undefined
+                    ? {}
+                    : { stacking: { mode: stacking } }),
+                ...(visual.display === 'bar' ? { drawStyle: 'bars' } : {}),
+                ...(visual.display === 'line' ? { drawStyle: 'line' } : {}),
+                ...(finite(visual.lineWidth) === undefined
+                    ? {}
+                    : { lineWidth: finite(visual.lineWidth) }),
+                ...(areaOpacity === undefined
+                    ? {}
+                    : { fillOpacity: Math.round(areaOpacity * 100) }),
+                ...(finite(visual.pointRadius) === undefined
+                    ? {}
+                    : { pointSize: finite(visual.pointRadius) }),
+                ...(typeof visual.connectNulls === 'boolean'
+                    ? { spanNulls: visual.connectNulls }
+                    : {}),
+                ...(text(yAxis.label) === undefined
+                    ? {}
+                    : { axisLabel: text(yAxis.label) }),
+                ...(yAxis.show === false ? { axisPlacement: 'hidden' } : {}),
+                // Perses draws a time series chart's thresholds as lines.
+                ...('thresholds' in thresholds
+                    ? { thresholdsStyle: { mode: 'line' } }
+                    : {}),
+            };
+            const placement = text(legend.position);
+            return withDefaults(
+                isRecord(spec.legend)
+                    ? {
+                          legend: {
+                              showLegend: true,
+                              ...(placement === undefined ? {} : { placement }),
+                              ...(text(legend.mode) === undefined
+                                  ? {}
+                                  : { displayMode: text(legend.mode) }),
+                              ...(Array.isArray(legend.values) &&
+                              legend.values.length > 0
+                                  ? { calcs: legend.values }
+                                  : {}),
+                          },
+                      }
+                    : {},
+                {
+                    ...formatDefaults(yAxis.format),
+                    ...(finite(yAxis.min) === undefined
+                        ? {}
+                        : { min: finite(yAxis.min) }),
+                    ...(finite(yAxis.max) === undefined
+                        ? {}
+                        : { max: finite(yAxis.max) }),
+                    ...thresholds,
+                    ...(Object.keys(custom).length > 0 ? { custom } : {}),
+                },
+            );
+        }
+        case 'BarChart':
+            return withDefaults({}, formatDefaults(spec.format));
+        case 'StatChart':
+            return withDefaults(
+                {
+                    ...reduceOptions(spec.calculation),
+                    // Perses shows a sparkline only when one is set; Grafana's default is one.
+                    graphMode:
+                        isRecord(spec.sparkline) || spec.sparkline === true
+                            ? 'area'
+                            : 'none',
+                },
+                {
+                    ...formatDefaults(spec.format),
+                    ...thresholdDefaults(spec.thresholds),
+                },
+            );
+        case 'GaugeChart':
+            return withDefaults(reduceOptions(spec.calculation), {
+                ...formatDefaults(spec.format),
+                ...thresholdDefaults(spec.thresholds),
+                ...(finite(spec.max) === undefined
+                    ? {}
+                    : { min: 0, max: finite(spec.max) }),
+            });
+        case 'Markdown':
+            return {
+                options: {
+                    mode: 'markdown',
+                    content: typeof spec.text === 'string' ? spec.text : '',
+                },
+            };
+        default:
+            return {};
+    }
+};
+
+/** The warning and TODO for a panel whose plugin the importer does not know. */
+const persesUnsupportedPlugin = (kind: string): UnsupportedPanelType => ({
+    code: 'perses-plugin-unsupported',
+    message: `The Perses panel plugin "${kind}" has no Lightdash equivalent`,
+    todo: `TODO: rebuild the Perses "${kind}" panel by hand; the importer does not know this panel plugin`,
+});
+
 type PanelConversion = {
     panel: GrafanaDashboardPanel;
     datasources: GrafanaDatasource[];
+    /** Set plugin options the panel kind does not carry, as `spec.plugin.spec` paths. */
+    droppedOptions: string[];
 };
 
 const refIdFor = (index: number): string =>
@@ -157,7 +442,7 @@ const convertPanel = (
     const plugin = record(spec.plugin);
     const kind = text(plugin.kind) ?? 'unknown';
     const pluginSpec = record(plugin.spec);
-    const type = PANEL_TYPES[kind] ?? kind;
+    const type = lookup(PANEL_TYPES, kind) ?? kind;
     const queries = convertQueries(spec.queries);
     const panel: GrafanaDashboardPanel = {
         type,
@@ -167,19 +452,16 @@ const convertPanel = (
             : { description: text(display.description) }),
         gridPos,
         ...(queries.targets.length > 0 ? { targets: queries.targets } : {}),
-        ...(type === 'text'
-            ? {
-                  options: {
-                      mode: 'markdown',
-                      content:
-                          typeof pluginSpec.text === 'string'
-                              ? pluginSpec.text
-                              : '',
-                  },
-              }
-            : {}),
+        ...panelOptions(kind, pluginSpec),
     };
-    return { panel, datasources: queries.datasources };
+    return {
+        panel,
+        datasources: queries.datasources,
+        // An unknown plugin is a TODO tile as a whole, so its options are not listed.
+        droppedOptions: lookup(CARRIED_OPTIONS, kind)
+            ? droppedOptions(kind, pluginSpec)
+            : [],
+    };
 };
 
 const PANEL_REF = /^#\/spec\/panels\/(.+)$/;
@@ -245,6 +527,18 @@ export const persesToGrafanaDashboard = (
             };
             bottom = Math.max(bottom, gridPos.y + gridPos.h);
             const converted = convertPanel(panelId, source, gridPos);
+            const plugin = text(
+                record(record(record(source).spec).plugin).kind,
+            );
+            converted.droppedOptions.forEach((path) =>
+                warnings.push({
+                    code: 'option-dropped',
+                    message: `The Perses ${plugin} option ${path} is not imported: the SQL chart has no equivalent`,
+                    dashboard: title,
+                    panel: converted.panel.title,
+                    path: `spec.plugin.spec.${path}`,
+                }),
+            );
             id += 1;
             children.push({ id, ...converted.panel });
             converted.datasources.forEach((ds) => datasources.set(ds.name, ds));
@@ -312,6 +606,7 @@ export const convertPersesDashboard = (
         { dashboard: restated.dashboard },
         {
             ...options,
+            unsupportedPanelType: persesUnsupportedPlugin,
             query: {
                 ...options.query,
                 datasources: [

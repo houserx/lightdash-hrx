@@ -36,6 +36,7 @@ export type ImportWarningCode =
     | 'parameter-default-adjusted'
     | 'parameter-merged'
     | 'panel-type-unsupported'
+    | 'perses-plugin-unsupported'
     | 'panel-dropped'
     | 'option-dropped'
     | 'chart-kind-fallback'

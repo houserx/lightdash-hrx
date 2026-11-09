@@ -158,7 +158,25 @@ export type GrafanaDashboardImportOptions = {
     takenChartSlugs?: Set<string>;
     /** Collapsed rows become headings with their panels below, instead of tabs. */
     noTabs?: boolean;
+    /**
+     * The warning and TODO for a panel type the panel mapping does not know. Importers that
+     * restate another format as Grafana JSON (Perses) name the source plugin here; the default
+     * is a `panel-type-unsupported` warning about the Grafana panel type.
+     */
+    unsupportedPanelType?: (type: string) => UnsupportedPanelType;
 };
+
+export type UnsupportedPanelType = {
+    code: ImportWarning['code'];
+    message: string;
+    todo: string;
+};
+
+const grafanaUnsupportedPanelType = (type: string): UnsupportedPanelType => ({
+    code: 'panel-type-unsupported',
+    message: `The Grafana panel type "${type}" has no Lightdash equivalent`,
+    todo: `TODO: rebuild the Grafana "${type}" panel by hand; the importer does not know this panel type`,
+});
 
 export type GrafanaDashboardImport = {
     dashboard: DashboardAsCode;
@@ -783,13 +801,11 @@ export const convertGrafanaDashboard = (
 
         const mapping = getGrafanaPanelMapping(type);
         if (!mapping) {
-            warn(
-                'panel-type-unsupported',
-                `The Grafana panel type "${type}" has no Lightdash equivalent`,
-            );
-            todoTile(
-                `TODO: rebuild the Grafana "${type}" panel by hand; the importer does not know this panel type`,
-            );
+            const unsupported = (
+                options.unsupportedPanelType ?? grafanaUnsupportedPanelType
+            )(type);
+            warn(unsupported.code, unsupported.message);
+            todoTile(unsupported.todo);
             return;
         }
         if (mapping.target === 'dropped') {
