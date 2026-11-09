@@ -2536,3 +2536,28 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   `docs.spec.ts` fails with or without this change ("a heading about prerequisites"). It belongs to the later
   demo-docs feature. No chromium or `.state` process is left.
 - 2026-11-09T11:27:43Z supervisor: demo-scene-03-alert-fires passed the gate in round 1
+
+### demo-scene-04-service-health (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/04-service-health.spec.ts` (25 `expect`s, scene timeout 300 s). It waits on the
+    scenario clock for `incident` (`waitForPhase`, max 120 s away), signs in and opens Service health from the
+    dashboards list. In the `Fill service logs` Tile it reads the "N of N lines" count, types `level=error` into the
+    "Filter lines" box and asserts the count drops (still > 0), every drawn `log-stream-row` has
+    `data-level="error"`, and a line mentions shipping-label-api. In the `Slow trace waterfall` Tile it finds the
+    `trace-span-row` with service shipping-label-api and the `Show details of POST /v1/labels` button (depth > 0),
+    hovers its bar, clicks it, and asserts the drawer (`role=dialog` holding `trace-span-drawer`) names the span and
+    service, shows a Duration of >= 2 s and lists the attributes. Key moment: drawer open beside the filtered logs.
+  - docs/eng-1799/demo.md: a bullet for 04-service-health under "Walkthrough scenes (recorded)".
+- **Selector notes.** The log filter only matches the line text (not labels), so filter on `level=error`, which every
+  error line carries. The log stream is virtualised: `rows.evaluateAll` sees only the rendered rows (enough to show
+  the filter). Both Tiles sit side by side below the heatmap; at 1920x1080 they are in view together after scrolling.
+  The drawer's Duration row is a Group (label + value); `formatDurationMs` writes `4.86 s` / `32 ms`.
+- **Tested as a user.** up.sh, scenario restarted with `{-150, 900}`, `run.sh 04-service-health`: passed in about
+  17 s. The video is 1920x1080 and 15.5 s long. The frame at 9 s shows "level=error" in the filter, "104 of 500
+  lines", all red error rows ("create shipping label failed … downstream=shipping-label-api"), and the waterfall with
+  5 spans (shipping-label-api `POST /v1/labels` 4.86 s, orange). key-moment.png shows the drawer: Service
+  shipping-label-api, Duration 4.86 s, trace id de30…0001, attributes.
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-04-service-health.spec.ts` passed (17.7 s test).
+  The demo typecheck is clean. No chromium or `.state` process is left.
+- 2026-11-09T11:37:20Z supervisor: demo-scene-04-service-health passed the gate in round 1

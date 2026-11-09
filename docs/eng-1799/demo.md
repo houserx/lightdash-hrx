@@ -209,6 +209,13 @@ Chromium outlives the run.
   with its labels and its rendered summary "Fill queue backlog is N (threshold 100)". Restart the clock first, as
   for 02-incident. The incident may also have started already, and then the scene skips the baseline check. Key
   moment: the fake incident.io page with the firing notification.
+- **04-service-health**: waits on the scenario clock for the `incident` and opens Service health from the dashboards
+  list. In the "Fill service logs" Tile it types `level=error` into the "Filter lines" box: the count drops from all the
+  loaded lines (the Tile loads up to 500) to the error lines only, and they say "create shipping label failed … downstream=
+  shipping-label-api". It then opens the `POST /v1/labels` span of `shipping-label-api` in the "Slow trace
+  waterfall" Tile (the pinned trace, the `trace_id` parameter's default). The span's drawer shows the service, a
+  duration of 2 s or more and the span's attributes. Restart the clock first, as for 02-incident (the incident may
+  already have started). Key moment: the waterfall with the slow span's drawer open, next to the filtered log stream.
 
 ## Known limits
 
