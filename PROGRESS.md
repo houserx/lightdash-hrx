@@ -469,3 +469,4 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - The engine's `json` columns (e.g. promql `labels`) map to Lightdash `string`.
   - Fake servers in the harness stop with `close()` (support.ts `track` handles both).
 - 2026-11-09T02:36:57Z supervisor: int-client-connect passed the gate in round 1
+- 2026-11-09T02:37:43Z supervisor: int-client-catalog halted: the worker halted on int-client-catalog
