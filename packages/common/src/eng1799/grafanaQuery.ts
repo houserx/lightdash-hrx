@@ -10,6 +10,7 @@ import {
     buildTelemetrySql,
     LOGQL_DEFAULT_DIRECTION,
     LOGQL_DEFAULT_LIMIT,
+    TELEMETRY_SQL_FROM,
     TELEMETRY_SQL_INTERVAL,
     TELEMETRY_SQL_TO,
     type CloudWatchDimension,
@@ -151,6 +152,77 @@ const sqlStringLiteral = (value: string): string =>
 const targetLabel = (target: GrafanaTarget): string =>
     target.refId ? `target ${target.refId}` : 'target';
 
+/** The reserved parameter (CONTRACTS §2) each Grafana time macro maps to. */
+const TIME_MACRO_PARAMETERS: ReadonlyMap<string, string> = new Map([
+    ['__interval', '__interval'],
+    // Grafana widens $__rate_interval past the scrape interval; the closest reserved
+    // parameter is the dashboard interval.
+    ['__rate_interval', '__interval'],
+    ['__range', '__range'],
+]);
+
+/** `$__name`, `${__name}`, `${__name:format}` or `[[__name]]`. */
+const TIME_MACRO =
+    /\$__([A-Za-z0-9_]+)|\$\{__([A-Za-z0-9_]+)(:[^}]*)?\}|\[\[__([A-Za-z0-9_]+)\]\]/g;
+
+/**
+ * A query expression as a SQL string expression: Grafana's `$__interval`, `${__interval}`,
+ * `$__rate_interval` and `$__range` become the reserved parameters, concatenated into the
+ * literal (`'rate(x[' || ${ld.parameters.__interval} || '])'`), so the query follows the
+ * Dashboard Time Range. Any other `__` macro (`$__range_s`, `$__interval_ms`, `$__from`, a
+ * format option) has no equivalent: it stays in the query text and gets a warning.
+ */
+const queryExpressionSql = (
+    expr: string,
+    what: string,
+    warnings: ImportWarning[],
+): string => {
+    const parts: string[] = [];
+    const unmapped: string[] = [];
+    let literal = '';
+    let last = 0;
+    for (const match of expr.matchAll(TIME_MACRO)) {
+        const [text, plain, braced, format, bracketed] = match;
+        const name = `__${plain ?? braced ?? bracketed}`;
+        const parameter =
+            format === undefined ? TIME_MACRO_PARAMETERS.get(name) : undefined;
+        literal += expr.slice(last, match.index);
+        last = match.index + text.length;
+        if (parameter === undefined) {
+            literal += text;
+            if (!unmapped.includes(text)) unmapped.push(text);
+        } else {
+            if (literal !== '') parts.push(sqlStringLiteral(literal));
+            parts.push(`\${ld.parameters.${parameter}}`);
+            literal = '';
+        }
+    }
+    literal += expr.slice(last);
+    if (literal !== '' || parts.length === 0) {
+        parts.push(sqlStringLiteral(literal));
+    }
+    if (unmapped.length > 0) {
+        warnings.push({
+            code: 'query-macro-unsupported',
+            message: `${what} uses ${unmapped.join(', ')}, with no Lightdash time parameter to map to; the query keeps the text as written and needs editing`,
+        });
+    }
+    return parts.join(' || ');
+};
+
+/** `SELECT * FROM name(args[, source])`, the args already SQL. */
+const tableFunctionSql = (
+    name: string,
+    args: string[],
+    source: string | undefined,
+): string => {
+    const allArgs =
+        source === undefined || source === ''
+            ? args
+            : [...args, sqlStringLiteral(source)];
+    return `SELECT * FROM ${name}(${allArgs.join(', ')})`;
+};
+
 const translatePrometheusTarget = (
     target: GrafanaTarget,
     source: string | undefined,
@@ -168,12 +240,19 @@ const translatePrometheusTarget = (
             warnings,
         };
     }
+    const query = queryExpressionSql(
+        expr,
+        `Prometheus ${targetLabel(target)}`,
+        warnings,
+    );
     if (target.instant === true && target.range !== true) {
         // promql_instant(query, time[, source]) evaluates at the end of the time range.
-        const args = [sqlStringLiteral(expr), TELEMETRY_SQL_TO];
-        if (source !== undefined) args.push(sqlStringLiteral(source));
         return {
-            sql: `SELECT * FROM promql_instant(${args.join(', ')})`,
+            sql: tableFunctionSql(
+                'promql_instant',
+                [query, TELEMETRY_SQL_TO],
+                source,
+            ),
             todo: null,
             warnings,
             shape: 'series',
@@ -186,7 +265,16 @@ const translatePrometheusTarget = (
         });
     }
     return {
-        sql: buildTelemetrySql({ kind: 'promql', query: expr, source }),
+        sql: tableFunctionSql(
+            'promql',
+            [
+                query,
+                TELEMETRY_SQL_FROM,
+                TELEMETRY_SQL_TO,
+                TELEMETRY_SQL_INTERVAL,
+            ],
+            source,
+        ),
         todo: null,
         warnings,
         shape: 'series',
@@ -250,15 +338,24 @@ const translateLokiTarget = (
             warnings,
         };
     }
+    const query = queryExpressionSql(
+        expr,
+        `Loki ${targetLabel(target)}`,
+        warnings,
+    );
     if (isLogqlLogQuery(expr)) {
         return {
-            sql: buildTelemetrySql({
-                kind: 'logql',
-                query: expr,
-                limit: lokiLimit(target, warnings),
-                direction: lokiDirection(target, warnings),
+            sql: tableFunctionSql(
+                'logql',
+                [
+                    query,
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                    String(lokiLimit(target, warnings)),
+                    sqlStringLiteral(lokiDirection(target, warnings)),
+                ],
                 source,
-            }),
+            ),
             todo: null,
             warnings,
             shape: 'log-lines',
@@ -267,22 +364,33 @@ const translateLokiTarget = (
     if (target.queryType === 'instant' || target.instant === true) {
         // No instant LogQL function in CONTRACTS §1.1: a range query from __to to __to
         // yields the one value at the end of the time range.
-        const args = [
-            sqlStringLiteral(expr),
-            TELEMETRY_SQL_TO,
-            TELEMETRY_SQL_TO,
-            TELEMETRY_SQL_INTERVAL,
-        ];
-        if (source !== undefined) args.push(sqlStringLiteral(source));
         return {
-            sql: `SELECT * FROM logql_metric(${args.join(', ')})`,
+            sql: tableFunctionSql(
+                'logql_metric',
+                [
+                    query,
+                    TELEMETRY_SQL_TO,
+                    TELEMETRY_SQL_TO,
+                    TELEMETRY_SQL_INTERVAL,
+                ],
+                source,
+            ),
             todo: null,
             warnings,
             shape: 'series',
         };
     }
     return {
-        sql: buildTelemetrySql({ kind: 'logql_metric', query: expr, source }),
+        sql: tableFunctionSql(
+            'logql_metric',
+            [
+                query,
+                TELEMETRY_SQL_FROM,
+                TELEMETRY_SQL_TO,
+                TELEMETRY_SQL_INTERVAL,
+            ],
+            source,
+        ),
         todo: null,
         warnings,
         shape: 'series',

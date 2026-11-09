@@ -422,3 +422,32 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   oxlint clean (run from packages/common with `-c .oxlintrc.json`), oxfmt applied. `npx` fails here with
   EBADDEVENGINES (node 26 vs 24), so call `node_modules/.bin/*` directly.
 - 2026-11-09T01:58:29Z supervisor: imp-query-datasources passed the gate in round 1
+
+### imp-query-time-macros (2026-11-08)
+
+- `queryExpressionSql` in `grafanaQuery.ts` turns a PromQL/LogQL expression into a SQL string expression:
+  `$__interval`, `${__interval}`, `[[__interval]]` and `$__rate_interval` → `${ld.parameters.__interval}`;
+  `$__range` → `${ld.parameters.__range}`, concatenated with `||` into the literal
+  (`'rate(x[' || ${ld.parameters.__interval} || '])'`). That works because Lightdash substitutes string
+  parameters as quoted literals (backend `QueryBuilder/parameters`), so the engine gets `'rate(x[' || '1m' || '])'`.
+  A query without macros is still one plain literal, as before.
+- Any other `__` macro (`$__range_s`, `$__interval_ms`, `$__from`, `$__to`, a format option like
+  `${__interval:text}`) stays in the query text as written and gets the new warning code
+  `query-macro-unsupported` naming each one. The SQL is kept (not a TODO); the query will fail at run time
+  until edited. Decision: the spec says "warnings", so no TODO.
+- The promql/promql_instant/logql/logql_metric SQL is now built by a local `tableFunctionSql` in
+  `grafanaQuery.ts` (buildTelemetrySql always quotes the query as one literal). CloudWatch still uses
+  buildTelemetrySql. Later translators taking a free-text query (cloudwatch_logs, traceql) can reuse
+  `queryExpressionSql` the same way.
+- Trap: `$__rate_interval` maps to `__interval` (Grafana widens it to ≥ 4× scrape interval). With the 15s
+  floor of `__interval`, `rate(x[15s])` on a 15s scrape can be empty on short ranges. Not decided here.
+- User variables (`$job`, `$__all`, `$__auto_interval_*`) are imp-query-variables. `$__auto_interval_x` is
+  currently caught by the `__` pattern and warned as unsupported; imp-query-variables should resolve
+  interval variables before (or instead of) this step.
+- Tested: rebuilt common via init.sh, called the built `dist/cjs` `translateGrafanaTarget` from node:
+  rate(x[$__interval]), rate(x[${__interval}]) and rate(x[$__rate_interval]) → `${ld.parameters.__interval}`,
+  folding to `rate(x[1m])` with __interval=1m; increase(x[$__range]) (range and instant) →
+  `${ld.parameters.__range}`; `$__range_s`/`$__interval_ms` → warning naming both; a Loki log query with a
+  macro also maps. Acceptance: time-macros 5/5; prometheus 5/5, loki 5/5, cloudwatch-metrics 5/5,
+  panel-targets 3/3, datasources 6/6. tsc clean, oxlint clean, oxfmt applied.
+- 2026-11-09T02:01:44Z supervisor: imp-query-time-macros passed the gate in round 1

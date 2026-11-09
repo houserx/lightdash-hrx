@@ -21,6 +21,7 @@ export type ImportWarningCode =
     | 'query-dimension-wildcard'
     | 'query-dimension-values-dropped'
     | 'query-match-exact-dropped'
+    | 'query-macro-unsupported'
     | (string & {});
 
 export type ImportWarning = {
