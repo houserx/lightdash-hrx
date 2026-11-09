@@ -50,7 +50,7 @@ function parseTime(value: string | undefined): number | undefined {
 }
 
 /** Seconds from a Prometheus step (a float of seconds or a duration such as `1m`, `1h30m`). */
-function parseStep(value: string | undefined): number | undefined {
+export function parseStep(value: string | undefined): number | undefined {
     if (value === undefined || value === '') return undefined;
     if (/^\d+(\.\d+)?$/.test(value)) return Number(value);
     const units: Record<string, number> = {
@@ -72,7 +72,7 @@ function parseStep(value: string | undefined): number | undefined {
 }
 
 /** Prometheus' sample value text. */
-function sampleValue(value: number): string {
+export function sampleValue(value: number): string {
     if (Number.isNaN(value)) return 'NaN';
     if (value === Infinity) return '+Inf';
     if (value === -Infinity) return '-Inf';

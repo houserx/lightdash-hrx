@@ -38,6 +38,8 @@ export type StartEngineOptions = {
     testMode?: boolean;
     /** A fake Prometheus: the default `prometheus` source points at its `url`. */
     prometheus?: { url: string };
+    /** A fake Loki: the `loki` source points at its `url`. */
+    loki?: { url: string };
     /**
      * A Platform Database: the `platform` source reads through `readUrl` and writes through
      * `writeUrl` (Write Mode is off without it), passed as `HRX_PLATFORM_READ_URL` /
@@ -54,7 +56,6 @@ export type StartEngineOptions = {
 
 /** Options the Harness API names that later harness features implement. */
 const NOT_YET_SUPPORTED = [
-    'loki',
     'cloudwatch',
     'cloudwatchLogs',
     'tempo',
@@ -138,6 +139,11 @@ function renderConfig(
         tables.push(
             `[[sources]]\nname = "prometheus"\nkind = "prometheus"\ndefault = true\nurl = ${url}\n`,
             `[[sources]]\nname = "prometheus-restricted"\nkind = "prometheus"\nrestricted = true\nurl = ${url}\n`,
+        );
+    }
+    if (opts.loki) {
+        tables.push(
+            `[[sources]]\nname = "loki"\nkind = "loki"\nurl = ${tomlString(opts.loki.url)}\n`,
         );
     }
     if (opts.platform) {

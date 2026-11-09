@@ -343,3 +343,28 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     need portal order re-order themselves (int-write-audit-integrity does).
   - A failing store costs ~2 s per Audited Query (SDK retries); keep that in mind for timeouts.
 - 2026-11-09T02:15:34Z supervisor: int-harness-audit-store passed the gate in round 1
+- 2026-11-09 int-harness-fake-loki: new `harness/loki.ts` (`startFakeLoki({ streams, series? })`,
+  exported from `index.ts` with its types). `/loki/api/v1/query_range` (GET or POST form): a query
+  starting with `{` answers `streams` (every fixture stream's lines inside `[start, end]` inclusive,
+  ordered by `direction`, cut to the first `limit` over all streams, empty streams left out,
+  ns-string timestamps; defaults limit 100 / backward like Loki); any other query answers a
+  `matrix` of `series` at every step from start to end inclusive (like the fake Prometheus).
+  Selectors are NOT evaluated: every stream is in every log answer. Times: ns, seconds (≤10 digits
+  or fractional) or RFC 3339 (fixture timestamps may carry up to 9 fraction digits); bad
+  limit/direction/start/end/step → 400 plain text, as Loki. Extras: `setStreams`, `setSeries`;
+  `/ready` → 200. `engine.ts`: `loki` option renders `[[sources]] name = "loki" kind = "loki"`
+  (the only loki source, so it is the default). `prometheus.ts` now exports `parseStep` and
+  `sampleValue` (reused by the Loki fake).
+  Tested by hand with a tsx script outside the repo through the real engine over pg-wire: default
+  logql() sent limit=1000 direction=backward (the engine's defaults) and returned 3 lines (a 4th
+  outside the window left out), sub-ms fixture time truncated to µs; `2,'forward'` → the 2 oldest,
+  `1,'backward'` → the newest; logql_metric() step '1m' → `step=60`, 3 points of 0.5 with series
+  `{app="a"}`; a log query via logql_metric and a metric query via logql → 42809; setStreams([]) →
+  0 rows; limit=0 → 400. Checks: fake-loki 1/1, fake-prometheus 2/2, engine 2/2; e2e typecheck
+  clean; no engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - `restrictedLokiSelectors` is still in `NOT_YET_SUPPORTED` (int-mcp-restricted-hidden uses it):
+    render it as `restricted_selectors = [...]` on the `loki` source.
+  - The engine always sends `limit` and `direction` for logql() (defaults 1000 / backward), so
+    the fake's own defaults matter only for direct HTTP calls.
+- 2026-11-09T02:19:09Z supervisor: int-harness-fake-loki passed the gate in round 1
