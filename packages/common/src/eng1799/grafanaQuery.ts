@@ -6,7 +6,14 @@
  * Pure: no network, no filesystem, no Lightdash API. Anything that does not translate is a
  * TODO plus a structured warning, never a silent drop.
  */
-import { buildTelemetrySql, TELEMETRY_SQL_TO } from '../utils/telemetrySql';
+import {
+    buildTelemetrySql,
+    LOGQL_DEFAULT_DIRECTION,
+    LOGQL_DEFAULT_LIMIT,
+    TELEMETRY_SQL_INTERVAL,
+    TELEMETRY_SQL_TO,
+    type LogqlDirection,
+} from '../utils/telemetrySql';
 import type { ImportWarning } from './importWarnings';
 
 /** A Grafana datasource as `grafana_data_sources.tf` defines it. */
@@ -164,6 +171,99 @@ const translatePrometheusTarget = (
     };
 };
 
+/**
+ * A LogQL log query starts with a stream selector (`{job="api"} | json`); everything else
+ * (`count_over_time(...)`, `rate(...)`, `sum by (...) (...)`, `topk(...)`) is a metric query.
+ */
+export const isLogqlLogQuery = (expr: string): boolean =>
+    expr.trimStart().startsWith('{');
+
+const lokiLimit = (
+    target: GrafanaTarget,
+    warnings: ImportWarning[],
+): number => {
+    const { maxLines } = target;
+    if (maxLines === undefined || maxLines === null || maxLines === '') {
+        return LOGQL_DEFAULT_LIMIT;
+    }
+    const limit = Number(maxLines);
+    if (Number.isInteger(limit) && limit > 0) return limit;
+    warnings.push({
+        code: 'query-limit-invalid',
+        message: `Loki ${targetLabel(target)} has maxLines ${String(maxLines)}, which is not a positive whole number; the default of ${LOGQL_DEFAULT_LIMIT} lines is used`,
+    });
+    return LOGQL_DEFAULT_LIMIT;
+};
+
+const lokiDirection = (
+    target: GrafanaTarget,
+    warnings: ImportWarning[],
+): LogqlDirection => {
+    const { direction } = target;
+    if (direction === undefined || direction === null || direction === '') {
+        return LOGQL_DEFAULT_DIRECTION;
+    }
+    if (direction === 'forward' || direction === 'backward') return direction;
+    warnings.push({
+        code: 'query-direction-unsupported',
+        message: `Loki ${targetLabel(target)} has direction ${String(direction)}; the ${LOGQL_DEFAULT_DIRECTION} direction is used`,
+    });
+    return LOGQL_DEFAULT_DIRECTION;
+};
+
+const translateLokiTarget = (
+    target: GrafanaTarget,
+    source: string | undefined,
+    warnings: ImportWarning[],
+): GrafanaQueryTranslation => {
+    const expr = typeof target.expr === 'string' ? target.expr.trim() : '';
+    if (expr === '') {
+        warnings.push({
+            code: 'query-empty',
+            message: `Loki ${targetLabel(target)} has no expression`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: Loki ${targetLabel(target)} has no expression to translate`,
+            warnings,
+        };
+    }
+    if (isLogqlLogQuery(expr)) {
+        return {
+            sql: buildTelemetrySql({
+                kind: 'logql',
+                query: expr,
+                limit: lokiLimit(target, warnings),
+                direction: lokiDirection(target, warnings),
+                source,
+            }),
+            todo: null,
+            warnings,
+        };
+    }
+    if (target.queryType === 'instant' || target.instant === true) {
+        // No instant LogQL function in CONTRACTS §1.1: a range query from __to to __to
+        // yields the one value at the end of the time range.
+        const args = [
+            sqlStringLiteral(expr),
+            TELEMETRY_SQL_TO,
+            TELEMETRY_SQL_TO,
+            TELEMETRY_SQL_INTERVAL,
+        ];
+        if (source !== undefined) args.push(sqlStringLiteral(source));
+        return {
+            sql: `SELECT * FROM logql_metric(${args.join(', ')})`,
+            todo: null,
+            warnings,
+        };
+    }
+    return {
+        sql: buildTelemetrySql({ kind: 'logql_metric', query: expr, source }),
+        todo: null,
+        warnings,
+    };
+};
+
 /** Translates one Grafana target into SQL, or a TODO with warnings saying why not. */
 export const translateGrafanaTarget = (
     target: GrafanaTarget,
@@ -194,6 +294,8 @@ export const translateGrafanaTarget = (
     switch (resolved.type) {
         case 'prometheus':
             return translatePrometheusTarget(target, resolved.source, warnings);
+        case 'loki':
+            return translateLokiTarget(target, resolved.source, warnings);
         default:
             warnings.push({
                 code: 'datasource-unsupported',

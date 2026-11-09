@@ -331,3 +331,22 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   promql/promql_instant SQL, the empty-expr TODO and the staging source from the panel datasource. Typecheck (common)
   clean; oxlint clean; oxfmt applied.
 - 2026-11-09T01:48:55Z supervisor: imp-query-prometheus passed the gate in round 1
+
+### imp-query-loki (2026-11-08)
+
+- `grafanaQuery.ts`: new `case 'loki'` → `translateLokiTarget`. A log query (expr starts with a `{` stream selector,
+  exported as `isLogqlLogQuery`) → `buildTelemetrySql({kind:'logql'})` with limit = target `maxLines` (default 1000,
+  invalid → `query-limit-invalid`) and direction = target `direction` (default 'backward'; anything else, e.g.
+  Grafana's `scan` → `query-direction-unsupported`). Everything else is a metric query →
+  `logql_metric(q, __from, __to, __interval[, source])`.
+- Instant metric (`queryType: 'instant'` or `instant: true`): CONTRACTS §1.1 has no instant LogQL function, so it is
+  `logql_metric(q, __to, __to, __interval[, source])` (one value at `__to`), built locally. Instant on a log query
+  is ignored (Loki has no instant log query). Empty expr → TODO + `query-empty`.
+- Added the warning codes `query-instant-dropped` (already used by Prometheus), `query-limit-invalid`,
+  `query-direction-unsupported` to `ImportWarningCode`.
+- Not done here: `$__auto`/`$__interval`/variables inside the LogQL expr (macro features), legendFormat.
+- Tested: `query-loki.test.ts` 5/5, `query-prometheus.test.ts` still 5/5; built common and called
+  `translateGrafanaTarget` from node with a pipeline log query, maxLines/forward, count_over_time, rate, topk,
+  an instant metric query, an empty expr and maxLines -3; saw the expected SQL and warnings. tsc clean, oxlint
+  clean, oxfmt applied.
+- 2026-11-09T01:50:54Z supervisor: imp-query-loki passed the gate in round 1

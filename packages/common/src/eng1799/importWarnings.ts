@@ -9,6 +9,9 @@ export type ImportWarningCode =
     | 'datasource-unresolved'
     | 'query-empty'
     | 'panel-targets-not-combined'
+    | 'query-instant-dropped'
+    | 'query-limit-invalid'
+    | 'query-direction-unsupported'
     | (string & {});
 
 export type ImportWarning = {
