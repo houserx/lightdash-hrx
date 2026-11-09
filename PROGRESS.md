@@ -449,3 +449,4 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - The fake answers `Complete` on the first poll; a check that needs Running/Failed/Cancel would
     have to extend it (the Rust harness `telemetry.rs` `logs_insights_mock` is the model).
 - 2026-11-09T02:30:06Z supervisor: int-harness-fake-cloudwatch-logs passed the gate in round 1
+- 2026-11-09T02:34:53Z supervisor: int-harness-fake-bigquery halted: the worker halted on int-harness-fake-bigquery
