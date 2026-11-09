@@ -785,3 +785,20 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   The db-query-portal snapshot (`refs/db-query-portal@aea73de`) is not on this machine. The fixtures are the only
   portal-computed values available. No engine or Postgres left running.
 - 2026-11-09T03:47:02Z supervisor: int-write-audit-integrity passed the gate in round 1
+- 2026-11-09 int-audit-browser: **no code change needed.** On arrival the check already passed (1/1). Lightdash side:
+  `FederationService.listAudit` (behind `GET /api/v2/projects/{uuid}/federation/audit`, FederationController) checks
+  platform_read before it mints a token or calls the engine. Engine side: `federation-engine/src/audit_browser.rs`
+  serves `GET /v1/audit` (byTicket / byUser / byMonth GSIs, 25 a page, newest first, base64 cursors). Tested by hand
+  (`../tmp/manual-audit-browser/try.ts`, run from e2e/eng-1799 with tsx, against the real engine and a throwaway
+  Platform Database) with data different from the check: 41 Audited Queries over 3 tickets (OPS-1 x12, OPS-2 x26,
+  OPS-3 x3) and 3 users. Results:
+  - Cursor walks give ticket OPS-2 = pages [25, 1] (26 unique), OPS-1 = [12], OPS-3 = [3], unknown ticket = [0].
+  - Each user maps to their own ticket with the same page sizes. The current month = [25, 16] (41 unique), all newest
+    first. Another month = [0].
+  - With ticket and user both given, the ticket wins (portal precedence).
+  - month 2026-13 gave 400 (ParameterError, before the engine). A garbage cursor and a request with no filter gave 400
+    from the engine.
+  - Without platform_read (no attrs, platform_read false, only platform_write) the answer is 403 and the audit store
+    sees no request. Straight to the engine: 403 without platform_read, 401 without a bearer.
+  No engine or Postgres left running.
+- 2026-11-09T03:49:42Z supervisor: int-audit-browser passed the gate in round 1
