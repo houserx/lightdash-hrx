@@ -8,9 +8,10 @@
 // endpoint the engine config reserved for it (`endpoints.*` of --endpoints-file). Once all of them listen,
 // the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}, "loki": {"url": ...},
 // "tempo": {"url": ...}, "cloudwatch": {"url": ...}, "cloudwatchLogs": {"url": ...}, "auditDynamodb": {"url": ...},
-// "auditS3": {"url": ...}, "incidentIo": {"url": ...}, "lightdashS3": {"url": ...}}) atomically; up.sh waits for it.
-// The fake incident.io receiver (stack/incident-io.ts) and Lightdash's results S3 (stack/results-s3.ts) are not
-// engine endpoints and listen on ephemeral ports.
+// "auditS3": {"url": ...}, "incidentIo": {"url": ...}, "lightdashS3": {"url": ...}, "okta": {"url": ..., "issuer": ...}})
+// atomically; up.sh waits for it.
+// The fake incident.io receiver (stack/incident-io.ts), Lightdash's results S3 (stack/results-s3.ts) and the fake
+// Okta that telemetry-mcp trusts (stack/okta.ts) are not engine endpoints and listen on ephemeral ports.
 //
 // Scenario API:
 //   GET  /scenario          -> {startedAt, incidentAt, recoveryAt, now, phase, ...}
@@ -32,6 +33,7 @@ import { cloudwatchHandler } from './cloudwatch.js';
 import { cloudwatchLogsHandler } from './cloudwatch-logs.js';
 import { IncidentIoInbox, incidentIoHandler } from './incident-io.js';
 import { lokiHandler } from './loki.js';
+import { FakeOkta, OKTA_ISSUER_PATH, oktaHandler } from './okta.js';
 import { prometheusHandler } from './prometheus.js';
 import { ResultsStore, resultsS3Handler } from './results-s3.js';
 import { tempoHandler } from './tempo.js';
@@ -125,6 +127,8 @@ const auditDynamodbServer = http.createServer(auditDynamodbHandler(auditStore));
 const auditS3Server = http.createServer(auditS3Handler(auditStore));
 const incidentIoServer = http.createServer(incidentIoHandler(new IncidentIoInbox()));
 const lightdashS3Server = http.createServer(resultsS3Handler(new ResultsStore()));
+const okta = new FakeOkta();
+const oktaServer = http.createServer(oktaHandler(okta));
 
 /** Listens on 127.0.0.1:<port> (0 = ephemeral) and resolves with the server's URL. */
 function listen(server: http.Server, port = 0): Promise<string> {
@@ -148,6 +152,7 @@ const servers = [
     auditS3Server,
     incidentIoServer,
     lightdashS3Server,
+    oktaServer,
 ];
 
 function shutdown(signal: string): void {
@@ -179,6 +184,8 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     const auditS3Url = await listen(auditS3Server, reservedPort(endpoints, 'auditS3'));
     const incidentIoUrl = await listen(incidentIoServer);
     const lightdashS3Url = await listen(lightdashS3Server);
+    const oktaUrl = await listen(oktaServer);
+    okta.issuer = `${oktaUrl}${OKTA_ISSUER_PATH}`;
     const ready = {
         scenario: { url: scenarioUrl },
         prometheus: { url: prometheusUrl },
@@ -190,6 +197,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
         auditS3: { url: auditS3Url },
         incidentIo: { url: incidentIoUrl },
         lightdashS3: { url: lightdashS3Url },
+        okta: { url: oktaUrl, issuer: okta.issuer },
     };
     writeFileSync(`${file}.tmp`, `${JSON.stringify(ready, null, 2)}\n`);
     renameSync(`${file}.tmp`, file);
@@ -205,6 +213,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     console.log(`telemetry-fakes: audit store at ${auditDynamodbUrl} (DynamoDB) and ${auditS3Url} (S3 Object Lock)`);
     console.log(`telemetry-fakes: incident.io receiver at ${incidentIoUrl}`);
     console.log(`telemetry-fakes: Lightdash results S3 at ${lightdashS3Url}`);
+    console.log(`telemetry-fakes: Okta (fake) issuer ${okta.issuer}`);
 }
 
 main(readyFile, endpointsFile).catch((e: unknown) => {

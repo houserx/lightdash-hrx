@@ -12,7 +12,9 @@
 //                           the Platform Database URLs; up.sh starts the engine with exactly this environment;
 //   home/                   the engine's HOME and TMPDIR (nothing of the user's leaks in).
 // and the ready file: {"engine": {host, pgPort, httpUrl, user, password, database, identitySecret},
-//                      "endpoints": {prometheus, loki, tempo, cloudwatch, cloudwatchLogs, auditDynamodb, auditS3}}.
+//                      "endpoints": {prometheus, loki, tempo, cloudwatch, cloudwatchLogs, auditDynamodb, auditS3},
+//                      "telemetryMcp": {user, password, sources}}.
+// `telemetryMcp` is telemetry-mcp's own pg-wire login and its MCP_SOURCES (the non-secret part of [[sources]]).
 //
 // The endpoint ports are reservations: telemetry-fakes listens exactly there (the audit store's two in
 // stack/audit-store.ts). A fake that does not answer shows as unreachable in /healthz (503); an audit store
@@ -30,12 +32,25 @@ const HOST = '127.0.0.1';
 const ENGINE_USER = 'lightdash-operations';
 const ENGINE_DATABASE = 'operations';
 const ENGINE_PASSWORD = 'demo-engine-password-not-real';
+/** pg-wire login of telemetry-mcp (stack/mcp.ts); every query still runs as the caller's hrx.identity. */
+const MCP_ENGINE_USER = 'telemetry-mcp';
+const MCP_ENGINE_PASSWORD = 'demo-mcp-engine-password-not-real';
 const IDENTITY_SECRET = 'demo-identity-secret-not-real';
 const AUDIT_INTEGRITY_KEY = 'demo-audit-integrity-key-not-real';
 const AWS_REGION = 'us-east-2';
 
 const ENDPOINTS = ['prometheus', 'loki', 'tempo', 'cloudwatch', 'cloudwatchLogs', 'auditDynamodb', 'auditS3'] as const;
 type EndpointName = (typeof ENDPOINTS)[number];
+
+/** The [[sources]] below as telemetry-mcp's MCP_SOURCES lists them (each the only, so the default, of its kind). */
+const MCP_SOURCES = [
+    { name: 'prometheus', kind: 'prometheus', default: true },
+    { name: 'loki', kind: 'loki', default: true },
+    { name: 'tempo', kind: 'tempo', default: true },
+    { name: 'cloudwatch', kind: 'cloudwatch', default: true },
+    { name: 'cloudwatch-logs', kind: 'cloudwatch_logs', default: true },
+    { name: 'platform', kind: 'platform_postgres', default: true },
+];
 
 type PlatformDb = {
     host: string;
@@ -91,6 +106,10 @@ identity_secret_env = "HRX_IDENTITY_SECRET"
 [[users]]
 name = ${toml(ENGINE_USER)}
 password_env = "HRX_PG_PASSWORD_OPERATIONS"
+
+[[users]]
+name = ${toml(MCP_ENGINE_USER)}
+password_env = "HRX_PG_PASSWORD_TELEMETRY_MCP"
 
 [[sources]]
 name = "prometheus"
@@ -155,6 +174,7 @@ async function main(stateDir: string, platformPath: string, readyPath: string): 
         TMPDIR: home,
         HRX_IDENTITY_SECRET: IDENTITY_SECRET,
         HRX_PG_PASSWORD_OPERATIONS: ENGINE_PASSWORD,
+        HRX_PG_PASSWORD_TELEMETRY_MCP: MCP_ENGINE_PASSWORD,
         AUDIT_INTEGRITY_KEY,
         HRX_PLATFORM_READ_URL: pgUrl(platform, platform.roles.read),
         HRX_PLATFORM_WRITE_URL: pgUrl(platform, platform.roles.write),
@@ -196,6 +216,7 @@ async function main(stateDir: string, platformPath: string, readyPath: string): 
             identitySecret: IDENTITY_SECRET,
         },
         endpoints: urls,
+        telemetryMcp: { user: MCP_ENGINE_USER, password: MCP_ENGINE_PASSWORD, sources: MCP_SOURCES },
     };
     write(readyPath, `${JSON.stringify(ready, null, 2)}\n`, 0o600);
 }

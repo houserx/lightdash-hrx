@@ -144,6 +144,27 @@ in the UI. To change it, edit the files and run `up.sh` again on a stopped stack
 Open it at `/projects/<Operations Project uuid>/alerting/rules`. The navbar has no Alerting entry yet. The page
 has the tabs Alert Rules, Contact Points and Notification Routes.
 
+## Telemetry MCP server
+
+`up.sh` also starts telemetry-mcp (`packages/telemetry-mcp/dist/main.js`, built by `init.sh`) on an ephemeral port.
+It runs against the demo's Federation Engine with its own pg-wire login, `telemetry-mcp`, and against Lightdash
+with the seed's personal access token as its service account. It trusts a **fake Okta** that runs inside the
+telemetry-fakes process. `stack.json` has `mcp.url` and `okta.issuer`. The server's whole environment is in
+`.state/mcp/mcp.env` (written by `stack/mcp.ts`). It has no `ANTHROPIC_API_KEY`, so `ask_data` reports that AI is
+not configured.
+
+- `GET <mcp.url>/healthz` answers `{"status":"ok"}`.
+- `POST <mcp.url>/mcp` without a bearer token gets `401` with a `WWW-Authenticate` challenge whose
+  `resource_metadata` points to `/.well-known/oauth-protected-resource/mcp`. That metadata names the fake Okta
+  issuer.
+- The fake Okta has no sign-in page. `POST <okta.issuer>/v1/token` with `{"email": "<email>"}` returns an RS256
+  access token for that email (audience `api://telemetry-mcp-demo`, valid for an hour). The server checks the token
+  against the fake Okta's JWKS (`<okta.issuer>/v1/keys`), the same way it checks a real Okta token.
+- A token for the demo user lists every tool: `platform_read` and `platform_write` are set by the seed. A token
+  for an email with no Lightdash user lists no tools.
+
+The fake Okta's key is generated when telemetry-fakes starts, so tokens stop working after `down.sh`.
+
 ## Known limits
 
 - **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's

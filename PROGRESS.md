@@ -2358,3 +2358,39 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   30 s interval and recovery at +35 s, at least one evaluation always lands inside the incident, so the spec's firing
   window is reliable. Stack is down.
 - 2026-11-09T10:13:46Z supervisor: demo-alert-resolves passed the gate in round 1
+
+### demo-mcp-server (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** `up.sh` now starts telemetry-mcp (`node packages/telemetry-mcp/dist/main.js`, built by
+  init.sh's init-mcp.sh) after the seed. It waits for `/healthz` (30 s) and records `mcp: {url}`, `okta: {issuer}` and
+  process `telemetry-mcp` in stack.json. A missing dist fails up.sh early with "run bash ./init.sh".
+  - `stack/okta.ts` (new): a fake Okta mounted in the telemetry-fakes process on an ephemeral port. Its issuer is
+    `http://127.0.0.1:<port>/oauth2/default`, and it serves the JWKS at `/v1/keys` plus discovery. `POST /v1/token
+    {email}` returns an RS256 token with aud `api://telemetry-mcp-demo` that is valid for 1 h. The key is generated
+    at start, so tokens die with the process. It is in telemetry-fakes.json as `okta: {url, issuer}`.
+  - `stack/engine-config.ts`: a second engine `[[users]]` login, `telemetry-mcp` (password env
+    `HRX_PG_PASSWORD_TELEMETRY_MCP`). The ready file gets `telemetryMcp: {user, password, sources}`, where `sources`
+    is MCP_SOURCES mirroring the six `[[sources]]`, each the default of its kind. **If you add an engine source, add
+    it to `MCP_SOURCES` too.**
+  - `stack/mcp.ts` (new): picks a free port and writes `.state/mcp/mcp.env` (0600), the server's whole environment.
+    That covers the Okta issuer/audience, LIGHTDASH_URL/PROJECT_UUID, and the seed's PAT (`seed.json
+    lightdash.apiToken`) as LIGHTDASH_API_TOKEN. The demo user is the org admin, so `/api/v1/org/users` and
+    `/org/attributes` work. It also sets the engine pg/HTTP settings, the shared HRX_IDENTITY_SECRET and
+    MCP_USER_CACHE_TTL_MS=5000. It sets no ANTHROPIC_API_KEY, so `ask_data` says AI is not configured.
+  - docs/eng-1799/demo.md: new section "Telemetry MCP server".
+- **Tested as a user** (fresh up.sh, curl as an MCP client): `/healthz` returned 200 `{"status":"ok"}`. POST /mcp
+  without a token returned 401 with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`.
+  A garbage token returned 401 `error="invalid_token"`. The metadata names the fake Okta issuer. With a demo-user
+  token from the fake Okta, `initialize` worked and `tools/list` returned all 14 tools. `list_sources` returned the
+  6 sources with `opsMarts: []`. `platform_query` `select count(*) from queues` returned n = 4 through the
+  engine (audited). `query_promql` `hrx_fill_queue_backlog{queue="fill"}` at `now` returned 27 (baseline). A token
+  for nobody@example.com got an empty tool list. `alert_state` returned `{"instances": []}` while both rules were
+  Normal. That is Lightdash's own answer: `/alerting/state` lists only non-normal instances. After POST
+  `/scenario/restart {-60, 600}`, it listed both rules **firing** (backlog 150, with rendered annotations).
+- **Checks:** `bash ./init.sh`, then `run.sh --stack mcp-server.spec.ts` passed (1 test). Regression: `--stack`
+  engine-healthy, seed-project and engine-boot pass. Demo typecheck is clean. down.sh stops telemetry-mcp (its pid
+  is in stack.json and `.state` is on its command line), and no process is left.
+- **For demo-mcp-ask:** the metric is `hrx_fill_queue_backlog` (not `fill_queue_backlog`, which returns 0 rows). An
+  instant query needs `at` (`"now"` works). A range query needs start, end and step. The MCP response is SSE
+  (`event: message` / `data: {...}`), so a client must send `accept: application/json, text/event-stream`.
+- 2026-11-09T10:26:58Z supervisor: demo-mcp-server passed the gate in round 1

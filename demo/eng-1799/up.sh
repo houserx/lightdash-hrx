@@ -54,6 +54,8 @@ NODE="$(command -v node || true)"
 [ -d "$DEMO/node_modules/tsx" ] || { echo "up.sh: demo dependencies missing; run bash ./init.sh at the repo root" >&2; exit 1; }
 [ -f "$DEMO/../../packages/frontend/build/index.html" ] ||
     { echo "up.sh: no frontend production build at packages/frontend/build; run bash ./init.sh at the repo root" >&2; exit 1; }
+[ -f "$DEMO/../../packages/telemetry-mcp/dist/main.js" ] ||
+    { echo "up.sh: telemetry-mcp is not built (packages/telemetry-mcp/dist); run bash ./init.sh at the repo root" >&2; exit 1; }
 
 # Pids recorded in stack.json.
 recorded_pids() {
@@ -80,6 +82,7 @@ report() {
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     echo "up.sh: Lightdash: $(json_url "$STACK_JSON" lightdash) (backend with the scheduler and alert worker in-process; results S3 (fake) $(json_url "$STACK_JSON" lightdashS3))"
+    "$NODE" -e 'const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`up.sh: telemetry-mcp: ${s.mcp.url}/mcp (health ${s.mcp.url}/healthz); fake Okta issuer ${s.okta.issuer} (a token: POST ${s.okta.issuer}/v1/token {"email": ...})`)' "$STACK_JSON"
     "$NODE" -e 'const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`up.sh: sign in as ${s.demoUser.email} (password in .state/stack.json demoUser); Operations Project: ${s.lightdash.url}/projects/${s.lightdash.projectUuid}/home`)' "$STACK_JSON"
 }
 
@@ -350,12 +353,38 @@ rm -f "$RUN/seed.json"
 }
 echo "up.sh: Lightdash seeded (demo user, Operations Project on the Federation Engine flavour, dashboards and alerting uploaded)"
 
-# Later demo features start telemetry-mcp here (on ephemeral ports: MCP_PORT and ENGINE_PG_PORT must be set,
-# their defaults are 8080 and 5433) and add it to stack.json below.
+# telemetry-mcp (packages/telemetry-mcp, built by init.sh) on an ephemeral port, against the engine (its own pg-wire
+# login), Lightdash (the seed's personal access token as its service account) and the fake Okta in the
+# telemetry-fakes process. Its whole environment is .state/mcp/mcp.env (written by stack/mcp.ts). The trailing
+# argument is ignored; it puts .state on the command line so down.sh finds the process even without stack.json.
+MCP_DIR="$STATE/mcp"
+rm -f "$RUN/mcp.json"
+(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/mcp.ts" --dir "$MCP_DIR" --engine-file "$RUN/engine-config.json" \
+    --fakes-file "$RUN/telemetry-fakes.json" --seed-file "$RUN/seed.json" --lightdash-url "$LIGHTDASH_URL" \
+    --ready-file "$RUN/mcp.json") ||
+    { echo "up.sh: writing the telemetry-mcp environment failed" >&2; exit 1; }
+DEMO_START_ENV_FILE="$MCP_DIR/mcp.env" \
+    start telemetry-mcp "$NODE" "$ROOT/packages/telemetry-mcp/dist/main.js" --demo-env-file "$MCP_DIR/mcp.env"
+MCP_PID=$STARTED_PID
+MCP_URL="$(json_url "$RUN/mcp.json" mcp)"
+deadline=$((SECONDS + 30))
+until curl -fsS -m 5 "$MCP_URL/healthz" >/dev/null 2>&1; do
+    if ! kill -0 "$MCP_PID" 2>/dev/null; then
+        echo "up.sh: telemetry-mcp exited during start-up; last lines of ${LOGS#"$DEMO"/}/telemetry-mcp.log:" >&2
+        tail -20 "$LOGS/telemetry-mcp.log" >&2
+        exit 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "up.sh: telemetry-mcp did not answer /healthz within 30 s (see ${LOGS#"$DEMO"/}/telemetry-mcp.log)" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+echo "up.sh: telemetry-mcp running ($MCP_URL)"
 
 "$NODE" -e '
 const [file, telemetryFile, telemetryPid, platformFile, platformPid, engineFile, enginePid, lightdashFile, lightdashDbPid, lightdashPid,
-    seedFile] = process.argv.slice(1);
+    seedFile, mcpFile, mcpPid] = process.argv.slice(1);
 const fs = require("fs");
 const telemetry = JSON.parse(fs.readFileSync(telemetryFile, "utf8"));
 const lightdash = JSON.parse(fs.readFileSync(lightdashFile, "utf8"));
@@ -376,18 +405,21 @@ const stack = {
     demoUser: seeded.demoUser,
     lightdashDb: lightdash.lightdashDb,
     lightdashS3: telemetry.lightdashS3,
+    mcp: JSON.parse(fs.readFileSync(mcpFile, "utf8")).mcp,
+    okta: { issuer: telemetry.okta.issuer },
     processes: [
         { name: "telemetry-fakes", pid: Number(telemetryPid) },
         { name: "platform-db", pid: Number(platformPid) },
         { name: "engine", pid: Number(enginePid) },
         { name: "lightdash-db", pid: Number(lightdashDbPid) },
         { name: "lightdash", pid: Number(lightdashPid) },
+        { name: "telemetry-mcp", pid: Number(mcpPid) },
     ],
 };
 fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n", { mode: 0o600 });
 fs.renameSync(file + ".tmp", file);
 ' "$STACK_JSON" "$RUN/telemetry-fakes.json" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID" \
-    "$RUN/lightdash.json" "$LIGHTDASH_DB_PID" "$LIGHTDASH_PID" "$RUN/seed.json"
+    "$RUN/lightdash.json" "$LIGHTDASH_DB_PID" "$LIGHTDASH_PID" "$RUN/seed.json" "$RUN/mcp.json" "$MCP_PID"
 
 echo "up.sh: demo stack is up (state: ${STATE#"$DEMO"/}, stop with demo/eng-1799/down.sh)"
 report
