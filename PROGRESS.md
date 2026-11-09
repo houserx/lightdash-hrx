@@ -1386,3 +1386,29 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: alerts-hcl 4/4, alerts-command 3/3, alerts-rule-conditions 4/4. tsc (common) clean, oxlint clean on
   changed files, oxfmt applied.
 - 2026-11-09T04:45:17Z supervisor: imp-alerts-hcl passed the gate in round 1
+
+## imp-alert-rule-fields (2026-11-09, round 1)
+- packages/common/src/eng1799/grafanaAlertImport.ts:
+  - spaceSlug from the group's `folder_uid`: new `TerraformContext.folderTitle`. `grafana_folder.<name>["<key>"].uid`
+    (or `.id`) is the folder resource's `title` evaluated with `each` bound when the folder resource is in the files
+    read (--folders, or a rule file that defines it, e.g. grafana_lb_rules.tf `"${each.key} - ALB Health"` ->
+    prod-alb-health); with no such resource the key is the title (same convention as --dashboards-tf). Titles are
+    returned wrapped (FOLDER_TITLE key) so a literal uid string (`"osP4qAHIk"`) is NOT taken for a title: that is a
+    `terraform-unresolved` on the group path and the rules get no spaceSlug.
+  - `for` (Prometheus duration kept as written, "0m" too; unreadable -> option-dropped), `timeRange` = widest
+    whole-second `relative_time_range.from` of the rule's queries (expressions ignored; from 0 ignored; unreadable
+    -> option-dropped), `to != 0` -> option-dropped (rule queries up to now).
+  - no_data_state NoData/OK/Alerting/KeepLast -> nodata/normal/alerting/keep_last; exec_err_state Error/Alerting/
+    KeepLast -> error/alerting/keep_last. exec_err_state OK -> errorState keep_last (decision: closest to "don't
+    alert on errors") with new warning code `rule-state-changed` (importWarnings.ts). Other values -> option-dropped.
+  - convertRule now takes `{name, interval, spaceSlug}` for the group; readDuration moved above it (no-use-before-define).
+- Unit test: grafanaAlertImport.test.ts 'carries the folder space, for, window and no-data and error states' (8 tests).
+- Tested as a user: CLI on a synthetic group (Service Mesh folder, for 10m, interval 120, window 900, OK/OK states,
+  paused) -> spaceSlug service-mesh, for 10m, interval 2m, timeRange 15m, noDataState normal, errorState keep_last,
+  paused, shadow; IMPORT-REPORT.md row rule-state-changed. Full fixture set with --folders: 84 rules, 79 with a space
+  (kubernetes, service-mesh, rds, platform, aws, vendor, prod/staging-alb-health, ...); 2 groups with literal folder
+  uids (dialpad, pg_cron) warned; 78 with timeRange (one fixture rule really has from = 63469 -> 63469s).
+- Follow-up for docs/full-ruleset features: new code `rule-state-changed` needs a line in the warning catalogue.
+- Acceptance: alerts-rule-fields 3/3, alerts-command 3/3, alerts-rule-conditions 4/4, alerts-hcl 4/4. tsc (common)
+  clean, oxlint clean on changed files, oxfmt applied.
+- 2026-11-09T04:52:57Z supervisor: imp-alert-rule-fields passed the gate in round 1

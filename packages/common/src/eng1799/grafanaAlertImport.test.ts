@@ -235,6 +235,102 @@ resource "grafana_rule_group" "unknown" {
         ).toEqual([expect.objectContaining({ code: 'terraform-unresolved' })]);
     });
 
+    it('carries the folder space, for, window and no-data and error states', () => {
+        const windowed = (from: number, to = 0) => `
+    data {
+      ref_id = "A"
+      relative_time_range {
+        from = ${from}
+        to   = ${to}
+      }
+      datasource_uid = grafana_data_source.prometheus-production.uid
+      model          = jsonencode({ expr = "up", refId = "A", instant = true })
+    }`;
+        const states = (noData: string, execErr: string) =>
+            `no_data_state = "${noData}"\n    exec_err_state = "${execErr}"\n    annotations = { summary = "s" }`;
+        const rules = `
+resource "grafana_rule_group" "mesh" {
+  name             = "mesh"
+  folder_uid       = grafana_folder.this["Service Mesh"].uid
+  interval_seconds = 120
+${rule('Fields', windowed(900) + reduceThreshold('gt', 1), `for = "10m"\n    is_paused = true\n    ${states('OK', 'Alerting')}`)}
+${rule('Keep', windowed(600, 60) + reduceThreshold('gt', 1), states('KeepLast', 'KeepLast'))}
+${rule('Error OK', windowed(90) + reduceThreshold('gt', 1), `for = "soon"\n    ${states('NoData', 'OK')}`)}
+}
+resource "grafana_rule_group" "titled" {
+  name       = "titled"
+  folder_uid = grafana_folder.named["k8s"].uid
+${rule('Titled', windowed(600) + reduceThreshold('gt', 1), states('Alerting', 'Error'))}
+}
+resource "grafana_rule_group" "literal" {
+  name       = "literal"
+  folder_uid = "osP4qAHIk"
+${rule('Literal', windowed(600) + reduceThreshold('gt', 1), states('Maybe', 'Error'))}
+}
+`;
+        const folders = `
+resource "grafana_folder" "named" {
+  for_each = { k8s = "Kubernetes Clusters" }
+  title    = each.value
+}
+`;
+        const result = convertGrafanaAlerting({
+            rules: [{ file: 'rules.tf', text: rules }],
+            contactPoints: { file: 'contact_points.tf', text: CONTACT_POINTS },
+            policy: { file: 'policy.tf', text: POLICY },
+            locals: [{ file: 'locals.tf', text: LOCALS }],
+            folders: { file: 'folders.tf', text: folders },
+            datasources: DATASOURCES,
+        });
+        result.alertRules.forEach((doc) =>
+            expect(validateAlertingAsCode(doc).errors).toEqual([]),
+        );
+        const byName = (name: string) =>
+            result.alertRules.find((r) => r.name === name);
+        expect(byName('Fields')).toMatchObject({
+            spaceSlug: 'service-mesh',
+            for: '10m',
+            interval: '2m',
+            timeRange: '15m',
+            noDataState: 'normal',
+            errorState: 'alerting',
+            paused: true,
+            shadow: true,
+        });
+        expect(byName('Keep')).toMatchObject({
+            timeRange: '10m',
+            noDataState: 'keep_last',
+            errorState: 'keep_last',
+        });
+        expect(byName('Error OK')).toMatchObject({
+            timeRange: '90s',
+            noDataState: 'nodata',
+            errorState: 'keep_last',
+        });
+        expect(byName('Error OK')).not.toHaveProperty('for');
+        expect(byName('Titled')).toMatchObject({
+            spaceSlug: 'kubernetes-clusters',
+            noDataState: 'alerting',
+            errorState: 'error',
+        });
+        expect(byName('Literal')).not.toHaveProperty('spaceSlug');
+        expect(byName('Literal')).not.toHaveProperty('noDataState');
+        const codes = (ruleName: string) =>
+            result.warnings
+                .filter((w) => w.rule === ruleName)
+                .map((w) => w.code);
+        expect(codes('Error OK')).toEqual(
+            expect.arrayContaining(['rule-state-changed', 'option-dropped']),
+        );
+        expect(codes('Keep')).toContain('option-dropped');
+        expect(codes('Literal')).toContain('option-dropped');
+        expect(
+            result.warnings.filter(
+                (w) => w.path === 'grafana_rule_group.literal',
+            ),
+        ).toEqual([expect.objectContaining({ code: 'terraform-unresolved' })]);
+    });
+
     it('turns classic conditions and ranges into the reducer and condition', () => {
         const classic = (reducer: string, evaluator: string, extra = '') =>
             exprData(

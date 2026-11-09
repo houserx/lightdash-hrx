@@ -8,6 +8,8 @@
  * importer can't translate is still emitted, valid and paused, with a `rule-needs-review` warning.
  */
 import type {
+    AlertErrorState,
+    AlertNoDataState,
     AlertRuleAsCode,
     ContactPointAsCode,
     ContactPointIntegrationAsCode,
@@ -36,6 +38,7 @@ import {
     getHclAttribute,
     getHclBlocks,
     hclHasUnknown,
+    HclUnknown,
     isHclObject,
     isHclUnknown,
     parseHcl,
@@ -177,6 +180,9 @@ const secondsToDuration = (seconds: number): string => {
     return `${seconds}s`;
 };
 
+/** The key {@link TerraformContext.folderTitle} wraps a resolved folder title in. */
+const FOLDER_TITLE = '\u0000grafana_folder_title';
+
 // The import's own error type sits next to the Terraform context it reads with.
 /* eslint-disable max-classes-per-file */
 
@@ -297,6 +303,66 @@ class TerraformContext {
             variables,
             resolve: (root, steps) => this.resolve(root, steps),
         });
+    }
+
+    /**
+     * The title of the Grafana folder a `folder_uid` attribute points at, or `undefined` when the
+     * body doesn't set it. `grafana_folder.<name>["<key>"].uid` is the instance's `title` with
+     * `each` bound when grafana_folders.tf is read; without it, the key is the title (the
+     * infra's `for_each = toset(local.folders)` with `title = each.key`, as `--dashboards-tf`
+     * reads it). Anything else (a literal uid) stays an `HclUnknown`.
+     */
+    folderTitle(
+        body: HclBody,
+        hcl: HclFile,
+        variables: Record<string, HclValue> = {},
+    ): HclValue | undefined {
+        const attribute = getHclAttribute(body, 'folder_uid');
+        if (attribute === undefined) return undefined;
+        // Titles come back wrapped, so a literal uid string is not taken for a title.
+        const value = evaluateHcl(attribute.expr, hcl.text, {
+            variables,
+            resolve: (root, steps) => {
+                if (root !== 'grafana_folder') return this.resolve(root, steps);
+                const title = this.folderTitleOf(steps);
+                return title === undefined
+                    ? undefined
+                    : { [FOLDER_TITLE]: title };
+            },
+        });
+        if (isHclUnknown(value)) return value;
+        const title = isHclObject(value) ? value[FOLDER_TITLE] : undefined;
+        if (typeof title === 'string' || isHclUnknown(title)) return title;
+        return new HclUnknown(
+            hcl.text.slice(attribute.expr.start, attribute.expr.end),
+            'it is not a grafana_folder reference',
+        );
+    }
+
+    private folderTitleOf(steps: HclStep[]): HclValue | undefined {
+        const last = steps[steps.length - 1];
+        if (last !== 'uid' && last !== 'id') return undefined;
+        const [name, ...keys] = steps.slice(0, -1);
+        if (typeof name !== 'string' || keys.length > 1) return undefined;
+        const resource = this.resources.get(`grafana_folder.${name}`);
+        const forEach =
+            resource &&
+            this.attribute(resource.block.body, 'for_each', resource.hcl);
+        if (keys.length === 0) {
+            if (!resource || forEach !== undefined) return undefined;
+            return this.attribute(resource.block.body, 'title', resource.hcl);
+        }
+        const [key] = keys;
+        if (!resource) return String(key);
+        if (forEach === undefined) return undefined;
+        const each = forEachInstances(forEach, 'value')?.find(
+            (instance) => instance.key === key,
+        );
+        return each === undefined
+            ? undefined
+            : this.attribute(resource.block.body, 'title', resource.hcl, {
+                  each,
+              });
     }
 
     /** An attribute's value, or `undefined` when the body doesn't set it. */
@@ -460,6 +526,22 @@ type RuleData = {
     refId: string;
     datasourceUid: HclValue | undefined;
     model: Record<string, unknown> | undefined;
+    /** `relative_time_range`: seconds before now the query starts and ends. */
+    from: HclValue | undefined;
+    to: HclValue | undefined;
+};
+
+const NO_DATA_STATES: Record<string, AlertNoDataState> = {
+    NoData: 'nodata',
+    OK: 'normal',
+    Alerting: 'alerting',
+    KeepLast: 'keep_last',
+};
+
+const ERROR_STATES: Record<string, AlertErrorState> = {
+    Error: 'error',
+    Alerting: 'alerting',
+    KeepLast: 'keep_last',
 };
 
 const readModel = (
@@ -672,13 +754,53 @@ const convertCondition = (
     };
 };
 
+const readDuration = (
+    value: HclValue | undefined,
+    what: string,
+    warn: Warn,
+    where: Partial<ImportWarning>,
+): string | undefined => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string' && DURATION_PATTERN.test(value)) return value;
+    warn({
+        code: 'option-dropped',
+        message: `${what} ${isHclUnknown(value) ? value.text : JSON.stringify(value)} is not a duration the importer can read; it is not imported.`,
+        ...where,
+    });
+    return undefined;
+};
+
+/** What a rule takes from its rule group. */
+type RuleGroupSettings = {
+    name: string;
+    interval: string | undefined;
+    spaceSlug: string | undefined;
+};
+
+/** A Grafana no-data or error state; `undefined` when the rule leaves it at the default. */
+const readRuleState = <T extends string>(
+    value: HclValue | undefined,
+    attribute: string,
+    states: Record<string, T>,
+    warn: Warn,
+): T | undefined => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string' && value in states) return states[value];
+    warn({
+        code: 'option-dropped',
+        message: `The rule's ${attribute} ${
+            isHclUnknown(value) ? value.text : JSON.stringify(value)
+        } is not a state the importer can read; the rule keeps the default.`,
+    });
+    return undefined;
+};
+
 const convertRule = (
     tf: TerraformContext,
     hcl: HclFile,
-    group: string,
+    groupSettings: RuleGroupSettings,
     index: number,
     rule: ExpandedBlock,
-    interval: string | undefined,
     datasources: GrafanaDatasource[] | undefined,
     takenSlugs: Set<string>,
     warn: Warn,
@@ -687,6 +809,7 @@ const convertRule = (
     const read = (key: string) => tf.attribute(body, key, hcl, variables);
     const nameValue = read('name');
     const readable = typeof nameValue === 'string' && nameValue.trim() !== '';
+    const group = groupSettings.name;
     const name = readable ? nameValue.trim() : `${group} rule ${index + 1}`;
     if (!readable) {
         warn({
@@ -703,10 +826,15 @@ const convertRule = (
         .map((d) => {
             const readData = (key: string) =>
                 tf.attribute(d.body, key, hcl, d.variables);
+            const [range] = getHclBlocks(d.body, 'relative_time_range');
+            const readRange = (key: string) =>
+                range && tf.attribute(range.body, key, hcl, d.variables);
             return {
                 refId: asString(readData('ref_id')) ?? '',
                 datasourceUid: readData('datasource_uid'),
                 model: readModel(readData('model')),
+                from: readRange('from'),
+                to: readRange('to'),
             };
         });
     data.filter((d) => d.model === undefined).forEach((d) =>
@@ -791,6 +919,70 @@ const convertRule = (
         });
     }
 
+    // The query window: the widest `from` of the rule's queries (expressions have none).
+    let timeRange: string | undefined;
+    const isSeconds = (from: HclValue | undefined): from is number =>
+        typeof from === 'number' && Number.isInteger(from) && from >= 0;
+    const windows = queries
+        .map((q) => q.from)
+        .filter((from) => from !== undefined);
+    const unreadable = windows.filter((from) => !isSeconds(from));
+    const widest = Math.max(0, ...windows.filter(isSeconds));
+    if (widest > 0) timeRange = secondsToDuration(widest);
+    if (unreadable.length > 0) {
+        ruleWarn({
+            code: 'option-dropped',
+            message: `The relative_time_range from ${unreadable
+                .map((from) =>
+                    isHclUnknown(from) ? from.text : JSON.stringify(from),
+                )
+                .join(
+                    ', ',
+                )} is not a whole number of seconds the importer can read; ${
+                timeRange === undefined
+                    ? 'the rule uses the default time range'
+                    : `the rule queries the widest readable window, ${timeRange}`
+            }.`,
+        });
+    }
+    const ends = queries.filter((q) => q.to !== undefined && q.to !== 0);
+    if (ends.length > 0) {
+        ruleWarn({
+            code: 'option-dropped',
+            message: `The query ${ends
+                .map((q) => q.refId)
+                .join(
+                    ', ',
+                )} ends before now (relative_time_range.to); the imported rule queries up to now.`,
+        });
+    }
+
+    const forValue = readDuration(read('for'), "The rule's for", ruleWarn, {});
+    const noDataState = readRuleState(
+        read('no_data_state'),
+        'no_data_state',
+        NO_DATA_STATES,
+        ruleWarn,
+    );
+    const execErrState = read('exec_err_state');
+    let errorState: AlertErrorState | undefined;
+    if (execErrState === 'OK') {
+        // Lightdash has no "normal on error": keeping the last state is closest (no new alert).
+        errorState = 'keep_last';
+        ruleWarn({
+            code: 'rule-state-changed',
+            message:
+                "The rule's exec_err_state is OK, which Lightdash has no error state for; the imported rule keeps its last state when the query fails (errorState keep_last).",
+        });
+    } else {
+        errorState = readRuleState(
+            execErrState,
+            'exec_err_state',
+            ERROR_STATES,
+            ruleWarn,
+        );
+    }
+
     const isPaused = read('is_paused') === true;
     if (review.length > 0) {
         ruleWarn({
@@ -805,13 +997,22 @@ const convertRule = (
         slug: uniqueSlug(toSlug(name, 'alert-rule'), takenSlugs),
         name,
         description,
+        ...(groupSettings.spaceSlug !== undefined
+            ? { spaceSlug: groupSettings.spaceSlug }
+            : {}),
         ...(labels ? { labels } : {}),
         ...(annotations ? { annotations } : {}),
         query: query ?? PLACEHOLDER_ALERT_QUERY,
-        ...(interval !== undefined ? { interval } : {}),
         ...('review' in converted
             ? { condition: { operator: '>', threshold: 0 } }
             : { reducer: converted.reducer, condition: converted.condition }),
+        ...(forValue !== undefined ? { for: forValue } : {}),
+        ...(groupSettings.interval !== undefined
+            ? { interval: groupSettings.interval }
+            : {}),
+        ...(timeRange !== undefined ? { timeRange } : {}),
+        ...(noDataState !== undefined ? { noDataState } : {}),
+        ...(errorState !== undefined ? { errorState } : {}),
         paused: isPaused || review.length > 0,
         shadow: true,
     };
@@ -949,22 +1150,6 @@ const convertContactPoint = (
         });
     });
     return integrations;
-};
-
-const readDuration = (
-    value: HclValue | undefined,
-    what: string,
-    warn: Warn,
-    where: Partial<ImportWarning>,
-): string | undefined => {
-    if (value === undefined || value === null) return undefined;
-    if (typeof value === 'string' && DURATION_PATTERN.test(value)) return value;
-    warn({
-        code: 'option-dropped',
-        message: `${what} ${isHclUnknown(value) ? value.text : JSON.stringify(value)} is not a duration the importer can read; it is not imported.`,
-        ...where,
-    });
-    return undefined;
 };
 
 const readGroupBy = (
@@ -1258,6 +1443,21 @@ export const convertGrafanaAlerting = (
                         ...where,
                     });
                 }
+                const folder = tf.folderTitle(group.body, hcl, variables);
+                let spaceSlug: string | undefined;
+                if (typeof folder === 'string' && folder.trim() !== '') {
+                    spaceSlug = toSlug(folder, 'space');
+                } else if (folder !== undefined) {
+                    warn({
+                        code: 'terraform-unresolved',
+                        message: `The folder of the rule group ${groupName} (${
+                            isHclUnknown(folder)
+                                ? folder.text
+                                : JSON.stringify(folder)
+                        }) is not a Grafana folder the importer can read; its rules are in no space.`,
+                        ...where,
+                    });
+                }
                 tf.blocks(
                     group.body,
                     'rule',
@@ -1270,10 +1470,9 @@ export const convertGrafanaAlerting = (
                         convertRule(
                             tf,
                             hcl,
-                            groupName,
+                            { name: groupName, interval, spaceSlug },
                             index,
                             rule,
-                            interval,
                             input.datasources,
                             ruleSlugs,
                             warn,

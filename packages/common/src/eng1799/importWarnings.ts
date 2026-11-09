@@ -57,6 +57,7 @@ export type ImportWarningCode =
     | 'rule-needs-review'
     | 'rule-description-generated'
     | 'rule-null-handling-changed'
+    | 'rule-state-changed'
     | 'contact-point-integration-unsupported'
     | 'contact-point-skipped'
     | (string & {});
