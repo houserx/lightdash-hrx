@@ -1858,3 +1858,18 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   with "1 invalid", so lint really validates the importer output. Scratch output was deleted afterwards.
 - Checks: roundtrip-lint 2/2 after init.
 - 2026-11-09T06:14:58Z supervisor: imp-roundtrip-lint passed the gate in round 1
+
+## imp-roundtrip-warning-snapshot (2026-11-09)
+
+- Added docs/eng-1799/importers-warning-counts.json, the per-code warning counts and TODOs from importing every
+  fixture: grafana-dashboard total 4035 / 18 TODOs (27 codes; option-dropped 3093 is most of it), grafana-alerts
+  79 / 11 (12 codes), perses-dashboard 12 / 1 (5 codes). No importer code change. byCode keys are sorted
+  alphabetically and the sums equal the totals.
+- How it was made: from packages/cli, ran the three imports the way the round-trip helpers do (all 32 grafana_config
+  dashboards with --datasources and --dashboards-tf; grafana-alerts with every rule group file, contact points, policy,
+  --locals, --folders, --datasources; perses node-overview.yaml + api-latency.json). Each exited 0. Then a node
+  one-liner copied {total, todos, byCode} out of each import-summary.json into the doc. Scratch output deleted.
+- Trap for later sessions: this file is a snapshot. Any change that adds, removes or renames a warning must regenerate
+  it the same way, or roundtrip-warning-snapshot fails.
+- Checks: roundtrip-warning-snapshot 3/3 after init.
+- 2026-11-09T06:17:10Z supervisor: imp-roundtrip-warning-snapshot passed the gate in round 1
