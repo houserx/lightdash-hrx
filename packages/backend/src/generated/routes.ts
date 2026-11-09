@@ -63597,6 +63597,8 @@ const models: TsoaRoute.Models = {
                 { dataType: 'enum', enums: ['mobilePushLiveActivityStart'] },
                 { dataType: 'enum', enums: ['mobilePushLiveActivity'] },
                 { dataType: 'enum', enums: ['sweepMobilePushLiveActivities'] },
+                { dataType: 'enum', enums: ['alertingTick'] },
+                { dataType: 'enum', enums: ['alertRuleEvaluate'] },
                 { dataType: 'enum', enums: ['handleScheduledDelivery'] },
                 { dataType: 'enum', enums: ['sendSlackNotification'] },
                 { dataType: 'enum', enums: ['sendEmailNotification'] },

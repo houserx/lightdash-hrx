@@ -58059,6 +58059,8 @@
                     "mobilePushLiveActivityStart",
                     "mobilePushLiveActivity",
                     "sweepMobilePushLiveActivities",
+                    "alertingTick",
+                    "alertRuleEvaluate",
                     "handleScheduledDelivery",
                     "sendSlackNotification",
                     "sendEmailNotification",

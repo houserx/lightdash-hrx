@@ -1321,3 +1321,8 @@ export { getDeferredExploreName } from './dbt/qualifiedName';
 export * from './utils/exploreName';
 
 export * from './alerting';
+// ENG-1799 integration base: ldq (utils/timeRange) and alerting (alerting/durations) both export
+// formatPrometheusDuration; they differ only for weeks and years (`7d` vs `1w`). The package root
+// exports ldq's, which builds the dashboard time parameters; alerting keeps its own internally.
+// Reconciling the two is an integration-line task (PROGRESS.md).
+export { formatPrometheusDuration } from './utils/timeRange';
