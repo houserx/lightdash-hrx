@@ -2143,3 +2143,4 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - For the next session: SQL chart Tiles on audited sources need a chart `description`. A Tile's results are not
   cached (federation bypasses the results cache), so each dashboard load writes 2 audit records per Tile.
 - 2026-11-09T08:54:36Z supervisor: demo-dashboard-platform-db passed the gate in round 1
+- 2026-11-09T08:55:29Z supervisor: demo-grafana-fixture halted: the worker halted on demo-grafana-fixture
