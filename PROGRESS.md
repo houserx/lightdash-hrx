@@ -470,3 +470,18 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - Fake servers in the harness stop with `close()` (support.ts `track` handles both).
 - 2026-11-09T02:36:57Z supervisor: int-client-connect passed the gate in round 1
 - 2026-11-09T02:37:43Z supervisor: int-client-catalog halted: the worker halted on int-client-catalog
+- 2026-11-09 int-client-metric-functions: **no code change needed.** The check passed on the first
+  run after `init.sh` (1/1, ~5 s); the integrated `FederationWarehouseClient` already parses the
+  engine's json `labels` into objects.
+  Tested by hand with a tsx script outside the repo (real engine + fake Prometheus/Loki/CloudWatch,
+  synthetic series) through `warehouseClientFromCredentials(...).runQuery`: promql (2 series ×
+  4 steps), promql_instant, logql_metric and cloudwatch all return the §1.1 columns
+  timestamp/value/labels/series typed timestamp/number/string/string, with `labels` arriving as a JS
+  object; `label(labels,'route')` → the value, a missing key → null, `series_name(labels)` →
+  `{__name__="http_requests",code="200",route="/refills"}` (keys sorted); cloudwatch `series` is the
+  target's `label`, and its labels hold the dimensions plus `metric_name`/`namespace`/`statistic`/`label`.
+  No engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - Lightdash reports the `labels` field type as `string` even though row values are objects
+    (json → string mapping); checks should accept an object or parse a string.
+- 2026-11-09T02:39:48Z supervisor: int-client-metric-functions passed the gate in round 1
