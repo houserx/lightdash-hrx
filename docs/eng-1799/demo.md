@@ -216,6 +216,14 @@ Chromium outlives the run.
   waterfall" Tile (the pinned trace, the `trace_id` parameter's default). The span's drawer shows the service, a
   duration of 2 s or more and the span's attributes. Restart the clock first, as for 02-incident (the incident may
   already have started). Key moment: the waterfall with the slow span's drawer open, next to the filtered log stream.
+- **05-investigate**: waits on the scenario clock for the `incident`, then opens New → Query using SQL runner and
+  switches it to Investigate (offered because the Operations Project's warehouse is the federation flavour). It picks
+  Prometheus, types `max by (queue) (hrx_fill_queue_backlog{job="fill-service"})` and runs it over Investigate's
+  time range: three lines, one per queue. It then edits the SQL box so the query has its own window
+  (`now() - INTERVAL '1 hour', now(), '15s'` instead of the reserved time parameters; see Known limits), runs it again
+  and saves it with Save as chart. Lightdash opens the new SQL chart, which lists the promql() rows with the fill
+  queue around 150. Edit chart then shows its SQL. Each run saves one more chart, named with the run's time. Restart
+  the clock first, as for 02-incident. Key moment: the saved chart open for editing, its promql() SQL above the rows.
 
 ## Known limits
 
@@ -225,6 +233,12 @@ Chromium outlives the run.
   SQL box, fails with "table 'datafusion.public.fills' not found". Run it as Platform SQL instead (see above). To
   fix this, the importer could wrap the SQL, or the SQL Runner could mark a chart as Platform SQL. Either change has
   to keep the portal text unchanged.
+
+- **ENG-1799 follow-up: a saved Investigate chart has no time range on its own.** Investigate writes
+  `${ld.parameters.__from}`, `__to` and `__interval` into the SQL, and "Save as chart" keeps them. On a dashboard the
+  Dashboard Time Range fills them in. Opened on its own (the chart page, or Edit chart in the SQL Runner), the chart
+  sends no time range, so it fails with "Missing values for SQL parameter(s): __from, __to, __interval". Until the SQL
+  chart pages get a time range (or a default), give the query its own window before saving, as scene 05 does.
 
 - **ENG-1799 follow-up: no "latest slow trace" waterfall.** Table-function arguments must be constants in the
   Federation Engine, so `trace((SELECT trace_id FROM traceql(...) LIMIT 1))` is refused. A Tile can't follow the

@@ -2561,3 +2561,40 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-04-service-health.spec.ts` passed (17.7 s test).
   The demo typecheck is clean. No chromium or `.state` process is left.
 - 2026-11-09T11:37:20Z supervisor: demo-scene-04-service-health passed the gate in round 1
+
+### demo-scene-05-investigate (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/05-investigate.spec.ts` (about 30 `expect`s, scene timeout 300 s). It waits on the
+    scenario clock for `incident` (max 120 s away), signs in, opens New → Query using SQL runner and switches the
+    "SQL Runner mode" control to Investigate. Save as chart is disabled before there is SQL. It picks Prometheus,
+    types `max by (queue) (hrx_fill_queue_backlog{job="fill-service"})`, checks the generated
+    `SELECT * FROM promql(...)` SQL, runs it (`investigate-timeseries`, `data-series-count` 3), then edits the SQL box
+    (see the trap below) and runs it again (`investigate-table` with a `{queue="fill"}` cell). Save as chart, with
+    a name that includes the run's UTC time. Lightdash navigates to the chart page: the toast, the name, the saved chart
+    via `GET sqlRunner/saved/slug/<slug>` (name, the exact SQL, `promql(`), and the Results tab rows without
+    an error. Finally Edit chart → SQL tab: the Monaco editor shows `promql(` and the fixed window. Key moment: that
+    editor view with the results below it.
+  - docs/eng-1799/demo.md: a 05-investigate bullet under "Walkthrough scenes (recorded)" and a new Known limits
+    item (below).
+- **Trap / follow-up (app gap, not fixed here).** Investigate writes the reserved `${ld.parameters.__from}`,
+  `__to` and `__interval` into the SQL, and Save as chart keeps them. A SQL chart opened on its own (ViewSqlChart, or
+  Edit chart in the SQL Runner) sends no `timeRange`, so the chart fails with "Missing values for SQL parameter(s):
+  __from, __to, __interval". Only dashboard Tiles fill them in. The plumbing already accepts `timeRange`
+  (useSavedSqlChartResults / executeQuery), but no caller passes one for a standalone chart. CONTRACTS §2 doesn't
+  say what range a standalone chart should get, so I left the app alone. The scene replaces the reserved arguments
+  with `now() - INTERVAL '1 hour', now(), '15s'` (the same pattern as the seeded hrx_fill_queue_backlog virtual view),
+  selects `"timestamp", "value", "series"` (the `labels` struct shows as "[object Object]" in Lightdash tables) and
+  adds `ORDER BY "timestamp" DESC`. Without `labels`, Investigate shows the result as a table, not a time series.
+- **Selector notes.** Mantine SegmentedControl options are clicked by their label text (`getByText('Investigate',
+  {exact})`) and checked with `getByRole('radio')`. The SQL box is `getByRole('textbox', {name: 'SQL', exact: true})`.
+  The Save as chart modal is `getByRole('dialog', {name: 'Save as chart'})`. The chart lands in the first space the
+  user can create in ("Platform db"). Each scene run adds a chart. The check counts only charts that are new.
+- **Tested as a user.** I ran up.sh, restarted the clock with `{-150, 900}` and ran `run.sh 05-investigate`. It passed
+  in about 28 s, and the video is 1920x1080, about 26 s long. The frame at 9 s shows Investigate with Prometheus, the
+  typed PromQL and the generated promql() SQL. key-moment.png shows the chart "Fill queue backlog by queue
+  (Investigate HH:MM:SS UTC)" in edit mode: the promql() SQL with the 1-hour window, and 500 result rows (newest first,
+  fill around 140-175, pack and ship in the teens or lower).
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-05-investigate.spec.ts` passed (31 s). The demo
+  typecheck is clean. No chromium or `.state` process is left.
+- 2026-11-09T11:56:30Z supervisor: demo-scene-05-investigate passed the gate in round 1
