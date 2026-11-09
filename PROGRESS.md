@@ -1296,3 +1296,24 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Tested as a user: I read the amended sections in place and checked each claim against its source. Check:
   int-contracts-amended 1/1. No server was started.
 - 2026-11-09T05:40:36Z supervisor: int-contracts-amended passed the gate in round 1
+- 2026-11-09 int-docs-integration (round 1): docs and a runner only, no product code changed.
+  - New `docs/eng-1799/integration.md`. It covers how to run the suite (`bash ./init.sh`, the protected
+    `acceptance/run.sh`, `run-all.sh`) and the ground rules (No Docker, ephemeral ports, `tmp/e2e` layout,
+    caps). A Harness section has one row per `start*` helper and says `startLightdash` is a full boot, not
+    service-layer. "What each check proves" has one row per acceptance file (50) in feature order, with
+    its kind. "Open checks" describes the two failing checks. "Reconciled assumptions" links
+    `contract-assumptions.md` and lists the 8 code-changing conflicts with their int-fix checks.
+  - New `e2e/eng-1799/run-all.sh` (executable). It runs every `acceptance/*.test.ts` in name order, each
+    through `acceptance/run.sh`, and takes an optional id prefix (`run-all.sh int-write-`). It keeps going
+    after a failure, prints passed/failed counts and the failed ids, and exits non-zero on any failure.
+  Tested as a user: I read the doc. I ran `bash e2e/eng-1799/run-all.sh` for the whole suite: 48 passed and
+  2 failed, 370 s. No process or `tmp/e2e` dir was left behind. Check: int-docs-integration 2/2.
+  Next sessions must know: the two failures do not share a cause.
+  - `int-harness-fake-bigquery` gets 9 rows: DataFusion's information_schema views are listed under the
+    ops_marts catalog. This needs a decision (engine change or amended check).
+  - `int-client-catalog` gets past `getAllTables` but fails on `getFields`. `hour` and `fills` come back as
+    `string`, not `timestamp`/`number`, so the Ops Mart column types that reach Lightdash through
+    information_schema.columns are wrong.
+  When those pass, update the "Open checks" section and the "Not passing yet" notes in rows 9 and 11 of
+  integration.md.
+- 2026-11-09T05:51:07Z supervisor: int-docs-integration passed the gate in round 1
