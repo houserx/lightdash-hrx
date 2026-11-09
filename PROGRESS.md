@@ -450,3 +450,22 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     have to extend it (the Rust harness `telemetry.rs` `logs_insights_mock` is the model).
 - 2026-11-09T02:30:06Z supervisor: int-harness-fake-cloudwatch-logs passed the gate in round 1
 - 2026-11-09T02:34:53Z supervisor: int-harness-fake-bigquery halted: the worker halted on int-harness-fake-bigquery
+- 2026-11-09 int-client-connect: **no code change needed.** The integrated base already has
+  `packages/warehouses/src/warehouseClients/FederationWarehouseClient.ts` (ldq line, extends
+  `PostgresWarehouseClient`) and `warehouseClientFromCredentials` picks it for
+  `type: 'postgres'` + `flavor: 'federation'` (`isFederationCredentials`). The check passed on
+  the first run after `init.sh` (1/1, ~9 s).
+  Tested by hand with a tsx script outside the repo against the real engine + fake Prometheus:
+  federation creds → `FederationWarehouseClient`; `test()` resolves; `SELECT 1 AS one,
+  'synthetic' AS word, now() AS at, true AS flag, 1.5::float8 AS f` → 1 row, fields number
+  (integer) / string / timestamp / boolean / number (float); `promql_instant('up', now())` →
+  1 row, fields timestamp/value(number)/labels(string)/series(string); an unknown table function
+  surfaces as `WarehouseQueryError` with the engine's planning message; `flavor: 'postgres'` and
+  no flavor → `PostgresWarehouseClient`. No engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - Without `options.getIdentityToken` the client sends no `SET hrx.identity`; the engine then
+    applies its no-identity rules (fine for the plain SELECT/promql here). Checks that need
+    restricted or platform access must pass a token provider (FederationService does).
+  - The engine's `json` columns (e.g. promql `labels`) map to Lightdash `string`.
+  - Fake servers in the harness stop with `close()` (support.ts `track` handles both).
+- 2026-11-09T02:36:57Z supervisor: int-client-connect passed the gate in round 1
