@@ -2145,3 +2145,22 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - 2026-11-09T08:54:36Z supervisor: demo-dashboard-platform-db passed the gate in round 1
 - 2026-11-09T08:55:29Z supervisor: demo-grafana-fixture halted: the worker halted on demo-grafana-fixture
 - 2026-11-09T08:56:57Z supervisor: demo-portal-script halted: worker demo.feature.demo-portal-script.r1 stopped: STOP file present
+
+## Decisions by the controls engineer (2026-11-09, after three halts)
+
+- **`demo-package-workspace`:** the protected `package.spec.ts` ran `git check-ignore -q` with two paths, which git
+  always rejects. Fixed in the spec (one call per path). Redo the feature; the earlier session's notes still apply.
+- **`demo-dashboard-service-health` (trace waterfall), decided: a pinned example trace, no engine change.**
+  - The demo's fake Tempo serves one **pinned example trace** for the incident's slow call under a fixed,
+    documented trace id that never changes with the scenario clock or a restart: for example the hex id
+    `de300000000000000000000000000001`. Put it in one shared constant. The trace has the slow
+    `shipping-label-api` span and looks like the incident's other slow traces. The fake returns it from
+    `trace(<id>)` at any time, and it shows in `traceql()` search results while the incident runs.
+  - The Service health dashboard gets a `trace_id` parameter whose default is that id. The trace_waterfall
+    Tile's SQL is `SELECT ... FROM trace('${ld.parameters.trace_id}')` (or the reserved-parameter form the
+    viz/ldq lines use), so a viewer can paste any trace id, like a Grafana trace-id variable. No SQL in the
+    content rebuilds the fake's own ids.
+  - Do not change the engine. The limit (table-function arguments must be constants, so no "latest slow trace"
+    subquery) is recorded as an ENG-1799 follow-up in `docs/eng-1799/demo.md` under "Known limits".
+  - Scene 4 may open the waterfall through the parameter default or by setting the parameter.
+- **`demo-grafana-fixture`:** blocked only by Service health. Redo it once that passes.

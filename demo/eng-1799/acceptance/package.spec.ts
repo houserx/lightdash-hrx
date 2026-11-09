@@ -18,8 +18,11 @@ test('demo-package-workspace: eng-1799-demo is a workspace package with typechec
     expect(pkg.devDependencies?.['@playwright/test']).toBe('1.63.0');
 
     // state and output are gitignored
-    const ignored = sh('git', ['check-ignore', '-q', 'demo/eng-1799/.state/probe', 'demo/eng-1799/out/probe.mp4']);
-    expect(ignored.status, 'demo/eng-1799/.state/ and demo/eng-1799/out/ are gitignored').toBe(0);
+    // git check-ignore -q accepts one path only, so check each path on its own
+    for (const probe of ['demo/eng-1799/.state/probe', 'demo/eng-1799/out/probe.mp4']) {
+        const ignored = sh('git', ['check-ignore', '-q', probe]);
+        expect(ignored.status, `${probe} is gitignored`).toBe(0);
+    }
 
     // the lockfile is consistent with every package.json
     const install = sh('pnpm', ['install', '--frozen-lockfile', '--prefer-offline'], { timeoutMs: 240_000 });
