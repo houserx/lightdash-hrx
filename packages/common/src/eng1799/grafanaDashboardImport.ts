@@ -29,6 +29,7 @@ import {
     type GrafanaQueryContext,
     type GrafanaTemplatingVariable,
 } from './grafanaQuery';
+import { importDashboardTimeRange } from './importTimeRange';
 import type { ImportWarning } from './importWarnings';
 
 /** The fields of a Grafana dashboard JSON the importer reads. */
@@ -800,6 +801,11 @@ export const convertGrafanaDashboard = (
         nonBlank(source.description),
         sourceLinks.links,
     );
+    const { timeRange, warnings: timeRangeWarnings } = importDashboardTimeRange(
+        source.time,
+        source.refresh,
+    );
+    timeRangeWarnings.forEach((w) => warnings.push({ ...w, dashboard: title }));
 
     return {
         dashboard: {
@@ -811,6 +817,7 @@ export const convertGrafanaDashboard = (
             spaceSlug: options.spaceSlug,
             tabs: layout.tabs,
             tiles: resolveTileOverlaps(tiles),
+            timeRange,
         },
         charts,
         warnings,

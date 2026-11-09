@@ -877,3 +877,36 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   dashboard-links 2/2, dashboard-dropped-panels 4/4, dashboard-charts 4/4, dashboard-command 4/4, dashboard-text 3/3,
   dashboard-collapsed-rows 2/2. tsc (common) and oxlint are clean, and oxfmt was applied.
 - 2026-11-09T03:06:46Z supervisor: imp-dashboard-links passed the gate in round 1
+
+### imp-dashboard-time-range (2026-11-08)
+
+- New pure module packages/common/src/eng1799/importTimeRange.ts (exported from the common index):
+  `importDashboardTimeRange(time, refresh)` returns the dashboard-as-code `timeRange`
+  (`{from, to, refreshInterval, tileTimeDimensions: {}}`) and warnings. It is written for reuse by the Perses importer
+  (imp-perses-queries-variables: duration/refreshInterval), so call it there rather than writing another one.
+- grafanaDashboardImport.ts sets `timeRange` on every imported dashboard from `source.time` / `source.refresh`; the
+  warnings carry the dashboard name and no panel.
+- Rules (my decisions, as the spec only says "relative or absolute, refresh to the nearest allowed value"):
+  - `now` and `now-<n><s|m|h|d|w>` are kept. Months/years become days (1M = 30d, 1y = 365d). Grafana rounding
+    (`now/d`, `now-1d/d`) is dropped: a rounded `from` reaches back one more unit (Today `now/d`..`now/d` → `now-1d`..`now`,
+    Yesterday → `now-2d`..`now-1d`). Each gives `time-range-adjusted`.
+  - Absolute ISO with an offset and epoch-ms strings become ISO UTC with no warning; offset-less timestamps are read as
+    UTC with `time-range-adjusted`.
+  - Unreadable, future (`now+1h`) or reversed ranges become Grafana's default `now-6h`..`now` with
+    `time-range-unsupported`. A dashboard with no `time` gets that default silently (Grafana does the same).
+  - Refresh: ''/false/missing → null. Otherwise the nearest of DASHBOARD_REFRESH_INTERVALS (ties go to the longer
+    interval) with `refresh-adjusted` when the duration differs (`60s` → `1m` gives no warning). Unreadable refresh →
+    null with `refresh-unsupported`.
+  - `tileTimeDimensions` is `{}`: the SQL charts already read `${ld.parameters.__from}`/`__to` from the query
+    translators, so no change was needed there.
+- New warning codes in importWarnings.ts: time-range-adjusted, time-range-unsupported, refresh-adjusted,
+  refresh-unsupported. The fixture dashboards may now produce some of these, so whoever builds the warning docs /
+  warning-count snapshot features must list them.
+- Unit test: packages/common/src/eng1799/importTimeRange.test.ts (21 cases).
+- Tested as a user: ran init.sh, then the CLI from source on 8 synthetic dashboards (now-24h/1m, absolute/false,
+  now-30m/5s, now/d with 2h, now-1d/d, now-3M with 45s, epoch+offset-less with "bogus", reversed with 30s). The YAML
+  timeRange values matched the rules above, IMPORT-REPORT.md listed each adjusted/unsupported warning, every one of the
+  16 chart SQLs read __from and __to, and `lightdash lint -p` said all files are valid. Acceptance: dashboard-time-range
+  4/4, plus dashboard-command, -charts, -links, -collapsed-rows, -dropped-panels, -layout, -rows, -text, -panel-kinds all
+  passing. tsc (common) and oxlint are clean, and oxfmt was applied.
+- 2026-11-09T03:13:50Z supervisor: imp-dashboard-time-range passed the gate in round 1

@@ -39,6 +39,10 @@ export type ImportWarningCode =
     | 'chart-kind-fallback'
     | 'link-unsupported'
     | 'dashboard-link-unsupported'
+    | 'time-range-adjusted'
+    | 'time-range-unsupported'
+    | 'refresh-adjusted'
+    | 'refresh-unsupported'
     | (string & {});
 
 export type ImportWarning = {
