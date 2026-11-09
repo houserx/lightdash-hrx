@@ -2628,3 +2628,31 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   typecheck is clean. `docs.spec.ts` still fails on headings that the later demo-docs feature adds; it fails the same
   way without this change. down.sh stopped the stack, and no chromium or `.state` process is left.
 - 2026-11-09T12:08:27Z supervisor: demo-scene-06-ai-question passed the gate in round 1
+
+### demo-scene-07-write-mode (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/07-write-mode.spec.ts` (about 35 `expect`s, scene timeout 300 s). It signs in, then
+    goes New → Query using SQL runner → Investigate → Platform Database. It types `UPDATE queues SET target_minutes =
+    target_minutes + 15 WHERE name = 'demo-fill' RETURNING name, target_minutes` in Platform SQL and turns the Write
+    Mode switch on. It fills in a Description that includes the run's time, plus ticket ENG-1799. Preview gives "Rolled
+    back", Rows affected: 1 and the returned demo-fill row. Typing `commit` keeps Commit disabled; `COMMIT` enables it.
+    Commit gives "Committed" with the same target as the Preview, a different audit id, and a cleared confirmation box.
+    The "Audit browser" link (next to the SQL Runner mode switch) is then filtered by User = the demo user. The scene
+    asserts that both rows with the run's description are write, ENG-1799 and success, the newest is the commit and
+    the older one has the "preview" badge. Key moment: the audit browser with both records.
+  - docs/eng-1799/demo.md: a 07-write-mode bullet under "Walkthrough scenes (recorded)".
+- **No app change was needed.** The Write Mode panel, the confirmation tokens, the engine write path and the audit
+  browser all worked as they are. The demo user already has platform_write (stack/seed.ts).
+- **Traps.** Clicking the Mantine Switch's label text does not work: the hidden `<input role="switch">` intercepts the
+  click. Click `getByRole('switch', {name: 'Write Mode'})` instead. Each run adds 15 to the demo-fill
+  `target_minutes` (60 → 75 → …), so the acceptance fingerprint changes every time. A fresh up.sh reseeds the value.
+  The scene does not use the scenario clock and never restarts it.
+- **Tested as a user.** I ran up.sh and `run.sh 07-write-mode`, which passed in 23 s. The frame at 15 s shows the
+  Write Mode panel with "Committed", Rows affected: 1 and demo-fill 75. key-moment.png shows the audit browser
+  filtered to demo.operator@example.com, with two rows (write, then write + preview, both success, 1 row, ENG-1799).
+  Querying the Platform Database directly gave demo-fill target_minutes = 75 (seeded as 60), so the Preview did not
+  write.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh --stack
+  scene-07-write-mode.spec.ts` passed (26 s). down.sh ran, and no chromium or `.state` process is left.
+- 2026-11-09T12:19:30Z supervisor: demo-scene-07-write-mode passed the gate in round 1

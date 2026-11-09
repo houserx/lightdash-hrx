@@ -233,6 +233,13 @@ Chromium outlives the run.
   `out/scenes/06-ai-question/answer.json` (`{question, tool, arguments, query, result: {columns, rows}, answer}`). The
   scene waits until the incident has run for 30 s, so the backlog is over the threshold. Restart the clock first, as
   for 02-incident. Key moment: the whole page with the answer.
+- **07-write-mode**: in Investigate, picks Platform Database and types `UPDATE queues SET target_minutes =
+  target_minutes + 15 WHERE name = 'demo-fill' RETURNING name, target_minutes`, then turns Write Mode on (the demo
+  user has platform_write). With a Description and ticket ENG-1799 it runs Preview first ("Rolled back", one row
+  returned), then types COMMIT and commits ("Committed", the same new target). The "Audit browser" link opens the
+  audit records, filtered to the demo user: the commit and the Preview (marked "preview") are the two newest write
+  records, both with the run's description. Each run adds 15 minutes to the demo-fill target; a fresh up.sh reseeds
+  the Platform Database. The scene does not use the scenario clock. Key moment: the audit browser with both records.
 
 ## Known limits
 
