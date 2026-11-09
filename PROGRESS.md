@@ -2892,3 +2892,19 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   45/150), the timeline `docs/eng-1799/demo.md` already gives as its example. The measured need was about 140–150 s
   of incident for scenes 02–06; 195 s leaves margin on a loaded machine. No other feature changes: no faster refresh,
   no scene reordering. Redo the feature: run the check; fix only what still fails.
+
+### demo-run-all (2026-11-09, run 20261109-013019, round 1 after the controls engineer's 45/240 decision)
+
+- **What changed.** No code. On the 45/240 timeline, run-all.sh (written in demo-run-all-fails-cleanly) passes as it is,
+  so I changed nothing, following "fix only what still fails".
+- **Check.** `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 bash demo/eng-1799/acceptance/run.sh run-all.spec.ts` (after
+  `bash ./init.sh`) passed in 6.1 min. The whole run took 365 s, which fits the 600 s foreground tool limit.
+- **Tested as a user.** I ran `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 demo/eng-1799/run-all.sh` directly. It exited
+  0 in 346 s. The steps ran in order: up.sh, scenario restart, walkthrough (scenes 01 to 08 each "ok" with video.webm and
+  key-moment.png, plus answer.json for 06), video build (287.7 s of scenes sped up x1.279 to a 226 s video), then
+  down.sh. out/ holds eng-1799-demo.mp4, CHAPTERS.md (title card, eight scenes, end card) and thumbnail.png. The 08
+  key-moment shows the backlog alert RESOLVED on the fake incident.io page. Afterwards `pgrep -f .state` was empty.
+- **For later sessions.** `out/scenes/99-probe/` is a stale, untracked clip left by an earlier session (06:03). Nothing
+  reads it: the video build takes the eight named scenes. The Postgres that `pgrep postgres` shows runs from
+  `~/.omnigent/pg` and belongs to the user, not to the demo.
+- 2026-11-09T14:13:50Z supervisor: demo-run-all passed the gate in round 1
