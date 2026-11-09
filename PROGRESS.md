@@ -1461,3 +1461,17 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: alerts-rule-math 2/2, alerts-rule-queries 2/2, alerts-rule-conditions 4/4, alerts-rule-fields 3/3,
   alerts-hcl 4/4, alerts-command 3/3, alerts-rule-description 2/2. tsc (common) clean, oxlint clean, oxfmt applied.
 - 2026-11-09T05:03:29Z supervisor: imp-alert-rule-math passed the gate in round 1
+
+## imp-alert-rule-description (2026-11-09, round 1)
+- No code change: imp-alert-rule-fields already implemented this in packages/common/src/eng1799/grafanaAlertImport.ts
+  (convertRule: `annotations.summary` trimmed; when missing or blank the description is generated as
+  `Imported from the Grafana alert rule "<name>", which queries <first query text>.` and a
+  rule-description-generated warning is raised for the rule). The summary is kept verbatim, Go templates included.
+- Tested as a user: CLI `import grafana-alerts` on a synthetic group (scratch in ../tmp/desc-manual, outside the repo)
+  with three rules -> has-summary.yml description `Token limit exceeded for {{ $labels.client_name }}`;
+  no-summary-at-all.yml and blank-summary.yml get generated descriptions naming the rule and its PromQL
+  (`kube_job_failed{namespace="sweep"}`, `up`); IMPORT-REPORT.md has two rule-description-generated rows and
+  import-summary.json counts 2.
+- Acceptance: alerts-rule-description 2/2 after init.
+- Note for later: the warning message says "has no summary annotation" for a blank summary too.
+- 2026-11-09T05:05:11Z supervisor: imp-alert-rule-description passed the gate in round 1
