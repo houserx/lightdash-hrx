@@ -1,0 +1,303 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "A generic dashboard to view custom metrics logged to CloudWatch for microservices.",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 108,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "fieldMinMax": false,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 14,
+          "w": 14,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "$metric",
+            "metricQueryType": 1,
+            "namespace": "$namespace",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "select": {
+                "name": "AVG",
+                "type": "function"
+              }
+            },
+            "statistic": "Average"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "$metric",
+            "metricQueryType": 0,
+            "namespace": "$namespace",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "$metric",
+            "metricQueryType": 0,
+            "namespace": "$namespace",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "C",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Minimum"
+          }
+        ],
+        "title": "Panel Title",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "",
+    "schemaVersion": 39,
+    "tags": [
+      "lambda",
+      "cloudwatch",
+      "ms"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": false,
+            "text": "Cloudwatch Staging",
+            "value": "uHbTebEVk"
+          },
+          "hide": 0,
+          "includeAll": false,
+          "label": "datasource",
+          "multi": false,
+          "name": "datasource",
+          "options": [],
+          "query": "cloudwatch",
+          "queryValue": "",
+          "refresh": 1,
+          "regex": "^(?!.*\\bTooling$).*$",
+          "skipUrlSync": false,
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "selected": false,
+            "text": "us-east-2",
+            "value": "us-east-2"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "",
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "region",
+          "options": [],
+          "query": {
+            "queryType": "regions",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "default"
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        },
+        {
+          "current": {
+            "selected": false,
+            "text": "HouseRX/Custom",
+            "value": "HouseRX/Custom"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "",
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "namespace",
+          "options": [],
+          "query": {
+            "queryType": "namespaces",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "default"
+          },
+          "refresh": 1,
+          "regex": "^HouseRX/.*",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        },
+        {
+          "current": {
+            "selected": false,
+            "text": "searchResultsFromApiCount",
+            "value": "searchResultsFromApiCount"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "",
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "metric",
+          "options": [],
+          "query": {
+            "namespace": "$namespace",
+            "queryType": "metrics",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "$region"
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "Custom Service Metrics",
+    "uid": "f8f064d9-1e77-44e2-9597-bd6efb2a9f48",
+    "version": 5,
+    "weekStart": ""
+  }

@@ -1,0 +1,1556 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "Monitoring for Amazon MWAA (Managed Workflows for Apache Airflow).\n\nRepository for DAGs: https://github.com/houserx/airflow",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 119,
+    "links": [],
+    "panels": [
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 8,
+        "panels": [],
+        "title": "Airflow",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "Total number of DAGs in the dagbag",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "text",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 5,
+          "x": 0,
+          "y": 1
+        },
+        "id": 17,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "percentChangeColorMode": "standard",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DagBagSize",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Dagbag Size",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "Number of tasks running.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "orange",
+                  "value": 40
+                },
+                {
+                  "color": "red",
+                  "value": 50
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 2,
+          "x": 5,
+          "y": 1
+        },
+        "id": 10,
+        "options": {
+          "minVizHeight": 75,
+          "minVizWidth": 75,
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true,
+          "sizing": "auto"
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "RunningTasks",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Running Tasks",
+        "type": "gauge"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "Number of tasks queued.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "orange",
+                  "value": 40
+                },
+                {
+                  "color": "red",
+                  "value": 50
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 2,
+          "x": 7,
+          "y": 1
+        },
+        "id": 11,
+        "options": {
+          "minVizHeight": 75,
+          "minVizWidth": 75,
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true,
+          "sizing": "auto"
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "QueuedTasks",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Queued Tasks",
+        "type": "gauge"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "Number of executable tasks.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "orange",
+                  "value": 40
+                },
+                {
+                  "color": "red",
+                  "value": 50
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 2,
+          "x": 9,
+          "y": 1
+        },
+        "id": 13,
+        "options": {
+          "minVizHeight": 75,
+          "minVizWidth": 75,
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true,
+          "sizing": "auto"
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "TasksExecutable",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Executable Tasks",
+        "type": "gauge"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "These tasks are HUNGRY! \nThey are ready to run, but cannot start because they are waiting for resources or are stuck in the queue for a prolonged period.\nA high value may indicate more workers are required to handle the load.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "orange",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 10
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 2,
+          "x": 11,
+          "y": 1
+        },
+        "id": 12,
+        "options": {
+          "minVizHeight": 75,
+          "minVizWidth": 75,
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true,
+          "sizing": "auto"
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "TasksStarving",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Starving Tasks",
+        "type": "gauge"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "Tasks that have missed the SLA defined in their DAG(s).",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "orange",
+                  "value": 1
+                },
+                {
+                  "color": "red",
+                  "value": 5
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 5,
+          "w": 2,
+          "x": 13,
+          "y": 1
+        },
+        "id": 16,
+        "options": {
+          "minVizHeight": 75,
+          "minVizWidth": 75,
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true,
+          "sizing": "auto"
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "SLAMissed",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "SLA Missed",
+        "type": "gauge"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "displayName": "Number of heartbeats",
+            "mappings": [],
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 7,
+          "x": 0,
+          "y": 6
+        },
+        "id": 1,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "Scheduler Heartbeat",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "SchedulerHeartbeat",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "t",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Maximum",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "Scheduler Health",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 7,
+          "y": 6
+        },
+        "id": 4,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "Worker Queue Depth",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "Worker Queue Depth",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "WorkerQueueDepth",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Sum"
+            ]
+          },
+          {
+            "alias": "Scaling Activity",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "Scaling Activity",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "ScalingActivity",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Sum"
+            ]
+          }
+        ],
+        "title": "Queue Depth and Scaling",
+        "type": "timeseries"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 14
+        },
+        "id": 9,
+        "panels": [],
+        "title": "DAGs",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 100,
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "max": 100,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "percent"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 7,
+          "x": 0,
+          "y": 15
+        },
+        "id": 3,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "CPU Usage",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "TaskCpuUsage",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "CPU Utilization by DAG",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 100,
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "max": 100,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "percent"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 7,
+          "x": 7,
+          "y": 15
+        },
+        "id": 7,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "CPU Usage",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "TaskMemoryUsage",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "Memory Utilization by DAG",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 100,
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "ms"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 14,
+          "y": 15
+        },
+        "id": 15,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "CPU Usage",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DAGDurationFailed",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "Failure Duration by DAG",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 7,
+          "x": 0,
+          "y": 23
+        },
+        "id": 14,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "Pool Usage",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "ImportErrors",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Average"
+            ]
+          },
+          {
+            "alias": "Pool Usage",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "DagFileRefreshError",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DAGFileRefreshError",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "File Errors by DAG",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "description": "",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "ms"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 7,
+          "x": 7,
+          "y": 23
+        },
+        "id": 2,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "Task Duration",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {
+              "DAG": "*"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DAGDurationSuccess",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Sum",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "Success Duration by DAG",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "$datasource"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "ms"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 14,
+          "y": 23
+        },
+        "id": 18,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "alias": "CPU Usage",
+            "datasource": {
+              "uid": "$datasource"
+            },
+            "dimensions": {},
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "TaskInstanceQueuedDuration",
+            "metricQueryType": 0,
+            "namespace": "AmazonMWAA",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sqlExpression": "",
+            "statistic": "Average",
+            "statistics": [
+              "Average"
+            ]
+          }
+        ],
+        "title": "Duration by DAG",
+        "type": "timeseries"
+      }
+    ],
+    "preload": false,
+    "refresh": "",
+    "schemaVersion": 40,
+    "tags": [
+      "airflow",
+      "aws"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "text": "Cloudwatch Production",
+            "value": "JOxT6xE4z"
+          },
+          "includeAll": false,
+          "name": "datasource",
+          "options": [],
+          "query": "cloudwatch",
+          "refresh": 1,
+          "regex": "",
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "text": "us-east-2",
+            "value": "us-east-2"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "",
+          "includeAll": false,
+          "name": "region",
+          "options": [],
+          "query": {
+            "queryType": "regions",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "default"
+          },
+          "refresh": 1,
+          "regex": "",
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "Airflow",
+    "uid": "a6fa5edd-b3d1-4a95-abbe-a24419cfa5a9",
+    "version": 24,
+    "weekStart": ""
+  }

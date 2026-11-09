@@ -1,0 +1,793 @@
+{
+  "title": "Branch Deployments - KPIs",
+  "tags": ["deployments", "ci-cd", "platform"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Deployments (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Environment": "staging",
+            "StepName": "client"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging Client"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Environment": "staging",
+            "StepName": "server"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging Server"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Environment": "staging",
+            "StepName": "database"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging Database"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "blue"
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Successful Deployments (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "Environment": "staging",
+            "StepName": "client"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging Client"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "Environment": "staging",
+            "StepName": "server"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging Server"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "Environment": "staging",
+            "StepName": "database"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging Database"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Failed Deployments (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "failed"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["sum"]
+        },
+        "textMode": "value",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Success Rate (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "Environment": "staging"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "hide": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Environment": "staging"
+          },
+          "matchExact": false,
+          "statistic": "Sum",
+          "period": "86400",
+          "hide": true
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$A / $B",
+          "type": "math",
+          "hide": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {},
+            "renameByName": {
+              "Value #C": "Staging"
+            }
+          }
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name",
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 0.5,
+                "color": "yellow"
+              },
+              {
+                "value": 0.8,
+                "color": "green"
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "N/A"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Client",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "StepName": "client",
+            "Environment": "staging"
+          },
+          "matchExact": true,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging ✅"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "failed",
+            "StepName": "client",
+            "Environment": "staging"
+          },
+          "matchExact": true,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging ❌"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "title": "Server",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "StepName": "server",
+            "Environment": "staging"
+          },
+          "matchExact": true,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging ✅"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "failed",
+            "StepName": "server",
+            "Environment": "staging"
+          },
+          "matchExact": true,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging ❌"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "title": "Database",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "success",
+            "StepName": "database",
+            "Environment": "staging"
+          },
+          "matchExact": true,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging ✅"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "queryMode": "Metrics",
+          "region": "us-east-2",
+          "namespace": "BranchDeployments",
+          "metricName": "ComponentDeployment",
+          "dimensions": {
+            "Status": "failed",
+            "StepName": "database",
+            "Environment": "staging"
+          },
+          "matchExact": true,
+          "statistic": "Sum",
+          "period": "86400",
+          "label": "Staging ❌"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "none",
+        "orientation": "vertical"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "cloudwatch",
+        "current": {
+          "text": "Cloudwatch Staging",
+          "value": "uHbTebEVk"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [
+          {
+            "text": "Cloudwatch Staging",
+            "value": "uHbTebEVk",
+            "selected": true
+          },
+          {
+            "text": "Cloudwatch Production",
+            "value": "JOxT6xE4z",
+            "selected": false
+          }
+        ],
+        "refresh": 1
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "style": "dark",
+  "uid": "branch-deployments-kpis",
+  "weekStart": ""
+}

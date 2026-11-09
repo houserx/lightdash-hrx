@@ -1,0 +1,493 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "target": {
+            "limit": 100,
+            "matchAny": false,
+            "tags": [],
+            "type": "dashboard"
+          },
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "AWS Translate SaaS",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 103,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "The number of billable characters in requests.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "id": 2,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "LanguagePair": "$language"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "CharacterCount",
+            "metricQueryType": 0,
+            "namespace": "AWS/Translate",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "us-east-2",
+            "sqlExpression": "",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Character Count",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "The time that it took to respond to a request.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "ms"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "id": 3,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "LanguagePair": "$language"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "ResponseTime",
+            "metricQueryType": 0,
+            "namespace": "AWS/Translate",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "us-east-2",
+            "sqlExpression": "",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Response Time",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "https://docs.aws.amazon.com/translate/latest/dg/translate-cloudwatch.html",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 100,
+              "axisSoftMin": 0,
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "decimals": 0,
+            "mappings": [],
+            "min": 0,
+            "noValue": "0",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "count"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 24,
+          "x": 0,
+          "y": 8
+        },
+        "id": 4,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "LanguagePair": "$language"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "Throttled Count",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "ThrottledCount",
+            "metricQueryType": 0,
+            "namespace": "AWS/Translate",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "us-east-2",
+            "sqlExpression": "",
+            "statistic": "Average"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "LanguagePair": "*"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "Server Error Count",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "ServerErrorCount",
+            "metricQueryType": 0,
+            "namespace": "AWS/Translate",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "us-east-2",
+            "sqlExpression": "",
+            "statistic": "Average"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "LanguagePair": "*"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "User Error Count",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "UserErrorCount",
+            "metricQueryType": 0,
+            "namespace": "AWS/Translate",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "C",
+            "region": "us-east-2",
+            "sqlExpression": "",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Errors",
+        "transformations": [
+          {
+            "id": "convertFieldType",
+            "options": {
+              "conversions": [
+                {
+                  "destinationType": "number",
+                  "targetField": "Throttled Count"
+                },
+                {
+                  "destinationType": "number",
+                  "targetField": "Server Error Count"
+                },
+                {
+                  "destinationType": "number",
+                  "targetField": "User Error Count"
+                }
+              ],
+              "fields": {}
+            }
+          }
+        ],
+        "type": "timeseries"
+      }
+    ],
+    "schemaVersion": 37,
+    "style": "dark",
+    "tags": [],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": false,
+            "text": "Cloudwatch Production",
+            "value": "Cloudwatch Production"
+          },
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "datasource",
+          "options": [],
+          "query": "cloudwatch",
+          "queryValue": "",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "selected": false,
+            "text": "en-es-MX",
+            "value": "en-es-MX"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "",
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "language",
+          "options": [],
+          "query": {
+            "attributeName": "",
+            "dimensionFilters": {},
+            "dimensionKey": "LanguagePair",
+            "ec2Filters": {},
+            "instanceID": "",
+            "metricName": "CharacterCount",
+            "namespace": "AWS/Translate",
+            "queryType": "dimensionValues",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "default",
+            "resourceType": "",
+            "tags": {}
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "Translate",
+    "uid": "85wmkvoIz",
+    "version": 4,
+    "weekStart": ""
+  }

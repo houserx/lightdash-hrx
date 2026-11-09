@@ -1,0 +1,1156 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 0,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "no data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "limit": 5, "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check3_submission_attachments" },
+          "expression": "",
+          "id": "",
+          "label": "Check 3",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_last_run_success",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Minimum"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check4_submission_status_audit_trail" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Check 4",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_last_run_success",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Minimum"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "job" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Job",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_last_run_success",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "C",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Minimum"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check1_medication_sync_coverage" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Check 1",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_last_run_success",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "D",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Minimum"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Check 2",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_last_run_success",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "E",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Minimum"
+        }
+      ],
+      "title": "Monitor freshness/health",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check3_submission_attachments" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check3_submission_attachments" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_failing",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "name": "Expression", "type": "__expr__", "uid": "__expr__" },
+          "expression": "($B / $A) * 100",
+          "hide": false,
+          "refId": "C",
+          "type": "math"
+        }
+      ],
+      "title": "Check 3 — Failure rate %",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check4_submission_status_audit_trail" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check4_submission_status_audit_trail" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_failing",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "name": "Expression", "type": "__expr__", "uid": "__expr__" },
+          "expression": "($B / $A) * 100",
+          "hide": false,
+          "refId": "C",
+          "type": "math"
+        }
+      ],
+      "title": "Check 4 — Failure rate %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check3_submission_attachments" },
+          "expression": "",
+          "id": "",
+          "label": "Eligible",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check3_submission_attachments" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Failing",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_failing",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        }
+      ],
+      "title": "Submission Attachments",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 3,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check4_submission_status_audit_trail" },
+          "expression": "",
+          "id": "",
+          "label": "Eligible",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check4_submission_status_audit_trail" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Failing",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_failing",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        }
+      ],
+      "title": "Submission Status/Audit Trail",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "id": 6,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check1_medication_sync_coverage" },
+          "expression": "",
+          "id": "",
+          "label": "Eligible",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check1_medication_sync_coverage" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Failing",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_failing",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        }
+      ],
+      "title": "Medication Sync Coverage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check1_medication_sync_coverage" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check1_medication_sync_coverage" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_failing",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "name": "Expression", "type": "__expr__", "uid": "__expr__" },
+          "expression": "($B / $A) * 100",
+          "hide": false,
+          "refId": "C",
+          "type": "math"
+        }
+      ],
+      "title": "Check 1 — Failure rate %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "orange", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "id": "",
+          "label": "Omitted + failed sync (coverage-limited, ~49% undercounted per SWA-1649)",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_omitted_failed_sync",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Check 2 — Omitted + Failed Sync (not alerted)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "id": 8,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "hideZeros": false, "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "id": "",
+          "label": "Total renewal PAs",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_total",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Shadow mode",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_mode_shadow",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Enforce mode",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_mode_enforce",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "C",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Dispatched",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_dispatched",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "D",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Confirmed",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_confirmed",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "E",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": false,
+          "id": "",
+          "label": "Not confirmed",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_not_confirmed",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "F",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Average"
+        }
+      ],
+      "title": "Check 2 — Stage Counts (not alerted, see panel description)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "id": "",
+          "label": "Dispatched >15m with no confirmed/not_confirmed outcome (48h window)",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_stuck",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Check 2 — Stuck",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 15 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_missing_signal_count",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "hide": true,
+          "id": "",
+          "label": "",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_missing_signal_eligible",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": { "name": "Expression", "type": "__expr__", "uid": "__expr__" },
+          "expression": "($A / $B) * 100",
+          "hide": false,
+          "refId": "C",
+          "type": "math"
+        }
+      ],
+      "title": "Check 2 — Missing Signal % (min 20 jobs/24h to be meaningful)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "No data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.0",
+      "targets": [
+        {
+          "datasource": { "type": "cloudwatch", "uid": "JOxT6xE4z" },
+          "dimensions": { "Check": "check2_medication_evaluation_fallback" },
+          "expression": "",
+          "id": "",
+          "label": "Shadow-mode decisions in the last 24h (alerted metric - not the 90-day stage count above)",
+          "logGroups": [],
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "pa_renewal_health_check2_mode_shadow_recent",
+          "metricQueryType": 0,
+          "namespace": "HouseRX/Custom",
+          "period": "",
+          "queryLanguage": "CWLI",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "default",
+          "sqlExpression": "",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Check 2 — Shadow Mode (Recent, Alerted)",
+      "type": "stat"
+    }
+  ],
+  "preload": false,
+  "schemaVersion": 42,
+  "tags": [],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PA Renewal Health",
+  "uid": "tajksmj",
+  "version": 1
+}

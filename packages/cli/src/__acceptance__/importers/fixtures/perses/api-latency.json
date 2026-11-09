@@ -1,0 +1,48 @@
+{
+  "kind": "Dashboard",
+  "metadata": { "name": "api-latency", "project": "operations" },
+  "spec": {
+    "display": { "name": "API latency" },
+    "duration": "1h",
+    "variables": [],
+    "panels": {
+      "p99": {
+        "kind": "Panel",
+        "spec": {
+          "display": { "name": "Request latency p50 and p99" },
+          "plugin": { "kind": "TimeSeriesChart", "spec": { "legend": { "position": "bottom" } } },
+          "queries": [
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "PrometheusTimeSeriesQuery",
+                  "spec": { "query": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))", "seriesNameFormat": "p50" }
+                }
+              }
+            },
+            {
+              "kind": "TimeSeriesQuery",
+              "spec": {
+                "plugin": {
+                  "kind": "PrometheusTimeSeriesQuery",
+                  "spec": { "query": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))", "seriesNameFormat": "p99" }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "layouts": [
+      {
+        "kind": "Grid",
+        "spec": {
+          "items": [
+            { "x": 0, "y": 0, "width": 24, "height": 8, "content": { "$ref": "#/spec/panels/p99" } }
+          ]
+        }
+      }
+    ]
+  }
+}

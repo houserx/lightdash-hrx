@@ -18,6 +18,9 @@
         "types": ["node", "vitest/globals"]
     },
     "include": ["src/**/*.ts", "src/**/*.json"],
+    // ENG-1799 importers acceptance tests and their fixtures (32 Grafana JSON dashboards) run
+    // under their own vitest config; keep them out of the package typecheck and build.
+    "exclude": ["src/__acceptance__/importers"],
     "references": [
         {
             "path": "../common/tsconfig.types.json"

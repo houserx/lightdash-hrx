@@ -1,0 +1,2684 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "datasource",
+            "uid": "grafana"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "target": {
+            "limit": 100,
+            "matchAny": false,
+            "tags": [],
+            "type": "dashboard"
+          },
+          "type": "dashboard"
+        },
+        {
+          "datasource": {
+            "type": "grafana-github-datasource",
+            "uid": "betb591q7ij28b"
+          },
+          "enable": true,
+          "hide": false,
+          "iconColor": "purple",
+          "mappings": {
+            "tags": {
+              "source": "field",
+              "value": "name"
+            },
+            "text": {
+              "source": "field",
+              "value": "url"
+            },
+            "title": {
+              "source": "field",
+              "value": "name"
+            }
+          },
+          "name": "Platform Releases",
+          "target": {
+            "limit": 100,
+            "matchAny": false,
+            "owner": "houserx",
+            "queryType": "Releases",
+            "repository": "platform",
+            "tags": [],
+            "type": "dashboard"
+          }
+        }
+      ]
+    },
+    "description": "Performance Insights",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 137,
+    "links": [],
+    "panels": [
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 37,
+        "panels": [],
+        "title": "About",
+        "type": "row"
+      },
+      {
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 3,
+          "w": 16,
+          "x": 0,
+          "y": 1
+        },
+        "id": 39,
+        "options": {
+          "code": {
+            "language": "plaintext",
+            "showLineNumbers": false,
+            "showMiniMap": false
+          },
+          "content": "- This data is loaded at 5 minute intervals from [RDS Performance Insights](https://aws.amazon.com/rds/performance-insights/)\n- For details on how to interpret this data, see [Analyzing Amazon RDS Database Workloads with Performance Insights](https://aws.amazon.com/blogs/database/analyzing-amazon-rds-database-workload-with-performance-insights/)",
+          "mode": "markdown"
+        },
+        "pluginVersion": "11.3.1",
+        "title": "Notes",
+        "type": "text"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 350
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 4,
+          "x": 0,
+          "y": 4
+        },
+        "id": 43,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "percentChangeColorMode": "standard",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DatabaseConnections",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "DatabaseConnections",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT AVG(DatabaseConnections) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance'",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Database Connections",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 350
+                }
+              ]
+            },
+            "unit": "short"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 4,
+          "y": 4
+        },
+        "id": 41,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DatabaseConnections",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "DatabaseConnections",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT AVG(DatabaseConnections) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance'",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Database Connections",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "percent"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 4,
+          "x": 0,
+          "y": 10
+        },
+        "id": 44,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "none",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "percentChangeColorMode": "standard",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "CPUUtilization",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "CPUUtilization",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT AVG(CPUUtilization) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance'",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "CPU Utilization",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "#EAB839",
+                  "value": 80
+                },
+                {
+                  "color": "red",
+                  "value": 95
+                }
+              ]
+            },
+            "unit": "percent"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 12,
+          "x": 4,
+          "y": 10
+        },
+        "id": 42,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "CPUUtilization",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "CPUUtilization",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT AVG(CPUUtilization) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance'",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "CPU Utilization",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Last value from time range",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "decimals": 2,
+            "mappings": [],
+            "max": 6,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "dark-green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 1.5
+                },
+                {
+                  "color": "yellow",
+                  "value": 2
+                },
+                {
+                  "color": "orange",
+                  "value": 3
+                },
+                {
+                  "color": "red",
+                  "value": 4
+                }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 4,
+          "x": 0,
+          "y": 16
+        },
+        "id": 45,
+        "options": {
+          "minVizHeight": 75,
+          "minVizWidth": 75,
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showThresholdLabels": true,
+          "showThresholdMarkers": true,
+          "sizing": "auto"
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DBLoadRelativeToNumVCPUs",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "CPUUtilization",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT AVG(CPUUtilization) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance'",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Current DB Load Relative to Num VCPUs",
+        "type": "gauge"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Last value from time range",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "decimals": 2,
+            "mappings": [],
+            "max": 6,
+            "min": 0,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "dark-green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 1.5
+                },
+                {
+                  "color": "yellow",
+                  "value": 2
+                },
+                {
+                  "color": "orange",
+                  "value": 3
+                },
+                {
+                  "color": "red",
+                  "value": 4
+                }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 4,
+          "y": 16
+        },
+        "id": 46,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": false
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "DBLoadRelativeToNumVCPUs",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "CPUUtilization",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT AVG(CPUUtilization) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance'",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "DB Load Relative to Num VCPUs",
+        "type": "timeseries"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 24
+        },
+        "id": 28,
+        "panels": [],
+        "title": "Top Load Events",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Session types by AAS (Average Active Sessions)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Average Active Sessions",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 25,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 0,
+          "y": 25
+        },
+        "id": 26,
+        "links": [
+          {
+            "targetBlank": true,
+            "title": "Understanding pg_stat_activity",
+            "url": "https://www.depesz.com/2022/07/05/understanding-pg_stat_activity/"
+          }
+        ],
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.session_type.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "session_type",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "HouseRX/RDS/PerformanceInsights",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.session_type.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "limit": 10,
+              "orderBy": {
+                "name": "MAX",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"session_type\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "db_instance_id",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"session_type\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.session_type.name\" ORDER BY MAX() DESC LIMIT 10",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Top Session Type",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Users by AAS (average active sessions)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Average Active Sessions",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 25,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 8,
+          "y": 25
+        },
+        "id": 22,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.user.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "user",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "HouseRX/RDS/PerformanceInsights",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.user.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "limit": 10,
+              "orderBy": {
+                "name": "MAX",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"user\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "db_instance_id",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"user\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.user.name\" ORDER BY MAX() DESC LIMIT 10",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Top Users",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Application by AAS (average active sessions)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Average Active Sessions",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 25,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 8,
+          "x": 16,
+          "y": 25
+        },
+        "id": 35,
+        "links": [
+          {
+            "targetBlank": true,
+            "title": "PostgreSQL Documentation: application_name parameter",
+            "url": "https://postgresqlco.nf/doc/en/param/application_name/"
+          }
+        ],
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.application.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "application",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "HouseRX/RDS/PerformanceInsights",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.application.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "limit": 10,
+              "orderBy": {
+                "name": "MAX",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"application\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "db_instance_id",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"application\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.application.name\" ORDER BY MAX() DESC LIMIT 10",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Top Application",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Hosts by AAS (average active sessions)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              }
+            },
+            "mappings": []
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 8,
+          "x": 0,
+          "y": 31
+        },
+        "id": 32,
+        "options": {
+          "displayLabels": [
+            "percent"
+          ],
+          "legend": {
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true,
+            "values": []
+          },
+          "pieType": "donut",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.host.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "host",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.host.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "limit": 10,
+              "orderBy": {
+                "name": "AVG",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "AVG",
+                "parameters": [
+                  {
+                    "name": "\"host\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT AVG(\"host\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.host.name\" ORDER BY AVG() DESC LIMIT 10",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Top Host",
+        "type": "piechart"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Wait events by AAS (average active sessions)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              }
+            },
+            "mappings": []
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 8,
+          "x": 8,
+          "y": 31
+        },
+        "id": 24,
+        "links": [
+          {
+            "targetBlank": true,
+            "title": "RDS for PostgreSQL wait events",
+            "url": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Tuning.concepts.summary.html"
+          }
+        ],
+        "options": {
+          "displayLabels": [
+            "percent"
+          ],
+          "legend": {
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true,
+            "values": []
+          },
+          "pieType": "donut",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.wait_event.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "wait_event",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.wait_event.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"wait_event\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"wait_event\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.wait_event.name\"",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Top Wait event",
+        "type": "piechart"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "Databases by AAS (average active sessions)",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              }
+            },
+            "mappings": []
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 8,
+          "x": 16,
+          "y": 31
+        },
+        "id": 30,
+        "options": {
+          "displayLabels": [
+            "percent"
+          ],
+          "legend": {
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true,
+            "values": []
+          },
+          "pieType": "donut",
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "name",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "limit": 10,
+              "orderBy": {
+                "name": "MAX",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"name\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"name\") FROM \"/AuroraMonitoringGrafana/PerformanceInsightMetrics\" GROUP BY \"db.name\" ORDER BY MAX() DESC LIMIT 10",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Top Database",
+        "type": "piechart"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "SQL load by AAS (average active sessions)\n* Data limited to now-3h due to Cloudwatch limitations",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "Average Active Sessions",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "bars",
+              "fillOpacity": 100,
+              "gradientMode": "hue",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "noValue": "Data limited to now-3h due to CloudWatch limitations. Try a more recent time range.",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": [
+            {
+              "__systemRef": "hideSeriesFrom",
+              "matcher": {
+                "id": "byNames",
+                "options": {
+                  "mode": "exclude",
+                  "names": [
+                    "4 - 'SELECT\\n              orders.id\\n          FROM\\n              orders\\n          INNER JOIN patients ON patients.id = orders.patient_id\\n          INNER JOIN phones ON phones.patient_id = patients.id AND regexp_replace(phones.phone_number, ?, ?, ?) ILIKE ?\\n          WHERE\\n              orders.practice_id IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'"
+                  ],
+                  "prefix": "All except:",
+                  "readOnly": true
+                }
+              },
+              "properties": [
+                {
+                  "id": "custom.hideFrom",
+                  "value": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": true
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 13,
+          "w": 24,
+          "x": 0,
+          "y": 38
+        },
+        "id": 20,
+        "interval": "5s",
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "table",
+            "placement": "right",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "desc"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "sql_tokenized",
+            "metricQueryType": 1,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "HouseRX/RDS/PerformanceInsights",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.sql_tokenized.statement",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "limit": 15,
+              "orderBy": {
+                "name": "MAX",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "sql_tokenized",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "db_instance_id",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(sql_tokenized) FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.sql_tokenized.statement\" ORDER BY MAX() DESC LIMIT 15",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Top SQL",
+        "type": "timeseries"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 51
+        },
+        "id": 18,
+        "panels": [],
+        "title": "Database load",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 10,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "bars",
+              "fillOpacity": 100,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "decimals": 0,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green"
+                },
+                {
+                  "color": "#EAB839",
+                  "value": 7
+                },
+                {
+                  "color": "red",
+                  "value": 8
+                }
+              ]
+            },
+            "unit": "vCPU"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 52
+        },
+        "id": 8,
+        "links": [
+          {
+            "title": "PostgreSQL Documentation: application_name parameter",
+            "url": "https://postgresqlco.nf/doc/en/param/application_name/"
+          }
+        ],
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "desc"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.application.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "application",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.application.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"application\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"application\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.application.name\"",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Database Load - Application",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 10,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "bars",
+              "fillOpacity": 100,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "decimals": 0,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green"
+                },
+                {
+                  "color": "#EAB839",
+                  "value": 7
+                },
+                {
+                  "color": "red",
+                  "value": 8
+                }
+              ]
+            },
+            "unit": "vCPU"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 52
+        },
+        "id": 14,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.user.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "user",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.user.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "orderBy": {
+                "name": "MAX",
+                "type": "function"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"user\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"user\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.user.name\" ORDER BY MAX() DESC",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Database load - User",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "description": "",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 10,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "bars",
+              "fillOpacity": 100,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "decimals": 0,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green"
+                },
+                {
+                  "color": "#EAB839",
+                  "value": 7
+                },
+                {
+                  "color": "red",
+                  "value": 8
+                }
+              ]
+            },
+            "unit": "vCPU"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 60
+        },
+        "id": 4,
+        "links": [
+          {
+            "targetBlank": true,
+            "title": "Understanding pg_stat_activity",
+            "url": "https://www.depesz.com/2022/07/05/understanding-pg_stat_activity/"
+          }
+        ],
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.session_type.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "session_type",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.session_type.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"session_type\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"session_type\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.session_type.name\"",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Session Type by Load",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${datasource}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 10,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "bars",
+              "fillOpacity": 100,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "area"
+              }
+            },
+            "decimals": 0,
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green"
+                },
+                {
+                  "color": "#EAB839",
+                  "value": 7
+                },
+                {
+                  "color": "red",
+                  "value": 8
+                }
+              ]
+            },
+            "unit": "vCPU"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 60
+        },
+        "id": 12,
+        "links": [
+          {
+            "targetBlank": true,
+            "title": "RDS for PostgreSQL wait events",
+            "url": "https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Tuning.concepts.summary.html"
+          }
+        ],
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${datasource}"
+            },
+            "dimensions": {
+              "db_instance_id": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "${PROP('Dim.db.wait_event.name')} ",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "wait_event",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "/AuroraMonitoringGrafana/PerformanceInsightMetrics",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "db.wait_event.name",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "\"wait_event\"",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              }
+            },
+            "sqlExpression": "SELECT MAX(\"wait_event\") FROM \"HouseRX/RDS/PerformanceInsights\" WHERE db_instance_id = '$db_instance' GROUP BY \"db.wait_event.name\"",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "Wait event by Load",
+        "type": "timeseries"
+      }
+    ],
+    "preload": false,
+    "refresh": "",
+    "schemaVersion": 40,
+    "tags": [
+      "rds"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "text": "Cloudwatch Production",
+            "value": "JOxT6xE4z"
+          },
+          "includeAll": false,
+          "label": "Data source",
+          "name": "datasource",
+          "options": [],
+          "query": "cloudwatch",
+          "refresh": 1,
+          "regex": "",
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "text": "us-east-2",
+            "value": "us-east-2"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "regions()",
+          "includeAll": false,
+          "label": "Region",
+          "name": "region",
+          "options": [],
+          "query": "regions()",
+          "refresh": 1,
+          "regex": "us-east-2",
+          "type": "query"
+        },
+        {
+          "current": {
+            "text": "houserx-platform-db-production-10-25",
+            "value": "houserx-platform-db-production-10-25"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${datasource}"
+          },
+          "definition": "",
+          "includeAll": false,
+          "name": "db_instance",
+          "options": [],
+          "query": {
+            "attributeName": "",
+            "dimensionFilters": {},
+            "dimensionKey": "db_instance_id",
+            "ec2Filters": {},
+            "instanceID": "",
+            "metricName": "name",
+            "namespace": "HouseRX/RDS/PerformanceInsights",
+            "queryType": "dimensionValues",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "$region",
+            "resourceType": "",
+            "tags": {}
+          },
+          "refresh": 1,
+          "regex": "houserx-.*",
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": [
+        "30s",
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "1h"
+      ]
+    },
+    "timezone": "browser",
+    "title": "Performance Insights",
+    "uid": "perf-insights",
+    "version": 28,
+    "weekStart": ""
+  }

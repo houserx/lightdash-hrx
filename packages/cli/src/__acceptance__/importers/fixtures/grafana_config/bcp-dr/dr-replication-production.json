@@ -1,0 +1,2593 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Production DR posture for the two MRAP-backed bucket pairs (houserx-customer-data-prod-mrap, fdb-clinical-data-prod-mrap), the platform Global Accelerator, and the platform RDS cross-region replica. Primary us-east-2, DR us-east-1. Note the region each metric family actually lives in: S3 replication metrics are published in the DESTINATION bucket's region, Global Accelerator publishes only to us-west-2, and RDS replica metrics only exist in us-east-1. All resource names are pinned to terraform-production; there are no dashboard variables.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Max S3 replication latency for each MRAP bucket. RTC target is 15 minutes; sustained values above that mean the replication SLA is breached. Queried in us-east-1 because S3 publishes replication metrics in the destination bucket's Region.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "ReplicationLatency",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "ReplicationLatency",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "S3 replication latency (max)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Peak objects queued for replication over the dashboard window. A backlog that does not drain is the earliest sign replication is stuck. Reduced with max rather than last: when replication is keeping up the latest datapoint is always 0, which hides the spikes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "max"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "S3 ops pending replication (peak)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Seconds houserx-platform-db-production-replica (us-east-1) trails houserx-platform-db-production-10-25 (us-east-2). Shows the latest datapoint, not the window peak, because the RPO question is how much data you lose failing over right now.\n\nRDS publishes ReplicaLag as whole seconds, so 0 means 'under one second', not 'zero'. It is the expected steady state here and is not a broken panel. Treat it as an RPO of <1s, not an RPO of 0. Use the byte-based slot lag panel below to see movement that is invisible at this resolution.\n\nRDS reports -1 in this metric family when lag cannot be determined (for example a disconnected replica), which is why negatives are mapped to UNKNOWN in red rather than falling into the green band.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "match": "null",
+                "result": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "NO DATA"
+                }
+              },
+              "type": "special"
+            },
+            {
+              "options": {
+                "from": -2147483648,
+                "result": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "UNKNOWN"
+                },
+                "to": -0.5
+              },
+              "type": "range"
+            },
+            {
+              "options": {
+                "from": -0.5,
+                "result": {
+                  "color": "green",
+                  "index": 2,
+                  "text": "< 1 s"
+                },
+                "to": 0.5
+              },
+              "type": "range"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica lag",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "ReplicaLag",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "60",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "RDS replica lag (latest)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Endpoints the platform-production accelerator considers unhealthy. Non-zero on the primary endpoint group means traffic is at risk of being shifted.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "unhealthy",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "UnhealthyEndpointCount",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-west-2",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "GA unhealthy endpoints",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 100,
+      "panels": [],
+      "title": "S3 replication for MRAP buckets: us-east-2 -> us-east-1 (metrics published in us-east-1, the destination Region)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "ReplicationLatency is reported in seconds and only exists because the replication rules enable RTC + metrics (platform_s3_replica.tf). S3 publishes it in the destination bucket's Region, so this queries us-east-1 even though the source buckets are in us-east-2.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 5
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "ReplicationLatency",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "ReplicationLatency",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Replication latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Objects accepted for replication but not yet replicated. Should return to zero between writes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 5
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Operations pending replication",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Byte volume still queued. Pair with the operations backlog: a large byte backlog with few operations means a handful of very large objects, which is usually benign.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 5
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "BytesPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "BytesPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Bytes pending replication",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Objects S3 could not replicate. Any non-zero value needs manual remediation; failed objects are never retried automatically. Unlike the other three replication metrics, this one is published in the SOURCE bucket's Region, so it is queried in us-east-2 (verified via cloudwatch list-metrics).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsFailedReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Sum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production"
+          },
+          "expression": "",
+          "id": "",
+          "label": "fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsFailedReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-2",
+          "statistic": "Sum"
+        }
+      ],
+      "title": "Operations FAILED replication",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Reverse replication (us-east-1 replica back to us-east-2 primary), configured in platform_s3_replica.tf. Destination here is the us-east-2 primary, so these metrics are published in us-east-2.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*pending.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "latency customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "ReplicationLatency",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "latency fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "ReplicationLatency",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-2",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "houserx-customer-data-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "pending customer-data",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "C",
+          "region": "us-east-2",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "SourceBucket": "fdb-clinical-data-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "pending fdb-clinical",
+          "matchExact": false,
+          "metricEditorMode": 0,
+          "metricName": "OperationsPendingReplication",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "D",
+          "region": "us-east-2",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Reverse replication (us-east-1 -> us-east-2)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 101,
+      "panels": [],
+      "title": "MRAP backing buckets - drift between regions",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "houserx-customer-data-prod-mrap. Multi-Region Access Points publish no CloudWatch metrics of their own, so MRAP health is inferred from the two buckets behind it. A size gap that does not close is the practical MRAP-level failure signal. BucketSizeBytes is a once-daily metric with up to 48h delay, so this panel overrides the dashboard range to 30 days.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "id": 10,
+      "interval": "1d",
+      "maxDataPoints": 100,
+      "timeFrom": "30d",
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "houserx-customer-data-production",
+            "StorageType": "StandardStorage"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary (us-east-2)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "BucketSizeBytes",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Average"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "houserx-customer-data-production-replica",
+            "StorageType": "StandardStorage"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica (us-east-1)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "BucketSizeBytes",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Average"
+        }
+      ],
+      "title": "customer-data: bucket size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "fdb-clinical-data-prod-mrap. Same reasoning as the customer-data panel: divergence between the two backing buckets is the only region-level health signal available for an MRAP.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "id": 11,
+      "interval": "1d",
+      "maxDataPoints": 100,
+      "timeFrom": "30d",
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "fdb-clinical-data-production",
+            "StorageType": "StandardStorage"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary (us-east-2)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "BucketSizeBytes",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Average"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "fdb-clinical-data-production-replica",
+            "StorageType": "StandardStorage"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica (us-east-1)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "BucketSizeBytes",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Average"
+        }
+      ],
+      "title": "fdb-clinical: bucket size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "A persistent object-count gap means objects are being written but never replicated, which the latency graph will not show once the pending-operations metric resets. Daily metric.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "id": 12,
+      "interval": "1d",
+      "maxDataPoints": 100,
+      "timeFrom": "30d",
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "houserx-customer-data-production",
+            "StorageType": "AllStorageTypes"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary (us-east-2)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "NumberOfObjects",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Average"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "houserx-customer-data-production-replica",
+            "StorageType": "AllStorageTypes"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica (us-east-1)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "NumberOfObjects",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Average"
+        }
+      ],
+      "title": "customer-data: object count",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Object count on each side of fdb-clinical-data-prod-mrap.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 6,
+            "showPoints": "always",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "id": 13,
+      "interval": "1d",
+      "maxDataPoints": 100,
+      "timeFrom": "30d",
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "fdb-clinical-data-production",
+            "StorageType": "AllStorageTypes"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary (us-east-2)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "NumberOfObjects",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Average"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "BucketName": "fdb-clinical-data-production-replica",
+            "StorageType": "AllStorageTypes"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica (us-east-1)",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "NumberOfObjects",
+          "metricQueryType": 0,
+          "namespace": "AWS/S3",
+          "period": "86400",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Average"
+        }
+      ],
+      "title": "fdb-clinical: object count",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "id": 102,
+      "panels": [],
+      "title": "Global Accelerator - platform-production (metrics published only in us-west-2)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Healthy vs unhealthy endpoints per endpoint group. us-east-2 is primary (traffic dial 100), us-east-1 is DR (traffic dial 0). Both groups run health checks continuously, so DR going unhealthy is visible here even while it carries no traffic.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": true
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "unhealthy.*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "min"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*",
+            "EndpointGroup": "*",
+            "Listener": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "healthy {{EndpointGroup}}",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "HealthyEndpointCount",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-west-2",
+          "statistic": "Minimum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*",
+            "EndpointGroup": "*",
+            "Listener": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "unhealthy {{EndpointGroup}}",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "UnhealthyEndpointCount",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-west-2",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Endpoint health by endpoint group",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "New connections per endpoint group. This is where traffic is actually landing: during a failover us-east-2 should fall to zero and us-east-1 should pick up. Global Accelerator only emits metrics while requests are flowing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 38
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*",
+            "EndpointGroup": "*",
+            "Listener": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "{{EndpointGroup}}",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "NewFlowCount",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-west-2",
+          "statistic": "Sum"
+        }
+      ],
+      "title": "New flows by endpoint group (traffic dial in practice)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Bytes in and out of the accelerator, split by endpoint group.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*",
+            "EndpointGroup": "*",
+            "Listener": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "in {{EndpointGroup}}",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "ProcessedBytesIn",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-west-2",
+          "statistic": "Sum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*",
+            "EndpointGroup": "*",
+            "Listener": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "out {{EndpointGroup}}",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "ProcessedBytesOut",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-west-2",
+          "statistic": "Sum"
+        }
+      ],
+      "title": "Processed bytes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "TCP resets. Accelerator-generated resets usually mean a listener/endpoint misconfiguration or a security group blocking the flow; endpoint-generated resets usually mean the ALB behind the accelerator is overloaded or draining.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 46
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "accelerator RST",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "TCP_AGA_Reset_Count",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-west-2",
+          "statistic": "Sum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "endpoint RST",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "TCP_Endpoint_Reset_Count",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-west-2",
+          "statistic": "Sum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "Accelerator": "*"
+          },
+          "expression": "",
+          "id": "",
+          "label": "client RST",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "TCP_Client_Reset_Count",
+          "metricQueryType": 0,
+          "namespace": "AWS/GlobalAccelerator",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "C",
+          "region": "us-west-2",
+          "statistic": "Sum"
+        }
+      ],
+      "title": "TCP resets",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "id": 103,
+      "panels": [],
+      "title": "RDS cross-region replication - houserx-platform-db-production-10-25 -> houserx-platform-db-production-replica",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Replica lag in seconds, reported by houserx-platform-db-production-replica in us-east-1. This is the data-loss window if you promote the replica right now.\n\nPublished as whole seconds, so a flat line at 0 means lag is under one second and is the normal steady state, not a dead panel. Real lag shows up as brief spikes of a few seconds. Gaps in the line mean the replica stopped publishing, and a dip below zero means RDS could not determine lag; neither is a zero-lag condition, and both colour red. For sub-second movement use the byte-based slot lag panel to the right.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "mappings": [
+            {
+              "options": {
+                "from": -2147483648,
+                "result": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "UNKNOWN"
+                },
+                "to": -0.5
+              },
+              "type": "range"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 54
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "mean",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica lag",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "ReplicaLag",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "60",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-1",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Replica lag (us-east-1)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "WAL not yet consumed by the slowest replication slot, reported by the primary. Unlike ReplicaLag this keeps climbing when a replica disconnects entirely, and it is what eventually fills the primary's storage.\n\nA few hundred MB steady state is normal and does not contradict a replica lag of 0. A physical slot holds restart_lsn back for the replica's needs, so bytes sit in the slot even while replay is current. Watch the trend, not the absolute value: flat is healthy, monotonically climbing is not.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 54
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-10-25"
+          },
+          "expression": "",
+          "id": "",
+          "label": "oldest slot lag",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "OldestReplicationSlotLag",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Maximum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-10-25"
+          },
+          "expression": "",
+          "id": "",
+          "label": "transaction logs disk usage",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "TransactionLogsDiskUsage",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-2",
+          "statistic": "Maximum"
+        }
+      ],
+      "title": "Primary WAL retention (us-east-2)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "CPU on both sides. A replica pinned at high CPU while the primary is idle usually means replay is the bottleneck, which shows up as growing replica lag.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 62
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-10-25"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "CPUUtilization",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Average"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "CPUUtilization",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Average"
+        }
+      ],
+      "title": "CPU: primary vs replica",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Free storage on both instances. The replica running out of space stops replication silently from the application's point of view.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 62
+      },
+      "id": 21,
+      "options": {
+        "legend": {
+          "calcs": [
+            "min",
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "asc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-10-25"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "FreeStorageSpace",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Minimum"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "FreeStorageSpace",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Minimum"
+        }
+      ],
+      "title": "Free storage: primary vs replica",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "JOxT6xE4z"
+      },
+      "description": "Write throughput on the primary drives how much WAL the replica has to consume. Use it to explain lag spikes that correlate with batch jobs.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 62
+      },
+      "id": 22,
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-10-25"
+          },
+          "expression": "",
+          "id": "",
+          "label": "primary write",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "WriteThroughput",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "A",
+          "region": "us-east-2",
+          "statistic": "Average"
+        },
+        {
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "JOxT6xE4z"
+          },
+          "dimensions": {
+            "DBInstanceIdentifier": "houserx-platform-db-production-replica"
+          },
+          "expression": "",
+          "id": "",
+          "label": "replica write",
+          "matchExact": true,
+          "metricEditorMode": 0,
+          "metricName": "WriteThroughput",
+          "metricQueryType": 0,
+          "namespace": "AWS/RDS",
+          "period": "",
+          "queryMode": "Metrics",
+          "refId": "B",
+          "region": "us-east-1",
+          "statistic": "Average"
+        }
+      ],
+      "title": "Write throughput: primary vs replica",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": [
+    "aws",
+    "dr",
+    "s3",
+    "mrap",
+    "rds",
+    "global-accelerator"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-12h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": false,
+    "nowDelay": "5m",
+    "quick_ranges": [
+      {
+        "display": "Last 1 hour",
+        "from": "now-1h",
+        "to": "now"
+      },
+      {
+        "display": "Last 3 hours",
+        "from": "now-3h",
+        "to": "now"
+      },
+      {
+        "display": "Last 6 hours",
+        "from": "now-6h",
+        "to": "now"
+      },
+      {
+        "display": "Last 12 hours",
+        "from": "now-12h",
+        "to": "now"
+      },
+      {
+        "display": "Last 24 hours",
+        "from": "now-24h",
+        "to": "now"
+      },
+      {
+        "display": "Last 2 days",
+        "from": "now-2d",
+        "to": "now"
+      },
+      {
+        "display": "Last 7 days",
+        "from": "now-7d",
+        "to": "now"
+      },
+      {
+        "display": "Last 30 days",
+        "from": "now-30d",
+        "to": "now"
+      }
+    ],
+    "refresh_intervals": [
+      "5m",
+      "15m",
+      "30m",
+      "1h"
+    ]
+  },
+  "timezone": "browser",
+  "title": "AWS DR & Replication - Production",
+  "uid": "aws-dr-replication-prod",
+  "version": 1,
+  "weekStart": ""
+}
