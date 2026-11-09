@@ -1475,3 +1475,17 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: alerts-rule-description 2/2 after init.
 - Note for later: the warning message says "has no summary annotation" for a blank summary too.
 - 2026-11-09T05:05:11Z supervisor: imp-alert-rule-description passed the gate in round 1
+
+## imp-alerts-full-ruleset (2026-11-09, round 1)
+- No code change: the earlier alert features (imp-alerts-hcl, -rule-fields, -rule-queries, -rule-math,
+  -rule-description) already expand every for_each/dynamic block and emit the full set. The check passed on the
+  first run after init (3/3).
+- Tested as a user: CLI `import grafana-alerts` with all 10 rule files (grafana_rule_groups_*.tf + grafana_lb_rules.tf),
+  --locals, --folders, --datasources, contact points and policy (scratch in ../tmp/fullset-manual, outside the repo).
+  stdout: "Imported 84 alert rules, 6 contact points ... (72 warnings, 11 rules to review)". Parsed the 84 YAMLs:
+  84 unique slugs, 84 shadow: true, 84 non-blank descriptions, 84 non-blank queries (19 paused). ALB Unhealthy Hosts
+  twice (prod-alb-health / staging-alb-health spaces), both Orphan sweep rules, 11 RDS rules, Envoy/SPIRE staging only.
+- Why 84, not the 85 the test comment counts by hand: grafana_rule_groups_pa_renewal_health.tf has 8 PA Renewal rules
+  (4 from the dynamic block over local.pa_renewal_health_alert_rules + 4 standalone), not 9. Every other group matches
+  the hand count (2+7+7+30+2+8+3+13+4+8 = 84). The test accepts 80-90, so nothing to change.
+- 2026-11-09T05:07:11Z supervisor: imp-alerts-full-ruleset passed the gate in round 1
