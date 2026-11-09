@@ -753,3 +753,18 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   exactly 2 write items (preview false, status success). The refused reuse is not audited as a write. Commit with
   RETURNING returns rows (the check's statement has no RETURNING, so returning is null). No engine or Postgres left running.
 - 2026-11-09T03:41:47Z supervisor: int-write-commit-once passed the gate in round 1
+- 2026-11-09 int-write-agent-commit-refused: **no code change needed.** On arrival the check already passed (1/1).
+  `FederationService.write` throws ForbiddenError (403) on `mode: 'commit'` when `isAgentSession()` is true. It
+  does this first, before loading the project or calling the engine. The engine (`federation-engine/src/write.rs`)
+  refuses a commit from an identity with `agent = true` with 403 "an AI agent identity (agent = true) may only Preview,
+  never commit". Tested by hand (`../tmp/manual-write-agent-commit-refused/try.ts`, run from e2e/eng-1799 with tsx,
+  against the real engine and a throwaway Platform Database) using a different statement from the check, `UPDATE
+  widgets SET qty = qty * 2 WHERE id IN (2, 9) RETURNING id, qty`. Results:
+  - An agent commit in agentExecutionContext gave 403, the DB was unchanged and the audit store stayed empty.
+  - An agent preview gave preview true with the doubled RETURNING rows, the DB was unchanged, and the audit item had
+    action ai_ask, preview true, status success.
+  - A person's commit (outside the agent context) applied.
+  - Straight to the engine with a backend-minted bearer: agent=true commit gave 403 naming agent and the DB was
+    unchanged. agent=true preview gave 200. agent=false commit gave 200 and applied (control).
+  No engine or Postgres left running.
+- 2026-11-09T03:44:03Z supervisor: int-write-agent-commit-refused passed the gate in round 1
