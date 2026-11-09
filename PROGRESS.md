@@ -1259,3 +1259,30 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
     - After init, the check passes (1 passed, 1 skipped). The whole docs.accept.ts passes 2/2.
     - As a user, I read the doc and checked each CLI command and flag against the real CLI's `--help` (via tsx): `alerting shadow-report` (`--project`, `--since`, `--grafana-history`, `--expected-differences`, `--json`, `--fail-on-unexpected`), and `upload`/`download --alerting-only`. They match.
 - 2026-11-09T00:02:35Z supervisor: alert-docs passed the gate in round 1
+- alert-annotation-templates (round 1) — 2026-11-08
+  - Changes:
+    - common `templateEngine.ts` / `templateTypes.ts`: a new `AlertTemplateOptions.variables` option defines extra top-level variables besides `$`. It is keyed without the `$`, so `{ labels }` defines `$labels`.
+    - New common `annotationTemplates.ts` (exported from `alerting/index.ts`, not from templateEngine, which avoids a circular import):
+      - `renderAlertAnnotation(template, { labels, value })` renders `$labels` / `.Labels` and `$value` / `.Value`.
+      - `renderAlertAnnotations` renders every annotation of a rule.
+      - Text with no `{{` is returned as it is.
+      - Unit test: `annotationTemplates.test.ts`.
+    - backend `evaluateAlertSeries.ts`:
+      - Each series' annotations are rendered with its instance labels (series, rule and `alertname`) and its reduced value.
+      - The DatasourceNoData and DatasourceError synthetic series are rendered too, with their labels and an empty `$value`. The `error` annotation is added after rendering, so it is never templated.
+      - Instances store the rendered text, so `/state`, the instance and the webhook payload all carry it.
+  - Decisions (contract assumptions; the spec says nothing about annotation templating):
+    - `$value` is the numeric reduced value (Prometheus style), so `gt $value 98.0` works and `95` prints as `95`. It is not Grafana's `[ var='A' ... ]` string. The acceptance test requires this.
+    - If an annotation's template fails to parse or run, the annotation keeps its original text, as Grafana does. The alert is never dropped.
+    - `$values` (per-refId map) is not supported, because rules have one query.
+    - A series that goes missing keeps the annotations from its last render. The settle path doesn't re-render them.
+  - Follow-up: `docs/eng-1799/alerting-examples/README.md` (alert-grafana-port-examples) says annotations are static because there was no `$labels` templating. That is no longer true, so the ported rules could now use templated summaries. I left the docs unchanged (out of scope).
+  - Tested:
+    - After init, the check passes (1 passed, 10 skipped). The whole `evaluation.accept.ts` passes 11/11.
+    - Unit tests pass: common `annotationTemplates.test.ts` 6/6 and `templateEngine.test.ts` 13/13, backend `evaluateAlertSeries.test.ts` 19/19.
+    - Backend typecheck is clean, and oxfmt/oxlint are clean on the changed files.
+    - As a user: the acceptance harness runs the real express app on 127.0.0.1:0 against a throwaway Postgres.
+      - I created a rule with summary `Disk on {{ $labels.instance }} is {{ $value }}%` and fired it for db-1 at 95 (and db-3 at 99).
+      - The instance, `GET /state` and the webhook POST all carried `Disk on db-1 is 95%`.
+      - The `{{ if gt $value 98.0 }}` description gave `warning` for db-1 and `critical` for db-3.
+- 2026-11-09T00:08:04Z supervisor: alert-annotation-templates passed the gate in round 1

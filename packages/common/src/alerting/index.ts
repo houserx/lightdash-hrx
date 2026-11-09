@@ -10,6 +10,7 @@ export * from './routingMatchers';
 export * from './routingTree';
 export * from './routingGrouping';
 export * from './templateEngine';
+export * from './annotationTemplates';
 export * from './alertmanagerPayload';
 export * from './asCode';
 export * from './alertRules';

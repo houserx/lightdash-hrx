@@ -3,6 +3,7 @@ import {
     evaluateAlertCondition,
     parsePrometheusDuration,
     reduceAlertSeries,
+    renderAlertAnnotations,
     splitAlertSeries,
     transitionAlertInstance,
     type AlertInstanceSnapshot,
@@ -144,7 +145,10 @@ export const evaluateAlertSeries = ({
                 ...snapshot,
                 fingerprint,
                 labels,
-                annotations: rule.annotations,
+                annotations: renderAlertAnnotations(rule.annotations, {
+                    labels,
+                    value,
+                }),
                 value,
             });
         },
@@ -255,13 +259,17 @@ export const evaluateAlertNoData = ({
     if (rule.noDataState === 'keep_last') {
         return { instances: [...previous], removedFingerprints: [] };
     }
+    const labels = getAlertNoDataLabels(rule);
     return evaluateSyntheticSeries({
         rule,
         previous,
         at,
         state: rule.noDataState,
-        labels: getAlertNoDataLabels(rule),
-        annotations: rule.annotations,
+        labels,
+        annotations: renderAlertAnnotations(rule.annotations, {
+            labels,
+            value: null,
+        }),
     });
 };
 
@@ -305,13 +313,20 @@ export const evaluateAlertError = ({
     if (rule.errorState === 'keep_last') {
         return { instances: [...previous], removedFingerprints: [] };
     }
+    const labels = getAlertErrorLabels(rule);
     return evaluateSyntheticSeries({
         rule,
         previous,
         at,
         state: rule.errorState,
-        labels: getAlertErrorLabels(rule),
-        annotations: { ...rule.annotations, error },
+        labels,
+        annotations: {
+            ...renderAlertAnnotations(rule.annotations, {
+                labels,
+                value: null,
+            }),
+            error,
+        },
     });
 };
 

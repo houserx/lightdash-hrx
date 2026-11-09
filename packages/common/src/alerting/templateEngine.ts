@@ -65,9 +65,20 @@ class Executor {
 
     constructor(private readonly defines: Map<string, Node[]>) {}
 
-    run(nodes: Node[], dot: unknown): string {
+    run(
+        nodes: Node[],
+        dot: unknown,
+        variables: Record<string, unknown> = {},
+    ): string {
         const out: string[] = [];
-        this.walk(nodes, dot, [{ name: '$', value: dot }], out);
+        const vars: Variable[] = [
+            { name: '$', value: dot },
+            ...Object.entries(variables).map(([name, value]) => ({
+                name: `$${name}`,
+                value,
+            })),
+        ];
+        this.walk(nodes, dot, vars, out);
         return out.join('');
     }
 
@@ -266,5 +277,5 @@ export const renderAlertTemplate = (
         parseTemplateSource(source, name, defines);
     });
     const nodes = parseTemplateSource(template, MAIN_TEMPLATE_NAME, defines);
-    return new Executor(defines).run(nodes, data);
+    return new Executor(defines).run(nodes, data, options.variables);
 };

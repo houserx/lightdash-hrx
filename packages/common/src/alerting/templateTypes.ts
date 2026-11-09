@@ -35,4 +35,9 @@ export type AlertTemplateData = {
 export type AlertTemplateOptions = {
     /** Extra template source(s) whose `define`s the template can call. */
     templates?: string | string[];
+    /**
+     * Variables defined at the top of the template besides `$`, named
+     * without the `$`: `{ labels: {...} }` defines `$labels`.
+     */
+    variables?: Record<string, unknown>;
 };
