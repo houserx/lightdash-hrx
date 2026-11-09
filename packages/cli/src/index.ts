@@ -44,6 +44,7 @@ import {
     DEFAULT_GRAFANA_DASHBOARD_SPACE,
     importGrafanaDashboardHandler,
 } from './handlers/importGrafanaDashboard';
+import { importPersesDashboardHandler } from './handlers/importPersesDashboard';
 import {
     DEFAULT_PORTAL_SCRIPTS_SPACE,
     importPortalScriptsHandler,
@@ -1487,6 +1488,27 @@ importProgram
     )
     .option('--verbose', undefined, false)
     .action(importGrafanaDashboardHandler);
+
+importProgram
+    .command('perses-dashboard <files...>')
+    .description(
+        'Converts Perses dashboards (JSON or YAML, kind: Dashboard) into dashboard and SQL chart YAML for `lightdash upload`',
+    )
+    .requiredOption(
+        '-o, --out <dir>',
+        'folder to write dashboards/, charts/, reports/ and import-summary.json into',
+    )
+    .option(
+        '-s, --space <slug>',
+        'slug of the space the dashboards and charts go to',
+        DEFAULT_GRAFANA_DASHBOARD_SPACE,
+    )
+    .option(
+        '--no-tabs',
+        'turn collapsed grids into headings with their panels below, instead of dashboard tabs',
+    )
+    .option('--verbose', undefined, false)
+    .action(importPersesDashboardHandler);
 
 importProgram
     .command('grafana-alerts')

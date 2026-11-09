@@ -80,6 +80,109 @@ const dumpYaml = (doc: unknown) =>
         lineWidth: -1,
     });
 
+/**
+ * Writes converted dashboards under `out`: dashboards/, charts/, reports/, lightdash.config.yml
+ * (when they define parameters) and import-summary.json, then prints what was written.
+ * Shared by `import grafana-dashboard` and `import perses-dashboard`.
+ */
+export const writeDashboardImports = async (
+    results: GrafanaDashboardImport[],
+    options: { out: string; command: string },
+) => {
+    // One lightdash.config.yml holds every dashboard's parameters; a difference between two
+    // dashboards' definitions is a warning on the later dashboard, so it shows in its report.
+    const merged = mergeProjectParameters(
+        results.map((r) => ({
+            dashboard: r.dashboard.name,
+            parameters: r.parameters,
+        })),
+    );
+    merged.warnings.forEach(({ index, warning }) =>
+        results[index].warnings.push(warning),
+    );
+
+    const written: string[] = [];
+    const write = async (rel: string, contents: string) => {
+        const abs = path.join(options.out, rel);
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await fs.writeFile(abs, contents);
+        written.push(rel);
+        GlobalState.debug(`Wrote ${abs}`);
+    };
+    for (const result of results) {
+        // eslint-disable-next-line no-await-in-loop
+        await write(
+            `dashboards/${result.dashboard.slug}.yml`,
+            dumpYaml(result.dashboard),
+        );
+        for (const chart of result.charts) {
+            // eslint-disable-next-line no-await-in-loop
+            await write(`charts/${chart.slug}.yml`, dumpYaml(chart));
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await write(
+            `reports/${result.dashboard.slug}/IMPORT-REPORT.md`,
+            renderGrafanaImportReport(result),
+        );
+    }
+
+    if (Object.keys(merged.parameters).length > 0) {
+        const config: LightdashProjectConfig = {
+            spotlight: DEFAULT_SPOTLIGHT_CONFIG,
+            parameters: merged.parameters,
+        };
+        await write('lightdash.config.yml', dumpYaml(config));
+    }
+
+    const warnings = results.flatMap((r) => r.warnings);
+    const byCode: Record<string, number> = {};
+    [...warnings]
+        .map((w) => w.code)
+        .sort()
+        .forEach((code) => {
+            byCode[code] = (byCode[code] ?? 0) + 1;
+        });
+    const todos = results.reduce((n, r) => n + r.todos.length, 0);
+    const charts = results.reduce((n, r) => n + r.charts.length, 0);
+    const summary = {
+        command: options.command,
+        warnings: { total: warnings.length, byCode },
+        todos,
+        files: [...written],
+    };
+    await write('import-summary.json', `${JSON.stringify(summary, null, 2)}\n`);
+
+    console.info(
+        styles.success(
+            `Imported ${plural(results.length, 'dashboard')} and ${plural(
+                charts,
+                'chart',
+            )} into ${options.out} (${plural(warnings.length, 'warning')}, ${plural(
+                todos,
+                'TODO',
+            )})`,
+        ),
+    );
+    if (warnings.length > 0 || todos > 0) {
+        console.info(
+            `See ${path.join(options.out, 'reports')} for each dashboard's IMPORT-REPORT.md.`,
+        );
+    }
+    console.info(
+        `Copy the folders into your project's lightdash/ folder and run ${styles.bold(
+            'lightdash upload',
+        )}.`,
+    );
+    if (written.includes('lightdash.config.yml')) {
+        console.info(
+            `Add the parameters in ${path.join(
+                options.out,
+                'lightdash.config.yml',
+            )} to your project's lightdash.config.yml.`,
+        );
+    }
+};
+
 export const importGrafanaDashboardHandler = async (
     files: string[],
     options: ImportGrafanaDashboardOptions,
@@ -145,96 +248,8 @@ export const importGrafanaDashboardHandler = async (
         }),
     );
 
-    // One lightdash.config.yml holds every dashboard's parameters; a difference between two
-    // dashboards' definitions is a warning on the later dashboard, so it shows in its report.
-    const merged = mergeProjectParameters(
-        results.map((r) => ({
-            dashboard: r.dashboard.name,
-            parameters: r.parameters,
-        })),
-    );
-    merged.warnings.forEach(({ index, warning }) =>
-        results[index].warnings.push(warning),
-    );
-
-    const written: string[] = [];
-    const write = async (rel: string, contents: string) => {
-        const abs = path.join(options.out, rel);
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, contents);
-        written.push(rel);
-        GlobalState.debug(`Wrote ${abs}`);
-    };
-    for (const result of results) {
-        // eslint-disable-next-line no-await-in-loop
-        await write(
-            `dashboards/${result.dashboard.slug}.yml`,
-            dumpYaml(result.dashboard),
-        );
-        for (const chart of result.charts) {
-            // eslint-disable-next-line no-await-in-loop
-            await write(`charts/${chart.slug}.yml`, dumpYaml(chart));
-        }
-        // eslint-disable-next-line no-await-in-loop
-        await write(
-            `reports/${result.dashboard.slug}/IMPORT-REPORT.md`,
-            renderGrafanaImportReport(result),
-        );
-    }
-
-    if (Object.keys(merged.parameters).length > 0) {
-        const config: LightdashProjectConfig = {
-            spotlight: DEFAULT_SPOTLIGHT_CONFIG,
-            parameters: merged.parameters,
-        };
-        await write('lightdash.config.yml', dumpYaml(config));
-    }
-
-    const warnings = results.flatMap((r) => r.warnings);
-    const byCode: Record<string, number> = {};
-    [...warnings]
-        .map((w) => w.code)
-        .sort()
-        .forEach((code) => {
-            byCode[code] = (byCode[code] ?? 0) + 1;
-        });
-    const todos = results.reduce((n, r) => n + r.todos.length, 0);
-    const charts = results.reduce((n, r) => n + r.charts.length, 0);
-    const summary = {
+    await writeDashboardImports(results, {
+        out: options.out,
         command: 'grafana-dashboard',
-        warnings: { total: warnings.length, byCode },
-        todos,
-        files: [...written],
-    };
-    await write('import-summary.json', `${JSON.stringify(summary, null, 2)}\n`);
-
-    console.info(
-        styles.success(
-            `Imported ${plural(results.length, 'dashboard')} and ${plural(
-                charts,
-                'chart',
-            )} into ${options.out} (${plural(warnings.length, 'warning')}, ${plural(
-                todos,
-                'TODO',
-            )})`,
-        ),
-    );
-    if (warnings.length > 0 || todos > 0) {
-        console.info(
-            `See ${path.join(options.out, 'reports')} for each dashboard's IMPORT-REPORT.md.`,
-        );
-    }
-    console.info(
-        `Copy the folders into your project's lightdash/ folder and run ${styles.bold(
-            'lightdash upload',
-        )}.`,
-    );
-    if (written.includes('lightdash.config.yml')) {
-        console.info(
-            `Add the parameters in ${path.join(
-                options.out,
-                'lightdash.config.yml',
-            )} to your project's lightdash.config.yml.`,
-        );
-    }
+    });
 };

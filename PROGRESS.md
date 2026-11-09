@@ -1694,3 +1694,37 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Trap for scripting the CLI by hand: the Bash tool's shell is zsh, so an unquoted `$RULES` list is not word-split.
   Run the command under `bash -c`.
 - 2026-11-09T05:45:29Z supervisor: imp-routing-fixes-deterministic passed the gate in round 1
+
+## imp-cli-perses-dashboard (2026-11-09)
+
+- New `lightdash import perses-dashboard <files...> --out <dir> [--space <slug>] [--no-tabs]` in
+  packages/cli/src/handlers/importPersesDashboard.ts. A `.json` file is parsed as JSON, any other as YAML. A file
+  that is not `kind: Dashboard` with a `spec.panels` map and a name (spec.display.name or metadata.name) fails
+  before anything is written, with "<file> is not a Perses dashboard: <reason>" (it suggests grafana-dashboard).
+- Design (the spec doesn't say how): common's persesDashboardImport.ts restates the Perses dashboard as the Grafana
+  dashboard JSON it corresponds to (`persesToGrafanaDashboard`) and `convertPersesDashboard` runs it through
+  `convertGrafanaDashboard`. One panel mapping, query translation, layout, slugs and report serve both importers.
+  - Plugins: TimeSeriesChart→timeseries, BarChart→barchart, StatChart→stat, GaugeChart→gauge, Table→table,
+    Markdown→text (spec.text as markdown content). Other plugins keep their Perses kind as the panel type, so
+    today they're `panel-type-unsupported` + a TODO tile.
+  - PrometheusTimeSeriesQuery → Prometheus target (expr, legendFormat from seriesNameFormat, refIds A, B...). A
+    named datasource becomes `{type: prometheus, uid: <name>}` and is added to the query context's datasource
+    list, so it resolves to the Telemetry Source of that name. A query with no datasource gets
+    datasource-unresolved (engine default source).
+  - Grid layouts stack in order. A titled grid becomes a Grafana row (open → heading, `collapse.open: false` →
+    collapsed row → tab). A panel in no layout is a `panel-dropped` warning. duration/refreshInterval become
+    `time: now-<duration>..now` and `refresh`.
+- CLI refactor: the write/summary/console half of the Grafana handler is now `writeDashboardImports(results,
+  {out, command})` in importGrafanaDashboard.ts, shared by both commands. Grafana output is unchanged.
+- Left for the next features (on purpose): perses-panels needs legend/stack/thresholds/units carried as Grafana
+  options and a `perses-plugin-unsupported` code (add it to importWarnings.ts) for unknown plugins instead of
+  panel-type-unsupported; perses-queries-variables needs Perses variables → Grafana templating (or parameters
+  directly). Today `$job`/`$env`/`$instance` give variable-undefined. perses-layout already passes 2/2.
+- Tested as a user: `import --help` lists perses-dashboard. Importing node-overview.yaml and api-latency.json
+  from source exited 0: 2 dashboards, 6 charts, 2 reports, summary command perses-dashboard, 14 warnings, 1 TODO
+  (HeatmapChart). CPU usage is promql(..., 'prometheus-production'), Overview heading + Details tab, CPU x0 w18,
+  stats x18/x27 w9, About markdown tile. A Grafana `{title, panels}` JSON fails, naming the file and writing
+  nothing. Broken YAML gives "<file> is not valid YAML: ...".
+- Checks: perses-command 3/3 after init. Regression: dashboard-command 4/4, dashboard-report 4/4, dashboard-multi
+  3/3. persesDashboardImport.test.ts 10/10. common and cli tsc clean, oxlint and oxfmt clean on changed files.
+- 2026-11-09T05:52:16Z supervisor: imp-cli-perses-dashboard passed the gate in round 1

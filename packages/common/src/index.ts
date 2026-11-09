@@ -107,6 +107,7 @@ export * from './eng1799/grafanaThresholds';
 export * from './eng1799/grafanaUnits';
 export * from './eng1799/grafanaValueMappings';
 export * from './eng1799/grafanaVariables';
+export * from './eng1799/persesDashboardImport';
 export * from './eng1799/importTimeRange';
 export * from './eng1799/importWarnings';
 export * from './eng1799/logStream';
