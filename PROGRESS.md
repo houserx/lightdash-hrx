@@ -909,3 +909,25 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   is not configured on this server"` in the harness, because no advice model is configured. That is
   expected, not a failure.
 - 2026-11-09T04:14:07Z supervisor: int-mcp-platform-tools passed the gate in round 1
+- int-mcp-restricted-hidden (round 1): **harness only; no product change needed.** The check failed
+  on arrival with `startEngine: option(s) restrictedLokiSelectors not supported yet`.
+  `e2e/eng-1799/harness/engine.ts` now renders `restrictedLokiSelectors` as the `loki` source's
+  `restricted_selectors` (TOML strings; throws if given without `loki`). `restrictedLogGroups` is
+  still in `NOT_YET_SUPPORTED`: no acceptance test uses it yet; the next session that needs it
+  renders it as `restricted_log_groups` on the `cloudwatch-logs` source the same way.
+  The MCP and engine already refuse: the MCP's identity token carries agent = true, so the
+  engine answers 42501 and the MCP's tool error says "Access denied ... an AI agent identity
+  (agent = true) may never read". Nothing is audited because the refusal happens at planning.
+  Tested by hand (`../tmp/manual-mcp-restricted-hidden/try.mts`, run from e2e/eng-1799 with tsx;
+  synthetic values unlike the check: selectors `{namespace="billing"}` and `{app="vault"}`, a user
+  with telemetry_restricted 'yes') through the real MCP over HTTP: query_promql on
+  prometheus-restricted (range and instant), query_logql with the exact selector, a regex overlap
+  `{namespace=~"bill.*"}`, a metric query over `{app="vault"}` and an explicit `source: loki` were
+  all tool errors naming agent; open `{namespace="web",app="site"}` LogQL and open PromQL
+  answered; audit store 0 items; the fake Loki saw only the open query; Prometheus saw one request.
+  Checks: this one 1/1; int-mcp-telemetry-tools, int-identity-agent-restricted, int-mcp-oauth-gate
+  pass; e2e typecheck clean. No prettier on this machine.
+  Trap: the fake Loki does not evaluate selectors (documented in loki.ts), so an open query
+  returns every fixture stream, restricted-looking ones included. That is the fake, not a leak:
+  assert on `loki.requests`, not on the rows returned.
+- 2026-11-09T04:17:27Z supervisor: int-mcp-restricted-hidden passed the gate in round 1

@@ -41,6 +41,11 @@ export type StartEngineOptions = {
     prometheus?: { url: string };
     /** A fake Loki: the `loki` source points at its `url`. */
     loki?: { url: string };
+    /**
+     * The `loki` source's `restricted_selectors` (needs `loki`): a LogQL query that may touch one
+     * of these stream selectors is a read of Restricted Telemetry (CONTRACTS §1.2).
+     */
+    restrictedLokiSelectors?: string[];
     /** A fake Tempo: the `tempo` source points at its `url`. */
     tempo?: { url: string };
     /**
@@ -78,10 +83,7 @@ export type StartEngineOptions = {
 };
 
 /** Options the Harness API names that later harness features implement. */
-const NOT_YET_SUPPORTED = [
-    'restrictedLokiSelectors',
-    'restrictedLogGroups',
-];
+const NOT_YET_SUPPORTED = ['restrictedLogGroups'];
 
 /** The non-secret part of one rendered `[[sources]]` entry (what the MCP's `MCP_SOURCES` mirrors). */
 export type EngineSource = {
@@ -201,9 +203,17 @@ function renderConfig(
             `[[sources]]\nname = "prometheus-restricted"\nkind = "prometheus"\nrestricted = true\nurl = ${url}\n`,
         );
     }
+    if (opts.restrictedLokiSelectors && !opts.loki) {
+        throw new Error('startEngine: restrictedLokiSelectors needs loki');
+    }
     if (opts.loki) {
+        // Selectors with streams that may match are Restricted Telemetry: reading them needs
+        // telemetry_restricted (never an agent) and is an Audited Query.
+        const selectors = opts.restrictedLokiSelectors?.length
+            ? `restricted_selectors = [${opts.restrictedLokiSelectors.map(tomlString).join(', ')}]\n`
+            : '';
         tables.push(
-            `[[sources]]\nname = "loki"\nkind = "loki"\nurl = ${tomlString(opts.loki.url)}\n`,
+            `[[sources]]\nname = "loki"\nkind = "loki"\nurl = ${tomlString(opts.loki.url)}\n${selectors}`,
         );
     }
     if (opts.tempo) {
