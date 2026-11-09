@@ -1272,3 +1272,27 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   the feature headings in each line's progress file. Check: int-assumptions-register 2/2.
   For int-contracts-amended: use the Changed rows and integration-log-1..5 as the list of CONTRACTS amendments.
 - 2026-11-09T05:36:29Z supervisor: int-assumptions-register passed the gate in round 1
+- 2026-11-09 int-contracts-amended (round 1): docs only. `docs/eng-1799/CONTRACTS.md` now has dated notes
+  ("amended 2026-11-09, <int-fix id>") for the readings this line settled. The Changed rows and integration-log-3/5 of
+  contract-assumptions.md were used as the list:
+  - §1.1 `cloudwatch()` accepts both shapes: Grafana's stored target (metricEditorMode builder/code mode,
+    Metrics Insights refused) and the AWS MetricDataQuery (Id/MetricStat/Expression), with the SQLSTATEs for its errors
+    (engine-A19).
+  - §2: the old one-line note is now a full "Quoting in SQL" amendment. It covers bare `${ld.parameters.__from}` and
+    `${lightdash.parameters.*}`, values written as `'...'` literals with `'` doubled, alerting producing Lightdash's SQL,
+    the legacy quoted-reference compatibility, and the shared duration formatter (alerting-log-1/2).
+  - §3: attrs are true when any value is exactly "true" (mcp-log-1). With no identity in scope, a federation client sends
+    `RESET hrx.identity` (ldq-2, ldq-log-8).
+  - §4.2: the inline note is now a full amendment with the payload JSON (`typ`, `statement_sha256` hex, `iat`, `nonce`).
+    It covers the 60 s iat skew and 120 s lifetime, and says that single use is engine-only (spent by signature) and that the MCP mints the same
+    token (ldq-3, ldq-log-1, mcp-4).
+  - §4.3: `ALERTING_EVALUATOR_ATTRS` (comma-separated claim names, unknown name fails module start), the system token
+    and audit block, and email = `system:alert-evaluator` (alerting-1, alerting-log-5, integration-log-3).
+  - §7: the alerting state/history query parameters (rule, since, until, limit 100/1000), and the duplicate
+    ruleUuid/from/to kept for the MCP's pinned check (mcp-2, alerting-5, alerting-log-3, integration-log-5).
+  Every detail was checked against the code (engine cloudwatch.rs/write.rs, getAlertEvaluatorAttrs, MCP
+  confirmation.ts and alerting.ts, AlertRuleService history parser) rather than only against the progress notes. The
+  §4.1 note and all other text are unchanged.
+  Tested as a user: I read the amended sections in place and checked each claim against its source. Check:
+  int-contracts-amended 1/1. No server was started.
+- 2026-11-09T05:40:36Z supervisor: int-contracts-amended passed the gate in round 1
