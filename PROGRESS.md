@@ -1920,3 +1920,28 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   "unreachable: Connection refused", platform still reachable (so health is probed live, not hardcoded). `down.sh`
   stopped everything. `run.sh --stack engine-healthy.spec.ts` passes; no demo process left.
 - 2026-11-09T07:41:23Z supervisor: demo-engine-healthy passed the gate in round 1
+
+### demo-fake-incident-io (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/incident-io.ts`: an in-memory fake incident.io receiver, served by the telemetry-fakes
+  process on an **ephemeral** port (it is not an engine endpoint, so engine-config does not reserve one).
+  `up.sh` checks its `/ready`, writes `incidentIo.url` to stack.json and `report()` prints it.
+  - `POST /webhook`: an Alertmanager v4 payload (version "4", status firing|resolved, groupKey, non-empty
+    alerts[] each with status, string labels/annotations, startsAt, endsAt, fingerprint). It needs
+    `Authorization: Bearer <any non-empty token>` (missing → 401; the token value is not checked or stored).
+    Bad shape/JSON → 400 naming the field. Accepted → 202 `{status: "success", message, deduplication_key}`.
+  - `GET /api/received` → `{notifications: [{receivedAt, payload}]}`, oldest first, payload exactly as posted
+    (the newest 1000 are kept). Notifications are lost when the process stops (down.sh / a fresh up.sh).
+  - `GET /`: HTML page titled "incident.io (fake) - received alerts", one `<tr>` per alert (not per
+    notification), newest first: Status (FIRING red / RESOLVED green), Alert (alertname), other labels,
+    summary, Started, Ended (blank for Alertmanager's 0001-01-01 zero time), Received. All values HTML-escaped.
+    It refreshes itself every 5 s (`<meta http-equiv=refresh>`), so the walkthrough can leave it open.
+- For demo-alerting-seed: point the incident_io Contact Point at `${stack.incidentIo.url}/webhook`, with the token
+  from a secretRef (the acceptance spec forbids an inline secret). Only `/webhook` is routed; incident.io's real
+  `/v2/alert_events/alertmanager/<id>` path is not.
+- Tested as a user: `up.sh` printed the receiver URL. With curl: a firing then a resolved v4 payload → 202 each; no
+  bearer → 401; version "3" → 400; non-JSON → 400. `/api/received` listed both in order. Opened `/` in Playwright's
+  Chromium: title as above, one firing and one resolved row for the alert, firing in red, `<b>` in the summary shown
+  escaped. Checks incident-io-receiver (--stack) and engine-healthy (--stack) pass; `tsc ... stack/*.ts` clean;
+  no demo process left.
+- 2026-11-09T07:45:08Z supervisor: demo-fake-incident-io passed the gate in round 1

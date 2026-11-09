@@ -8,7 +8,8 @@
 // endpoint the engine config reserved for it (`endpoints.*` of --endpoints-file). Once all of them listen,
 // the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}, "loki": {"url": ...},
 // "tempo": {"url": ...}, "cloudwatch": {"url": ...}, "cloudwatchLogs": {"url": ...}, "auditDynamodb": {"url": ...},
-// "auditS3": {"url": ...}}) atomically; up.sh waits for it.
+// "auditS3": {"url": ...}, "incidentIo": {"url": ...}}) atomically; up.sh waits for it. The fake incident.io
+// receiver (stack/incident-io.ts) is not an engine endpoint and listens on an ephemeral port.
 //
 // Scenario API:
 //   GET  /scenario          -> {startedAt, incidentAt, recoveryAt, now, phase, ...}
@@ -17,7 +18,8 @@
 // The telemetry fakes read the one ScenarioClock below per request. Prometheus (stack/prometheus.ts), Loki
 // (stack/loki.ts), Tempo (stack/tempo.ts), CloudWatch metrics (stack/cloudwatch.ts) and CloudWatch Logs
 // Insights (stack/cloudwatch-logs.ts) are here, and the engine's audit store (stack/audit-store.ts: DynamoDB and
-// S3 Object Lock, one in-memory store on two endpoints) that Audited Queries and the audit browser need.
+// S3 Object Lock, one in-memory store on two endpoints) that Audited Queries and the audit browser need, and the
+// fake incident.io receiver that the alerting Contact Point posts Alertmanager webhooks to.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -26,6 +28,7 @@ import { AuditStore, auditDynamodbHandler, auditS3Handler } from './audit-store.
 import { ScenarioClock, validateOffsets } from './clock.js';
 import { cloudwatchHandler } from './cloudwatch.js';
 import { cloudwatchLogsHandler } from './cloudwatch-logs.js';
+import { IncidentIoInbox, incidentIoHandler } from './incident-io.js';
 import { lokiHandler } from './loki.js';
 import { prometheusHandler } from './prometheus.js';
 import { tempoHandler } from './tempo.js';
@@ -117,6 +120,7 @@ const cloudwatchLogsServer = http.createServer(cloudwatchLogsHandler(() => clock
 const auditStore = new AuditStore();
 const auditDynamodbServer = http.createServer(auditDynamodbHandler(auditStore));
 const auditS3Server = http.createServer(auditS3Handler(auditStore));
+const incidentIoServer = http.createServer(incidentIoHandler(new IncidentIoInbox()));
 
 /** Listens on 127.0.0.1:<port> (0 = ephemeral) and resolves with the server's URL. */
 function listen(server: http.Server, port = 0): Promise<string> {
@@ -138,6 +142,7 @@ const servers = [
     cloudwatchLogsServer,
     auditDynamodbServer,
     auditS3Server,
+    incidentIoServer,
 ];
 
 function shutdown(signal: string): void {
@@ -167,6 +172,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     const cloudwatchLogsUrl = await listen(cloudwatchLogsServer, reservedPort(endpoints, 'cloudwatchLogs'));
     const auditDynamodbUrl = await listen(auditDynamodbServer, reservedPort(endpoints, 'auditDynamodb'));
     const auditS3Url = await listen(auditS3Server, reservedPort(endpoints, 'auditS3'));
+    const incidentIoUrl = await listen(incidentIoServer);
     const ready = {
         scenario: { url: scenarioUrl },
         prometheus: { url: prometheusUrl },
@@ -176,6 +182,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
         cloudwatchLogs: { url: cloudwatchLogsUrl },
         auditDynamodb: { url: auditDynamodbUrl },
         auditS3: { url: auditS3Url },
+        incidentIo: { url: incidentIoUrl },
     };
     writeFileSync(`${file}.tmp`, `${JSON.stringify(ready, null, 2)}\n`);
     renameSync(`${file}.tmp`, file);
@@ -189,6 +196,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     console.log(`telemetry-fakes: CloudWatch (GetMetricData) at ${cloudwatchUrl}`);
     console.log(`telemetry-fakes: CloudWatch Logs Insights at ${cloudwatchLogsUrl}`);
     console.log(`telemetry-fakes: audit store at ${auditDynamodbUrl} (DynamoDB) and ${auditS3Url} (S3 Object Lock)`);
+    console.log(`telemetry-fakes: incident.io receiver at ${incidentIoUrl}`);
 }
 
 main(readyFile, endpointsFile).catch((e: unknown) => {

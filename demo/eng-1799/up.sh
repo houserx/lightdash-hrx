@@ -74,6 +74,7 @@ report() {
     echo "up.sh: CloudWatch metrics (fake): $(json_url "$STACK_JSON" cloudwatch)"
     echo "up.sh: CloudWatch Logs Insights (fake): $(json_url "$STACK_JSON" cloudwatchLogs)"
     echo "up.sh: audit store (fake): DynamoDB $(json_url "$STACK_JSON" auditDynamodb), S3 Object Lock $(json_url "$STACK_JSON" auditS3)"
+    echo "up.sh: incident.io receiver (fake): $(json_url "$STACK_JSON" incidentIo) (webhook: POST /webhook, received: GET /api/received)"
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
@@ -228,6 +229,9 @@ for store in auditDynamodb auditS3; do
     curl -fsS -m 5 "$AUDIT_URL/ready" >/dev/null ||
         { echo "up.sh: the fake audit store ($store) at $AUDIT_URL does not answer" >&2; exit 1; }
 done
+INCIDENT_IO_URL="$(json_url "$RUN/telemetry-fakes.json" incidentIo)"
+curl -fsS -m 5 "$INCIDENT_IO_URL/ready" >/dev/null ||
+    { echo "up.sh: the fake incident.io receiver at $INCIDENT_IO_URL does not answer" >&2; exit 1; }
 
 DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" start engine "$ENGINE_BIN" --config "$ENGINE_CONFIG"
 ENGINE_PID=$STARTED_PID
@@ -264,6 +268,7 @@ const stack = {
     cloudwatchLogs: telemetry.cloudwatchLogs,
     auditDynamodb: telemetry.auditDynamodb,
     auditS3: telemetry.auditS3,
+    incidentIo: telemetry.incidentIo,
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
     engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
     processes: [
