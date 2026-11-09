@@ -717,3 +717,16 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   real engine: Investigate promql SQL substituted by alerting and by Lightdash was identical for
   10m/6h/7d, and each returned 1 row with value 1. A legacy quoted query also ran. No engine left running.
 - 2026-11-09T03:33:51Z supervisor: int-fix-alert-sql-parameters passed the gate in round 1
+- 2026-11-09 int-fix-write-confirmation-token: implemented decision 1 for Lightdash. In
+  `packages/backend/src/services/FederationService/writeConfirmationToken.ts`, the minted payload now adds
+  `typ: "write_confirmation"` (new export `WRITE_CONFIRMATION_TOKEN_TYPE`) and `iat` (mint time, unix s;
+  `exp = iat + lifetime`, lifetime still capped at 120 s). So it is exactly the engine's encoding
+  (`federation-engine/src/write.rs` `verify_confirmation`). Before this, the engine said `{valid:false}` for
+  every Lightdash token. The unit test (`writeConfirmationToken.test.ts`) expects the two new keys. CONTRACTS §4.2
+  has a dated note on the payload. ldq's pinned `write-confirmation-route.test.ts` uses `toMatchObject` and
+  still passes (4/4). Tested: the check passes (1/1). FederationService.createWriteConfirmation
+  runs against the real test-mode engine: the bound statement/user/project gives valid true; a changed
+  statement, another user's bearer and another project's bearer give valid false. Backend tsc is clean.
+  **Still open (next feature, int-fix-mcp-write-preview):** the MCP's `packages/telemetry-mcp/src/identity/confirmation.ts`
+  still uses `stmt_sha256` and has no `typ`/`iat`. It needs the same change.
+- 2026-11-09T03:37:15Z supervisor: int-fix-write-confirmation-token passed the gate in round 1

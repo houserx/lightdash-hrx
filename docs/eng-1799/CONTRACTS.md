@@ -202,7 +202,7 @@ The Federation Engine is **not** a new `WarehouseTypes` member. It is the Postgr
 ### 4.2 Write Mode and Preview (never through `AsyncQueryService`)
 
 - **Routes.**
-  - `POST /api/v2/projects/{projectUuid}/write/confirmations` takes `{statement}` and returns `{confirmationToken, expiresAt}`. The token is an HMAC over (sha256(statement), user uuid, project uuid, exp ≤ 120 s, nonce) under the identity secret.
+  - `POST /api/v2/projects/{projectUuid}/write/confirmations` takes `{statement}` and returns `{confirmationToken, expiresAt}`. The token is an HMAC over (sha256(statement), user uuid, project uuid, exp ≤ 120 s, nonce) under the identity secret. Its payload is the engine's encoding: `{"v":1,"typ":"write_confirmation","statement_sha256","sub","project","iat","exp","nonce"}` with `exp - iat` ≤ 120 s, in the §3 envelope (amended 2026-11-09, int-fix-write-confirmation-token).
   - `POST /api/v2/projects/{projectUuid}/write` takes `{statement, mode: "preview"|"commit", confirmationToken, description, ticket?}`. It forwards to the engine's `POST /v1/write` with a fresh identity token and returns the engine's result.
 - **Who may call.** It requires the user attribute `platform_write`. A request from an AI agent context (`agent = true`) may only use `mode = "preview"`. The engine enforces this too.
 - **Engine `POST /v1/write`:**

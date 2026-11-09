@@ -6,22 +6,32 @@
  * Same envelope and secret as the §3 identity tokens. The payload binds the token to the
  * statement (by its sha256), the user, the project and a short expiry; the nonce lets the
  * engine refuse a token it has already seen (single use, 409 on reuse).
+ *
+ * The payload is exactly what the engine verifies (federation-engine/src/write.rs
+ * `verify_confirmation`): `{v: 1, typ: "write_confirmation", statement_sha256, sub, project,
+ * iat, exp, nonce}`, with `exp - iat` ≤ 120 s.
  */
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 
 export const WRITE_CONFIRMATION_TOKEN_VERSION = 1;
 /** CONTRACTS §4.2: exp ≤ 120 s after the token is minted. */
 export const MAX_WRITE_CONFIRMATION_TTL_SECONDS = 120;
+/** The engine refuses a confirmation token without this `typ`. */
+export const WRITE_CONFIRMATION_TOKEN_TYPE = 'write_confirmation';
 const NONCE_BYTES = 16;
 
 export type WriteConfirmationTokenPayload = {
     v: typeof WRITE_CONFIRMATION_TOKEN_VERSION;
+    typ: typeof WRITE_CONFIRMATION_TOKEN_TYPE;
     /** Lowercase hex sha256 of the statement's UTF-8 bytes, exactly as submitted. */
     statement_sha256: string;
     /** User uuid. */
     sub: string;
     /** Project uuid. */
     project: string;
+    /** Unix seconds when the token was minted. */
+    iat: number;
+    /** Unix seconds; at most MAX_WRITE_CONFIRMATION_TTL_SECONDS after `iat`. */
     exp: number;
     /** 16 random bytes, unpadded base64url. */
     nonce: string;
@@ -67,12 +77,15 @@ export const mintWriteConfirmationToken = ({
         0,
         Math.min(Math.floor(ttlSeconds), MAX_WRITE_CONFIRMATION_TTL_SECONDS),
     );
+    const iat = Math.floor(now.getTime() / 1000);
     const payload: WriteConfirmationTokenPayload = {
         v: WRITE_CONFIRMATION_TOKEN_VERSION,
+        typ: WRITE_CONFIRMATION_TOKEN_TYPE,
         statement_sha256: statementSha256(statement),
         sub: userUuid,
         project: projectUuid,
-        exp: Math.floor(now.getTime() / 1000) + lifetime,
+        iat,
+        exp: iat + lifetime,
         nonce: nonce.toString('base64url'),
     };
     const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
