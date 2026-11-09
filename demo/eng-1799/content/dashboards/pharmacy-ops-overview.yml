@@ -1,3 +1,7 @@
+# Converted by hand from the synthetic Grafana dashboard demo/eng-1799/seed/grafana/pharmacy-ops-overview.json
+# (the base has no Grafana importer CLI). One Tile per panel, same titles; Grafana's 24-column grid is scaled
+# to Lightdash's 36 (x and w times 1.5), the time picker (now-30m, refresh 30s) became the Dashboard Time Range.
+# Keep the two in step: the demo-grafana-fixture check matches every panel title to a Tile title.
 contentType: dashboard
 description: Fill queue health for the ENG-1799 demo (synthetic data from the fake Prometheus, through the Federation Engine).
 filters:

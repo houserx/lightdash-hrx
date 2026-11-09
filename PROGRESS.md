@@ -2231,3 +2231,28 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Next:** `demo-grafana-fixture` was blocked only by this feature, so redo it now. Scene 4 can open the waterfall
   through the parameter default (no URL parameter needed).
 - 2026-11-09T09:18:21Z supervisor: demo-dashboard-service-health passed the gate in round 1
+
+### demo-grafana-fixture (2026-11-09, run 20261109-013019, redo after Service health passed)
+
+- **No importer CLI in the base.** `packages/cli` has only `alerting shadow-report --grafana-history`; the Grafana
+  side is the mapping module `packages/common/src/eng1799/grafanaPanelMapping.ts` (and docs), with no dashboard
+  importer. So the conversion is the hand-written YAML route that the feature allows.
+- New `demo/eng-1799/seed/grafana/pharmacy-ops-overview.json`: a synthetic Grafana export (schemaVersion 39, a
+  `DS_DEMO_PROMETHEUS` datasource input, no hosts) of **Pharmacy Ops overview**. Four panels: `stat` "Current fill
+  queue backlog", `timeseries` "Fill queue backlog" (dashed threshold at 100), `bargauge` "Peak backlog by queue",
+  and `table` "Queue status" (OK/Elevated/Backlogged range value mappings, the same shape as the chart YAML). Time
+  `now-30m`, refresh `30s`. Grafana gridPos (24 cols) × 1.5 = the YAML's x/w (36 cols); h is the same.
+- `content/dashboards/pharmacy-ops-overview.yml` gains a header comment naming its Grafana source. YAML comments
+  pass through `lightdash upload`; the Tiles are unchanged. `docs/eng-1799/demo.md` gains a paragraph under
+  Pharmacy Ops overview. **Deviation recorded there:** `stat`/`bargauge` became built-in big number and horizontal
+  bar, not the mapping doc's `stat-sparkline`/`bar-gauge` registry entries, so the demo needs no chart registry.
+- **Trap:** the spec matches every panel title (lowercased) to a Tile title of Pharmacy Ops, Service health or
+  Platform DB. Rename a Tile, and you must rename the panel too.
+- Tested as a user: fresh up.sh, then in Chromium (throwaway script in the run's tmp/) I signed in through /login and
+  opened Browse → dashboards → Pharmacy Ops overview. All four fixture panels show as Tiles with data: big number
+  19, the line with a red dashed line at 100, bars fill/pack/ship, and the table with Status OK. No tile or page
+  errors. Stack down afterwards.
+- Checks: `run.sh --stack grafana-fixture.spec.ts` passes (1 test). Regression: `--stack
+  dashboard-pharmacy-ops.spec.ts` passes (2 tests). Typecheck is clean. `docs.spec.ts` fails as it did before this
+  change (no "prerequisites" heading yet, which is demo-docs' job).
+- 2026-11-09T09:26:56Z supervisor: demo-grafana-fixture passed the gate in round 1

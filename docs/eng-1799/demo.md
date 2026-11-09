@@ -60,6 +60,15 @@ now(), '15s')` on the Federation Engine. Explore charts don't receive the reserv
 which only reach SQL charts, so the view's window is fixed at 6 hours. The Dashboard Time Range filters each Tile
 on `ts` inside that window, so ranges longer than 6 hours show only the last 6 hours.
 
+Pharmacy Ops overview is the demo's **converted Grafana dashboard**. Its source is the synthetic Grafana export
+`demo/eng-1799/seed/grafana/pharmacy-ops-overview.json` (a Prometheus datasource input, no real hosts). The base has
+no Grafana importer CLI, so the YAML was converted by hand: one Tile per panel with the same title (`timeseries` →
+cartesian line with the dashed threshold, `table` with range value mappings → table with the same mappings, as in
+`docs/eng-1799/grafana-panel-mapping.md`; `stat` → big number and `bargauge` → horizontal bar, built-in charts
+instead of the mapping's `stat-sparkline` and `bar-gauge` registry entries, so the demo needs no chart registry), x
+and w scaled from Grafana's 24 columns to Lightdash's 36, and the time picker (`now-30m`, refresh `30s`) as the
+Dashboard Time Range. If you change a panel title in one, change it in the other.
+
 **Platform DB** has three SQL chart Tiles over the synthetic Platform Database. Each one wraps an aggregate in
 `platform_query('...')`, so it is an Audited Query that runs as the signed-in user, who needs `platform_read`. No
 Tile selects a row-level column:
