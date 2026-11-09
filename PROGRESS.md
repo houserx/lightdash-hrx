@@ -1001,3 +1001,23 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   query-datasources, -ops-marts pass. tsc (common, cli), oxlint, oxfmt clean.
 - Trap: roundtrip-dashboards now fails only on the unbuilt `--dashboards-tf` option (unknown option).
 - 2026-11-09T03:32:27Z supervisor: imp-dashboard-datasources passed the gate in round 1
+
+## imp-dashboard-import-report (round 1)
+- Found already built: earlier sessions (imp-cli-grafana-dashboard onward) added `renderGrafanaImportReport` in
+  packages/common/src/eng1799/grafanaDashboardImport.ts, and the CLI handler writes
+  reports/<slug>/IMPORT-REPORT.md after the merged-parameter warnings are attached to each result, so per-dashboard
+  report counts always add up to import-summary.json. The acceptance check dashboard-report passed 4/4 before any change.
+- Only change: new unit test packages/common/src/eng1799/grafanaDashboardImport.test.ts (3 cases: warnings table with
+  code+panel and the TODO list; clean dashboard says "No warnings."/"No TODOs."; `|`/newline escaping in cells,
+  dashboard-level warning with empty panel cell, multi-target TODO as a nested list). It is the first unit test for
+  grafanaDashboardImport.ts; later dashboard features can add cases there.
+- Tested as a user: ran init.sh, then the CLI from source on "Report One" (news panel + Elasticsearch timeseries) and
+  "Report Two" (one Prometheus panel on uid RnQB6bP4kz) with `--datasources fixtures/terraform/grafana_data_sources.tf`.
+  report-one/IMPORT-REPORT.md: header "0 charts, 2 warnings, 1 TODO", rows `panel-dropped | Blog feed` and
+  `datasource-unsupported | Elastic errors`, TODO "Elastic errors: translate target A from the elasticsearch datasource
+  by hand". report-two: "No warnings." / "No TODOs.". import-summary.json: total 2, byCode panel-dropped 1 +
+  datasource-unsupported 1, todos 1. Report format: `# Import report: <name>`, counts line, `## Warnings` table
+  (Code | Panel | Message), `## TODO` list.
+- Trap: a Prometheus uid not in the tf (e.g. `prometheus-staging`, which is a resource name, not a uid) gives a
+  datasource-unresolved warning, so a "clean" test dashboard needs a real uid from the fixture.
+- 2026-11-09T03:35:38Z supervisor: imp-dashboard-import-report passed the gate in round 1
