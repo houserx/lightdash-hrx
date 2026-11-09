@@ -165,6 +165,17 @@ not configured.
 
 The fake Okta's key is generated when telemetry-fakes starts, so tokens stop working after `down.sh`.
 
+### Asking a question (scripted MCP client)
+
+`pnpm -F eng-1799-demo ask "<question>"` (`demo/eng-1799/ask/`) is an MCP client with no model behind it. It
+matches the question against a short scripted list (`ask --list` prints it), signs in at the fake Okta as the demo
+user, calls the matching telemetry-mcp tool and prints the tool, its arguments, the live query, the result table and
+a one-sentence answer. With `--json` it prints one JSON object instead:
+`{question, tool, arguments, query, result: {columns, rows}, answer}`. A question it doesn't know exits 1 with the
+list. Today both scripted questions are about the fill queue backlog and run `query_promql` on
+`hrx_fill_queue_backlog{queue="fill"}`: "What is the fill queue backlog right now?" (an instant query at `now`) and
+"How has the fill queue backlog changed over the last 15 minutes?" (a 1-minute range query).
+
 ## Known limits
 
 - **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's

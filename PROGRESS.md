@@ -2415,3 +2415,28 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Checks:** `bash ./init.sh`, then `run.sh lifecycle.spec.ts` passed (1 test, about 49 s). Regression:
   `run.sh --stack platform-db.spec.ts` passed. Demo typecheck is clean. No process is left.
 - 2026-11-09T10:37:25Z supervisor: demo-stack-lifecycle passed the gate in round 1
+
+### demo-mcp-ask (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** New `demo/eng-1799/ask/client.ts` (library: `ask(question, stack?)` returns
+  `{question, tool, arguments, query, result: {columns, rows}, answer}`) and `ask/main.ts` (CLI: `--json`, `--list`,
+  human-readable by default). `package.json` `ask` is now `node --import tsx ask/main.ts`. No model: the question is
+  matched against a scripted intent list. "...fill queue backlog right now?" runs `query_promql`
+  `hrx_fill_queue_backlog{queue="fill"}` with `at: "now"`. "...fill queue backlog ... over the last 15 minutes?" runs
+  the same expression as a range query (now-15m..now, step 1m). An unknown question exits 1 and prints the list. The
+  client signs in at the fake Okta (`stack.json okta.issuer`, `demoUser.email`), sends `initialize`,
+  `notifications/initialized` and `tools/list` (it fails if the tool is missing), then `tools/call`. It reads the SSE
+  replies and turns the tool's object rows into arrays in column order. It uses plain `fetch` and adds no dependency,
+  so the lockfile is unchanged. docs/eng-1799/demo.md has a new subsection, "Asking a question (scripted MCP client)".
+- **Tested as a user** (fresh up.sh): after scenario restart {-120, 900}, `pnpm -F eng-1799-demo ask --json "What is
+  the fill queue backlog right now?"` gave tool query_promql, the PromQL, 1 row with value 166 and the answer "166 jobs
+  right now, above the alert threshold of 100". The human-readable form showed the same. After restart {900, 1200}
+  (baseline), the value was 21 and the answer said "below the threshold". The 15-minute range question answered
+  18..46, latest 21. "what's the weather" exited 1 with the list.
+- **Checks:** `bash ./init.sh`, then `run.sh --stack mcp-ask.spec.ts` passed (1 test). `run.sh package.spec.ts` passed.
+  Demo typecheck is clean. No `.state` process is left. `docs.spec.ts` fails on headings (prerequisites, one command,
+  ...), and it fails the same way without this change: it belongs to the later demo-docs feature.
+- **For demo-scene-06-ai-question:** import `ask` from `demo/eng-1799/ask/client` (CommonJS, no extension) and write
+  its return value as out/scenes/06-ai-question/answer.json. To script more questions, add entries to `INTENTS` in
+  client.ts. Order matters: the range intent is checked before the "right now" intent.
+- 2026-11-09T10:47:21Z supervisor: demo-mcp-ask passed the gate in round 1
