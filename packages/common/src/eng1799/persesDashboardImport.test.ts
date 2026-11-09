@@ -215,6 +215,109 @@ describe('convertPersesDashboard', () => {
     });
 });
 
+describe('Perses variables', () => {
+    const withVariables = (variables: unknown[]) =>
+        convertPersesDashboard(
+            {
+                dashboard: dashboard({
+                    variables,
+                    panels: {
+                        q: panel('Q', 'TimeSeriesChart', {
+                            queries: [
+                                promQuery(
+                                    'up{job="$job", env="$env", region="$region"}',
+                                    'prom-prod',
+                                ),
+                            ],
+                        }),
+                    },
+                    layouts: [
+                        {
+                            kind: 'Grid',
+                            spec: { items: [item('q', 0, 0, 24, 8)] },
+                        },
+                    ],
+                }),
+            },
+            { spaceSlug: 'ops' },
+        );
+
+    it('turns list, static and text variables into parameters', () => {
+        const result = withVariables([
+            {
+                kind: 'ListVariable',
+                spec: {
+                    name: 'job',
+                    display: { name: 'Job' },
+                    defaultValue: 'node',
+                    plugin: {
+                        kind: 'PrometheusLabelValuesVariable',
+                        spec: { labelName: 'job' },
+                    },
+                },
+            },
+            {
+                kind: 'ListVariable',
+                spec: {
+                    name: 'env',
+                    defaultValue: 'prod',
+                    plugin: {
+                        kind: 'StaticListVariable',
+                        spec: {
+                            values: [
+                                'prod',
+                                { label: 'Staging', value: 'stg' },
+                            ],
+                        },
+                    },
+                },
+            },
+            {
+                kind: 'TextVariable',
+                spec: { name: 'region', value: 'eu', constant: true },
+            },
+        ]);
+        expect(result.parameters).toEqual({
+            job: { label: 'Job', allow_custom_values: true, default: 'node' },
+            env: {
+                label: 'env',
+                options: [
+                    { label: 'prod', value: 'prod' },
+                    { label: 'Staging', value: 'stg' },
+                ],
+                default: 'prod',
+            },
+        });
+        expect(result.dashboard.parameters).toEqual({
+            job: { parameterName: 'job', value: 'node' },
+            env: { parameterName: 'env', value: 'prod' },
+        });
+        const { sql } = result.charts[0];
+        expect(sql).toContain('${ld.parameters.job}');
+        expect(sql).toContain('${ld.parameters.env}');
+        // A constant text variable is inlined.
+        expect(sql).toContain('region="eu"');
+    });
+
+    it('warns about multi-value and unknown variables', () => {
+        const result = withVariables([
+            {
+                kind: 'ListVariable',
+                spec: {
+                    name: 'job',
+                    allowMultiple: true,
+                    plugin: { kind: 'PrometheusLabelValuesVariable' },
+                },
+            },
+            { kind: 'MysteryVariable', spec: { name: 'env' } },
+        ]);
+        const codes = result.warnings.map((w) => w.code);
+        expect(codes).toContain('variable-multi-value');
+        expect(codes).toContain('variable-unsupported');
+        expect(Object.keys(result.parameters)).toEqual(['job']);
+    });
+});
+
 describe('Perses panel options', () => {
     const convert = (panels: Record<string, unknown>) =>
         convertPersesDashboard(

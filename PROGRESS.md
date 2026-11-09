@@ -1764,3 +1764,32 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   dashboard-panel-kinds 3/3, dashboard-todo-tiles 2/2, dashboard-legend-stacking 4/4, dashboard-thresholds-units
   3/3. persesDashboardImport.test.ts 13/13. common builds (tsc) via init; oxlint/oxfmt clean on changed files.
 - 2026-11-09T05:59:22Z supervisor: imp-perses-panels passed the gate in round 1
+
+## imp-perses-queries-variables (2026-11-09)
+
+- persesDashboardImport.ts now restates `spec.variables` as Grafana `templating.list`, so the existing
+  grafanaVariables/grafanaQuery code turns them into parameters and `${ld.parameters.<name>}` exactly as for Grafana:
+  - ListVariable + StaticListVariable -> `custom` with the values as options (`"prod"` or `{label, value}`).
+  - ListVariable + any other plugin (PrometheusLabelValuesVariable, PromQL, ...) -> `query`, so the
+    parameter gets allow_custom_values (options come from a datasource at view time).
+  - TextVariable -> `textbox` (allow_custom_values, default = value); `constant: true` -> Grafana `constant`, inlined.
+  - defaultValue -> current value (dashboard parameter value + project default); allowMultiple / allowAllValue /
+    customAllValue -> multi / includeAll / allValue, so variable-multi-value and the All default work the same way.
+  - Any other variable kind -> `variable-unsupported` warning (dashboard set), not imported.
+- Queries, $__rate_interval/$__range and duration/refreshInterval needed no change: they already went through
+  the Grafana query translation and time range code (imp-cli-perses-dashboard). Two queries in one panel -> one
+  chart with two promql() calls (UNION ALL), already the case.
+- Not mapped (no Grafana counterpart in our importer, no warning): ListVariable `sort`, `capturingRegexp`,
+  `display.hidden`. A follow-up could warn about capturingRegexp if it matters.
+- Trap: GrafanaTemplatingVariable has an index signature, so `'x' in result` doesn't narrow a union with it;
+  convertVariable returns `{variable}` | `{unsupported}`.
+- Tested as a user: `node --import tsx src/index.ts import perses-dashboard node-overview.yaml api-latency.json
+  --out tmp/qv-manual` from packages/cli: CPU usage sql has `job="' || ${ld.parameters.job} || '"`, env likewise,
+  `[' || ${ld.parameters.__interval} || ']` and 'prometheus-production'; lightdash.config.yml has job (any value,
+  default node), env (options prod, staging, default prod), instance (any value, default node-1); dashboard
+  parameters job=node env=prod instance=node-1; timeRange now-6h..now refresh 1m; api-latency now-1h..now and
+  its latency chart has 2 promql() calls.
+- Checks: perses-queries-variables 4/4 after init. Regression: perses-command 3/3, perses-layout 2/2,
+  perses-panels 4/4, dashboard-variables 3/3, dashboard-multi 3/3. persesDashboardImport.test.ts 15/15 (2 new).
+  common tsc clean via init; oxlint/oxfmt clean on changed files.
+- 2026-11-09T06:04:42Z supervisor: imp-perses-queries-variables passed the gate in round 1

@@ -18,6 +18,11 @@
  * - PrometheusTimeSeriesQuery queries become Prometheus targets. A query's datasource name is
  *   both the Grafana datasource uid and name, so it resolves to the Telemetry Source of that
  *   name; other query plugins keep their kind as the datasource type and are reported.
+ *   `$var`, `$__rate_interval`, `$__range` etc. are translated as in Grafana queries.
+ * - Variables become Grafana templating variables (static lists → custom, other list plugins →
+ *   query, text → textbox or constant), so they become Lightdash parameters with the
+ *   dashboard's defaults exactly like Grafana variables. Other variable kinds are a
+ *   `variable-unsupported` warning.
  * - Grid layouts (24 columns, like Grafana's) are stacked in order. A grid with a title
  *   becomes a row: an open grid a heading above its panels, a collapsed one a collapsed row.
  *   A panel no layout places is not shown in Perses; it is a `panel-dropped` warning.
@@ -32,7 +37,11 @@ import {
     type GrafanaDashboardPanel,
     type UnsupportedPanelType,
 } from './grafanaDashboardImport';
-import type { GrafanaDatasource, GrafanaTarget } from './grafanaQuery';
+import type {
+    GrafanaDatasource,
+    GrafanaTarget,
+    GrafanaTemplatingVariable,
+} from './grafanaQuery';
 import type { ImportWarning } from './importWarnings';
 
 /** The fields of a Perses dashboard the importer reads. */
@@ -464,6 +473,116 @@ const convertPanel = (
     };
 };
 
+/** A Perses static list value (`"prod"` or `{label, value}`) as a Grafana variable option. */
+const staticOption = (
+    value: unknown,
+): { text: string; value: string } | undefined => {
+    if (typeof value === 'string' || typeof value === 'number') {
+        return { text: String(value), value: String(value) };
+    }
+    const { value: v, label } = record(value);
+    if (typeof v !== 'string' && typeof v !== 'number') return undefined;
+    return {
+        text:
+            typeof label === 'string' || typeof label === 'number'
+                ? String(label)
+                : String(v),
+        value: String(v),
+    };
+};
+
+/**
+ * One Perses variable as the Grafana templating variable it corresponds to, or the reason it
+ * has none:
+ * - a ListVariable with a StaticListVariable plugin → a custom variable with those options;
+ * - a ListVariable with any other plugin (label values, PromQL, ...) → a query variable, whose
+ *   options come from a datasource, so its parameter accepts any value;
+ * - a TextVariable → a textbox variable, or a constant (inlined in queries) when `constant`.
+ * `allowMultiple`, `allowAllValue` and `customAllValue` are Grafana's multi, includeAll and
+ * allValue, so the query translation warns about them the same way.
+ */
+const convertVariable = (
+    variable: unknown,
+): { variable: GrafanaTemplatingVariable } | { unsupported: string } => {
+    const kind = text(record(variable).kind) ?? 'unknown';
+    const spec = record(record(variable).spec);
+    const name = typeof spec.name === 'string' ? spec.name : '';
+    const display = record(spec.display);
+    const common = {
+        name,
+        ...(text(display.name) === undefined
+            ? {}
+            : { label: text(display.name) }),
+        ...(text(display.description) === undefined
+            ? {}
+            : { description: text(display.description) }),
+    };
+    if (kind === 'TextVariable') {
+        const value = typeof spec.value === 'string' ? spec.value : '';
+        return {
+            variable:
+                spec.constant === true
+                    ? { ...common, type: 'constant', query: value }
+                    : {
+                          ...common,
+                          type: 'textbox',
+                          query: value,
+                          current: { text: value, value },
+                      },
+        };
+    }
+    if (kind !== 'ListVariable') {
+        return {
+            unsupported: `The Perses ${kind} "${name}" has no Lightdash equivalent; it is not imported`,
+        };
+    }
+    const plugin = record(spec.plugin);
+    const isStatic = plugin.kind === 'StaticListVariable';
+    const options = isStatic
+        ? (Array.isArray(record(plugin.spec).values)
+              ? (record(plugin.spec).values as unknown[])
+              : []
+          ).flatMap((value) => staticOption(value) ?? [])
+        : [];
+    const { defaultValue } = spec;
+    const converted: GrafanaTemplatingVariable = {
+        ...common,
+        type: isStatic ? 'custom' : 'query',
+        ...(isStatic ? { options } : {}),
+        ...(spec.allowMultiple === true ? { multi: true } : {}),
+        ...(spec.allowAllValue === true ? { includeAll: true } : {}),
+        ...(text(spec.customAllValue) === undefined
+            ? {}
+            : { allValue: text(spec.customAllValue) }),
+        ...(defaultValue === undefined || defaultValue === null
+            ? {}
+            : { current: { value: defaultValue } }),
+    };
+    return { variable: converted };
+};
+
+/** The dashboard's variables as Grafana templating variables, and warnings for the rest. */
+const convertVariables = (
+    variables: unknown,
+    dashboard: string,
+): { list: GrafanaTemplatingVariable[]; warnings: ImportWarning[] } => {
+    const list: GrafanaTemplatingVariable[] = [];
+    const warnings: ImportWarning[] = [];
+    (Array.isArray(variables) ? variables : []).forEach((variable) => {
+        const converted = convertVariable(variable);
+        if ('unsupported' in converted) {
+            warnings.push({
+                code: 'variable-unsupported',
+                message: converted.unsupported,
+                dashboard,
+            });
+        } else {
+            list.push(converted.variable);
+        }
+    });
+    return { list, warnings };
+};
+
 const PANEL_REF = /^#\/spec\/panels\/(.+)$/;
 
 /** The panel id a Grid item's `content.$ref` points at. */
@@ -577,6 +696,9 @@ export const persesToGrafanaDashboard = (
             });
         });
 
+    const variables = convertVariables(spec.variables, title);
+    warnings.push(...variables.warnings);
+
     const duration = text(spec.duration);
     const refresh = text(spec.refreshInterval);
     return {
@@ -586,6 +708,9 @@ export const persesToGrafanaDashboard = (
                 ? {}
                 : { description: text(record(spec.display).description) }),
             panels,
+            ...(variables.list.length > 0
+                ? { templating: { list: variables.list } }
+                : {}),
             ...(duration === undefined
                 ? {}
                 : { time: { from: `now-${duration}`, to: 'now' } }),
