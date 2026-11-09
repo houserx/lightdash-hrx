@@ -2656,3 +2656,40 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh --stack
   scene-07-write-mode.spec.ts` passed (26 s). down.sh ran, and no chromium or `.state` process is left.
 - 2026-11-09T12:19:30Z supervisor: demo-scene-07-write-mode passed the gate in round 1
+
+### demo-scene-08-recovery (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/08-recovery.spec.ts` (23 `expect`s, scene timeout 300 s). It fails at once
+    if the recovery is more than 120 s away or the clock is still in the baseline. It signs in and opens
+    `/projects/<uuid>/alerting/rules`. If the scene starts in the incident and no resolve has arrived yet, it reloads
+    the list every ~3 s until the backlog rule reads Firing (so the video shows Firing first). It then runs
+    `waitForPhase('recovered')`, which returns at once when the recovery is already over. Next it reloads until the
+    rule reads Normal (or Resolved). It opens the rule page and asserts State history shows "Firing → Normal|Resolved"
+    (the backend records "Firing → Resolved"). It polls `/api/received` for a resolve notification for the rule. On
+    the fake incident.io page, it asserts the newest row for the rule is RESOLVED in rgb(14, 124, 58), with
+    team=pharmacy-ops, an Ended time and the summary "Fill queue backlog is N (threshold 100)" with N <= 100. An
+    older FIRING row must be listed below it. Key moment: the incident.io page.
+  - docs/eng-1799/demo.md: a 08-recovery bullet under "Walkthrough scenes (recorded)".
+- **Decision: what counts as "this" resolve.** A resolve notification counts only if it was received at or after
+  max(recoveryAt, startedAt) of the current timeline. The receiver keeps every notification for the life of the
+  stack, so an earlier timeline's resolve must not pass. A restart from firing into a baseline can also produce a
+  resolve before the new recovery, and the max() excludes that one too.
+- **No app change was needed.** List state labels: the list shows "Normal" after the resolve, while the rule page's
+  Series badge shows "Resolved".
+- **Tested as a user.** (1) I ran up.sh, restarted with `{-120, 35}` and ran `run.sh 08-recovery`: it passed in
+  1.5 min. key-moment.png shows RESOLVED "Fill queue backlog is 80 (threshold 100)" above two FIRING rows. (2) **All
+  eight scenes after a single restart:** I restarted with `{40, 215}` and then ran `run.sh` with no scene id. All 8
+  passed in 4m37s (01 17 s, 02 1.5 min, 03 11 s, 04 15 s, 05 28 s, 06 11 s, 07 23 s, 08 1.3 min; 08 started about
+  18 s before the recovery). (3) **Already resolved:** with no further restart, `run.sh 08-recovery` passed in 14 s.
+  It used the resolve received at 12:29:22 and ignored the 12:23:51 one from the earlier timeline.
+- **Trap for run-all / video lines.** Within one timeline, scene 08 cannot start after the resolve when the walkthrough
+  runs back to back. 02–06 each assert "still in the incident" at their end, 07 takes only ~25 s, and the resolve
+  arrives ~60 s after the recovery. So in a full run, 08 waits about 1 min, which is normal. Also, scenes 01–06 took
+  ~3 min from the restart here, so `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=150` (run-all.spec.ts) looks too short for
+  02–06 to finish inside the incident. The demo-run-all session should check this timing first; it may need run-all.sh
+  to restart the clock before the walkthrough.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh --stack
+  scene-08-recovery.spec.ts` passed (1.4 min test). In that video, the frame at 25 s shows both rules Firing. down.sh
+  ran, and no chromium or `.state` process is left.
+- 2026-11-09T12:39:10Z supervisor: demo-scene-08-recovery passed the gate in round 1

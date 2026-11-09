@@ -240,6 +240,17 @@ Chromium outlives the run.
   audit records, filtered to the demo user: the commit and the Preview (marked "preview") are the two newest write
   records, both with the run's description. Each run adds 15 minutes to the demo-fill target; a fresh up.sh reseeds
   the Platform Database. The scene does not use the scenario clock. Key moment: the audit browser with both records.
+- **08-recovery**: opens the Alerting page with "Fill queue backlog high". If it starts in the incident, it first
+  reloads the list until the rule reads Firing. It then waits on the scenario clock for `recovered` and reloads the
+  list until the rule is back to Normal (the backlog is under 100 within a minute of the recovery, and the rule is
+  evaluated every 30 s). It opens the rule, whose State history shows "Firing → Resolved". Once the receiver has the
+  resolve notification, it opens the fake incident.io page. There the rule's newest row is RESOLVED in green, with its
+  labels, an Ended time and the summary "Fill queue backlog is N (threshold 100)" with N at or under 100. The earlier
+  FIRING row is below it. Only a resolve received after this timeline's recovery counts. The scene also runs when the
+  recovery is already over, as it is at the end of the whole walkthrough: then it shows the rule already Normal and
+  the resolve already received. Restart the clock first with the recovery at most 120 s out (`{"incidentAfterSeconds":
+  -120, "recoveryAfterSeconds": 35}`). If the recovery is further away, or the clock is still in the baseline, the
+  scene fails at once. Key moment: the fake incident.io page with the resolve notification.
 
 ## Known limits
 
