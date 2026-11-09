@@ -73,6 +73,43 @@ const NOT_YET_SUPPORTED = [
     'restrictedLogGroups',
 ];
 
+/** The non-secret part of one rendered `[[sources]]` entry (what the MCP's `MCP_SOURCES` mirrors). */
+export type EngineSource = {
+    name: string;
+    kind: string;
+    default: boolean;
+    restricted: boolean;
+};
+
+/** The `[[sources]]` entries `renderConfig` writes for `opts`, in the same order. */
+export function engineSources(opts: StartEngineOptions): EngineSource[] {
+    const source = (
+        name: string,
+        kind: string,
+        flags: Partial<EngineSource> = {},
+    ): EngineSource => ({
+        name,
+        kind,
+        default: false,
+        restricted: false,
+        ...flags,
+    });
+    const sources: EngineSource[] = [];
+    if (opts.prometheus) {
+        sources.push(
+            source('prometheus', 'prometheus', { default: true }),
+            source('prometheus-restricted', 'prometheus', { restricted: true }),
+        );
+    }
+    if (opts.loki) sources.push(source('loki', 'loki'));
+    if (opts.tempo) sources.push(source('tempo', 'tempo'));
+    if (opts.cloudwatch) sources.push(source('cloudwatch', 'cloudwatch'));
+    if (opts.cloudwatchLogs)
+        sources.push(source('cloudwatch-logs', 'cloudwatch_logs'));
+    if (opts.platform) sources.push(source('platform', 'platform_postgres'));
+    return sources;
+}
+
 export type Engine = {
     host: string;
     pgPort: number;
@@ -83,6 +120,8 @@ export type Engine = {
     pid: number;
     binary: string;
     configToml: string;
+    /** The rendered `[[sources]]`, without URLs or secrets. */
+    sources: EngineSource[];
     /** The `[audit]` store: `opts.auditStore` when given, else the harness's own fake. */
     auditStore: { dynamodbUrl: string; s3Url: string } | FakeAuditStore;
     /** SIGTERM, wait for exit (SIGKILL after a grace period), remove the scratch dir. Idempotent. */
@@ -335,6 +374,7 @@ export async function startEngine(
         pid: child.pid!,
         binary: ENGINE_BINARY,
         configToml,
+        sources: engineSources(opts),
         auditStore,
         stop,
     };

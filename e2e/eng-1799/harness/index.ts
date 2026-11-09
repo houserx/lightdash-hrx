@@ -55,3 +55,16 @@ export type {
     PrometheusSeries,
     StartFakePrometheusOptions,
 } from './prometheus';
+export { engineSources } from './engine';
+export type { EngineSource } from './engine';
+export { OKTA_AUDIENCE, startFakeOkta } from './okta';
+export type { FakeOkta, MintAccessTokenOptions } from './okta';
+export { startFakeLightdashApi } from './lightdashApi';
+export type {
+    FakeLightdashApi,
+    FakeLightdashUser,
+    StartFakeLightdashApiOptions,
+} from './lightdashApi';
+// Loads packages/telemetry-mcp only inside startTelemetryMcp (dynamic import).
+export { MCP_PUBLIC_URL, startTelemetryMcp } from './telemetryMcp';
+export type { StartTelemetryMcpOptions, TelemetryMcp } from './telemetryMcp';

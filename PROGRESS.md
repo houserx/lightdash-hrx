@@ -816,3 +816,32 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   identical claims on both sides. MCP `tests/acceptance/user-attributes.test.ts` (3/3) and the unit test (4/4) pass;
   MCP tsc clean. No server left running.
 - 2026-11-09T03:52:37Z supervisor: int-fix-attr-truthiness passed the gate in round 1
+- 2026-11-09 int-mcp-oauth-gate: harness only, **no MCP code change** (the MCP's Okta gate, user mapping and
+  no-tools server already did the right thing). New `harness/okta.ts` (`startFakeOkta()`: a FakeServer
+  serving `/oauth2/default/v1/keys` with its own RS256 key and random kid, plus the authorization-server
+  metadata; `issuer` = `<url>/oauth2/default`, `audience` = `OKTA_AUDIENCE` = `api://telemetry-mcp-e2e`,
+  async `mintAccessToken({ sub, email?, aud?, expiresInSeconds? })`, email left out when undefined).
+  New `harness/lightdashApi.ts` (`startFakeLightdashApi`: `/api/v1/org/users` substring search with
+  `groups: []` when `includeGroups` is asked, `/api/v1/org/attributes` built from each user's
+  `attributes` as direct assignments sending both `values` and legacy `value`, no defaults; alerting
+  state/history = `[]` for the project, 404 for another; everything behind `ApiKey <apiToken>` with
+  `apiToken = test-lightdash-api-token-not-real`). New `harness/telemetryMcp.ts` (`startTelemetryMcp`:
+  dynamic import of `packages/telemetry-mcp/src/index.ts` by absolute path, env per the Harness API,
+  `MCP_PUBLIC_URL = https://telemetry-mcp.e2e.example.test`, `LOG_LEVEL=debug` captured into
+  `mcp.logs` instead of stdout; returns `{ url, logs, close() }`). `engine.ts`: `engineSources(opts)`
+  and `engine.sources` (`{ name, kind, default, restricted }[]`, the rendered `[[sources]]` without
+  URLs) — `MCP_SOURCES` is exactly that. Tested by hand (`../tmp/manual-mcp-oauth-gate/try.mts`, run
+  from e2e/eng-1799 with tsx; the SDK must be imported by absolute path from e2e/eng-1799/node_modules)
+  with cases unlike the check: no token, `Basic` auth, a same-issuer token re-signed by another key, a
+  10-minute-expired token, a wrong audience and garbage all 401 (challenge with `resource_metadata` /
+  `invalid_token`); a valid token initializes (200); protected-resource metadata names the fake issuer;
+  a mapped user lists the 14 tools and `list_sources` returns the engine's two prometheus sources; a
+  deactivated user, an unknown email and a token with no email list 0 tools and every call is an
+  error naming why. Check 1/1; e2e typecheck clean. No engine left running.
+  Next sessions must know:
+  - `startEngine` has no `platform` in this check, but `MCP_PLATFORM_SOURCE=platform` is always set;
+    platform tools are still listed (the MCP lists all 14 regardless of sources and attrs).
+  - When a later check adds `restrictedLokiSelectors`, the loki source stays `restricted: false` in
+    `engine.sources` (selectors restrict lines, not the source); adjust `engineSources` only if the
+    MCP needs to know.
+- 2026-11-09T03:57:24Z supervisor: int-mcp-oauth-gate passed the gate in round 1
