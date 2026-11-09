@@ -252,6 +252,18 @@ Chromium outlives the run.
   -120, "recoveryAfterSeconds": 35}`). If the recovery is further away, or the clock is still in the baseline, the
   scene fails at once. Key moment: the fake incident.io page with the resolve notification.
 
+## Video build
+
+`pnpm -F eng-1799-demo video [--scenes-dir <dir>] [--out <dir>]` (`demo/eng-1799/video/build.ts`) joins the eight
+scene recordings, `<scenes-dir>/<scene-id>/video.webm`, in walkthrough order into `<out>/eng-1799-demo.mp4`: H.264
+(yuv420p), 1920x1080, 30 fps, with ffmpeg from `ffmpeg-static`. `--scenes-dir` defaults to `demo/eng-1799/out/scenes`
+and `--out` to `demo/eng-1799/out`. Relative paths resolve against the directory you ran pnpm from. Every frame of
+every scene is kept. When the scenes together run longer than 225 s, the whole video is sped up by one uniform factor
+to 225 s, which keeps it inside 4 minutes. A full walkthrough records about 296 s, so it plays at about 1.3x. Under
+2 minutes the build still writes the video but prints a warning. A missing recording fails the build and names the
+file. The MP4 has no audio track. The demo ships no music, and `--music <file>` (music supplied by the person
+rendering the video) is refused until demo-video-music adds it.
+
 ## Known limits
 
 - **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's

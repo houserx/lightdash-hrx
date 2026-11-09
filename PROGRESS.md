@@ -2693,3 +2693,32 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   scene-08-recovery.spec.ts` passed (1.4 min test). In that video, the frame at 25 s shows both rules Firing. down.sh
   ran, and no chromium or `.state` process is left.
 - 2026-11-09T12:39:10Z supervisor: demo-scene-08-recovery passed the gate in round 1
+
+### demo-video-build (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/video/build.ts`, which is the `video` script (`node --import tsx video/build.ts`) in
+    demo/eng-1799/package.json and replaces the "not implemented" stub. It parses `--scenes-dir`, `--out` and
+    `--music`. Relative paths resolve against `INIT_CWD`, the directory pnpm was run from. It checks all eight
+    `<scene-id>/video.webm` files and fails, listing them, if any are missing or empty. It measures each clip by
+    decoding it, because Playwright webm headers carry no duration. Then one ffmpeg run does per clip scale/pad to
+    1920x1080, setsar=1, setpts, fps=30 and yuv420p, then `concat`. Output is libx264 veryfast crf 20, `-an`,
+    `+faststart`, `-threads 2`. It writes a `.partial.mp4` first and renames it to `eng-1799-demo.mp4`.
+  - docs/eng-1799/demo.md: new "Video build" section.
+- **Decision: fitting into 2–4 minutes.** The real recordings add up to 296 s (02 and 08 wait on the clock for ~90 s
+  each). If the total is over `MAX_SCENES_SECONDS = 225`, the build speeds up the whole video by one uniform factor
+  (x1.316 today) to 225 s. Every scene stays complete and in order. 225 leaves ~15 s for the title and end cards that
+  demo-video-cards-captions adds. That session must make sure the cards plus scenes minus crossfades stay <= 240 s.
+  On the synthetic 8x18 s clips the factor is 1 (144 s). Under 120 s the build only warns, since run-all checks >= 60.
+- **`--music` is parsed but refused** with "not supported by this build yet (demo-video-music)". The hygiene spec
+  needs the string `--music` and `ffmpeg-static` in build.ts. demo-video-music should replace that refusal.
+- **Trap:** the package compiles as CommonJS for tsc, so `import.meta` fails typecheck. Use `__dirname`, as stack/*.ts does.
+- **Tested as a user.** I ran `pnpm -F eng-1799-demo video --scenes-dir demo/eng-1799/out/scenes --out
+  tmp/video-manual` on the real recordings (18 s wall). Output: h264 High, yuv420p, 1920x1080, 30 fps, 3:45, one
+  video stream and no audio. A contact sheet of frames at 6/40/85/100/115/130/140/160/200 s showed sign-in → the
+  incident dashboard → Alerting → Service health → Investigate → Ask telemetry-mcp → Write Mode → the recovery
+  Alerting list, in order. A missing scenes dir and `--music` each exit 1 with a clear message. With no arguments it
+  wrote demo/eng-1799/out/eng-1799-demo.mp4.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh video.spec.ts --grep
+  "demo-video-build:"` passed (11.7 s). No ffmpeg process is left.
+- 2026-11-09T12:48:25Z supervisor: demo-video-build passed the gate in round 1

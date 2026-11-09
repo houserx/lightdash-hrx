@@ -7,7 +7,7 @@
     "scripts": {
         "typecheck": "tsc --noEmit -p tsconfig.json",
         "walkthrough": "bash walkthrough/run.sh",
-        "video": "node -e \"console.error('eng-1799-demo video: not implemented yet (video/build.ts comes with demo-video-build)'); process.exit(1)\" --",
+        "video": "node --import tsx video/build.ts",
         "ask": "node --import tsx ask/main.ts"
     },
     "devDependencies": {
