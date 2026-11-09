@@ -47,7 +47,7 @@ describe('resolveAlertQueryParameters', () => {
             __from: '2026-11-01T09:00:00.000Z',
             __to: '2026-11-08T09:00:00.000Z',
             __interval: '15m',
-            __range: '1w',
+            __range: '7d',
         });
     });
 
@@ -69,7 +69,7 @@ describe('substituteAlertQueryParameters', () => {
         __from: '2026-11-01T09:00:00.000Z',
         __to: '2026-11-08T09:00:00.000Z',
         __interval: '15m',
-        __range: '1w',
+        __range: '7d',
     };
 
     it('replaces every reserved parameter, as often as it appears', () => {
@@ -79,7 +79,7 @@ describe('substituteAlertQueryParameters', () => {
                 parameters,
             ),
         ).toBe(
-            "ts >= '2026-11-01T09:00:00.000Z' AND ts < '2026-11-08T09:00:00.000Z' AND step = '15m' AND '2026-11-01T09:00:00.000Z' < '1w'",
+            "ts >= '2026-11-01T09:00:00.000Z' AND ts < '2026-11-08T09:00:00.000Z' AND step = '15m' AND '2026-11-01T09:00:00.000Z' < '7d'",
         );
     });
 

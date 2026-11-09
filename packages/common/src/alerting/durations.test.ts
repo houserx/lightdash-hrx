@@ -40,14 +40,16 @@ describe('formatPrometheusDuration', () => {
         [5_400_000, '1h30m'],
         [90_500, '1m30s500ms'],
         [86_400_000, '1d'],
-        [691_200_000, '1w1d'],
+        [604_800_000, '7d'],
+        [691_200_000, '8d'],
     ])('formats %d as %s', (input, expected) => {
         expect(formatPrometheusDuration(input)).toBe(expected);
     });
 
-    it('rejects negative and fractional values', () => {
+    it('rejects negative and non-finite values', () => {
         expect(() => formatPrometheusDuration(-1)).toThrow();
-        expect(() => formatPrometheusDuration(1.5)).toThrow();
+        expect(() => formatPrometheusDuration(Number.NaN)).toThrow();
+        expect(() => formatPrometheusDuration(Infinity)).toThrow();
     });
 
     it('round-trips', () => {

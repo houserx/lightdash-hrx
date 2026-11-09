@@ -683,3 +683,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   gave one cache key and the window 09:45..10:00 (step 15 s). At 10:01:01 the key was different and
   the window was 09:46..10:01. 61 rows each time. No engine left running.
 - 2026-11-09T03:25:03Z supervisor: int-time-cache-key passed the gate in round 1
+- 2026-11-09 int-fix-alert-time-params-agree: one `formatPrometheusDuration`. Alerting's
+  `common/src/alerting/durations.ts` now re-exports ldq's (`utils/timeRange.ts`) instead of having
+  its own. The largest unit is now the day, so 7 days is `7d`, not `1w`. This follows recommendation 4
+  above. `parsePrometheusDuration` is unchanged and still accepts `w`/`y`. Alerting's reserved
+  parameters (`resolveAlertQueryParameters`) now equal ldq's `getReservedTimeParameterValues` for the
+  same absolute window. Behaviour change for alerting: the formatter no longer throws on fractional
+  ms; it floors them as ldq's always did. It still throws on negative or non-finite input. Updated
+  the alerting unit tests (durations.test.ts: `8d` instead of `1w1d`, non-finite instead of
+  fractional; queryParameters.test.ts: `__range` `7d`). Also updated the index.ts comment.
+  `computeAlertQueryIntervalMs` still duplicates ldq's `getTimeIntervalMs` (same steps and floor;
+  only alerting's throws on a negative range). They agree today; merging them is a possible cleanup.
+  Tested: with tsx, both modules gave identical params for 10m/7d/14d/30d at 10:00Z
+  (`7d` → 15m/7d, `30d` → 1h/30d). The check passes (1/1): every __interval/__range was used as a
+  promql() step on the real engine and returned rows. The common alerting unit tests pass and
+  common's typecheck is clean.
+- 2026-11-09T03:28:11Z supervisor: int-fix-alert-time-params-agree passed the gate in round 1
