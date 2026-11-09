@@ -1,13 +1,14 @@
 // ENG-1799 demo: `pnpm -F eng-1799-demo video [--scenes-dir <dir>] [--out <dir>] [--music <file>]`
 //
 //   --scenes-dir  default demo/eng-1799/out/scenes; holds <scene-id>/video.webm for the eight walkthrough scenes
-//   --out         default demo/eng-1799/out; gets eng-1799-demo.mp4
+//   --out         default demo/eng-1799/out; gets eng-1799-demo.mp4, thumbnail.png and CHAPTERS.md
 //   --music       a music file supplied by the person rendering the video (the demo never ships audio of its own)
 //
 // The video opens on a title card ("Lightdash for HouseRx operations"), then plays the eight scene recordings in
 // walkthrough order, each with a plain-language caption in the lower third, and ends on an end card. Neighbouring
 // segments crossfade for XFADE_SECONDS. The output is one H.264 (yuv420p) 1920x1080 30 fps MP4 made with ffmpeg from
-// ffmpeg-static, plus <out>/CHAPTERS.md ("<mm:ss> <title>", one line per chapter: title card, eight scenes, end card).
+// ffmpeg-static, plus <out>/CHAPTERS.md ("<mm:ss> <title>", one line per chapter: title card, eight scenes, end card)
+// and <out>/thumbnail.png (1920x1080: the incident scene's closing frame under a title band).
 // Every frame of every scene is used. When the scenes together run longer than MAX_SCENES_SECONDS, the whole video is
 // sped up by one uniform factor so it stays inside the 2-4 minute budget. Without --music the MP4 has no audio track.
 // Relative paths resolve against the directory pnpm was started from.
@@ -36,6 +37,8 @@ const SCENES = [
     { id: '08-recovery', chapter: 'Recovery', caption: 'The backlog clears, the alert resolves and incident.io is told' },
 ] as const;
 const END_CHAPTER = 'End card';
+/** The thumbnail is this scene's closing frame (the incident: the backlog stat has turned red by then). */
+const THUMBNAIL_SCENE = '02-incident';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -205,8 +208,29 @@ function main(): void {
         rmSync(partial, { force: true });
     }
     writeFileSync(path.join(outDir, 'CHAPTERS.md'), chaptersMd);
+
+    // thumbnail.png: one frame of the finished video near the end of the thumbnail scene (before its crossfade out), with the title on a
+    // light band across the top (the scene's own caption stays in the lower third).
+    const seg = SCENES.findIndex((scene) => scene.id === THUMBNAIL_SCENE) + 1;
+    const thumbAt = starts[seg] + Math.max(lengths[seg] - XFADE_SECONDS - 1.5, lengths[seg] / 2);
+    const thumb = path.join(outDir, 'thumbnail.png');
+    const thumbPartial = path.join(outDir, '.thumbnail.partial.png');
+    rmSync(thumbPartial, { force: true });
+    try {
+        ffmpeg(bin, [
+            '-loglevel', 'error', '-y',
+            '-ss', thumbAt.toFixed(3), '-i', target,
+            '-frames:v', '1',
+            '-vf', `drawbox=x=0:y=0:w=iw:h=200:color=${CARD_COLOUR}@0.92:t=fill,${drawtext(font, TITLE, 96, '100-(th/2)', CARD_TEXT)}`,
+            '-threads', THREADS,
+            '-f', 'image2', '-c:v', 'png', thumbPartial,
+        ]);
+        renameSync(thumbPartial, thumb);
+    } finally {
+        rmSync(thumbPartial, { force: true });
+    }
     log(`video ${videoSeconds.toFixed(1)} s: title card, ${SCENES.length} captioned scenes, end card, ${XFADE_SECONDS} s crossfades`);
-    log(`wrote ${target} and ${path.join(outDir, 'CHAPTERS.md')}`);
+    log(`wrote ${target}, ${thumb} and ${path.join(outDir, 'CHAPTERS.md')}`);
 }
 
 try {

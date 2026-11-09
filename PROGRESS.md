@@ -2754,3 +2754,27 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   "demo-video-cards-captions:"` passed (19 s), and `--grep "demo-video-build:"` still passes. hygiene.spec.ts and
   docs.spec.ts fail for reasons outside this feature, which belong to later features (no run-all.sh yet, no prerequisites section).
 - 2026-11-09T12:59:49Z supervisor: demo-video-cards-captions passed the gate in round 1
+
+### demo-video-thumbnail-chapters (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/video/build.ts`. After the MP4 is written, a second ffmpeg call takes one frame of the finished video
+    and writes `<out>/thumbnail.png` (1920x1080), through a partial file and a rename. The frame comes from
+    `THUMBNAIL_SCENE` ('02-incident'), at `starts[seg] + max(len - XFADE - 1.5, len / 2)`: the end of the scene, just before
+    it crossfades out. A light band (CARD_COLOUR at 0.92) runs across the top with the title in 96 px dark text. The
+    scene's own lower-third caption stays.
+  - CHAPTERS.md was already correct from demo-video-cards-captions (10 lines, 00:00 title card … end card), so it is
+    unchanged.
+  - docs/eng-1799/demo.md "Video build" now describes the thumbnail.
+- **Decision: use the end of scene 2, not its middle.** Mid-scene the stat is still a calm 29, because the scene waits
+  on the scenario clock. Near the end it shows the red 158 and "Backlogged", which makes the better thumbnail. With
+  short clips (the 18 s synthetic ones) the max() keeps the frame inside the scene.
+- **Tested as a user.** After `bash ./init.sh`, I ran `pnpm -F eng-1799-demo video --scenes-dir demo/eng-1799/out/scenes
+  --out tmp/video-thumb` on the real recordings (31 s). I opened thumbnail.png: the Pharmacy Ops overview with the red
+  158 stat, the line over the threshold, the title band on top and the caption below. CHAPTERS.md has ten lines,
+  00:00 … 03:42, strictly increasing. I rebuilt the default demo/eng-1799/out/ outputs (gitignored).
+- **Checks:** demo `pnpm typecheck` is clean. `run.sh video.spec.ts --grep "demo-video-thumbnail-chapters:"` passed
+  (34 s). `demo-video-build:` and `demo-video-cards-captions:` still pass. No ffmpeg process is left.
+- **For demo-video-music:** the thumbnail step reads the finished MP4 with `-ss`, so adding an audio track does not
+  affect it.
+- 2026-11-09T13:09:41Z supervisor: demo-video-thumbnail-chapters passed the gate in round 1

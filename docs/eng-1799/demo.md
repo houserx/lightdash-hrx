@@ -267,7 +267,9 @@ Liberation Sans on Linux), else fontconfig's default sans.
 
 Next to the MP4 the build writes `<out>/CHAPTERS.md`, one `<mm:ss> <title>` line per chapter: the title card at 00:00,
 the eight scenes, then the end card. A chapter starts where the crossfade into it starts, rounded down to whole
-seconds.
+seconds. It also writes `<out>/thumbnail.png` (1920x1080): a frame of the finished video taken just before the
+incident scene (02-incident) crossfades out, when the backlog stat is red, with the title "Lightdash for HouseRx
+operations" on a light band across the top. `THUMBNAIL_SCENE` in `build.ts` picks the scene.
 
 Every frame of every scene is kept. When the scenes together run longer than 225 s, the whole video is sped up by
 one uniform factor to 225 s. With the cards that comes to about 226 s, inside 4 minutes. A full walkthrough records
