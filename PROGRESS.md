@@ -532,3 +532,16 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     repartition); queries that need an order must say ORDER BY.
   - rustfmt and clippy are not installed on this machine; only `cargo build`/`cargo test` ran.
 - 2026-11-09T02:59:33Z supervisor: int-client-streaming passed the gate in round 1
+- 2026-11-09 int-identity-backend-token: **no code change needed.** The check passed on the first
+  run after `init.sh` (1/1, ~5 s).
+  Tested by hand with a tsx script outside the repo (real engine + throwaway Platform Database,
+  synthetic identity): minted a token with the backend's `mintIdentityToken`
+  (`packages/backend/src/services/FederationIdentity/identityToken.ts`, platform_read only,
+  description + ticket set). `verifyIdentityToken` accepted it. On one pg-wire connection,
+  `SET hrx.identity` and then `platform_query('SELECT id FROM widgets')` → count 200. The audit store
+  had exactly 1 item with the token's sub, email, description and ticket, `action: query`,
+  `mode: read`, `status: success`, `database: platform`. A connection without SET hrx.identity →
+  platform_query refused with 42501. No engine or Postgres left running, `tmp/e2e` empty.
+  Note: the helper script stayed at `../tmp/manual-identity/try.ts` (outside the repo) because
+  the sandbox refused `rm`; it is safe to delete.
+- 2026-11-09T03:01:43Z supervisor: int-identity-backend-token passed the gate in round 1
