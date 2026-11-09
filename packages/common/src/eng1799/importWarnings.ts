@@ -22,6 +22,10 @@ export type ImportWarningCode =
     | 'query-dimension-values-dropped'
     | 'query-match-exact-dropped'
     | 'query-macro-unsupported'
+    | 'variable-undefined'
+    | 'variable-unsupported'
+    | 'variable-multi-value'
+    | 'variable-format-ignored'
     | (string & {});
 
 export type ImportWarning = {

@@ -451,3 +451,37 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   macro also maps. Acceptance: time-macros 5/5; prometheus 5/5, loki 5/5, cloudwatch-metrics 5/5,
   panel-targets 3/3, datasources 6/6. tsc clean, oxlint clean, oxfmt applied.
 - 2026-11-09T02:01:44Z supervisor: imp-query-time-macros passed the gate in round 1
+
+### imp-query-variables (2026-11-08)
+
+- `queryExpressionSql` in `grafanaQuery.ts` now resolves every reference matching `$name`, `${name}`,
+  `${name:fmt}`, `[[name]]` or `[[name:fmt]]` (names start with a letter or `_`, so PromQL's `$1` in label_replace
+  is left alone), using `ctx.variables` (the dashboard's `templating.list`):
+  - `__` names: the time macros as before; `$__auto_interval_<var>` (an interval variable's auto option) now maps to
+    `${ld.parameters.__interval}` instead of the `query-macro-unsupported` warning.
+  - custom, query, textbox, interval → the parameter of the same name, `${ld.parameters.<var>}`, concatenated into
+    the literal like the time macros. Multi-value / Include All / array current / `$__all` → `variable-multi-value`
+    warning. A `:format` on a user variable → `variable-format-ignored` (the plain value is used).
+  - constant → inlined (its `query`, else its current value).
+  - undefined → kept as written + `variable-undefined` naming it. Other types (datasource or adhoc used inside query
+    text) → kept + `variable-unsupported`.
+- Datasource variables: `resolveDatasourceVariable` runs before `resolveDatasource` in `translateTarget`. A ref
+  (target or panel; object `uid` or legacy string) that is exactly one variable of type `datasource` becomes the
+  datasource it picks: its current value (uid or name), else its current text, else the only datasource of the
+  variable's `query` type. Not found or not a datasource variable (e.g. `${DS_PROMETHEUS}` export inputs) → unchanged,
+  so the existing `datasource-unresolved` path applies. A multi-value datasource variable warns `variable-multi-value`.
+- CloudWatch now builds its SQL with the local `tableFunctionSql` and runs the MetricDataQuery JSON through
+  `queryExpressionSql`, so `$env` in a dimension value or label becomes a parameter and constants are inlined
+  (JSON-escaped). CloudWatch dynamic labels (`${LABEL}`, `${MAX}`…) are in `CLOUDWATCH_DYNAMIC_LABELS` and kept
+  without a warning. Output without variables is identical to the old buildTelemetrySql output.
+- Translators take `(target, source, variables, warnings)` now. New warning codes are added to `ImportWarningCode`.
+- For imp-dashboard-variables: an interval variable's parameter can hold `$__auto_interval_<var>` as a value in
+  Grafana; the dashboard-level feature should drop the auto option from the parameter's options/default. A parameter
+  value is substituted raw inside the PromQL/JSON string, so a value with `"` breaks the query (as in Grafana).
+- Tested: rebuilt common via init.sh, called the built `dist/cjs` `translateGrafanaTarget` from node: `$env`,
+  `[[env]]` → `${ld.parameters.env}`; constant cluster inlined as `prod-eks`; multi/All `$pod` → parameter +
+  `variable-multi-value`; `$agg` → parameter, `$__auto_interval_agg` → `__interval`, `$1` untouched; CloudWatch with
+  `uid: '${datasource}'` and legacy `'$datasource'` → `'cloudwatch-staging'`, dimension `$env` parameterised, `${LABEL}`
+  kept silently; `$nope` → `variable-undefined`. Acceptance: query-variables 6/6; time-macros 5/5, prometheus 5/5,
+  loki 5/5, cloudwatch-metrics 5/5, panel-targets 3/3, datasources 6/6. tsc clean, oxlint clean, oxfmt applied.
+- 2026-11-09T02:06:03Z supervisor: imp-query-variables passed the gate in round 1

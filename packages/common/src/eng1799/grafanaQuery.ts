@@ -7,7 +7,6 @@
  * TODO plus a structured warning, never a silent drop.
  */
 import {
-    buildTelemetrySql,
     LOGQL_DEFAULT_DIRECTION,
     LOGQL_DEFAULT_LIMIT,
     TELEMETRY_SQL_FROM,
@@ -161,39 +160,218 @@ const TIME_MACRO_PARAMETERS: ReadonlyMap<string, string> = new Map([
     ['__range', '__range'],
 ]);
 
-/** `$__name`, `${__name}`, `${__name:format}` or `[[__name]]`. */
-const TIME_MACRO =
-    /\$__([A-Za-z0-9_]+)|\$\{__([A-Za-z0-9_]+)(:[^}]*)?\}|\[\[__([A-Za-z0-9_]+)\]\]/g;
+/** Grafana's automatic option of an interval variable: `$__auto_interval_<variable>`. */
+const AUTO_INTERVAL_PREFIX = '__auto_interval_';
 
 /**
- * A query expression as a SQL string expression: Grafana's `$__interval`, `${__interval}`,
- * `$__rate_interval` and `$__range` become the reserved parameters, concatenated into the
- * literal (`'rate(x[' || ${ld.parameters.__interval} || '])'`), so the query follows the
- * Dashboard Time Range. Any other `__` macro (`$__range_s`, `$__interval_ms`, `$__from`, a
- * format option) has no equivalent: it stays in the query text and gets a warning.
+ * A variable or macro reference: `$name`, `${name}`, `${name:format}`, `[[name]]` or
+ * `[[name:format]]`. Names start with a letter or `_`, so PromQL's `$1` in label_replace is
+ * left alone.
+ */
+const VARIABLE_REFERENCE =
+    /\$([A-Za-z_]\w*)|\$\{([A-Za-z_]\w*)(?::([^}]*))?\}|\[\[([A-Za-z_]\w*)(?::([^\]]*))?\]\]/g;
+
+/** A whole datasource reference that is one variable: `$ds`, `${ds}` or `[[ds]]`. */
+const DATASOURCE_VARIABLE =
+    /^\s*(?:\$([A-Za-z_]\w*)|\$\{([A-Za-z_]\w*)(?::[^}]*)?\}|\[\[([A-Za-z_]\w*)\]\])\s*$/;
+
+/** Variable types whose value a chart viewer picks: each becomes a Lightdash parameter. */
+const PARAMETER_VARIABLE_TYPES = new Set([
+    'custom',
+    'query',
+    'textbox',
+    'interval',
+]);
+
+const findVariable = (
+    variables: GrafanaTemplatingVariable[],
+    name: string,
+): GrafanaTemplatingVariable | undefined =>
+    variables.find((v) => v.name === name);
+
+/** The current value(s) of a variable as strings: `current.value`, else `current.text`. */
+const currentValues = (variable: GrafanaTemplatingVariable): string[] => {
+    const pick = (value: unknown): string[] =>
+        (Array.isArray(value) ? value : [value])
+            .filter((v): v is string | number =>
+                ['string', 'number'].includes(typeof v),
+            )
+            .map(String);
+    const values = pick(variable.current?.value);
+    return values.length > 0 ? values : pick(variable.current?.text);
+};
+
+/** A constant's value: its `query`, else its current value. */
+const constantValue = (variable: GrafanaTemplatingVariable): string =>
+    typeof variable.query === 'string'
+        ? variable.query
+        : (currentValues(variable)[0] ?? '');
+
+/** True when the variable can hold several values (Multi-value, Include All, or an array). */
+const isMultiValue = (variable: GrafanaTemplatingVariable): boolean =>
+    variable.multi === true ||
+    variable.includeAll === true ||
+    Array.isArray(variable.current?.value) ||
+    currentValues(variable).includes('$__all');
+
+/** What a variable or macro reference becomes in the query. */
+type ReferenceReplacement =
+    | { kind: 'parameter'; name: string }
+    | { kind: 'inline'; value: string }
+    | { kind: 'keep' };
+
+/** Reference problems, collected over one query so each warning names every reference once. */
+type ReferenceFindings = {
+    unmappedMacros: string[];
+    undefinedVariables: string[];
+    unsupportedVariables: string[];
+    multiValueVariables: string[];
+    formatsIgnored: string[];
+};
+
+const addOnce = (list: string[], value: string) => {
+    if (!list.includes(value)) list.push(value);
+};
+
+/** How a query language embeds references; the default suits PromQL and LogQL text. */
+type ReferenceOptions = {
+    /** Escapes an inlined constant for the query text (CloudWatch: inside a JSON string). */
+    escapeInline?: (value: string) => string;
+    /** Undefined names that are part of the query language, kept without a warning. */
+    nativeNames?: ReadonlySet<string>;
+};
+
+const replaceReference = (
+    text: string,
+    name: string,
+    format: string | undefined,
+    variables: GrafanaTemplatingVariable[],
+    options: ReferenceOptions,
+    findings: ReferenceFindings,
+): ReferenceReplacement => {
+    if (name.startsWith('__')) {
+        // An interval variable's auto option follows the dashboard interval.
+        const mapped = name.startsWith(AUTO_INTERVAL_PREFIX)
+            ? '__interval'
+            : TIME_MACRO_PARAMETERS.get(name);
+        const parameter = format === undefined ? mapped : undefined;
+        if (parameter === undefined) {
+            addOnce(findings.unmappedMacros, text);
+            return { kind: 'keep' };
+        }
+        return { kind: 'parameter', name: parameter };
+    }
+    const variable = findVariable(variables, name);
+    if (variable === undefined) {
+        if (!options.nativeNames?.has(name)) {
+            addOnce(findings.undefinedVariables, text);
+        }
+        return { kind: 'keep' };
+    }
+    if (variable.type === 'constant') {
+        const value = constantValue(variable);
+        return {
+            kind: 'inline',
+            value: options.escapeInline ? options.escapeInline(value) : value,
+        };
+    }
+    if (!PARAMETER_VARIABLE_TYPES.has(variable.type)) {
+        addOnce(findings.unsupportedVariables, `${text} (${variable.type})`);
+        return { kind: 'keep' };
+    }
+    if (isMultiValue(variable)) addOnce(findings.multiValueVariables, name);
+    if (format !== undefined) addOnce(findings.formatsIgnored, text);
+    return { kind: 'parameter', name };
+};
+
+const pushReferenceWarnings = (
+    what: string,
+    findings: ReferenceFindings,
+    warnings: ImportWarning[],
+) => {
+    if (findings.unmappedMacros.length > 0) {
+        warnings.push({
+            code: 'query-macro-unsupported',
+            message: `${what} uses ${findings.unmappedMacros.join(', ')}, with no Lightdash time parameter to map to; the query keeps the text as written and needs editing`,
+        });
+    }
+    if (findings.undefinedVariables.length > 0) {
+        warnings.push({
+            code: 'variable-undefined',
+            message: `${what} uses ${findings.undefinedVariables.join(', ')}, which the dashboard does not define; the query keeps the text as written and needs editing`,
+        });
+    }
+    if (findings.unsupportedVariables.length > 0) {
+        warnings.push({
+            code: 'variable-unsupported',
+            message: `${what} uses ${findings.unsupportedVariables.join(', ')}, a variable type with no Lightdash parameter; the query keeps the text as written and needs editing`,
+        });
+    }
+    findings.multiValueVariables.forEach((name) => {
+        warnings.push({
+            code: 'variable-multi-value',
+            message: `${what} uses the multi-value or All variable ${name}; the Lightdash parameter ${name} holds one value at a time`,
+        });
+    });
+    if (findings.formatsIgnored.length > 0) {
+        warnings.push({
+            code: 'variable-format-ignored',
+            message: `${what} formats ${findings.formatsIgnored.join(', ')}; the parameter is used as its plain value`,
+        });
+    }
+};
+
+/**
+ * A query expression as a SQL string expression, with Grafana's variables and macros
+ * resolved:
+ * - `$__interval`, `${__interval}`, `$__rate_interval` and `$__range` become the reserved
+ *   parameters (CONTRACTS §2), and `$__auto_interval_<var>` follows `__interval`;
+ * - a custom, query, textbox or interval variable (`$env`, `${env}`, `[[env]]`) becomes the
+ *   Lightdash parameter of the same name, with a `variable-multi-value` warning when it can
+ *   hold several values;
+ * - a constant is inlined.
+ * Parameters are concatenated into the literal (`'up{env="' || ${ld.parameters.env} || '"}'`);
+ * Lightdash substitutes string parameters as quoted literals, so the engine folds them into one
+ * string. Any other macro, an undefined variable or a variable of another type stays in the
+ * query text as written and gets a warning.
  */
 const queryExpressionSql = (
     expr: string,
     what: string,
+    variables: GrafanaTemplatingVariable[],
     warnings: ImportWarning[],
+    options: ReferenceOptions = {},
 ): string => {
+    const findings: ReferenceFindings = {
+        unmappedMacros: [],
+        undefinedVariables: [],
+        unsupportedVariables: [],
+        multiValueVariables: [],
+        formatsIgnored: [],
+    };
     const parts: string[] = [];
-    const unmapped: string[] = [];
     let literal = '';
     let last = 0;
-    for (const match of expr.matchAll(TIME_MACRO)) {
-        const [text, plain, braced, format, bracketed] = match;
-        const name = `__${plain ?? braced ?? bracketed}`;
-        const parameter =
-            format === undefined ? TIME_MACRO_PARAMETERS.get(name) : undefined;
+    for (const match of expr.matchAll(VARIABLE_REFERENCE)) {
+        const [text, plain, braced, bracedFormat, bracketed, bracketedFormat] =
+            match;
+        const replacement = replaceReference(
+            text,
+            plain ?? braced ?? bracketed,
+            bracedFormat ?? bracketedFormat,
+            variables,
+            options,
+            findings,
+        );
         literal += expr.slice(last, match.index);
         last = match.index + text.length;
-        if (parameter === undefined) {
+        if (replacement.kind === 'keep') {
             literal += text;
-            if (!unmapped.includes(text)) unmapped.push(text);
+        } else if (replacement.kind === 'inline') {
+            literal += replacement.value;
         } else {
             if (literal !== '') parts.push(sqlStringLiteral(literal));
-            parts.push(`\${ld.parameters.${parameter}}`);
+            parts.push(`\${ld.parameters.${replacement.name}}`);
             literal = '';
         }
     }
@@ -201,13 +379,57 @@ const queryExpressionSql = (
     if (literal !== '' || parts.length === 0) {
         parts.push(sqlStringLiteral(literal));
     }
-    if (unmapped.length > 0) {
+    pushReferenceWarnings(what, findings, warnings);
+    return parts.join(' || ');
+};
+
+/**
+ * A datasource reference that is a datasource variable (`${datasource}`) becomes the
+ * datasource the variable picks: its current value (a uid or a name), else its current text,
+ * else the one datasource of the variable's type. Other references are returned as they are.
+ */
+const resolveDatasourceVariable = (
+    ref: GrafanaDatasourceRef,
+    ctx: GrafanaQueryContext,
+    what: string,
+    warnings: ImportWarning[],
+): GrafanaDatasourceRef => {
+    const text = typeof ref === 'string' ? ref : ref?.uid;
+    const match = text === undefined ? null : DATASOURCE_VARIABLE.exec(text);
+    if (match === null) return ref;
+    const name = match[1] ?? match[2] ?? match[3];
+    const variable = findVariable(ctx.variables ?? [], name);
+    if (variable === undefined || variable.type !== 'datasource') return ref;
+    const datasources = ctx.datasources ?? [];
+    const values = [
+        ...currentValues(variable),
+        ...(typeof variable.current?.text === 'string'
+            ? [variable.current.text]
+            : []),
+    ];
+    const ofType =
+        typeof variable.query === 'string'
+            ? datasources.filter((ds) => ds.type === variable.query)
+            : [];
+    const picked = values
+        .map(
+            (value) =>
+                datasources.find((ds) => ds.uid === value) ??
+                datasources.find((ds) => ds.name === value),
+        )
+        .find((ds) => ds !== undefined);
+    const found = picked ?? (ofType.length === 1 ? ofType[0] : undefined);
+    if (found === undefined) return ref;
+    if (isMultiValue(variable)) {
         warnings.push({
-            code: 'query-macro-unsupported',
-            message: `${what} uses ${unmapped.join(', ')}, with no Lightdash time parameter to map to; the query keeps the text as written and needs editing`,
+            code: 'variable-multi-value',
+            message: `${what} reads the multi-value datasource variable ${name}; only ${found.name} is imported`,
         });
     }
-    return parts.join(' || ');
+    return {
+        type: typeof ref === 'object' && ref?.type ? ref.type : found.type,
+        uid: found.uid,
+    };
 };
 
 /** `SELECT * FROM name(args[, source])`, the args already SQL. */
@@ -226,6 +448,7 @@ const tableFunctionSql = (
 const translatePrometheusTarget = (
     target: GrafanaTarget,
     source: string | undefined,
+    variables: GrafanaTemplatingVariable[],
     warnings: ImportWarning[],
 ): TargetTranslation => {
     const expr = typeof target.expr === 'string' ? target.expr.trim() : '';
@@ -243,6 +466,7 @@ const translatePrometheusTarget = (
     const query = queryExpressionSql(
         expr,
         `Prometheus ${targetLabel(target)}`,
+        variables,
         warnings,
     );
     if (target.instant === true && target.range !== true) {
@@ -324,6 +548,7 @@ const lokiDirection = (
 const translateLokiTarget = (
     target: GrafanaTarget,
     source: string | undefined,
+    variables: GrafanaTemplatingVariable[],
     warnings: ImportWarning[],
 ): TargetTranslation => {
     const expr = typeof target.expr === 'string' ? target.expr.trim() : '';
@@ -341,6 +566,7 @@ const translateLokiTarget = (
     const query = queryExpressionSql(
         expr,
         `Loki ${targetLabel(target)}`,
+        variables,
         warnings,
     );
     if (isLogqlLogQuery(expr)) {
@@ -534,9 +760,35 @@ const cloudWatchDimensions = (
     return result;
 };
 
+/** CloudWatch dynamic labels (`${LABEL}`, `${MAX}`), which look like variables in a label. */
+const CLOUDWATCH_DYNAMIC_LABELS: ReadonlySet<string> = new Set([
+    'AVG',
+    'DATAPOINT_COUNT',
+    'FIRST',
+    'FIRST_LAST_RANGE',
+    'FIRST_LAST_TIME_RANGE',
+    'FIRST_TIME',
+    'FIRST_TIME_RELATIVE',
+    'LABEL',
+    'LAST',
+    'LAST_TIME',
+    'LAST_TIME_RELATIVE',
+    'MAX',
+    'MAX_MIN_RANGE',
+    'MAX_MIN_TIME_RANGE',
+    'MAX_TIME',
+    'MAX_TIME_RELATIVE',
+    'MIN',
+    'MIN_TIME',
+    'MIN_TIME_RELATIVE',
+    'SUM',
+    'TIME_RANGE',
+]);
+
 const translateCloudWatchTarget = (
     target: GrafanaTarget,
     source: string | undefined,
+    variables: GrafanaTemplatingVariable[],
     warnings: ImportWarning[],
 ): TargetTranslation => {
     const queryMode =
@@ -606,8 +858,23 @@ const translateCloudWatchTarget = (
         (l): l is string => typeof l === 'string' && l.trim() !== '',
     );
     if (label !== undefined) metricDataQuery.Label = label;
+    // Compact JSON, so the query stays one readable line in the SQL (as buildTelemetrySql).
+    const query = queryExpressionSql(
+        JSON.stringify(metricDataQuery),
+        `CloudWatch ${targetLabel(target)}`,
+        variables,
+        warnings,
+        {
+            escapeInline: (value) => JSON.stringify(value).slice(1, -1),
+            nativeNames: CLOUDWATCH_DYNAMIC_LABELS,
+        },
+    );
     return {
-        sql: buildTelemetrySql({ kind: 'cloudwatch', metricDataQuery, source }),
+        sql: tableFunctionSql(
+            'cloudwatch',
+            [query, TELEMETRY_SQL_FROM, TELEMETRY_SQL_TO],
+            source,
+        ),
         todo: null,
         warnings,
         shape: 'series',
@@ -620,6 +887,7 @@ const TARGET_TRANSLATORS = new Map<
     (
         target: GrafanaTarget,
         source: string | undefined,
+        variables: GrafanaTemplatingVariable[],
         warnings: ImportWarning[],
     ) => TargetTranslation
 >([
@@ -633,9 +901,14 @@ const translateTarget = (
     ctx: GrafanaQueryContext,
 ): TargetTranslation => {
     const warnings: ImportWarning[] = [];
-    const ref = isUsableRef(target.datasource)
-        ? target.datasource
-        : ctx.panelDatasource;
+    const ref = resolveDatasourceVariable(
+        isUsableRef(target.datasource)
+            ? target.datasource
+            : ctx.panelDatasource,
+        ctx,
+        targetLabel(target),
+        warnings,
+    );
     const resolved = resolveDatasource(ref, ctx.datasources ?? []);
     if (resolved.type === undefined) {
         warnings.push({
@@ -666,7 +939,7 @@ const translateTarget = (
             message: `The ${resolved.type} datasource ${resolved.label} of ${targetLabel(target)} is not a known Grafana datasource; the engine's default source is used`,
         });
     }
-    return translator(target, resolved.source, warnings);
+    return translator(target, resolved.source, ctx.variables ?? [], warnings);
 };
 
 /** Translates one Grafana target into SQL, or a TODO with warnings saying why not. */
