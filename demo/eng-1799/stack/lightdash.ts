@@ -172,7 +172,7 @@ async function prepare(dir: string, s3Url: string, readyFile: string): Promise<v
     mkdirSync(dir, { recursive: true });
     const [dbPort, port] = await freePorts(2);
     initCluster(path.join(dir, 'pgdata'), dbPort);
-    const url = `http://${HOST}:${port}`;
+    const url = `http://127.0.0.1:${port}`;
     const home = path.join(dir, 'home');
     mkdirSync(home);
     writeAtomic(

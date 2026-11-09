@@ -163,7 +163,7 @@ async function main(stateDir: string, platformPath: string, readyPath: string): 
     mkdirSync(home, { recursive: true });
 
     const [pgPort, httpPort, ...endpointPorts] = await freePorts(2 + ENDPOINTS.length);
-    const urls = Object.fromEntries(ENDPOINTS.map((name, i) => [name, `http://${HOST}:${endpointPorts[i]}`])) as Record<
+    const urls = Object.fromEntries(ENDPOINTS.map((name, i) => [name, `http://127.0.0.1:${endpointPorts[i]}`])) as Record<
         EndpointName,
         string
     >;
@@ -186,7 +186,7 @@ async function main(stateDir: string, platformPath: string, readyPath: string): 
         AWS_CONFIG_FILE: path.join(home, 'no-aws-config'),
         AWS_SHARED_CREDENTIALS_FILE: path.join(home, 'no-aws-credentials'),
         // A dead port: any AWS call without an explicit endpoint fails locally instead of reaching AWS.
-        AWS_ENDPOINT_URL: `http://${HOST}:9`,
+        AWS_ENDPOINT_URL: `http://127.0.0.1:9`,
         RUST_LOG: 'info',
     };
     for (const [key, value] of Object.entries(env)) {
@@ -209,7 +209,7 @@ async function main(stateDir: string, platformPath: string, readyPath: string): 
         engine: {
             host: HOST,
             pgPort,
-            httpUrl: `http://${HOST}:${httpPort}`,
+            httpUrl: `http://127.0.0.1:${httpPort}`,
             user: ENGINE_USER,
             password: ENGINE_PASSWORD,
             database: ENGINE_DATABASE,

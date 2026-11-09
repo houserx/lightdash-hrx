@@ -307,7 +307,7 @@ export class AuditStore {
             })
             .join('');
         return (
-            `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
+            `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>` +
             `<Name>${AUDIT_BUCKET}</Name><Prefix>${xml(prefix)}</Prefix><KeyCount>${shown.length}</KeyCount><MaxKeys>${maxKeys}</MaxKeys>` +
             `<IsTruncated>${shown.length < keys.length}</IsTruncated>${contents}</ListBucketResult>`
         );

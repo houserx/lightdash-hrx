@@ -2860,3 +2860,27 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   the hygiene check counts that as a remote reference. That file came from demo-dashboard-service-health, not from
   this feature. run-all.sh itself has no URL other than 127.0.0.1-style ones it reads at run time.
 - 2026-11-09T13:32:15Z supervisor: demo-run-all-fails-cleanly passed the gate in round 1
+
+### demo-hygiene (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** `hygiene.spec.ts` flagged three kinds of non-local URL in demo code. The fixes change no behaviour:
+  - `content/charts/log-level-heatmap.yml`: dropped the vega-lite `$schema: https://vega.github.io/...` line. It is
+    only a declaration and vega-lite never fetches it.
+  - `stack/audit-store.ts`, `stack/results-s3.ts`: dropped `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"` from the
+    fake S3 XML replies (ListBucketResult, Initiate/CompleteMultipartUploadResult). The AWS SDKs match element names
+    and do not check the namespace.
+  - `stack/engine-config.ts`, `stack/lightdash.ts`, `stack/mcp.ts`: URLs written as `` `http://${HOST}:${port}` ``
+    became `` `http://127.0.0.1:${port}` ``. The spec reads source text, so it can't tell that `HOST` is the loopback
+    constant. `HOST` stays for listen addresses and other non-URL uses.
+- **Trap for later sessions.** Any `http(s)://` literal in a non-.md, non-package.json file under demo/ must be
+  127.0.0.1, localhost, [::1], *.example.*, json-schema.org or www.w3.org. That includes template literals with a
+  variable host, XML namespaces and JSON-schema `$schema` values. Write the loopback address directly.
+- **Tested as a user.** I scanned every demo/ and docs/eng-1799 file with the spec's own regexes. There are no audio
+  files, no streaming-site references and no remote URLs left. video/build.ts takes music only from `--music` and
+  ffmpeg from ffmpeg-static. `video --music /nonexistent/x.mp3` was refused, naming the file. The ee/ diff from
+  f85d1ce60 is empty. `.state` and `out` are not tracked. With up.sh running, the AWS SDK (client-s3 + lib-storage)
+  did a 12 MiB multipart Upload, ListObjectsV2 and GetObject against the results S3 fake, and all three worked. Then
+  down.sh left no process.
+- **Checks.** `run.sh hygiene.spec.ts` passed. The regression specs `--stack audit-store`, `lightdash-engine-query`,
+  `mcp-ask` and `dashboard-service-health` (heatmap still renders) passed. `pnpm -F eng-1799-demo typecheck` was clean.
+- 2026-11-09T13:37:56Z supervisor: demo-hygiene passed the gate in round 1

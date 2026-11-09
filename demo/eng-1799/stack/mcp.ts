@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     const home = path.join(dir, 'home');
     mkdirSync(home, { recursive: true });
     const port = await freePort();
-    const url = `http://${HOST}:${port}`;
+    const url = `http://127.0.0.1:${port}`;
 
     const env: Record<string, string> = {
         PATH: '/usr/bin:/bin:/usr/sbin:/sbin',

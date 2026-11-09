@@ -93,7 +93,7 @@ function listObjects(res: http.ServerResponse, store: ResultsStore, bucket: stri
     sendXml(
         res,
         200,
-        `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${escapeXml(bucket)}</Name>` +
+        `<ListBucketResult><Name>${escapeXml(bucket)}</Name>` +
             `<Prefix>${escapeXml(prefix)}</Prefix><KeyCount>${page.length}</KeyCount><MaxKeys>${maxKeys}</MaxKeys>` +
             `<IsTruncated>${truncated}</IsTruncated>${contents}${next}</ListBucketResult>`,
     );
@@ -168,7 +168,7 @@ async function handle(store: ResultsStore, req: http.IncomingMessage, res: http.
         sendXml(
             res,
             200,
-            `<InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>${escapeXml(bucket)}</Bucket>` +
+            `<InitiateMultipartUploadResult><Bucket>${escapeXml(bucket)}</Bucket>` +
                 `<Key>${escapeXml(key)}</Key><UploadId>${newId}</UploadId></InitiateMultipartUploadResult>`,
         );
         return;
@@ -201,7 +201,7 @@ async function handle(store: ResultsStore, req: http.IncomingMessage, res: http.
             sendXml(
                 res,
                 200,
-                `<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>${escapeXml(bucket)}</Bucket>` +
+                `<CompleteMultipartUploadResult><Bucket>${escapeXml(bucket)}</Bucket>` +
                     `<Key>${escapeXml(key)}</Key><ETag>&quot;${etag}&quot;</ETag></CompleteMultipartUploadResult>`,
             );
             return;
