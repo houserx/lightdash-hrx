@@ -40,6 +40,10 @@ import { generateHandler } from './handlers/generate';
 import { generateExposuresHandler } from './handlers/generateExposures';
 import { getProjectHandler } from './handlers/getProject';
 import {
+    DEFAULT_GRAFANA_DASHBOARD_SPACE,
+    importGrafanaDashboardHandler,
+} from './handlers/importGrafanaDashboard';
+import {
     DEFAULT_PORTAL_SCRIPTS_SPACE,
     importPortalScriptsHandler,
 } from './handlers/importPortalScripts';
@@ -1449,6 +1453,23 @@ importProgram
     )
     .option('--verbose', undefined, false)
     .action(importPortalScriptsHandler);
+
+importProgram
+    .command('grafana-dashboard <files...>')
+    .description(
+        'Converts Grafana dashboard JSON (or the API export {dashboard, meta}) into dashboard and SQL chart YAML for `lightdash upload`',
+    )
+    .requiredOption(
+        '-o, --out <dir>',
+        'folder to write dashboards/, charts/, reports/ and import-summary.json into',
+    )
+    .option(
+        '-s, --space <slug>',
+        'slug of the space the dashboards and charts go to',
+        DEFAULT_GRAFANA_DASHBOARD_SPACE,
+    )
+    .option('--verbose', undefined, false)
+    .action(importGrafanaDashboardHandler);
 
 const alertingProgram = program
     .command('alerting')

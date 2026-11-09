@@ -647,3 +647,45 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   need classic conditions and hysteresis as rule state, not SQL. The generated SQL has not run on the engine yet
   (`last_value(... ORDER BY ...)` is DataFusion aggregate syntax).
 - 2026-11-09T02:29:54Z supervisor: imp-query-expressions passed the gate in round 1
+
+### imp-cli-grafana-dashboard (2026-11-08)
+
+- New pure module `packages/common/src/eng1799/grafanaDashboardImport.ts` (exported from the common index):
+  - `readGrafanaDashboardJson(json)` → `{dashboard, folderTitle?}` or `{error}`. Accepts a dashboard or the API
+    export `{dashboard, meta}` (`meta.folderTitle` is kept for imp-dashboard-spaces). A dashboard needs a non-blank
+    `title` and a `panels` array; legacy pre-5.0 `rows` gets its own message.
+  - `convertGrafanaDashboard(input, {spaceSlug, query?, takenDashboardSlugs?, takenChartSlugs?})` →
+    `{dashboard, charts, warnings, todos}`. `query` is the datasources/opsMarts context (the variables come from
+    `templating.list`). The taken-slug sets are shared across a run, so slugs stay unique (`-2`, `-3`, ...).
+    Slugs are never random: a title with no letters falls back to a fixed slug.
+  - `renderGrafanaImportReport(result)` → the minimal IMPORT-REPORT.md: a title, counts, a `| code | panel |
+    message |` table (or "No warnings."), and a TODO list (or "No TODOs.").
+- **Deliberately minimal parts that later features own** (replace them, don't stack on them):
+  - Chart kind (`chartKindForPanel`): CARTESIAN → line, barchart/bargauge → vertical_bar, PIE → pie,
+    GAUGE/stat → big_number, else table. No `chart-kind-fallback` yet (imp-dashboard-panel-kinds).
+  - Layout: gridPos is copied as is, clamped to the 36-column grid (no 1.5 scaling yet: imp-dashboard-layout).
+  - Rows: a row panel is skipped and a collapsed row's nested panels are flattened in place (no headings or tabs
+    yet: imp-dashboard-rows/collapsed-rows).
+  - Text: a markdown tile with `options.content` only (imp-dashboard-text handles html/code/legacy content).
+  - Dropped types → `panel-dropped` with the mapping's reason. Unknown type → TODO tile + `panel-type-unsupported`
+    (a new code; imp-docs must list it).
+  - A panel with no SQL → a markdown TODO tile at its gridPos holding the translator's TODO text
+    (imp-dashboard-todo-tiles refines it). `todos` counts TODO tiles only; dropped panels are not TODOs.
+  - No time range, parameters/lightdash.config.yml, links or thresholds yet.
+- CLI: `packages/cli/src/handlers/importGrafanaDashboard.ts`, registered in `index.ts` as
+  `import grafana-dashboard <files...>` with `-o, --out <dir>` (required), `-s, --space <slug>` (default
+  `operations`) and `--verbose`. The other pinned options (`--datasources`, `--ops-marts`, `--dashboards-tf`,
+  `--no-tabs`) are not added yet; their features add them. All files are read and checked before anything is
+  written. A failure throws `ParseError` with the file path in the message: "<file> is not valid JSON: ...",
+  "<file> is not a Grafana dashboard: <reason>", or "Could not read the Grafana dashboard <file>: ENOENT ...".
+  The output is dashboards/, charts/, reports/<slug>/IMPORT-REPORT.md, and import-summary.json (byCode sorted;
+  `files` lists every file written before the summary). YAML is dumped after a JSON round trip, because the
+  as-code types require `uuid: undefined` / `display: undefined`, which js-yaml can't dump. The run prints
+  `Imported N dashboard(s) and M chart(s) into <out> (W warnings, T TODOs)`.
+- Tested as a user: ran init.sh, then the CLI from source. `import --help` lists grafana-dashboard. A synthetic
+  service-health.json (2 prom panels, an elasticsearch panel and a news panel) wrote the dashboard, 2 charts, the
+  report (4 warnings, 1 TODO) and the summary. `lightdash lint --path out` said all files are valid. The fixture
+  golden-signals.json gave 4 charts plus a text tile, and 18 warnings. A broken JSON file, `{"hello":"world"}` and a
+  missing file each exited 1 naming the file, with no output written. Leaving out --out gives commander's
+  required-option error. Acceptance: dashboard-command 4/4. tsc clean (common, cli), oxlint clean, oxfmt applied.
+- 2026-11-09T02:35:46Z supervisor: imp-cli-grafana-dashboard passed the gate in round 1
