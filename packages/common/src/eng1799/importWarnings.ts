@@ -12,6 +12,15 @@ export type ImportWarningCode =
     | 'query-instant-dropped'
     | 'query-limit-invalid'
     | 'query-direction-unsupported'
+    | 'query-cloudwatch-unsupported'
+    | 'query-region-unsupported'
+    | 'query-period-auto'
+    | 'query-period-invalid'
+    | 'query-statistic-missing'
+    | 'query-statistics-dropped'
+    | 'query-dimension-wildcard'
+    | 'query-dimension-values-dropped'
+    | 'query-match-exact-dropped'
     | (string & {});
 
 export type ImportWarning = {

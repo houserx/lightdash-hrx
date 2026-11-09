@@ -350,3 +350,28 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   an instant metric query, an empty expr and maxLines -3; saw the expected SQL and warnings. tsc clean, oxlint
   clean, oxfmt applied.
 - 2026-11-09T01:50:54Z supervisor: imp-query-loki passed the gate in round 1
+
+### imp-query-cloudwatch-metric-stat (2026-11-08)
+
+- `grafanaQuery.ts`: new `case 'cloudwatch'` → `translateCloudWatchTarget`. A Metrics-mode target with
+  `metricQueryType` 0 (or unset) and an empty `expression` becomes
+  `buildTelemetrySql({kind:'cloudwatch'})` (ldq) with a MetricStat MetricDataQuery: Namespace, MetricName,
+  Dimensions (target order), Period (seconds), Stat, `ReturnData: true`, `Label` from `label` else `alias`.
+- `Id`: target `id` if it matches `^[a-z][a-zA-Z0-9_]*$`, else refId with non-word chars → `_` and the first
+  letter lower-cased (`A` → `a`), else `m1`.
+- Period: number or digit string = seconds; durations via ldq `parseTimeRangeDuration` (`5m` → 300); empty/`auto`
+  → 300 + `query-period-auto`; anything else (incl. `$var`) → 300 + `query-period-invalid`.
+- Warnings (new codes in `importWarnings.ts`): `query-region-unsupported` (region other than `default`; the
+  MetricDataQuery has no region, the source's region applies), `query-statistics-dropped` (legacy `statistics`
+  list; first kept), `query-statistic-missing` (→ Average), `query-dimension-wildcard` (`*` or empty value: the
+  dimension is left out of the MetricStat), `query-dimension-values-dropped` (array of values; first kept),
+  `query-match-exact-dropped` (`matchExact: false`).
+- Placeholders for later features: Logs mode, metric math/code expressions and Metrics Insights
+  (`metricQueryType` 1) are a TODO + `query-cloudwatch-unsupported`. imp-query-cloudwatch-expressions and
+  imp-query-cloudwatch-logs should replace that branch (the expressions test wants top-level `Period` on an
+  Expression query). Missing namespace/metric → TODO + `query-empty`.
+- Tested: `query-cloudwatch-metrics.test.ts` 5/5, prometheus and loki still 5/5; rebuilt common via init.sh and
+  called the built `dist/cjs` `translateGrafanaTarget` from node with the ALB two-dimension target, periods
+  60/5m/1h/86400/3600(number)/''/bogus, the us-west-2 + statistics + wildcard target (4 warnings), a Logs target
+  and an empty namespace. tsc clean, oxlint clean, oxfmt applied.
+- 2026-11-09T01:53:28Z supervisor: imp-query-cloudwatch-metric-stat passed the gate in round 1

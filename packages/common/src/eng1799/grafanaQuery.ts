@@ -12,8 +12,11 @@ import {
     LOGQL_DEFAULT_LIMIT,
     TELEMETRY_SQL_INTERVAL,
     TELEMETRY_SQL_TO,
+    type CloudWatchDimension,
+    type CloudWatchMetricDataQuery,
     type LogqlDirection,
 } from '../utils/telemetrySql';
+import { parseTimeRangeDuration } from '../utils/timeRange';
 import type { ImportWarning } from './importWarnings';
 
 /** A Grafana datasource as `grafana_data_sources.tf` defines it. */
@@ -264,6 +267,222 @@ const translateLokiTarget = (
     };
 };
 
+/** The period a CloudWatch target without one (Grafana's `auto`) gets, in seconds. */
+export const CLOUDWATCH_DEFAULT_PERIOD_SECONDS = 300;
+
+/** The statistic a CloudWatch target without one gets (Grafana's default). */
+export const CLOUDWATCH_DEFAULT_STATISTIC = 'Average';
+
+const METRIC_DATA_QUERY_ID = /^[a-z][a-zA-Z0-9_]*$/;
+
+/**
+ * The MetricDataQuery `Id`: the target's `id` when CloudWatch accepts it, else one derived
+ * from the refId (`A` → `a`, `B-2` → `b_2`), else `m1`.
+ */
+const cloudWatchQueryId = (target: GrafanaTarget): string => {
+    if (typeof target.id === 'string' && METRIC_DATA_QUERY_ID.test(target.id)) {
+        return target.id;
+    }
+    const refId =
+        typeof target.refId === 'string'
+            ? target.refId.replace(/[^A-Za-z0-9_]/g, '_')
+            : '';
+    const fromRefId = refId.charAt(0).toLowerCase() + refId.slice(1);
+    return METRIC_DATA_QUERY_ID.test(fromRefId) ? fromRefId : 'm1';
+};
+
+/** A Grafana period (`60`, `'300'`, `'5m'`, `'1h'`) in seconds, or a warning and the default. */
+const cloudWatchPeriod = (
+    target: GrafanaTarget,
+    warnings: ImportWarning[],
+): number => {
+    const { period } = target;
+    const text = typeof period === 'number' ? String(period) : period;
+    if (
+        text === undefined ||
+        text === null ||
+        (typeof text === 'string' && ['', 'auto'].includes(text.trim()))
+    ) {
+        warnings.push({
+            code: 'query-period-auto',
+            message: `CloudWatch ${targetLabel(target)} has an automatic period; a fixed period of ${CLOUDWATCH_DEFAULT_PERIOD_SECONDS} seconds is used`,
+        });
+        return CLOUDWATCH_DEFAULT_PERIOD_SECONDS;
+    }
+    if (typeof text === 'string') {
+        const trimmed = text.trim();
+        if (/^\d+$/.test(trimmed) && Number(trimmed) > 0) {
+            return Number(trimmed);
+        }
+        try {
+            const ms = parseTimeRangeDuration(trimmed);
+            if (ms % 1000 === 0) return ms / 1000;
+        } catch {
+            // Reported below.
+        }
+    }
+    warnings.push({
+        code: 'query-period-invalid',
+        message: `CloudWatch ${targetLabel(target)} has period ${String(period)}, which is not a number of seconds or a duration; ${CLOUDWATCH_DEFAULT_PERIOD_SECONDS} seconds is used`,
+    });
+    return CLOUDWATCH_DEFAULT_PERIOD_SECONDS;
+};
+
+/** The one statistic a MetricStat carries; further legacy `statistics` are reported. */
+const cloudWatchStatistic = (
+    target: GrafanaTarget,
+    warnings: ImportWarning[],
+): string => {
+    const listed = Array.isArray(target.statistics)
+        ? target.statistics.filter(
+              (s): s is string => typeof s === 'string' && s.trim() !== '',
+          )
+        : [];
+    const single =
+        typeof target.statistic === 'string' && target.statistic.trim() !== ''
+            ? target.statistic.trim()
+            : undefined;
+    const all = single !== undefined ? [single, ...listed] : listed;
+    const unique = [...new Set(all.map((s) => s.trim()))];
+    if (unique.length === 0) {
+        warnings.push({
+            code: 'query-statistic-missing',
+            message: `CloudWatch ${targetLabel(target)} has no statistic; ${CLOUDWATCH_DEFAULT_STATISTIC} is used`,
+        });
+        return CLOUDWATCH_DEFAULT_STATISTIC;
+    }
+    if (unique.length > 1) {
+        warnings.push({
+            code: 'query-statistics-dropped',
+            message: `CloudWatch ${targetLabel(target)} asks for several statistics (${unique.join(', ')}); only ${unique[0]} is imported, add a query for ${unique.slice(1).join(', ')} by hand`,
+        });
+    }
+    return unique[0];
+};
+
+/**
+ * The MetricStat dimensions, in the target's order. A `*` wildcard cannot be expressed in a
+ * MetricStat and is left out; a list of values keeps its first value. Both are reported.
+ */
+const cloudWatchDimensions = (
+    target: GrafanaTarget,
+    warnings: ImportWarning[],
+): CloudWatchDimension[] => {
+    const { dimensions } = target;
+    if (
+        dimensions === null ||
+        typeof dimensions !== 'object' ||
+        Array.isArray(dimensions)
+    ) {
+        return [];
+    }
+    const result: CloudWatchDimension[] = [];
+    Object.entries(dimensions as Record<string, unknown>).forEach(
+        ([name, raw]) => {
+            const values = (Array.isArray(raw) ? raw : [raw])
+                .filter((v): v is string | number =>
+                    ['string', 'number'].includes(typeof v),
+                )
+                .map((v) => String(v).trim())
+                .filter((v) => v !== '');
+            if (values.length === 0 || values.includes('*')) {
+                warnings.push({
+                    code: 'query-dimension-wildcard',
+                    message: `CloudWatch ${targetLabel(target)} matches every value of dimension ${name} (*); a MetricStat cannot, so the dimension is left out and the query reads the metric without it`,
+                });
+                return;
+            }
+            if (values.length > 1) {
+                warnings.push({
+                    code: 'query-dimension-values-dropped',
+                    message: `CloudWatch ${targetLabel(target)} matches several values of dimension ${name} (${values.join(', ')}); only ${values[0]} is imported`,
+                });
+            }
+            result.push({ Name: name, Value: values[0] });
+        },
+    );
+    return result;
+};
+
+const translateCloudWatchTarget = (
+    target: GrafanaTarget,
+    source: string | undefined,
+    warnings: ImportWarning[],
+): GrafanaQueryTranslation => {
+    const queryMode =
+        typeof target.queryMode === 'string' ? target.queryMode : 'Metrics';
+    const expression =
+        typeof target.expression === 'string' ? target.expression.trim() : '';
+    const isMetricStat =
+        queryMode === 'Metrics' &&
+        (target.metricQueryType === undefined ||
+            target.metricQueryType === 0) &&
+        expression === '';
+    if (!isMetricStat) {
+        warnings.push({
+            code: 'query-cloudwatch-unsupported',
+            message: `CloudWatch ${targetLabel(target)} is a ${queryMode === 'Metrics' ? 'metric math, code or Metrics Insights' : queryMode} query, which has no translation yet`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: translate CloudWatch ${targetLabel(target)} by hand`,
+            warnings,
+        };
+    }
+    const namespace =
+        typeof target.namespace === 'string' ? target.namespace.trim() : '';
+    const metricName =
+        typeof target.metricName === 'string' ? target.metricName.trim() : '';
+    if (namespace === '' || metricName === '') {
+        warnings.push({
+            code: 'query-empty',
+            message: `CloudWatch ${targetLabel(target)} has no namespace or metric name`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: CloudWatch ${targetLabel(target)} has no namespace or metric name to translate`,
+            warnings,
+        };
+    }
+    const region =
+        typeof target.region === 'string' ? target.region.trim() : '';
+    if (region !== '' && region !== 'default') {
+        warnings.push({
+            code: 'query-region-unsupported',
+            message: `CloudWatch ${targetLabel(target)} reads region ${region}; the MetricDataQuery has no region, so the region of the Telemetry Source ${source ?? '(default)'} is used`,
+        });
+    }
+    const dimensions = cloudWatchDimensions(target, warnings);
+    if (target.matchExact === false) {
+        warnings.push({
+            code: 'query-match-exact-dropped',
+            message: `CloudWatch ${targetLabel(target)} also matches metrics with more dimensions than it lists (Match exact off); a MetricStat matches the listed dimensions exactly`,
+        });
+    }
+    const metricDataQuery: CloudWatchMetricDataQuery = {
+        Id: cloudWatchQueryId(target),
+        MetricStat: {
+            Metric: {
+                Namespace: namespace,
+                MetricName: metricName,
+                Dimensions: dimensions,
+            },
+            Period: cloudWatchPeriod(target, warnings),
+            Stat: cloudWatchStatistic(target, warnings),
+        },
+        ReturnData: true,
+    };
+    const label = [target.label, target.alias].find(
+        (l): l is string => typeof l === 'string' && l.trim() !== '',
+    );
+    if (label !== undefined) metricDataQuery.Label = label;
+    return {
+        sql: buildTelemetrySql({ kind: 'cloudwatch', metricDataQuery, source }),
+        todo: null,
+        warnings,
+    };
+};
+
 /** Translates one Grafana target into SQL, or a TODO with warnings saying why not. */
 export const translateGrafanaTarget = (
     target: GrafanaTarget,
@@ -296,6 +515,8 @@ export const translateGrafanaTarget = (
             return translatePrometheusTarget(target, resolved.source, warnings);
         case 'loki':
             return translateLokiTarget(target, resolved.source, warnings);
+        case 'cloudwatch':
+            return translateCloudWatchTarget(target, resolved.source, warnings);
         default:
             warnings.push({
                 code: 'datasource-unsupported',
