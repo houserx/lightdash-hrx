@@ -575,3 +575,24 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   platform_query), not as a bad token. Give system tokens a placeholder email.
   No engine or Postgres left running, `tmp/e2e` empty.
 - 2026-11-09T03:06:35Z supervisor: int-identity-claims-scope passed the gate in round 1
+- 2026-11-09 int-identity-agent-restricted: the check failed at first with `ParseError: Must specify
+  environment variable LIGHTDASH_SECRET`: `FederationIdentityService` imports logging/winston, which
+  imports `config/lightdashConfig.ts`, and that runs `parseConfig()` at import. Fix: new
+  `e2e/eng-1799/setupEnv.ts`, wired in as a `test.setupFiles` entry in `e2e/eng-1799/vitest.base.ts`.
+  It sets local placeholders only when unset: LIGHTDASH_SECRET (a fixed non-secret test string),
+  SITE_URL, S3_ENDPOINT (`http://127.0.0.1:9`, never contacted), S3_BUCKET, S3_REGION,
+  LIGHTDASH_LOG_LEVEL=error. That was enough for parseConfig; nothing else was required. Unlike
+  packages/backend/setupVitest.ts, it does not mock lightdashConfig or stub fetch: the e2e checks
+  need real network calls to the harness, and the backend modules should see a real parsed config.
+  Engine code did not change: the engine already refuses Restricted Telemetry for agent = true.
+  Tested by hand with a tsx script outside the repo (`../tmp/manual-agent/try.ts`; it imports
+  setupEnv.ts first): fake Prometheus + real engine, `FederationIdentityService.mintForUser` with
+  `telemetry_restricted: ['true']`. Person token on `promql(..., 'prometheus-restricted')` gave rows,
+  with 1 audit item (sub = user, database prometheus-restricted, action query, status success). The
+  same user minted inside `agentExecutionContext.run` got 42501 `source "prometheus-restricted" is
+  Restricted Telemetry, which an AI agent identity (agent = true) may never read`. The open promql
+  source still returned rows. Still 1 audit item at the end. The check passes (1/1), and so does
+  int-identity-claims-scope with the new setup file.
+  Next sessions: any check that imports backend services pulling in lightdashConfig now parses with
+  these placeholders. If a later parseConfig needs more env, add it to setupEnv.ts.
+- 2026-11-09T03:09:21Z supervisor: int-identity-agent-restricted passed the gate in round 1
