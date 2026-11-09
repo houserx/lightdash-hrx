@@ -72,6 +72,7 @@ report() {
     echo "up.sh: Loki (fake): $(json_url "$STACK_JSON" loki)"
     echo "up.sh: Tempo (fake): $(json_url "$STACK_JSON" tempo)"
     echo "up.sh: CloudWatch metrics (fake): $(json_url "$STACK_JSON" cloudwatch)"
+    echo "up.sh: CloudWatch Logs Insights (fake): $(json_url "$STACK_JSON" cloudwatchLogs)"
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
@@ -218,6 +219,9 @@ curl -fsS -m 5 "$TEMPO_URL/ready" >/dev/null ||
 CLOUDWATCH_URL="$(json_url "$RUN/telemetry-fakes.json" cloudwatch)"
 curl -fsS -m 5 "$CLOUDWATCH_URL/ready" >/dev/null ||
     { echo "up.sh: the fake CloudWatch at $CLOUDWATCH_URL does not answer" >&2; exit 1; }
+CLOUDWATCH_LOGS_URL="$(json_url "$RUN/telemetry-fakes.json" cloudwatchLogs)"
+curl -fsS -m 5 "$CLOUDWATCH_LOGS_URL/ready" >/dev/null ||
+    { echo "up.sh: the fake CloudWatch Logs at $CLOUDWATCH_LOGS_URL does not answer" >&2; exit 1; }
 
 DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" start engine "$ENGINE_BIN" --config "$ENGINE_CONFIG"
 ENGINE_PID=$STARTED_PID
@@ -251,6 +255,7 @@ const stack = {
     loki: telemetry.loki,
     tempo: telemetry.tempo,
     cloudwatch: telemetry.cloudwatch,
+    cloudwatchLogs: telemetry.cloudwatchLogs,
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
     engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
     processes: [

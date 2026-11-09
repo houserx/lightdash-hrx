@@ -1851,3 +1851,31 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation pass; `tsc --ignoreConfig --strict
   --module nodenext --types node --noEmit stack/*.ts` clean; no demo process left.
 - 2026-11-09T07:26:58Z supervisor: demo-fake-cloudwatch-metrics passed the gate in round 1
+
+### demo-fake-cloudwatch-logs (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/cloudwatch-logs.ts`: `cloudwatchLogsHandler(() => clock.current())`, served by
+  telemetry-fakes on `endpoints.cloudwatchLogs`. Log group `/hrx/demo/fill-service` only (others → 400
+  ResourceNotFoundException). Events are the fake Loki lines (`fillServiceLogs()`), rewritten as
+  `<ISO time> INFO|ERROR <logfmt rest>`, so ERROR counts follow Loki: ~1.5/min baseline and recovered, 20..30/min
+  in the incident (each mentions shipping-label-api). Fields: @timestamp (`YYYY-MM-DD HH:MM:SS.mmm` UTC), @message,
+  @logStream, @log, @ptr. Window is [startTime, endTime] in epoch seconds, both inclusive, never after now.
+- **Protocol:** aws-sdk-cloudwatchlogs 1.163 speaks **AWS JSON 1.1** (`X-Amz-Target: Logs_20140328.<Op>`), not
+  CBOR. Ops: StartQuery (runs the query at once), GetQueryResults (always `Complete`), StopQuery (`success: false`),
+  DescribeLogGroups; the last 200 query ids are kept. Errors are 400 `{__type, message}`.
+- Logs Insights subset: `fields`/`display` (plain lists), `filter` (`like /re/flags`, `like "text"`, `not like`,
+  `=~`, `=`, `!=`, with and/or/not/parentheses), `sort <field> [asc|desc]` (none → newest first), `limit` (none →
+  1000, max 10000; a `limit` command wins over the StartQuery `limit` parameter). `stats`, `parse`, `dedup` etc.
+  → 400 MalformedQueryException: extend `parseQuery`/`runQuery` if a dashboard or alert needs them. Range at most 7 days.
+- `up.sh` checks `$CLOUDWATCH_LOGS_URL/ready`, writes `cloudwatchLogs.url` to stack.json, `report()` prints it.
+  Engine `/healthz` is now `status: ok` with every source reachable.
+- Tested as a user: `up.sh`, restart -240/-90, through the engine (pg-wire): the spec query
+  (`filter @message like /ERROR/ | sort @timestamp desc | limit 2000`, now-400s..now) → 77 rows, all ERROR, newest
+  first; 1.2/min baseline, 28.4/min incident, every incident row mentions shipping-label-api; `fields` json =
+  {@message, @timestamp} (engine drops @ptr); `fields ... | limit 2000` over the baseline → 60 lines (56 INFO); no
+  fields/limit → @log/@logStream too; `like /error/i and not ... like /shipping/ | sort asc | limit 3` → 3 ascending
+  rows, message NULL (not selected); `stats ...` → engine error "StartQuery failed: MalformedQueryException: ...";
+  log group `/nope` → "ResourceNotFoundException: Log group ..."; repeated query identical. Checks fake-cloudwatch-logs,
+  fake-cloudwatch, fake-loki, fake-tempo, fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation
+  pass; `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:32:52Z supervisor: demo-fake-cloudwatch-logs passed the gate in round 1
