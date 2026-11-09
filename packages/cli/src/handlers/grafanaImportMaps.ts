@@ -1,7 +1,9 @@
 import {
     ParseError,
+    parseGrafanaDashboardsTf,
     parseGrafanaDatasourcesTf,
     readGrafanaOpsMarts,
+    type GrafanaDashboardsTfResource,
     type GrafanaDatasource,
     type GrafanaOpsMarts,
 } from '@lightdash/common';
@@ -40,6 +42,28 @@ export const readGrafanaDatasourcesFile = async (
         );
     }
     return datasources;
+};
+
+/**
+ * `--dashboards-tf <grafana_dashboards.tf>`: which Grafana folder each folder of dashboard JSON
+ * files goes to, so each dashboard lands in the space named after its folder. A resource that
+ * can't be read is skipped with a warning.
+ */
+export const readGrafanaDashboardsTfFile = async (
+    file: string,
+): Promise<GrafanaDashboardsTfResource[]> => {
+    const { dashboards, skipped } = parseGrafanaDashboardsTf(
+        await readText(file, 'Grafana dashboards file'),
+    );
+    skipped.forEach((line) =>
+        console.warn(styles.warning(`${file}: skipped ${line}`)),
+    );
+    if (dashboards.length === 0) {
+        throw new ParseError(
+            `${file} defines no grafana_dashboard resource the importer can read. Pass the Terraform file with the resource "grafana_dashboard" blocks (grafana_dashboards.tf).`,
+        );
+    }
+    return dashboards;
 };
 
 /**

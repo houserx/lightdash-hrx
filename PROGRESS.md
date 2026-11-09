@@ -1021,3 +1021,31 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Trap: a Prometheus uid not in the tf (e.g. `prometheus-staging`, which is a resource name, not a uid) gives a
   datasource-unresolved warning, so a "clean" test dashboard needs a real uid from the fixture.
 - 2026-11-09T03:35:38Z supervisor: imp-dashboard-import-report passed the gate in round 1
+
+## imp-dashboard-spaces (round 1)
+- `--space` (default `operations`, DEFAULT_GRAFANA_DASHBOARD_SPACE) already reached the dashboard and every chart
+  through `convertGrafanaDashboard({spaceSlug})`; this feature added `--dashboards-tf <grafana_dashboards.tf>`.
+- Common (packages/common/src/eng1799/grafanaImportMaps.ts):
+  - The HCL block reader now also keeps each top-level attribute's raw expression text (`expressions`, from after
+    `=` to end of line, trailing comment dropped), for values that aren't plain string literals.
+  - `parseGrafanaDashboardsTf(text)` reads each `resource "grafana_dashboard"` with
+    `for_each = fileset("${path.module}/<dir>", "<pattern>")` and `folder = grafana_folder.<x>["<title>"].id|uid`
+    (no `folder` = Grafana root). Other shapes (single config_json, computed folder) go to `skipped` with a reason.
+  - `findGrafanaDashboardResource(resources, file)` matches a dashboard file by path-segment suffix of the fileset
+    dir (`grafana_config/rds` matches `/any/where/grafana_config/rds/x.json`, so the tf need not sit next to the
+    JSON) plus the fileset pattern (`*`, `?`, `{a,b}`); the longest dir wins.
+- CLI: `readGrafanaDashboardsTfFile` in handlers/grafanaImportMaps.ts (prints skipped resources, fails when the file
+  has no readable grafana_dashboard). The handler gives each file the space `generateSlug(folderTitle)` (`BCP/DR` ->
+  `bcp-dr`); a root dashboard, or a file in no resource's folder (CLI warning on stderr, not an import warning, so
+  warning counts are unchanged), goes to `--space`.
+- Decision: the API export's `meta.folderTitle` is NOT used for the space; only --dashboards-tf decides. A later
+  feature could use it as a fallback if wanted.
+- Unit tests: grafanaImportMaps.test.ts +2 cases (parse/skip; file matching incl. Windows separators).
+- Tested as a user: CLI from source on rds/pg_cron.json: no options -> dashboard + 3 charts `spaceSlug: operations`;
+  `--space grafana-migration` -> all grafana-migration. pg_cron + bcp-dr/dr-replication-production + golden-signals
+  with `--dashboards-tf grafana_dashboards.tf --space general` -> dashboards in rds, bcp-dr, general and every chart
+  (3/22/4) in its dashboard's space. `--dashboards-tf grafana_folders.tf` fails with a clear message (exit 1); a copy
+  of golden-signals outside grafana_config warns and goes to operations.
+- Acceptance: dashboard-spaces 3/3; dashboard-command, -datasources, -report pass. tsc (common, cli), oxlint, oxfmt
+  clean. roundtrip-dashboards not run (heavy; its unknown-option failure should now be gone).
+- 2026-11-09T03:41:47Z supervisor: imp-dashboard-spaces passed the gate in round 1

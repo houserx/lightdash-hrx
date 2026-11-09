@@ -1480,6 +1480,10 @@ importProgram
         '--ops-marts <yml>',
         'YAML mapping GitHub and Sentry query types to Ops Mart tables (github: {Pull_Requests: ops_marts.github.pull_requests}); unmapped ones become TODOs',
     )
+    .option(
+        '--dashboards-tf <tf>',
+        'grafana_dashboards.tf: each dashboard goes to the space named after its Grafana folder (dashboards at the Grafana root go to --space)',
+    )
     .option('--verbose', undefined, false)
     .action(importGrafanaDashboardHandler);
 

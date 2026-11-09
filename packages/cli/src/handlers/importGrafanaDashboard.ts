@@ -1,6 +1,8 @@
 import {
     convertGrafanaDashboard,
     DEFAULT_SPOTLIGHT_CONFIG,
+    findGrafanaDashboardResource,
+    generateSlug,
     mergeProjectParameters,
     ParseError,
     readGrafanaDashboardJson,
@@ -15,6 +17,7 @@ import * as path from 'path';
 import GlobalState from '../globalState';
 import * as styles from '../styles';
 import {
+    readGrafanaDashboardsTfFile,
     readGrafanaDatasourcesFile,
     readGrafanaOpsMartsFile,
 } from './grafanaImportMaps';
@@ -31,6 +34,8 @@ type ImportGrafanaDashboardOptions = {
     datasources?: string;
     /** YAML mapping GitHub and Sentry query types to Ops Mart tables. */
     opsMarts?: string;
+    /** grafana_dashboards.tf: each dashboard goes to the space named after its Grafana folder. */
+    dashboardsTf?: string;
     verbose: boolean;
 };
 
@@ -103,11 +108,36 @@ export const importGrafanaDashboardHandler = async (
                 : await readGrafanaOpsMartsFile(options.opsMarts),
     };
 
+    // With --dashboards-tf a dashboard in a Grafana folder goes to the space named after it;
+    // one at the Grafana root, or in no resource's folder, goes to --space.
+    const dashboardsTf =
+        options.dashboardsTf === undefined
+            ? undefined
+            : await readGrafanaDashboardsTfFile(options.dashboardsTf);
+    const spaceSlugs = files.map((file) => {
+        if (dashboardsTf === undefined) return spaceSlug;
+        const resource = findGrafanaDashboardResource(
+            dashboardsTf,
+            path.resolve(file),
+        );
+        if (resource === undefined) {
+            console.warn(
+                styles.warning(
+                    `${file} is in no grafana_dashboard resource's folder in ${options.dashboardsTf}; it goes to the ${spaceSlug} space.`,
+                ),
+            );
+            return spaceSlug;
+        }
+        return resource.folder === undefined
+            ? spaceSlug
+            : generateSlug(resource.folder);
+    });
+
     const takenDashboardSlugs = new Set<string>();
     const takenChartSlugs = new Set<string>();
-    const results: GrafanaDashboardImport[] = inputs.map((input) =>
+    const results: GrafanaDashboardImport[] = inputs.map((input, index) =>
         convertGrafanaDashboard(input, {
-            spaceSlug,
+            spaceSlug: spaceSlugs[index],
             query,
             takenDashboardSlugs,
             takenChartSlugs,

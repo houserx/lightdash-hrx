@@ -108,11 +108,35 @@ const skipTrivia = (text: string, start: number): number => {
     return i;
 };
 
+/** Drops a trailing `#` or `//` comment from one line of HCL, leaving quoted text alone. */
+const stripLineComment = (line: string): string => {
+    let inString = false;
+    for (let i = 0; i < line.length; i += 1) {
+        const ch = line[i];
+        if (inString && ch === '\\') {
+            i += 1;
+        } else if (ch === '"') {
+            inString = !inString;
+        } else if (
+            !inString &&
+            (ch === '#' || (ch === '/' && line[i + 1] === '/'))
+        ) {
+            return line.slice(0, i);
+        }
+    }
+    return line;
+};
+
 type HclBlock = {
     labels: string[];
     type: string;
     /** The block's top-level `name = value` attributes. */
     attributes: Map<string, HclValue>;
+    /**
+     * The source text of each top-level attribute's value, from after `=` to the end of its
+     * line (comments dropped), for the expressions a plain literal can't hold.
+     */
+    expressions: Map<string, string>;
 };
 
 /**
@@ -161,7 +185,12 @@ const readHclBlocks = (text: string): HclBlock[] => {
                 current =
                     type === undefined
                         ? undefined
-                        : { type, labels, attributes: new Map() };
+                        : {
+                              type,
+                              labels,
+                              attributes: new Map(),
+                              expressions: new Map(),
+                          };
                 if (current) blocks.push(current);
                 pendingWords = [];
             } else if (depth === 1 && current && attributeName !== undefined) {
@@ -192,6 +221,18 @@ const readHclBlocks = (text: string): HclBlock[] => {
             if (depth === 1 && text[after] === '=' && text[after + 1] !== '=') {
                 attributeName = word;
                 i = after + 1;
+                if (current) {
+                    const lineEnd = text.indexOf('\n', i);
+                    current.expressions.set(
+                        word,
+                        stripLineComment(
+                            text.slice(
+                                i,
+                                lineEnd === -1 ? text.length : lineEnd,
+                            ),
+                        ).trim(),
+                    );
+                }
             } else {
                 if (depth === 1 && current && attributeName !== undefined) {
                     // `name = local.x`, `name = var.y`, numbers, booleans: not a string literal.
@@ -264,6 +305,118 @@ export const parseGrafanaDatasourcesTf = (
             });
         });
     return { datasources, skipped };
+};
+
+/** One `resource "grafana_dashboard"` block: the dashboards a folder of JSON files holds. */
+export type GrafanaDashboardsTfResource = {
+    /** `grafana_dashboard.<name>`. */
+    resource: string;
+    /** The fileset directory without `${path.module}/`, e.g. `grafana_config/rds`. */
+    dir: string;
+    /** The fileset pattern, e.g. `*.json`. */
+    pattern: string;
+    /** The Grafana folder title, or `undefined` for a dashboard Grafana keeps at the root. */
+    folder: string | undefined;
+};
+
+export type GrafanaDashboardsTf = {
+    dashboards: GrafanaDashboardsTfResource[];
+    /** One line per `grafana_dashboard` resource that could not be read, saying why. */
+    skipped: string[];
+};
+
+const FILESET_RE = /^fileset\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)$/;
+const FOLDER_RE = /^grafana_folder\.[A-Za-z0-9_-]+\["([^"]+)"\]\.u?id$/;
+
+/**
+ * The dashboards `grafana_dashboards.tf` places in folders: each `resource "grafana_dashboard"`
+ * with `for_each = fileset("${path.module}/<dir>", "<pattern>")` and
+ * `folder = grafana_folder.<name>["<title>"].id` (or no `folder`, for the root). A resource in
+ * another shape (a single `config_json`, a computed folder) is listed in `skipped`.
+ */
+export const parseGrafanaDashboardsTf = (text: string): GrafanaDashboardsTf => {
+    const dashboards: GrafanaDashboardsTfResource[] = [];
+    const skipped: string[] = [];
+    readHclBlocks(text)
+        .filter(
+            (block) =>
+                block.type === 'resource' &&
+                block.labels[0] === 'grafana_dashboard',
+        )
+        .forEach((block) => {
+            const resource = `grafana_dashboard.${block.labels[1] ?? '(unnamed)'}`;
+            const forEach = block.expressions.get('for_each');
+            const fileset =
+                forEach === undefined ? null : FILESET_RE.exec(forEach);
+            if (!fileset) {
+                skipped.push(
+                    `${resource}: it has no for_each = fileset("<dir>", "<pattern>")`,
+                );
+                return;
+            }
+            const folderText = block.expressions.get('folder');
+            let folder: string | undefined;
+            if (folderText !== undefined) {
+                const match = FOLDER_RE.exec(folderText);
+                if (!match || !/[A-Za-z0-9]/.test(match[1])) {
+                    skipped.push(
+                        `${resource}: its folder ${folderText} is not grafana_folder.<name>["<title>"].id`,
+                    );
+                    return;
+                }
+                [, folder] = match;
+            }
+            const dir = fileset[1]
+                .replace(/^\$\{path\.(module|root|cwd)\}\/?/, '')
+                .replace(/\/+$/, '');
+            dashboards.push({ resource, dir, pattern: fileset[2], folder });
+        });
+    return { dashboards, skipped };
+};
+
+/** A Terraform fileset pattern (`*`, `?`, `{a,b}`) as a regex over one file name. */
+const filesetPatternRegex = (pattern: string): RegExp => {
+    let re = '';
+    let braces = 0;
+    for (const ch of pattern) {
+        if (ch === '*') re += '[^/]*';
+        else if (ch === '?') re += '[^/]';
+        else if (ch === '{') {
+            braces += 1;
+            re += '(?:';
+        } else if (ch === '}' && braces > 0) {
+            braces -= 1;
+            re += ')';
+        } else if (ch === ',' && braces > 0) re += '|';
+        else re += ch.replace(/[.+^$()|[\]{}\\]/g, '\\$&');
+    }
+    re += ')'.repeat(braces);
+    return new RegExp(`^${re}$`);
+};
+
+/**
+ * The `grafana_dashboard` resource a dashboard file belongs to: the one whose fileset directory
+ * ends the file's directory (path segments compared, so `grafana_config/rds` matches
+ * `/any/where/grafana_config/rds/pg_cron.json`) and whose pattern matches its name. The longest
+ * directory wins. `undefined` when no resource holds the file.
+ */
+export const findGrafanaDashboardResource = (
+    resources: GrafanaDashboardsTfResource[],
+    file: string,
+): GrafanaDashboardsTfResource | undefined => {
+    const segments = file.split(/[\\/]+/).filter((s) => s !== '');
+    const name = segments.pop() ?? '';
+    return resources
+        .filter((r) => {
+            const dirSegments = r.dir.split('/').filter((s) => s !== '');
+            if (dirSegments.length > segments.length) return false;
+            const tail = segments.slice(segments.length - dirSegments.length);
+            return (
+                dirSegments.every((s, i) => s === tail[i]) &&
+                filesetPatternRegex(r.pattern).test(name)
+            );
+        })
+        .sort((a, b) => b.dir.length - a.dir.length)[0];
 };
 
 const OPS_MART_KEYS = ['github', 'sentry'] as const;
