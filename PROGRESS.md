@@ -2338,3 +2338,23 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   (11 here, 23 in the earlier hand run), so a scene that needs it firing reliably may want a lower threshold. Change the
   YAML in `alerting/`, not the API (the rules are Managed). Stack is down.
 - 2026-11-09T10:03:09Z supervisor: demo-alert-fires passed the gate in round 1
+
+### demo-alert-resolves (2026-11-09, run 20261109-013019, round 1)
+
+- **No code change.** The demo-alerting-seed setup (interval 30s, `for` 0s, `disableResolveMessage: false` on the
+  incident.io Contact Point, route groupWait 1s / groupInterval 15s) already makes the backlog rule resolve and send a
+  resolve notification. This session only verified it.
+- Check: `bash ./init.sh`, then `run.sh --stack alert-lifecycle.spec.ts --grep "demo-alert-resolves:"` passed on the
+  first try (1 test, 1.3m).
+- Tested as a user: fresh up.sh. In Chromium (throwaway script in the run's tmp/alert-resolves/) I signed in through
+  /login and opened `/projects/<uuid>/alerting/rules`: the backlog rule showed Normal. Then I sent POST `/scenario/restart
+  {incidentAfterSeconds: -120, recoveryAfterSeconds: 35}` (phase "incident"). The rule showed **Firing** from ~32 s
+  after the restart until ~90 s, then **Normal**. The fake incident.io page listed 3 notifications: FIRING backlog
+  ("Fill queue backlog is 149"), FIRING error-log rate (26 errors), and **RESOLVED** backlog ("Fill queue backlog is
+  94 (threshold 100)") with startsAt 10:06:30Z and endsAt 10:07:00Z, received about 74 s after the restart. The firing
+  alerts carry Alertmanager's zero endsAt (`0001-01-01T00:00:00Z`). No page errors.
+- Timing note: the resolve notification reached the receiver (10:07:21Z) about 13 s before the rules page stopped
+  showing Firing. Scenes that wait on both should poll the receiver as well as the UI, not assume one order. With a
+  30 s interval and recovery at +35 s, at least one evaluation always lands inside the incident, so the spec's firing
+  window is reliable. Stack is down.
+- 2026-11-09T10:13:46Z supervisor: demo-alert-resolves passed the gate in round 1
