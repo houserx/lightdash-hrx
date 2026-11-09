@@ -309,3 +309,4 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Alerting's `alerting/queryParameters.ts` builds the CONTRACTS §2 reserved time parameters (`__interval`,
   `__range`, ...) separately from ldq's `utils/timeRange.ts`. The two should agree on every value the engine sees.
 - 2026-11-09T01:14:28Z supervisor: initialized: 61 features, run 20261108-192705
+- 2026-11-09T01:46:23Z supervisor: initialized: 61 features, run 20261108-203649
