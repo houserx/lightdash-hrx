@@ -2031,3 +2031,22 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   seed-project, lightdash-frontend, lightdash-backend (--stack) pass; `tsc --ignoreConfig ... stack/*.ts` clean;
   no demo process left.
 - 2026-11-09T08:12:06Z supervisor: demo-seed-project passed the gate in round 1
+
+### demo-lightdash-engine-query (2026-11-09, run 20261109-013019)
+
+- **No code change needed.** The tree from demo-seed-project already meets this feature: the Operations Project
+  (postgres/federation flavour) sends SQL Runner queries to the Federation Engine, and the async query results are
+  written to the fake results S3 (`demo-lightdash-results`). The check passed on the first run with nothing edited.
+  This entry is the only change in this session.
+- API path the specs use: `POST /api/v1/login` → `POST /api/v2/projects/<uuid>/query/sql` (`context: sqlRunner`,
+  `invalidateCache: true`) → poll `GET /api/v2/projects/<uuid>/query/<queryUuid>` until `status: ready`; cell
+  values come back as `{value: {raw}}`.
+- Scenario restart body uses `incidentAfterSeconds` / `recoveryAfterSeconds`. With `incidentAt`/`recoveryAt` the
+  clock answers 400, so the data stays on the default timeline.
+- Tested as a user: up.sh; signed in as the stack.json demo user through `/api/v1/login`; set the scenario to
+  incident −240 s and recovery −90 s; ran through the SQL Runner API
+  `promql('hrx_fill_queue_backlog{queue="fill"}', from, to, '15s')` → 27 rows, baseline max 47, incident window
+  141–166 (≥120); `count(*)` over `logql('{app="fill-service"} |= "level=error"', ...)` → 47 in the incident window
+  vs 4 at baseline. The fake S3 bucket gained one object per query (3 → 6 over three queries). down.sh; no demo
+  process left. `run.sh --stack lightdash-engine-query.spec.ts` passes (1 test).
+- 2026-11-09T08:16:41Z supervisor: demo-lightdash-engine-query passed the gate in round 1
