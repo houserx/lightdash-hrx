@@ -375,3 +375,28 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   60/5m/1h/86400/3600(number)/''/bogus, the us-west-2 + statistics + wildcard target (4 warnings), a Logs target
   and an empty namespace. tsc clean, oxlint clean, oxfmt applied.
 - 2026-11-09T01:53:28Z supervisor: imp-query-cloudwatch-metric-stat passed the gate in round 1
+
+### imp-query-panel-targets (2026-11-08)
+
+- `grafanaQuery.ts` `translateGrafanaPanelQueries`: the visible targets that translate become one result set,
+  `(SELECT ...)\nUNION ALL\n(SELECT ...)` (one target stays a bare SELECT). Hidden targets are skipped; targets
+  that don't translate are left out with their warnings (panel `todo` stays null); when none translates the
+  panel is a TODO joining the targets' TODOs. No visible target → TODO + `query-empty` (unchanged).
+- Result shapes (CONTRACTS §1.1): translators now return an internal `shape` (`series` for promql,
+  promql_instant, logql_metric, cloudwatch; `log-lines` for logql). Only targets with the first translated
+  target's shape are unioned; others get `panel-targets-not-combined` (code kept, new meaning: different
+  columns). A translator without a `shape` (future platform_query, cloudwatch_logs) never unions with
+  anything — later features that add translators must set `shape` (add `'logs-insights'` etc. to
+  `ResultShape`) if they want panel combining. `translateGrafanaTarget` strips `shape` from its public result.
+- Dispatch is now a `TARGET_TRANSLATORS` Map (type → translator); later datasource features add an entry.
+  An unsupported type is checked before source resolution, so it gets only `datasource-unsupported` (no
+  misleading "engine's default source is used" `datasource-unresolved`).
+- Not done here: series names can collide across unioned targets with no legendFormat (e.g. two `sum(...)`
+  both `{}`); imp-query-legend-format should consider defaulting the series to the refId/expr when unioning.
+- Tested: `query-panel-targets.test.ts` 3/3; prometheus, loki, cloudwatch-metrics still 5/5. Rebuilt common via
+  init.sh and called the built `dist/cjs` `translateGrafanaPanelQueries` from node: two visible + one hidden
+  Prometheus → two promql SELECTs joined by UNION ALL, no `c`; Prometheus + elasticsearch → the promql query
+  plus `datasource-unsupported`; only influxdb → sql null, TODO naming influxdb; Prometheus + Loki log +
+  CloudWatch → promql UNION ALL cloudwatch plus `panel-targets-not-combined` for the log target; all hidden →
+  TODO. tsc clean, oxlint clean, oxfmt applied.
+- 2026-11-09T01:56:28Z supervisor: imp-query-panel-targets passed the gate in round 1

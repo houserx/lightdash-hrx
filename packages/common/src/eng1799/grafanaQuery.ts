@@ -73,6 +73,19 @@ export type GrafanaQueryTranslation = {
     warnings: ImportWarning[];
 };
 
+/**
+ * The columns a translated target returns (CONTRACTS §1.1). Only targets with the same known
+ * shape can share one result through UNION ALL.
+ */
+type ResultShape =
+    /** `timestamp, value, labels, series`: promql, promql_instant, logql_metric, cloudwatch. */
+    | 'series'
+    /** `timestamp, line, labels, stream`: logql. */
+    | 'log-lines';
+
+/** A target's translation plus the shape of its result, when it has SQL. */
+type TargetTranslation = GrafanaQueryTranslation & { shape?: ResultShape };
+
 /** The Telemetry Source name for a Grafana datasource name: `Cloudwatch Staging` → `cloudwatch-staging`. */
 export const telemetrySourceName = (datasourceName: string): string =>
     datasourceName
@@ -138,7 +151,7 @@ const translatePrometheusTarget = (
     target: GrafanaTarget,
     source: string | undefined,
     warnings: ImportWarning[],
-): GrafanaQueryTranslation => {
+): TargetTranslation => {
     const expr = typeof target.expr === 'string' ? target.expr.trim() : '';
     if (expr === '') {
         warnings.push({
@@ -159,6 +172,7 @@ const translatePrometheusTarget = (
             sql: `SELECT * FROM promql_instant(${args.join(', ')})`,
             todo: null,
             warnings,
+            shape: 'series',
         };
     }
     if (target.instant === true && target.range === true) {
@@ -171,6 +185,7 @@ const translatePrometheusTarget = (
         sql: buildTelemetrySql({ kind: 'promql', query: expr, source }),
         todo: null,
         warnings,
+        shape: 'series',
     };
 };
 
@@ -218,7 +233,7 @@ const translateLokiTarget = (
     target: GrafanaTarget,
     source: string | undefined,
     warnings: ImportWarning[],
-): GrafanaQueryTranslation => {
+): TargetTranslation => {
     const expr = typeof target.expr === 'string' ? target.expr.trim() : '';
     if (expr === '') {
         warnings.push({
@@ -242,6 +257,7 @@ const translateLokiTarget = (
             }),
             todo: null,
             warnings,
+            shape: 'log-lines',
         };
     }
     if (target.queryType === 'instant' || target.instant === true) {
@@ -258,12 +274,14 @@ const translateLokiTarget = (
             sql: `SELECT * FROM logql_metric(${args.join(', ')})`,
             todo: null,
             warnings,
+            shape: 'series',
         };
     }
     return {
         sql: buildTelemetrySql({ kind: 'logql_metric', query: expr, source }),
         todo: null,
         warnings,
+        shape: 'series',
     };
 };
 
@@ -408,7 +426,7 @@ const translateCloudWatchTarget = (
     target: GrafanaTarget,
     source: string | undefined,
     warnings: ImportWarning[],
-): GrafanaQueryTranslation => {
+): TargetTranslation => {
     const queryMode =
         typeof target.queryMode === 'string' ? target.queryMode : 'Metrics';
     const expression =
@@ -480,14 +498,28 @@ const translateCloudWatchTarget = (
         sql: buildTelemetrySql({ kind: 'cloudwatch', metricDataQuery, source }),
         todo: null,
         warnings,
+        shape: 'series',
     };
 };
 
-/** Translates one Grafana target into SQL, or a TODO with warnings saying why not. */
-export const translateGrafanaTarget = (
+/** The datasource types with a translation; anything else is `datasource-unsupported`. */
+const TARGET_TRANSLATORS = new Map<
+    string,
+    (
+        target: GrafanaTarget,
+        source: string | undefined,
+        warnings: ImportWarning[],
+    ) => TargetTranslation
+>([
+    ['prometheus', translatePrometheusTarget],
+    ['loki', translateLokiTarget],
+    ['cloudwatch', translateCloudWatchTarget],
+]);
+
+const translateTarget = (
     target: GrafanaTarget,
-    ctx: GrafanaQueryContext = {},
-): GrafanaQueryTranslation => {
+    ctx: GrafanaQueryContext,
+): TargetTranslation => {
     const warnings: ImportWarning[] = [];
     const ref = isUsableRef(target.datasource)
         ? target.datasource
@@ -504,35 +536,48 @@ export const translateGrafanaTarget = (
             warnings,
         };
     }
+    const translator = TARGET_TRANSLATORS.get(resolved.type);
+    if (translator === undefined) {
+        warnings.push({
+            code: 'datasource-unsupported',
+            message: `${targetLabel(target)} uses the ${resolved.type} datasource, which has no translation`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: translate ${targetLabel(target)} from the ${resolved.type} datasource by hand`,
+            warnings,
+        };
+    }
     if (resolved.source === undefined) {
         warnings.push({
             code: 'datasource-unresolved',
             message: `The ${resolved.type} datasource ${resolved.label} of ${targetLabel(target)} is not a known Grafana datasource; the engine's default source is used`,
         });
     }
-    switch (resolved.type) {
-        case 'prometheus':
-            return translatePrometheusTarget(target, resolved.source, warnings);
-        case 'loki':
-            return translateLokiTarget(target, resolved.source, warnings);
-        case 'cloudwatch':
-            return translateCloudWatchTarget(target, resolved.source, warnings);
-        default:
-            warnings.push({
-                code: 'datasource-unsupported',
-                message: `${targetLabel(target)} uses the ${resolved.type} datasource, which has no translation`,
-            });
-            return {
-                sql: null,
-                todo: `TODO: translate ${targetLabel(target)} from the ${resolved.type} datasource by hand`,
-                warnings,
-            };
-    }
+    return translator(target, resolved.source, warnings);
 };
 
+/** Translates one Grafana target into SQL, or a TODO with warnings saying why not. */
+export const translateGrafanaTarget = (
+    target: GrafanaTarget,
+    ctx: GrafanaQueryContext = {},
+): GrafanaQueryTranslation => {
+    const { sql, todo, warnings } = translateTarget(target, ctx);
+    return { sql, todo, warnings };
+};
+
+/** One translated query per SELECT, combined into one result set. */
+const unionAll = (queries: string[]): string =>
+    queries.length === 1
+        ? queries[0]
+        : queries.map((sql) => `(${sql})`).join('\nUNION ALL\n');
+
 /**
- * Translates a panel's targets into one chart's SQL. Hidden targets are skipped. For now one
- * visible target becomes the chart; further targets are reported, not dropped silently.
+ * Translates a panel's targets into one chart's SQL. Hidden targets are skipped. The visible
+ * targets that translate become one result set (UNION ALL); a target whose result has other
+ * columns than the first translated target's (log lines next to series) is left out with a
+ * `panel-targets-not-combined` warning. Targets that don't translate are left out with their
+ * warnings; when none translates, the panel is a TODO.
  */
 export const translateGrafanaPanelQueries = (
     panel: GrafanaPanelWithTargets,
@@ -557,27 +602,33 @@ export const translateGrafanaPanelQueries = (
     }
     const warnings: ImportWarning[] = [];
     const todos: string[] = [];
-    let sql: string | null = null;
+    const queries: string[] = [];
+    let shape: ResultShape | undefined;
     visible.forEach((target) => {
-        const result = translateGrafanaTarget(target, targetCtx);
+        const result = translateTarget(target, targetCtx);
         warnings.push(...result.warnings);
         if (result.sql === null) {
             if (result.todo !== null) todos.push(result.todo);
-        } else if (sql === null) {
-            sql = result.sql;
+            return;
+        }
+        if (queries.length === 0) {
+            shape = result.shape;
+            queries.push(result.sql);
+        } else if (shape !== undefined && result.shape === shape) {
+            queries.push(result.sql);
         } else {
             warnings.push({
                 code: 'panel-targets-not-combined',
-                message: `${targetLabel(target)} is not combined with the panel's first query`,
+                message: `${targetLabel(target)} returns other columns than the panel's first query, so it cannot share the chart's result; add it as its own chart by hand`,
             });
         }
     });
-    return {
-        sql,
-        todo:
-            sql === null
-                ? todos.join('\n') || 'TODO: no query translated'
-                : null,
-        warnings,
-    };
+    if (queries.length === 0) {
+        return {
+            sql: null,
+            todo: todos.join('\n') || 'TODO: no query translated',
+            warnings,
+        };
+    }
+    return { sql: unionAll(queries), todo: null, warnings };
 };
