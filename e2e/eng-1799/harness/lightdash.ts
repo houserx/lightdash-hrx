@@ -69,6 +69,15 @@ export type Lightdash = {
      * Other users' values and group values are kept.
      */
     setUserAttributes(attributes: Record<string, string>): Promise<void>;
+    /**
+     * Saves a SQL chart (a table over `sql`, limit 500 unless given) in the seeded space through
+     * the backend's `POST /api/v1/projects/{projectUuid}/sqlRunner/saved` API. Returns its uuid.
+     */
+    createSqlChart(chart: {
+        name: string;
+        sql: string;
+        limit?: number;
+    }): Promise<string>;
     /** Stops the backend (SIGTERM, SIGKILL after a grace period), its Postgres and the fake S3. Idempotent. */
     close(): Promise<void>;
 };
@@ -197,6 +206,36 @@ async function setUserAttributes(
             await callApi(baseUrl, apiKey, 'POST', route, payload);
         }
     }
+}
+
+async function createSqlChart(
+    baseUrl: string,
+    apiKey: string,
+    projectUuid: string,
+    spaceUuid: string,
+    chart: { name: string; sql: string; limit?: number },
+): Promise<string> {
+    const { savedSqlUuid } = await callApi<{ savedSqlUuid: string }>(
+        baseUrl,
+        apiKey,
+        'POST',
+        `/api/v1/projects/${projectUuid}/sqlRunner/saved`,
+        {
+            name: chart.name,
+            description: null,
+            sql: chart.sql,
+            limit: chart.limit ?? 500,
+            spaceUuid,
+            // A table showing every column the SQL returns (ChartKind.TABLE).
+            config: {
+                metadata: { version: 1 },
+                type: 'table',
+                columns: {},
+                display: undefined,
+            },
+        },
+    );
+    return savedSqlUuid;
 }
 
 function waitForExit(child: ChildProcess, ms: number): Promise<boolean> {
@@ -330,6 +369,14 @@ export async function startLightdash(
             s3,
             setUserAttributes: (attributes) =>
                 setUserAttributes(baseUrl, apiKey, seeded.userUuid, attributes),
+            createSqlChart: (chart) =>
+                createSqlChart(
+                    baseUrl,
+                    apiKey,
+                    seeded.projectUuid,
+                    seeded.spaceUuid,
+                    chart,
+                ),
             close,
         };
     } catch (error) {

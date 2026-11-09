@@ -1097,3 +1097,25 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     --single-quote --tab-width 4 --trailing-comma all --print-width 80`. That version still expands a few
     one-line object literals in ProjectService/AsyncQueryService, so check `git diff` for unrelated hunks.
 - 2026-11-09T04:58:22Z supervisor: int-fix-query-path-identity passed the gate in round 1
+- 2026-11-09 int-lightdash-sql-chart (round 1): a saved SQL chart and a time-ranged SQL Runner query run
+  through Lightdash's async query path against the engine.
+  Changed: only the harness. `startLightdash(...).createSqlChart({ name, sql, limit? })` is built
+  (`e2e/eng-1799/harness/lightdash.ts`). It calls the real `POST /api/v1/projects/{uuid}/sqlRunner/saved`
+  with the PAT, saving a table chart (`config: { metadata: { version: 1 }, type: 'table', columns: {} }`,
+  limit 500 by default) in the seeded space, and returns `savedSqlUuid`. No backend change was needed:
+  `query/sql-chart` and `query/sql` with `timeRange` already worked end to end on this tree.
+  Tested as a user (`../tmp/manual-sql-chart/try.mts`, run with the pnpm-pinned node as before). The saved
+  chart's GET returned 200, name "Synthetic up", type table, in the seeded space. `query/sql-chart` came back
+  ready with 6 rows, value 1 and the `up` series. Prometheus was asked for 10:00–10:05 at step 60.
+  Investigate's `buildTelemetrySql({kind:'promql'})` SQL with timeRange 09:00–10:00 came back with 241 rows,
+  and Prometheus was asked for exactly start 09:00 and end 10:00 at step 15. With a 6 h range it was 721 rows
+  at step 30. Checks: this one 1/1; e2e typecheck clean.
+  Next sessions must know:
+  - Each run asks the source **twice**: the column-discovery `LIMIT 1` probe, then the async run. This holds
+    for saved charts too.
+  - `executeAsyncSqlChartQuery` / `executeAsyncDashboardSqlChartQuery` preparation still runs **without**
+    `withAccountFederationIdentity` (`RESET hrx.identity`). It is harmless for telemetry, but a saved SQL chart
+    over `platform_query()` will probably be refused during preparation. That was left alone here because it
+    is outside this feature's steps and needs an audit-description decision for saved charts (they carry none).
+  - `runAlertingCycle` is still not built.
+- 2026-11-09T05:01:52Z supervisor: int-lightdash-sql-chart passed the gate in round 1
