@@ -2598,3 +2598,33 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-05-investigate.spec.ts` passed (31 s). The demo
   typecheck is clean. No chromium or `.state` process is left.
 - 2026-11-09T11:56:30Z supervisor: demo-scene-05-investigate passed the gate in round 1
+
+### demo-scene-06-ai-question (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/06-ai-question.spec.ts` (about 25 `expect`s, scene timeout 300 s). It waits on the
+    scenario clock for `incident` (max 120 s away) and then until incidentAt+30 s, so every fill backlog sample since
+    then is at least 120. It binds `window.askTelemetry` (page.exposeFunction) to `ask()` from `ask/client.ts`, the
+    same code as `pnpm -F eng-1799-demo ask`, and loads the page with page.setContent. It types "How has the fill queue
+    backlog changed over the last 15 minutes?" and presses Ask. It then checks, in order: the `query_promql` tool call
+    and its `now-15m` arguments, the live PromQL query, one table row per sample with the newest at or over 100 (in red),
+    and the answer text. It writes the client's AskResult to `out/scenes/06-ai-question/answer.json`. Key moment: the
+    whole page with the answer.
+  - New `demo/eng-1799/walkthrough/lib/ask-page.ts`: the self-contained "Ask telemetry-mcp" HTML page (no network,
+    every value written with textContent). It has test ids `ask-question`, `ask-submit`, `ask-tool`, `ask-arguments`,
+    `ask-query`, `ask-result-row`, `ask-row-count`, `ask-answer` and `ask-error`.
+  - docs/eng-1799/demo.md: a 06-ai-question bullet under "Walkthrough scenes (recorded)".
+- **Decision.** Lightdash has no AI page outside `ee/`, which is protected, and telemetry-mcp's `ask_data` has no
+  model in the demo. So the "page" is the scene's own local page, driven by the real scripted client. The MCP call
+  runs in Node, not in the browser (the client needs no CORS and reads stack.json).
+- **Trap.** On the page, `.hidden` needs `!important`: `.row2 { display: grid }` comes later and otherwise kept the empty
+  tool-call cards visible before Ask. The scene now asserts that the tool call and the answer are hidden before Ask.
+- **Tested as a user.** I ran up.sh and `ask` by hand (both scripted questions answered live). I restarted the clock with
+  the incident 10 s out and ran `run.sh 06-ai-question`, which passed (it waited for the incident). I ran it again with
+  `{-120, 900}` (11 s). The video is 1920x1080, about 11 s long. The frame at 2 s shows the question being typed, and
+  the frame at 7 s shows the call, the query and 16 rows. key-moment.png shows the answer "Over the last 15 minutes the
+  fill queue backlog ranged from 20 to 172 jobs; the latest sample is 164."
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-06-ai-question.spec.ts` passed (13 s). The demo
+  typecheck is clean. `docs.spec.ts` still fails on headings that the later demo-docs feature adds; it fails the same
+  way without this change. down.sh stopped the stack, and no chromium or `.state` process is left.
+- 2026-11-09T12:08:27Z supervisor: demo-scene-06-ai-question passed the gate in round 1

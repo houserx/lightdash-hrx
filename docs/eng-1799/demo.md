@@ -224,6 +224,15 @@ Chromium outlives the run.
   and saves it with Save as chart. Lightdash opens the new SQL chart, which lists the promql() rows with the fill
   queue around 150. Edit chart then shows its SQL. Each run saves one more chart, named with the run's time. Restart
   the clock first, as for 02-incident. Key moment: the saved chart open for editing, its promql() SQL above the rows.
+- **06-ai-question**: asks "How has the fill queue backlog changed over the last 15 minutes?" through telemetry-mcp
+  with the scripted MCP client (the same code as `ask`, see above; there is no model). The scene records a small local
+  page, "Ask telemetry-mcp" (`walkthrough/lib/ask-page.ts`, no network of its own). It types the question and presses
+  Ask, which calls the client in Node. The client signs in at the fake Okta as the demo user and calls `query_promql`.
+  The page then shows the tool call and its arguments, the live PromQL query, the result rows (newest first, samples at
+  or over 100 in red) and the one-sentence answer. The client's JSON result is saved as
+  `out/scenes/06-ai-question/answer.json` (`{question, tool, arguments, query, result: {columns, rows}, answer}`). The
+  scene waits until the incident has run for 30 s, so the backlog is over the threshold. Restart the clock first, as
+  for 02-incident. Key moment: the whole page with the answer.
 
 ## Known limits
 
