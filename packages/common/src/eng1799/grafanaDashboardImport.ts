@@ -18,7 +18,10 @@ import {
     MAX_CONTENT_SLUG_LENGTH,
     truncateSlug,
 } from '../utils/slugs';
-import type { AllVizChartConfig } from '../visualizations/types';
+import type {
+    AllVizChartConfig,
+    VizColumnsConfig,
+} from '../visualizations/types';
 import {
     grafanaChartDisplay,
     type GrafanaChartDisplay,
@@ -34,6 +37,7 @@ import {
     type GrafanaQueryContext,
     type GrafanaTemplatingVariable,
 } from './grafanaQuery';
+import { applyGrafanaTransformations } from './grafanaTransformations';
 import { grafanaVariableParameters } from './grafanaVariables';
 import { importDashboardTimeRange } from './importTimeRange';
 import type { ImportWarning } from './importWarnings';
@@ -238,11 +242,12 @@ const chartKindForPanel = (
 
 /**
  * The SQL chart config for a kind, with the display from the panel's unit, thresholds, legend
- * and stacking.
+ * and stacking, and (tables) the column config from the panel's transformations.
  */
 const chartConfig = (
     kind: ChartKind,
     display: GrafanaChartDisplay,
+    columns: VizColumnsConfig,
 ): AllVizChartConfig => {
     const metadata = { version: 1 };
     switch (kind) {
@@ -272,7 +277,7 @@ const chartConfig = (
             return {
                 metadata,
                 type: ChartKind.TABLE,
-                columns: {},
+                columns,
                 display: undefined,
             };
     }
@@ -839,6 +844,12 @@ export const convertGrafanaDashboard = (
                 `The ${type} panel maps to the ${fallbackFrom} chart type, which SQL charts do not support; it is imported as a ${kind} SQL chart`,
             );
         }
+        const transformed = applyGrafanaTransformations(
+            panel.transformations,
+            { sql: translation.sql, shape: translation.shape },
+            kind,
+        );
+        transformed.warnings.forEach((w) => warn(w.code, w.message));
         const display = grafanaChartDisplay(panel, kind);
         // The panel mapping may already report an option the chart kind can't show.
         const droppedPaths = new Set(droppedOptions.map(({ path }) => path));
@@ -857,10 +868,10 @@ export const convertGrafanaDashboard = (
                 takenChartSlugs,
             ),
             spaceSlug: options.spaceSlug,
-            sql: translation.sql,
+            sql: transformed.sql,
             limit: IMPORTED_SQL_CHART_LIMIT,
             chartKind: kind,
-            config: chartConfig(kind, display),
+            config: chartConfig(kind, display, transformed.columns),
         };
         charts.push(chart);
         tiles.push({

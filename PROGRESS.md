@@ -267,6 +267,9 @@ options in `roundtripsupport.ts`. Update it whenever a change moves the counts o
     line only writes the SQL. Supplying the audit description for tile runs is the ldq line's job.
 12. Root `init.sh` is this line's own (the goal fixes its contents). The previous all-lines runner is
     `scripts/eng-1799/init-all.sh`.
+13. **`regexp_replace`** (renameByRegex) is assumed to follow Postgres: first match only unless the flags include
+    `g`, and `\N` back-references in the replacement. CONTRACTS §1 names Postgres semantics over DataFusion but
+    doesn't list this function.
 
 ## Fixture facts (from the infra snapshot, counts only)
 
@@ -1140,3 +1143,38 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   annotation mention in report or summary.
 - Acceptance: dashboard-annotations 2/2, dashboard-report 4/4. tsc (common), oxlint, oxfmt clean.
 - 2026-11-09T03:57:56Z supervisor: imp-dashboard-annotations passed the gate in round 1
+
+## imp-transform-rename-organize (round 1)
+- New module `packages/common/src/eng1799/grafanaTransformations.ts`: `applyGrafanaTransformations(transformations,
+  {sql, shape}, kind)` -> `{sql, columns, warnings}`. It goes through the panel's transformations in order and skips
+  `disabled: true`. Unknown ids are left alone for now: imp-transform-convert-config owns the "unknown transformation
+  -> transformation-unsupported" warning. Add the next transformations (filter, calculate, reduce, merge, convert)
+  as new `case`s there.
+- `renameByRegex`: wraps the SQL as `SELECT <other cols>, regexp_replace(series, '<pattern>', '<repl>'[, 'gi']) AS
+  series FROM (<sql>) AS renamed`. This works only for results that have a `series` column (shape `series`:
+  timestamp, value, labels; or shape `number`: value, labels). `/pattern/flags` is parsed, and only `g` and `i` are
+  kept. The JS replacement is converted to Postgres style: `$1` -> `\1`, `$&` -> `\&`, `$$` -> `$`, and a backslash
+  is escaped. An empty regex is a no-op. Any other shape (platform_query, logs) -> `transformation-unsupported`.
+- `organize` (tables only): every column named in renameByName, excludeByName or indexByName gets
+  `{reference, label, visible, frozen: false, order?}` in `config.columns`, with keys sorted so output is
+  deterministic. Columns it doesn't name are left out of the config. On a non-table chart kind ->
+  `transformation-unsupported` (unless it names no column).
+- `translateGrafanaPanelQueries` now also returns `shape` (type `GrafanaResultShape` is exported, renamed from the
+  internal `ResultShape`). `chartConfig` takes the table columns. New warning code `transformation-unsupported` is
+  in importWarnings.ts; imp-docs must catalogue it.
+- Contract assumptions: the engine's `regexp_replace(str, pattern, replacement[, flags])` follows Postgres: it
+  replaces the first match unless the flags include `g`, and the replacement uses `\N` back-references. Grafana
+  regexes are JS; the common subset (classes, groups, lookahead) is copied as is.
+- Trap: grafanaPanelMapping.ts and docs/eng-1799/grafana-panel-mapping.md still list `transformations` as
+  "dropped" (not reported, since NON_OPTION_PANEL_KEYS skips it). imp-docs should update that line.
+- Trap: the shell is zsh, so an unquoted `$F` file list doesn't word-split; use an array. Lint with
+  `node_modules/.pnpm/node_modules/.bin/oxlint -c .oxlintrc.json` from packages/common.
+- Unit tests: grafanaTransformations.test.ts (6 cases).
+- Tested as a user: ran the CLI from source on a synthetic dashboard (timeseries with renameByRegex, Postgres
+  table with organize). The timeseries SQL wraps promql in regexp_replace(series, '(perc_success.*)',
+  'perc_success'). In the table config, jobname has label Job and order 1, status is visible false, and runs has
+  order 0. IMPORT-REPORT has no transformation line. Adding organize to the timeseries gives one
+  transformation-unsupported row, and import-summary counts it. Scratch dir removed.
+- Acceptance: transform-rename-organize 3/3; dashboard-charts, panel-kinds, report, legend-stacking pass. tsc
+  (common), oxlint, oxfmt clean.
+- 2026-11-09T04:03:54Z supervisor: imp-transform-rename-organize passed the gate in round 1

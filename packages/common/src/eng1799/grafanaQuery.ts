@@ -77,7 +77,7 @@ export type GrafanaQueryTranslation = {
  * The columns a translated target returns (CONTRACTS §1.1). Only targets with the same known
  * shape can share one result through UNION ALL.
  */
-type ResultShape =
+export type GrafanaResultShape =
     /** `timestamp, value, labels, series`: promql, promql_instant, logql_metric, cloudwatch. */
     | 'series'
     /** `timestamp, line, labels, stream`: logql. */
@@ -88,7 +88,9 @@ type ResultShape =
     | 'number';
 
 /** A target's translation plus the shape of its result, when it has SQL. */
-type TargetTranslation = GrafanaQueryTranslation & { shape?: ResultShape };
+type TargetTranslation = GrafanaQueryTranslation & {
+    shape?: GrafanaResultShape;
+};
 
 /** The Telemetry Source name for a Grafana datasource name: `Cloudwatch Staging` → `cloudwatch-staging`. */
 export const telemetrySourceName = (datasourceName: string): string =>
@@ -2350,12 +2352,13 @@ const unionAll = (queries: string[]): string =>
  * expressions evaluate over the targets they reference, hidden or not. A target whose result has other
  * columns than the first translated target's (log lines next to series) is left out with a
  * `panel-targets-not-combined` warning. Targets that don't translate are left out with their
- * warnings; when none translates, the panel is a TODO.
+ * warnings; when none translates, the panel is a TODO. `shape` names the result's columns, for
+ * the transformations that rewrite them.
  */
 export const translateGrafanaPanelQueries = (
     panel: GrafanaPanelWithTargets,
     ctx: GrafanaQueryContext = {},
-): GrafanaQueryTranslation => {
+): GrafanaQueryTranslation & { shape?: GrafanaResultShape } => {
     const targetCtx: GrafanaQueryContext = {
         ...ctx,
         panelDatasource: panel.datasource,
@@ -2381,7 +2384,7 @@ export const translateGrafanaPanelQueries = (
         targets: panel.targets ?? [],
         translate: (target) => translateTarget(target, targetCtx),
     };
-    let shape: ResultShape | undefined;
+    let shape: GrafanaResultShape | undefined;
     visible.forEach((target) => {
         const result = translateTarget(target, targetCtx, panelScope);
         warnings.push(...result.warnings);
@@ -2408,5 +2411,5 @@ export const translateGrafanaPanelQueries = (
             warnings,
         };
     }
-    return { sql: unionAll(queries), todo: null, warnings };
+    return { sql: unionAll(queries), todo: null, warnings, shape };
 };

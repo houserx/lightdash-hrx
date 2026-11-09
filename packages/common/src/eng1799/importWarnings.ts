@@ -46,6 +46,7 @@ export type ImportWarningCode =
     | 'link-unsupported'
     | 'dashboard-link-unsupported'
     | 'annotations-unsupported'
+    | 'transformation-unsupported'
     | 'time-range-adjusted'
     | 'time-range-unsupported'
     | 'refresh-adjusted'
