@@ -1678,3 +1678,19 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   -command 3/3, -contact-points 4/4. grafanaRoutingFixes.test.ts 19/19, grafanaAlertImport.test.ts 10/10. common and
   cli tsc clean, oxlint and oxfmt clean.
 - 2026-11-09T05:43:18Z supervisor: imp-routing-default-only-rules passed the gate in round 1
+
+## imp-routing-fixes-deterministic (2026-11-09)
+
+- No code change: the earlier routing features (unreachable routes, unhandled severity, unreached contact points,
+  default-only rules) already produce this feature's result on the fixtures, and the output is deterministic.
+  routing-fixture-fixes.test.ts passes 3/3 after init.
+- Tested as a user: ran `import grafana-alerts` from source twice on the full fixture alerting (every
+  grafana_rule_groups_*.tf, grafana_lb_rules.tf, locals, folders, datasources) into two scratch dirs (tmp/rfd,
+  removed). Both runs exited 0 with 84 rules, 6 contact points and 79 warnings, and `diff -r` found no differences.
+  ROUTING-FIXES.md lists both pg_cron rules (add `channel = #alerts` -> slack-alerts, root.4), three team=Support rules
+  (proposed `team = Support`, needs a decision), slack-sec as unreached (route `notify = slack-sec`, root.2), and
+  severities 1/2/3/4/critical/low as unhandled. routeAlert from common sends both pg_cron rules to slack-alerts and
+  {notify: slack-sec} to slack-sec.
+- Trap for scripting the CLI by hand: the Bash tool's shell is zsh, so an unquoted `$RULES` list is not word-split.
+  Run the command under `bash -c`.
+- 2026-11-09T05:45:29Z supervisor: imp-routing-fixes-deterministic passed the gate in round 1
