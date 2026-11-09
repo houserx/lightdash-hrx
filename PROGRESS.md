@@ -1879,3 +1879,32 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   fake-cloudwatch, fake-loki, fake-tempo, fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation
   pass; `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no demo process left.
 - 2026-11-09T07:32:52Z supervisor: demo-fake-cloudwatch-logs passed the gate in round 1
+
+### demo-audit-store (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/audit-store.ts`: one in-memory `AuditStore` served by telemetry-fakes on the two
+  endpoints engine-config already reserved, `endpoints.auditDynamodb` and `endpoints.auditS3`. Table and bucket
+  names (`AUDIT_TABLE`, `AUDIT_BUCKET`, both `demo-federation-audit`) now live there; engine-config.ts imports them.
+- **DynamoDB** (AWS JSON 1.0, `X-Amz-Target: DynamoDB_20120810.<Op>`): PutItem (only `attribute_not_exists(id)`
+  as condition, which the engine always sends), Query on the table or the portal GSIs byMonth / byTicket / byUser
+  (sort key createdAt; ScanIndexForward, Limit, ExclusiveStartKey/LastEvaluatedKey, an optional createdAt range;
+  FilterExpression → 400), GetItem, DescribeTable. Errors are `{__type: com.amazonaws.dynamodb.v20120810#X}`.
+- **S3 Object Lock** (path-style): PutObject (`?x-id=PutObject` is allowed; each put is a new version; lock mode
+  must be COMPLIANCE/GOVERNANCE with a future retain-until date; aws-chunked bodies decoded), GET/HEAD (with
+  `versionId`, returns the lock headers), ListObjectsV2 (`?list-type=2&prefix=`). DELETE → 403 AccessDenied while
+  locked (501 otherwise: the demo never deletes).
+- Records live as long as the telemetry-fakes process: down.sh / a fresh up.sh discards them (a live-stack up.sh
+  keeps them). `up.sh` checks `/ready` on both endpoints, writes `auditDynamodb.url` / `auditS3.url` to stack.json,
+  `report()` prints them.
+- Observation (engine, not changed): an Audited Query whose SQL fails while the engine plans `platform_query`
+  (e.g. 42P01 unknown relation) is not audited; only failures inside `run()` (pg.rs) are. Scene 7 / Write Mode
+  sessions should not rely on a record for such a statement.
+- Tested as a user: `up.sh` (baseline before the change: platform_query → 58000 "audit write failed",
+  `/v1/audit` → 502). After: pg-wire `SET hrx.identity` (platform_read, description, ticket ENG-1799) +
+  `platform_query('select count(*) as n from orders')` → 120; a token without platform_read → 42501 "... needs
+  platform_read"; `GET /v1/audit?ticket=ENG-1799` → 200 with the record (description, database platform,
+  linearTicketId, createdAtMonth, hmac-sha256 integrityHash); S3 object `executions/<createdAt>/<id>.json` has all
+  17 fields and COMPLIANCE lock 7 years out, DELETE → 403. 27 more queries: ticket, month, user and recent browse
+  each 2 pages, newest first, no duplicates; no platform_read → 403. Checks audit-store, engine-boot,
+  fake-cloudwatch-logs (--stack) and config-validation pass; `tsc ... stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:39:20Z supervisor: demo-audit-store passed the gate in round 1

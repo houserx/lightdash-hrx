@@ -7,7 +7,8 @@
 // The scenario API listens on an ephemeral 127.0.0.1 port; each telemetry fake listens exactly on the
 // endpoint the engine config reserved for it (`endpoints.*` of --endpoints-file). Once all of them listen,
 // the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}, "loki": {"url": ...},
-// "tempo": {"url": ...}, "cloudwatch": {"url": ...}, "cloudwatchLogs": {"url": ...}}) atomically; up.sh waits for it.
+// "tempo": {"url": ...}, "cloudwatch": {"url": ...}, "cloudwatchLogs": {"url": ...}, "auditDynamodb": {"url": ...},
+// "auditS3": {"url": ...}}) atomically; up.sh waits for it.
 //
 // Scenario API:
 //   GET  /scenario          -> {startedAt, incidentAt, recoveryAt, now, phase, ...}
@@ -15,11 +16,13 @@
 //
 // The telemetry fakes read the one ScenarioClock below per request. Prometheus (stack/prometheus.ts), Loki
 // (stack/loki.ts), Tempo (stack/tempo.ts), CloudWatch metrics (stack/cloudwatch.ts) and CloudWatch Logs
-// Insights (stack/cloudwatch-logs.ts) are here.
+// Insights (stack/cloudwatch-logs.ts) are here, and the engine's audit store (stack/audit-store.ts: DynamoDB and
+// S3 Object Lock, one in-memory store on two endpoints) that Audited Queries and the audit browser need.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parseArgs } from 'node:util';
+import { AuditStore, auditDynamodbHandler, auditS3Handler } from './audit-store.js';
 import { ScenarioClock, validateOffsets } from './clock.js';
 import { cloudwatchHandler } from './cloudwatch.js';
 import { cloudwatchLogsHandler } from './cloudwatch-logs.js';
@@ -111,6 +114,9 @@ const lokiServer = http.createServer(lokiHandler(() => clock.current()));
 const tempoServer = http.createServer(tempoHandler(() => clock.current()));
 const cloudwatchServer = http.createServer(cloudwatchHandler(() => clock.current()));
 const cloudwatchLogsServer = http.createServer(cloudwatchLogsHandler(() => clock.current()));
+const auditStore = new AuditStore();
+const auditDynamodbServer = http.createServer(auditDynamodbHandler(auditStore));
+const auditS3Server = http.createServer(auditS3Handler(auditStore));
 
 /** Listens on 127.0.0.1:<port> (0 = ephemeral) and resolves with the server's URL. */
 function listen(server: http.Server, port = 0): Promise<string> {
@@ -123,7 +129,16 @@ function listen(server: http.Server, port = 0): Promise<string> {
     });
 }
 
-const servers = [scenarioServer, prometheusServer, lokiServer, tempoServer, cloudwatchServer, cloudwatchLogsServer];
+const servers = [
+    scenarioServer,
+    prometheusServer,
+    lokiServer,
+    tempoServer,
+    cloudwatchServer,
+    cloudwatchLogsServer,
+    auditDynamodbServer,
+    auditS3Server,
+];
 
 function shutdown(signal: string): void {
     console.log(`telemetry-fakes: ${signal}, stopping`);
@@ -150,6 +165,8 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     const tempoUrl = await listen(tempoServer, reservedPort(endpoints, 'tempo'));
     const cloudwatchUrl = await listen(cloudwatchServer, reservedPort(endpoints, 'cloudwatch'));
     const cloudwatchLogsUrl = await listen(cloudwatchLogsServer, reservedPort(endpoints, 'cloudwatchLogs'));
+    const auditDynamodbUrl = await listen(auditDynamodbServer, reservedPort(endpoints, 'auditDynamodb'));
+    const auditS3Url = await listen(auditS3Server, reservedPort(endpoints, 'auditS3'));
     const ready = {
         scenario: { url: scenarioUrl },
         prometheus: { url: prometheusUrl },
@@ -157,6 +174,8 @@ async function main(file: string, endpointsPath: string): Promise<void> {
         tempo: { url: tempoUrl },
         cloudwatch: { url: cloudwatchUrl },
         cloudwatchLogs: { url: cloudwatchLogsUrl },
+        auditDynamodb: { url: auditDynamodbUrl },
+        auditS3: { url: auditS3Url },
     };
     writeFileSync(`${file}.tmp`, `${JSON.stringify(ready, null, 2)}\n`);
     renameSync(`${file}.tmp`, file);
@@ -169,6 +188,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     console.log(`telemetry-fakes: Tempo at ${tempoUrl}`);
     console.log(`telemetry-fakes: CloudWatch (GetMetricData) at ${cloudwatchUrl}`);
     console.log(`telemetry-fakes: CloudWatch Logs Insights at ${cloudwatchLogsUrl}`);
+    console.log(`telemetry-fakes: audit store at ${auditDynamodbUrl} (DynamoDB) and ${auditS3Url} (S3 Object Lock)`);
 }
 
 main(readyFile, endpointsFile).catch((e: unknown) => {

@@ -14,13 +14,15 @@
 // and the ready file: {"engine": {host, pgPort, httpUrl, user, password, database, identitySecret},
 //                      "endpoints": {prometheus, loki, tempo, cloudwatch, cloudwatchLogs, auditDynamodb, auditS3}}.
 //
-// The endpoint ports are reservations: the fakes that serve them (later demo features) must listen exactly
-// there. Until they do, /healthz reports those sources unreachable (503) and the engine still runs.
+// The endpoint ports are reservations: telemetry-fakes listens exactly there (the audit store's two in
+// stack/audit-store.ts). A fake that does not answer shows as unreachable in /healthz (503); an audit store
+// that does not answer fails every Audited Query closed.
 // Every secret here is a fake (`...-not-real`); nothing reaches a real service.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { AUDIT_BUCKET, AUDIT_TABLE } from './audit-store.js';
 
 const HOST = '127.0.0.1';
 
@@ -30,8 +32,6 @@ const ENGINE_DATABASE = 'operations';
 const ENGINE_PASSWORD = 'demo-engine-password-not-real';
 const IDENTITY_SECRET = 'demo-identity-secret-not-real';
 const AUDIT_INTEGRITY_KEY = 'demo-audit-integrity-key-not-real';
-const AUDIT_TABLE = 'demo-federation-audit';
-const AUDIT_BUCKET = 'demo-federation-audit';
 const AWS_REGION = 'us-east-2';
 
 const ENDPOINTS = ['prometheus', 'loki', 'tempo', 'cloudwatch', 'cloudwatchLogs', 'auditDynamodb', 'auditS3'] as const;
