@@ -48,6 +48,11 @@ export type StartEngineOptions = {
      */
     cloudwatch?: { url: string };
     /**
+     * A fake CloudWatch Logs Insights: the `cloudwatch-logs` source (kind `cloudwatch_logs`,
+     * region `us-east-2`) points `endpoint_url` at its `url`; signed like `cloudwatch`.
+     */
+    cloudwatchLogs?: { url: string };
+    /**
      * A Platform Database: the `platform` source reads through `readUrl` and writes through
      * `writeUrl` (Write Mode is off without it), passed as `HRX_PLATFORM_READ_URL` /
      * `HRX_PLATFORM_WRITE_URL`.
@@ -63,7 +68,6 @@ export type StartEngineOptions = {
 
 /** Options the Harness API names that later harness features implement. */
 const NOT_YET_SUPPORTED = [
-    'cloudwatchLogs',
     'bigquery',
     'restrictedLokiSelectors',
     'restrictedLogGroups',
@@ -159,6 +163,11 @@ function renderConfig(
     if (opts.cloudwatch) {
         tables.push(
             `[[sources]]\nname = "cloudwatch"\nkind = "cloudwatch"\nregion = "us-east-2"\nendpoint_url = ${tomlString(opts.cloudwatch.url)}\n`,
+        );
+    }
+    if (opts.cloudwatchLogs) {
+        tables.push(
+            `[[sources]]\nname = "cloudwatch-logs"\nkind = "cloudwatch_logs"\nregion = "us-east-2"\nendpoint_url = ${tomlString(opts.cloudwatchLogs.url)}\n`,
         );
     }
     if (opts.platform) {

@@ -422,3 +422,30 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - CloudWatch Logs (next feature) is a different SDK; check its protocol (the Rust harness
     `aws.rs` decodes CBOR / JSON 1.1). `cbor.ts` is reusable if it speaks CBOR.
 - 2026-11-09T02:26:51Z supervisor: int-harness-fake-cloudwatch passed the gate in round 1
+- 2026-11-09 int-harness-fake-cloudwatch-logs: new `harness/cloudwatchLogs.ts`
+  (`startFakeCloudWatchLogs({ results })`, exported from `index.ts` with its types). The engine's
+  aws-sdk-cloudwatchlogs 1.163 speaks **AWS JSON 1.1** (`x-amz-target: Logs_20140328.<Op>`,
+  `application/x-amz-json-1.1`), not CBOR, so `cbor.ts` is not used. `StartQuery` records its
+  input and answers `queryId` `fake-query-<n>`; `GetQueryResults` for a known id answers
+  `Complete` at once with every result (`[{field, value}]` in fixture key order, `@ptr` included
+  — the engine drops it); `StopQuery` → `success: true`. Query, log groups and window are NOT
+  evaluated. Unknown queryId → 400 `ResourceNotFoundException`; other operations → 400
+  `InvalidOperationException`; SigV4 not verified. Extras: `startQueries()` (raw StartQuery
+  inputs, epoch seconds), `stoppedQueries()`, `setResults`. `engine.ts`: `cloudwatchLogs` option
+  renders `[[sources]] name = "cloudwatch-logs" kind = "cloudwatch_logs" region = "us-east-2"
+  endpoint_url = <fake>` (removed from `NOT_YET_SUPPORTED`; default poll interval, the fake never
+  answers `Running`).
+  Tested by hand with a tsx script outside the repo through the real engine over pg-wire:
+  cloudwatch_logs('/synthetic/app, /synthetic/worker', …, 10:00–10:05) → 2 rows, types
+  timestamptz/text/json, fields `{@message, @timestamp, status}` without `@ptr`; StartQuery got
+  both groups, the query string, startTime/endTime epoch s; signed
+  `Credential=AKIDTESTNOTREAL00001/<date>/us-east-2`; a fractional window 10:00:00.5–10:00:10.2
+  was sent as …000/…011 (floor/ceil); setResults([]) → 0 rows; explicit 5th arg
+  `'cloudwatch-logs'` works. Checks: fake-cloudwatch-logs 1/1, fake-cloudwatch 1/1, engine 2/2;
+  e2e typecheck clean; no engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - `restrictedLogGroups` is still in `NOT_YET_SUPPORTED`; it belongs on this `cloudwatch-logs`
+    source as `restricted_log_groups = [...]` (see federation-engine/README.md).
+  - The fake answers `Complete` on the first poll; a check that needs Running/Failed/Cancel would
+    have to extend it (the Rust harness `telemetry.rs` `logs_insights_mock` is the model).
+- 2026-11-09T02:30:06Z supervisor: int-harness-fake-cloudwatch-logs passed the gate in round 1

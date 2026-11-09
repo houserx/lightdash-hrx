@@ -34,6 +34,13 @@ export type {
     MetricDataQuery,
     StartFakeCloudWatchOptions,
 } from './cloudwatch';
+export { startFakeCloudWatchLogs } from './cloudwatchLogs';
+export type {
+    CloudWatchLogsResult,
+    CloudWatchLogsStartQuery,
+    FakeCloudWatchLogs,
+    StartFakeCloudWatchLogsOptions,
+} from './cloudwatchLogs';
 export { startFakeTempo } from './tempo';
 export type {
     FakeTempo,
