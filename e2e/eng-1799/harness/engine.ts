@@ -30,11 +30,12 @@ export type StartEngineOptions = {
     maxRows?: number;
     /** `test_mode` (default true). */
     testMode?: boolean;
+    /** A fake Prometheus: the default `prometheus` source points at its `url`. */
+    prometheus?: { url: string };
 };
 
 /** Options the Harness API names that later harness features implement. */
 const NOT_YET_SUPPORTED = [
-    'prometheus',
     'loki',
     'cloudwatch',
     'cloudwatchLogs',
@@ -82,6 +83,9 @@ function engineEnv(dir: string): NodeJS.ProcessEnv {
     };
 }
 
+/** A TOML basic string. */
+const tomlString = (value: string) => JSON.stringify(value);
+
 function renderConfig(
     pgPort: number,
     httpPort: number,
@@ -102,6 +106,13 @@ function renderConfig(
     const tables = [
         `[[users]]\nname = "${ENGINE_USER}"\npassword_env = "HRX_PG_PASSWORD_OPERATIONS"\n`,
     ];
+    if (opts.prometheus) {
+        // `prometheus-restricted` (same URL, `restricted = true`) needs `[audit]`, which the
+        // engine refuses to start without: it comes with the harness audit store.
+        tables.push(
+            `[[sources]]\nname = "prometheus"\nkind = "prometheus"\ndefault = true\nurl = ${tomlString(opts.prometheus.url)}\n`,
+        );
+    }
     return `${top.join('\n')}\n\n${tables.join('\n')}`;
 }
 

@@ -270,3 +270,23 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - Format new harness files with `node_modules/.bin/oxfmt <files>` (the repo's formatter; there is no
     prettier config).
 - 2026-11-09T02:03:31Z supervisor: int-harness-engine passed the gate in round 1
+- 2026-11-09 int-harness-fake-prometheus: added `harness/fakeServer.ts` (`startFakeServer(handler)`:
+  node:http on a free 127.0.0.1 port, records every request as the Harness API `RecordedRequest`
+  — query string merged with a form body, lower-case headers, `json` when the body parses; a
+  handler returning `undefined` sends nothing; `close()` idempotent and drops open connections;
+  `jsonReply()` helper) — **reuse it for every later fake** (Loki, Tempo, recorder, Lightdash API…).
+  `harness/prometheus.ts` (`startFakePrometheus({ series, delayMs? })` with `setSeries`, `setDelay`,
+  `cancelled()`, per the Harness API; GET or POST; bad params answer Prometheus' 400 `bad_data`).
+  `startEngine({ prometheus })` now renders the default `prometheus` source at the fake's URL.
+  Tested by hand with a tsx script (outside the repo): 12 rows, types timestamptz/float8/json/text,
+  6 points per series 10:00–10:05, fake recorded POST `query_range` `query=up start=1794132000
+  end=1794132300 step=60`; a non-bare instant query returns every series; with `setDelay(3000)` and
+  `statement_timeout=500` the engine cancels and `cancelled()` = 1; stop leaves `tmp/e2e` empty.
+  Check: 2/2 pass; int-harness-engine still 2/2.
+  Next sessions must know:
+  - **`prometheus-restricted` is NOT rendered yet.** The engine refuses to start with a
+    `restricted = true` source and no `[audit]` (engine-config `audited_sources_need_audit`).
+    Feature `int-harness-audit-store` must add it (same fake URL, `restricted = true`) together with
+    the always-on `[audit]` block, per the Harness API "Source names" row.
+  - The engine sends `start`/`end`/`step` as decimal seconds (`seconds_text`) in a POST form body.
+- 2026-11-09T02:06:47Z supervisor: int-harness-fake-prometheus passed the gate in round 1

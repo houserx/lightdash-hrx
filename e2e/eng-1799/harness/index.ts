@@ -15,3 +15,10 @@ export {
     startEngine,
 } from './engine';
 export type { Engine, StartEngineOptions } from './engine';
+export type { FakeServer, RecordedRequest } from './fakeServer';
+export { startFakePrometheus } from './prometheus';
+export type {
+    FakePrometheus,
+    PrometheusSeries,
+    StartFakePrometheusOptions,
+} from './prometheus';
