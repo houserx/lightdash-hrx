@@ -661,3 +661,16 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   the JSON as a literal. That session needs to make the engine accept a `::json` parameter cast or
   change the MCP SQL (e.g. `$1::text`).
 - 2026-11-09T03:20:38Z supervisor: int-fix-cloudwatch-query-shape passed the gate in round 1
+- 2026-11-09 int-time-params-engine: no code change was needed. The check already passed (2/2)
+  when this session started. The pieces it uses were already in place:
+  `withTimeRangeParameters` (backend AsyncQueryService/queryTimeRange.ts) →
+  `resolveReservedParameterValues` (common) → `safeReplaceParametersWithSqlBuilder` → the
+  federation client → the engine's promql(). Checked against CONTRACTS §2: relative bounds round
+  down to the refresh interval (10 s when there is none). __interval is (to − from)/1000, rounded
+  up to the nice-step list with a 15 s floor.
+  Tested by hand (`../tmp/manual-time/try.ts`, run from e2e/eng-1799 with tsx) using a fake
+  Prometheus and the real engine. Investigate's PromQL SQL was resolved and substituted, then run
+  through the client. now-6h..now at 10:00:07.3Z gave 04:00:00Z..10:00:00Z at step 30 s, 721 rows.
+  now-24h gave 10:00Z..10:00Z at 300 s, 289 rows. now-1h with a 5m refresh at 10:04:59Z gave
+  09:00..10:00 at 15 s (the floor), 241 rows. No missing references. No engine left running.
+- 2026-11-09T03:22:56Z supervisor: int-time-params-engine passed the gate in round 1
