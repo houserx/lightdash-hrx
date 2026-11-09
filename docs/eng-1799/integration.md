@@ -90,7 +90,7 @@ and **docs**.
 | 6 | `int-harness-fake-tempo` | harness | A fake Tempo serves a synthetic trace to the engine's `traceql()` and `trace()`. |
 | 7 | `int-harness-fake-cloudwatch` | harness | A fake CloudWatch speaking the SDK's GetMetricData protocol serves datapoints to the engine's `cloudwatch()`, with fake signed credentials only. |
 | 8 | `int-harness-fake-cloudwatch-logs` | harness | A fake CloudWatch Logs Insights serves synthetic results to the engine's `cloudwatch_logs()`. |
-| 9 | `int-harness-fake-bigquery` | harness | A fake BigQuery API serves synthetic Ops Mart tables that appear in the engine's `information_schema` and can be read. **Not passing yet**; see "Open checks". |
+| 9 | `int-harness-fake-bigquery` | harness | A fake BigQuery API serves synthetic Ops Mart tables that appear in the engine's `information_schema` and can be read. The check skips `table_schema = 'information_schema'`: the engine lists DataFusion's own views under every catalog, as Postgres does (amended 2026-11-09). |
 | 10 | `int-client-connect` | functional | Lightdash's `FederationWarehouseClient` (federation flavour) connects to, tests and queries the real engine. |
 | 11 | `int-client-catalog` | functional | The Lightdash catalog lists the engine's Ops Marts and their fields through `information_schema` only. **Not passing yet**; see "Open checks". |
 | 12 | `int-client-metric-functions` | functional | `promql()`, `promql_instant()`, `logql_metric()` and `cloudwatch()` work through the Lightdash client with `label()` and `series_name()`. |
@@ -135,15 +135,15 @@ and **docs**.
 
 ### Open checks
 
-Their sessions halted two checks on 2026-11-09, and both still fail. The last whole-suite run
-(2026-11-09, `run-all.sh`) gave 48 passed and 2 failed:
+Their sessions halted two checks on 2026-11-09. The whole-suite run that day (`run-all.sh`) gave
+48 passed and 2 failed. One of the two has since been settled:
 
-- `int-harness-fake-bigquery`: the fake and the engine's `ops-marts` source work. The fake was built
-  under `int-mcp-telemetry-tools`, and the MCP reads Ops Marts through it. The check fails only
-  because the engine's DataFusion lists its own `information_schema` views under every catalog. So
-  `information_schema.tables WHERE table_catalog = 'ops_marts'` returns 9 rows, not the 2 Ops Mart
-  tables. This needs a decision: change the engine to hide those views, or amend the check.
-- `int-client-catalog`: `getAllTables` passes. `getFields('fills_hourly', 'ops_marts', 'ops_marts')`
+- `int-harness-fake-bigquery` (settled 2026-11-09, check amended): the engine's DataFusion lists its own
+  `information_schema` views under every catalog, so `information_schema.tables WHERE table_catalog =
+  'ops_marts'` gives 7 views plus the 2 Ops Mart tables. The decision was to keep that behaviour, which
+  matches Postgres listing `information_schema` in `information_schema.tables`. The check now filters
+  out `table_schema = 'information_schema'`, and it passes with no engine change.
+- `int-client-catalog` (still failing): `getAllTables` passes. `getFields('fills_hourly', 'ops_marts', 'ops_marts')`
   returns `string` for the `hour` (timestamp) and `fills` (number) columns, where the check expects
   `timestamp` and `number`. The column types that reach Lightdash from the engine's
   `information_schema.columns` for Ops Marts need fixing in the engine or the federation client.

@@ -1317,3 +1317,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   When those pass, update the "Open checks" section and the "Not passing yet" notes in rows 9 and 11 of
   integration.md.
 - 2026-11-09T05:51:07Z supervisor: int-docs-integration passed the gate in round 1
+- 2026-11-09 int-harness-fake-bigquery (round 1): no product code changed. The check was amended by the
+  controls engineer in 3e018f8ce (it now filters out `table_schema = 'information_schema'`). With that,
+  the existing fake (harness/bigquery.ts) and the engine's ops-marts source pass as they are.
+  - `docs/eng-1799/integration.md`: row 9 drops "Not passing yet" and records the amendment. "Open
+    checks" marks this check settled (DataFusion's information_schema views stay listed under every
+    catalog, as Postgres does) and leaves `int-client-catalog` as the only open one.
+  Tested as a user: a throwaway driver (in ../tmp, since deleted) started the fake BigQuery with the two
+  OPS_MART_TABLES and the real engine, then queried over the pg wire. Unfiltered information_schema.tables
+  for ops_marts gave 9 rows (7 information_schema views and fills_hourly, queue_depth). Filtered, it gave
+  exactly the 2 mart tables. `SELECT site, fills FROM ops_marts.ops_marts.fills_hourly` gave 2 rows, and
+  queue_depth count 1. The fake recorded 2 table GETs and 2 query POSTs. No engine process was left.
+  Check: int-harness-fake-bigquery 1/1; int-docs-integration 2/2 after the doc edit.
+  Next session (int-client-catalog) must know: information_schema.columns.data_type for Ops Marts is the
+  Arrow type name (`Timestamp(µs, "UTC")`, `Utf8`, `Int64`, `Float64`), not a Postgres type name. That
+  is probably why getFields maps `hour` and `fills` to `string`.
+- 2026-11-09T05:55:29Z supervisor: int-harness-fake-bigquery passed the gate in round 1
