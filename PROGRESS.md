@@ -2164,3 +2164,23 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
     subquery) is recorded as an ENG-1799 follow-up in `docs/eng-1799/demo.md` under "Known limits".
   - Scene 4 may open the waterfall through the parameter default or by setting the parameter.
 - **`demo-grafana-fixture`:** blocked only by Service health. Redo it once that passes.
+
+### demo-package-workspace (2026-11-09, run 20261109-013019, redo after the spec fix)
+
+- New `demo/eng-1799/tsconfig.json`: the flags the acceptance specs typecheck with (`strict`, `module`/`moduleResolution`
+  `nodenext`, `lib` es2022+dom, `types` node, `esModuleInterop`, `skipLibCheck`, `noEmit`), `include` every
+  `**/*.ts|mts|cts` in the package (acceptance included: 43 files plus 16 under `stack/` today), excluding
+  `node_modules`, `.state`, `out`, `test-results`, `playwright-report`. Having its own tsconfig also stops `tsc` from
+  picking up the repo root `tsconfig.json`, so `--ignoreConfig` is no longer needed.
+- `demo/eng-1799/package.json` scripts: `typecheck` = `tsc --noEmit -p tsconfig.json` (TypeScript 7.0.2, under a
+  second). `walkthrough`, `video` and `ask` are **stubs** that print "not implemented yet (…feature…)" and exit 1.
+  They are `node -e "…" --`: the trailing `--` matters, because pnpm appends the caller's args (`--json`, `--music`)
+  and node rejects unknown flags otherwise. **Next sessions:** replace the stub with the real command
+  (`bash walkthrough/run.sh`, `tsx video/build.ts`, `tsx ask/…`). The package stays CommonJS (no `"type": "module"`).
+- No change to `init-demo.sh`: it already re-runs ffmpeg-static's install or `playwright install chromium` only
+  when the binary / chromium executable is missing; two warm `bash ./init.sh` runs downloaded nothing.
+- Tested as a user: `pnpm install --frozen-lockfile` (lockfile up to date, exit 0); `pnpm -F eng-1799-demo typecheck`
+  exit 0, and exit 1 with a deliberately wrong probe file under `stack/` (removed again); `git check-ignore -v` for
+  `.state/probe` and `out/probe.mp4` → `.gitignore:185/186`; each stub with extra args prints its message and fails.
+  Check `bash demo/eng-1799/acceptance/run.sh package.spec.ts`: 1 passed.
+- 2026-11-09T09:01:31Z supervisor: demo-package-workspace passed the gate in round 1
