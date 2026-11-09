@@ -2508,3 +2508,31 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   about 2 min with up/down). `run.sh --stack scene-01-sign-in.spec.ts` still passes. The demo typecheck is clean. No
   chromium or `.state` process is left.
 - 2026-11-09T11:16:45Z supervisor: demo-scene-02-incident passed the gate in round 1
+
+### demo-scene-03-alert-fires (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/03-alert-fires.spec.ts` (18 `expect`s, scene timeout 300 s). It signs in and goes
+    to `/projects/<uuid>/alerting/rules` by URL, because no nav link leads there. It asserts the Alert Rules tab is
+    selected and the "Fill queue backlog high" row shows "Managed in git" and team=pharmacy-ops. In the baseline it
+    asserts the row is not Firing. If the scene starts in the incident, it records a `baseline` annotation and skips
+    that check. It waits for `incident` with `waitForPhase`. Then it reloads the list every ~3 s, for up to 120 s,
+    until the state cell reads "Firing". The list doesn't poll: the rules query has no refetch interval. It then sets
+    the State filter (`getByRole('combobox', {name: 'State'})`) to Firing. It polls the receiver's `/api/received` for
+    a firing notification for the rule and opens the fake incident.io page. It asserts the rule's row has
+    `td.status` "firing" in rgb(200,30,30), the summary `Fill queue backlog is N (threshold 100)` and the labels.
+    Key moment: the incident.io page.
+  - `walkthrough/lib/scene.ts`: `WalkthroughStack` has a new `incidentIo: {url}` field. It is type-only and already
+    in stack.json.
+  - docs/eng-1799/demo.md: a bullet for 03-alert-fires under "Walkthrough scenes (recorded)".
+- **Selector notes.** A rule row is `getByRole('row')` filtered by the rule name's Anchor button. The state badge is
+  the row's first cell. The fake incident.io page has a meta refresh every 5 s, so use auto-retrying locators on it.
+- **Tested as a user.** I ran up.sh, restarted the clock with `{25, 900}` and ran `run.sh 03-alert-fires`: it
+  passed in about 92 s. The video is 1920x1080 and 91 s long. The frame at 12 s shows both rules as Normal. The
+  frame at 82 s shows both as Firing with State=Firing. key-moment.png shows two FIRING rows in red: the backlog
+  rule with "Fill queue backlog is 166 (threshold 100)", and the error-log rule.
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-03-alert-fires.spec.ts` passed (22 s: the
+  check starts the clock in the incident, so the rule is already firing). The demo typecheck is clean.
+  `docs.spec.ts` fails with or without this change ("a heading about prerequisites"). It belongs to the later
+  demo-docs feature. No chromium or `.state` process is left.
+- 2026-11-09T11:27:43Z supervisor: demo-scene-03-alert-fires passed the gate in round 1

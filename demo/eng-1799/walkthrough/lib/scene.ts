@@ -22,6 +22,7 @@ export type WalkthroughStack = {
     lightdash: { url: string; projectUuid: string };
     demoUser: { email: string; password: string };
     scenario: { url: string };
+    incidentIo: { url: string };
 };
 
 export function readStack(): WalkthroughStack {

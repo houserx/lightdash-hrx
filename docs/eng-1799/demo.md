@@ -201,6 +201,14 @@ Chromium outlives the run.
   <scenario>/scenario/restart` `{"incidentAfterSeconds": 20, "recoveryAfterSeconds": 900}`). If the incident is
   more than 120 s away, the scene fails at once and says so. Key moment: the line over the threshold, the stat in
   red and the fill queue "Backlogged".
+- **03-alert-fires**: opens the Operations Project's Alerting page (`/projects/<uuid>/alerting/rules`, there is no
+  nav link to it) with "Fill queue backlog high" listed as "Managed in git". In the baseline the rule shows Normal.
+  The scene waits on the scenario clock for the `incident`, then reloads the list until the rule reads Firing (the
+  rule is evaluated every 30 s, so this takes up to about a minute), and filters State to "Firing". It then opens
+  the fake incident.io page once the receiver has the firing notification. The page shows the rule FIRING in red,
+  with its labels and its rendered summary "Fill queue backlog is N (threshold 100)". Restart the clock first, as
+  for 02-incident. The incident may also have started already, and then the scene skips the baseline check. Key
+  moment: the fake incident.io page with the firing notification.
 
 ## Known limits
 
