@@ -393,3 +393,32 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - Fixture `durationMs` on a span sets `endTimeUnixNano`; the engine computes `duration_ms` from
     start/end, so sub-ns precision is lost only beyond 1e-6 ms.
 - 2026-11-09T02:22:34Z supervisor: int-harness-fake-tempo passed the gate in round 1
+- 2026-11-09 int-harness-fake-cloudwatch: new `harness/cloudwatch.ts` (`startFakeCloudWatch({ metrics })`,
+  exported from `index.ts` with its types) and `harness/cbor.ts` (a small CBOR codec: decoder takes
+  definite/indefinite items, tags, half/single/double floats; encoder writes definite lengths, with
+  `cborTimestamp(s)` = tag 1 over a double and `cborDouble(n)` to force doubles). The fake answers
+  `GetMetricData` in Smithy RPC v2 CBOR (`POST /service/GraniteServiceVersion20100801/operation/
+  GetMetricData`, reply `application/cbor` + `smithy-protocol: rpc-v2-cbor`) and in AWS JSON 1.0
+  (`x-amz-target: GraniteServiceVersion20100801.GetMetricData`). i-th query → `Id`, `Label` = query
+  Label else `metrics[i].label` (metrics[0] when fewer metrics than queries), that metric's points,
+  `Complete`, no NextToken. The query and time range are NOT evaluated (every point in every
+  answer). Other operations → 400 `UnknownOperationException`; empty MetricDataQueries → 400.
+  SigV4 is NOT verified; checks read the recorded `authorization` header. Extras:
+  `metricDataQueries()`, `setMetrics`. For CBOR requests the decoded input is also put on the
+  recorded request's `json`. `fakeServer.ts`: `FakeReply.body` may now be a Buffer (binary
+  replies). `engine.ts`: `cloudwatch` option renders `[[sources]] name = "cloudwatch" kind =
+  "cloudwatch" region = "us-east-2" endpoint_url = <fake>` (removed from `NOT_YET_SUPPORTED`).
+  Tested by hand with a tsx script outside the repo through the real engine over pg-wire: Grafana
+  builder target with empty label → 2 rows, `series` = the fake's label, labels JSON with
+  namespace/metric_name/statistic/dimension; the engine sent `Id: "queryA"`, MetricStat with
+  Period 60 / Stat Maximum, `ReturnData: true`, StartTime/EndTime epoch s, ScanBy
+  TimestampAscending, CBOR, signed `Credential=AKIDTESTNOTREAL00001/<date>/us-east-2`; a code-mode
+  target sent `Expression` + `Label` + `Period` without MetricStat; setMetrics([]) → 0 rows;
+  ListMetrics → 400 CBOR error; JSON 1.0 GetMetricData answers JSON. Checks: fake-cloudwatch 1/1,
+  audit-store 1/1, engine 2/2; e2e typecheck clean; no engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - The engine's query Id is `query<refId>` (Grafana target) — tests read `MetricDataQueries` by
+    order, not Id.
+  - CloudWatch Logs (next feature) is a different SDK; check its protocol (the Rust harness
+    `aws.rs` decodes CBOR / JSON 1.1). `cbor.ts` is reusable if it speaks CBOR.
+- 2026-11-09T02:26:51Z supervisor: int-harness-fake-cloudwatch passed the gate in round 1

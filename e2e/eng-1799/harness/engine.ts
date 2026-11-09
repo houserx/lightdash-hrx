@@ -43,6 +43,11 @@ export type StartEngineOptions = {
     /** A fake Tempo: the `tempo` source points at its `url`. */
     tempo?: { url: string };
     /**
+     * A fake CloudWatch: the `cloudwatch` source (region `us-east-2`) points `endpoint_url` at
+     * its `url`; the engine signs with the fake AWS credentials of the environment.
+     */
+    cloudwatch?: { url: string };
+    /**
      * A Platform Database: the `platform` source reads through `readUrl` and writes through
      * `writeUrl` (Write Mode is off without it), passed as `HRX_PLATFORM_READ_URL` /
      * `HRX_PLATFORM_WRITE_URL`.
@@ -58,7 +63,6 @@ export type StartEngineOptions = {
 
 /** Options the Harness API names that later harness features implement. */
 const NOT_YET_SUPPORTED = [
-    'cloudwatch',
     'cloudwatchLogs',
     'bigquery',
     'restrictedLokiSelectors',
@@ -150,6 +154,11 @@ function renderConfig(
     if (opts.tempo) {
         tables.push(
             `[[sources]]\nname = "tempo"\nkind = "tempo"\nurl = ${tomlString(opts.tempo.url)}\n`,
+        );
+    }
+    if (opts.cloudwatch) {
+        tables.push(
+            `[[sources]]\nname = "cloudwatch"\nkind = "cloudwatch"\nregion = "us-east-2"\nendpoint_url = ${tomlString(opts.cloudwatch.url)}\n`,
         );
     }
     if (opts.platform) {

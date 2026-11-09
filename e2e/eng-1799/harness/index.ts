@@ -27,6 +27,13 @@ export type {
     LokiStream,
     StartFakeLokiOptions,
 } from './loki';
+export { startFakeCloudWatch } from './cloudwatch';
+export type {
+    CloudWatchMetric,
+    FakeCloudWatch,
+    MetricDataQuery,
+    StartFakeCloudWatchOptions,
+} from './cloudwatch';
 export { startFakeTempo } from './tempo';
 export type {
     FakeTempo,

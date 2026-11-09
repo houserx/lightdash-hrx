@@ -27,7 +27,8 @@ export type FakeServer = {
 export type FakeReply = {
     status?: number;
     headers?: Record<string, string>;
-    body?: string;
+    /** Text is sent as UTF-8; a Buffer as is (binary protocols such as CBOR). */
+    body?: string | Buffer;
 };
 
 /**
