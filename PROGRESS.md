@@ -1251,3 +1251,24 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   `shadow-ascode-ai.accept.ts -t '^alert-ai-'` 2/2. tsc is clean in backend, common and telemetry-mcp, and oxfmt
   made no changes.
 - 2026-11-09T05:30:47Z supervisor: int-fix-mcp-real-lightdash passed the gate in round 1
+- 2026-11-09 int-assumptions-register (round 1): new `docs/eng-1799/contract-assumptions.md`. It has one table row for
+  every numbered contract assumption (engine A1–A30, ldq 1–12, mcp 1–10, alerting 1–8, viz 1–7). It also has rows
+  for assumptions that were recorded only in session logs: `ldq-log-1..8`, `mcp-log-1..7`, `alerting-log-1..8`,
+  and `integration-log-1..5` for this line's own readings. Each row has a Kept, Changed or Superseded decision and
+  a source feature. Every Changed row names its int-fix feature, and a summary table at the top lists the
+  cross-line conflicts (findings 1–8) with the winning and losing sides. There are 14 Changed rows: engine-A19,
+  ldq-2/3, ldq-log-1/8, mcp-2/4, mcp-log-1, alerting-1/5 and alerting-log-1/2/3/5.
+  `PROGRESS-mcp.md`: the session-log "Contract assumption 9" (example-query paging, from
+  mcp-example-queries-port) and "10" (engine-side Ask audit and catalog, from mcp-data-assistant-port) are now items 9
+  and 10 of its numbered list. The text is unchanged and each item says where it came from.
+  Decisions worth a look in the morning:
+  - **alerting-7 is Superseded.** Its numbered list says the ADR 0003 routing bugs are fixed in the as-code tree, but
+    alert-grafana-port-examples later chose not to apply them (alerting-log-4). Their target channels are still a
+    human decision.
+  - engine-A6 and ldq-8 are Kept. In each pair the other side changed (ldq-3 and mcp-4 for A6, engine-A19 for ldq-8).
+  Tested as a user: I read the doc top to bottom and checked every table row has 5 cells (no stray `|` in the
+  text). I counted rows per line (engine 30, ldq 20, mcp 17, alerting 16, viz 7, integration 5) and listed the
+  Changed rows with their int-fix ids. All 9 `int-fix-*` features appear. Source feature ids were checked against
+  the feature headings in each line's progress file. Check: int-assumptions-register 2/2.
+  For int-contracts-amended: use the Changed rows and integration-log-1..5 as the list of CONTRACTS amendments.
+- 2026-11-09T05:36:29Z supervisor: int-assumptions-register passed the gate in round 1
