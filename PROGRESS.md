@@ -1185,3 +1185,22 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Next sessions must know: a deployment whose rules read Restricted Telemetry or the Platform Database must set
   `ALERTING_EVALUATOR_ATTRS` on both the app and the scheduler worker (both build the module from process.env).
 - 2026-11-09T05:14:42Z supervisor: int-fix-alert-evaluator-identity passed the gate in round 1
+- 2026-11-09 int-alert-incident-io-lifecycle (round 1): the fake Prometheus driven through firing and resolving sends
+  Alertmanager v4 payloads to a fake incident.io with the Contact Point's secret bearer, and the heartbeat URL gets
+  a GET on every cycle.
+  Changed and why: the alerting code (incident.io integration, notification flush, heartbeat) already worked from
+  earlier merges. The only gap was the Harness API's `startRecorder()`, which was listed but never built. Added
+  `e2e/eng-1799/harness/recorder.ts` (a `FakeServer` from `startFakeServer` answering 200 `{}` to everything) and
+  exported it from harness/index.ts. No app code changed.
+  Tested as a user (`../tmp/manual-alert-incident-io/try.mts`, run from e2e/eng-1799 with `pnpm exec node --import tsx`,
+  TZ=UTC and absolute `E2E_REPO_ROOT`/`E2E_ENGINE_BINARY`): the contact point (incident_io, `secretRef` resolved from
+  `ALERTING_SECRET_INCIDENT_IO_MANUAL`), routes and rule all returned 200. Cycles 1 and 2 sent one POST to
+  `/v2/alert_events/alertmanager/manual`: `Bearer <secret>`, version "4", status firing, labels with alertname/instance/team,
+  summary "db-1 CPU is 95", endsAt `0001-01-01T00:00:00Z`, and a 16-hex fingerprint. The rule state was `firing`.
+  After the series was lowered to 20 and cycles 3 and 4 ran in the next 30s slot, there was one resolved POST with the
+  same fingerprint and endsAt = slot time, still only one firing POST, and the rule state was `normal`. The
+  heartbeat recorder saw 4 `GET /beat` (one per cycle). Check: 1/1. e2e typecheck is clean, and oxfmt is clean on
+  the two files.
+  Next sessions must know: the rule's own labels include `__name__` from the series (here `db_cpu`) next to
+  alertname/instance/team. The check uses toMatchObject, so this is fine, but it is visible in incident.io payloads.
+- 2026-11-09T05:18:56Z supervisor: int-alert-incident-io-lifecycle passed the gate in round 1

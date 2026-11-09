@@ -20,6 +20,7 @@ export type { FakeAuditStore } from './auditStore';
 export { startPlatformDatabase } from './platform';
 export type { PlatformDatabase } from './platform';
 export type { FakeServer, RecordedRequest } from './fakeServer';
+export { startRecorder } from './recorder';
 export { startFakeLoki } from './loki';
 export type {
     FakeLoki,
