@@ -45,6 +45,7 @@ export type ImportWarningCode =
     | 'stacking-unsupported'
     | 'link-unsupported'
     | 'dashboard-link-unsupported'
+    | 'annotations-unsupported'
     | 'time-range-adjusted'
     | 'time-range-unsupported'
     | 'refresh-adjusted'

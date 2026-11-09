@@ -480,6 +480,29 @@ const dashboardLinks = (
 };
 
 /**
+ * Warnings for the dashboard's annotation queries. Lightdash dashboards have no annotations
+ * (v1), so each enabled query is reported by name. Grafana's built-in "Annotations & Alerts"
+ * query (`builtIn: 1`) is on every dashboard and only shows Grafana's own annotations and
+ * alerts, so it is skipped; disabled queries (`enable: false`) show nothing and are skipped.
+ */
+const annotationWarnings = (value: unknown): string[] => {
+    const list = isRecord(value) ? value.list : undefined;
+    return objectList(list)
+        .filter(
+            (annotation) => !annotation.builtIn && annotation.enable !== false,
+        )
+        .map((annotation) => {
+            const name = nonBlank(annotation.name) ?? 'Unnamed annotation';
+            const datasource = isRecord(annotation.datasource)
+                ? nonBlank(annotation.datasource.type)
+                : nonBlank(annotation.datasource);
+            return `The annotation query "${name}"${
+                datasource ? ` (${datasource})` : ''
+            } is not imported: Lightdash dashboards have no annotations`;
+        });
+};
+
+/**
  * The markdown tile content for a Grafana text panel. markdown and html content are copied
  * exactly (Lightdash markdown renders inline html). code mode is wrapped in a fenced code
  * block with `options.code.language`; the fence is longer than any backtick run in the
@@ -857,6 +880,13 @@ export const convertGrafanaDashboard = (
     sourceLinks.unsupported.forEach((message) =>
         warnings.push({
             code: 'dashboard-link-unsupported',
+            message,
+            dashboard: title,
+        }),
+    );
+    annotationWarnings(source.annotations).forEach((message) =>
+        warnings.push({
+            code: 'annotations-unsupported',
             message,
             dashboard: title,
         }),

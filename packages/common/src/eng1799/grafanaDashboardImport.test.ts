@@ -159,3 +159,43 @@ describe('convertGrafanaDashboard over several dashboards', () => {
         );
     });
 });
+
+describe('convertGrafanaDashboard annotations', () => {
+    const builtIn = {
+        builtIn: 1,
+        datasource: { type: 'grafana', uid: '-- Grafana --' },
+        enable: true,
+        name: 'Annotations & Alerts',
+        type: 'dashboard',
+    };
+    const annotationCodes = (list: unknown[]) =>
+        convertGrafanaDashboard(
+            {
+                dashboard: {
+                    title: 'Annotated',
+                    panels: [],
+                    annotations: { list },
+                },
+            },
+            options(),
+        ).warnings.filter((w) => w.code === 'annotations-unsupported');
+
+    it('warns once per enabled annotation query, naming it, and skips the built-in one', () => {
+        const warnings = annotationCodes([
+            builtIn,
+            {
+                name: 'Deploy markers',
+                enable: true,
+                datasource: { type: 'prometheus', uid: 'p' },
+            },
+            { name: 'Off', enable: false, datasource: 'loki' },
+        ]);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0].message).toContain('"Deploy markers" (prometheus)');
+        expect(warnings[0].dashboard).toBe('Annotated');
+    });
+
+    it('stays quiet for the built-in annotation alone', () => {
+        expect(annotationCodes([builtIn])).toHaveLength(0);
+    });
+});

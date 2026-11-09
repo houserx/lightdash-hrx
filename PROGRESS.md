@@ -1124,3 +1124,19 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: dashboard-legend-stacking 4/4; thresholds-units, panel-kinds, report, dropped-panels, charts all
   pass. tsc (common), oxlint, oxfmt clean.
 - 2026-11-09T03:55:07Z supervisor: imp-dashboard-legend-stacking passed the gate in round 1
+
+## imp-dashboard-annotations (round 1)
+- grafanaDashboardImport.ts: new `annotationWarnings(source.annotations)` -> one dashboard-level
+  `annotations-unsupported` warning per entry of `annotations.list` that is not built in (`builtIn` falsy) and not
+  disabled (`enable !== false`). Message names the query and its datasource type: `The annotation query "Deploy
+  markers" (prometheus) is not imported: Lightdash dashboards have no annotations`. Missing name -> "Unnamed annotation".
+  Hidden (`hide: true`) but enabled queries still warn (Grafana still runs them).
+- New code `annotations-unsupported` in importWarnings.ts (imp-docs must catalogue it; warning-count snapshot will
+  include it). Warning has no panel, so the IMPORT-REPORT panel cell is blank, like dashboard-link-unsupported.
+- Unit tests: grafanaDashboardImport.test.ts +2 cases (built-in and disabled skipped; built-in alone quiet).
+- Tested as a user: CLI from source (node --import tsx packages/cli/src/index.ts import grafana-dashboard) on two
+  synthetic dashboards (scratch dir since removed). With built-in + "Platform releases" + "Deploy markers": IMPORT-REPORT.md lists
+  two annotations-unsupported rows naming each, import-summary byCode annotations-unsupported: 2. Built-in only: no
+  annotation mention in report or summary.
+- Acceptance: dashboard-annotations 2/2, dashboard-report 4/4. tsc (common), oxlint, oxfmt clean.
+- 2026-11-09T03:57:56Z supervisor: imp-dashboard-annotations passed the gate in round 1
