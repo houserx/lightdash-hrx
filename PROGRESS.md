@@ -976,3 +976,17 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   dates, but not names. ask_data already sends query rows to the model, so this adds no new class of data. It is
   still worth a look.
 - 2026-11-09T04:28:18Z supervisor: int-mcp-ask-data passed the gate in round 1
+- int-viz-engine-results (round 1): no code change needed. The check passed on a clean tree after `init.sh`: the viz
+  line's `log_stream` and `trace_waterfall` already read the engine's column shapes (logql: timestamp, line,
+  labels, stream; cloudwatch_logs: timestamp, message, fields; trace: trace_id, span_id, parent_span_id, service,
+  name, start, duration_ms, status, attributes).
+  Tested by hand (`../tmp/manual-viz-engine-results/try.mts`, run from e2e/eng-1799 with tsx; synthetic values unlike
+  the check). Real engine, fake Loki/CloudWatch Logs/Tempo, Lightdash's federation warehouse client, and then
+  `renderChart`. logql: four lines, newest first. Label `level: WARN` gives `warning`; lines with no level label give
+  `unknown`. CloudWatch: `@message` is the line and the millisecond `@timestamp` (14:00:02.500) is kept. A 3-level
+  trace gives depths 0/1/2, offsets 0/5/12 ms, durations, error status and json attributes, including a numeric one.
+  An unknown trace id returns 0 rows and renders as kind `empty`, reason `noRows`.
+  Trap: the script must `process.exit` at the end, because the warehouse client's pg pool keeps node alive after
+  the engine stops. Note: a `severity` label is NOT read as a level. That is the viz line's documented rule (the
+  `level` column, then the `level` label, then `detected_level`, else `unknown`), so it was left alone.
+- 2026-11-09T04:33:59Z supervisor: int-viz-engine-results passed the gate in round 1
