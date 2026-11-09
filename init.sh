@@ -6,7 +6,7 @@
 # whose inputs haven't changed, so a warm run is fast.
 set -euo pipefail
 cd "$(dirname "$0")"
-for line in viz ldq mcp alerting engine; do
+for line in viz ldq mcp alerting engine demo; do
     script="scripts/eng-1799/init-$line.sh"
     [ -f "$script" ] || continue
     echo "init.sh: $line"

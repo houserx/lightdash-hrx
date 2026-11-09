@@ -1,0 +1,17 @@
+{
+    "name": "eng-1799-demo",
+    "version": "0.0.0",
+    "private": true,
+    "description": "ENG-1799 end-to-end demo: local observability stack, scripted walkthrough and promo video build",
+    "license": "MIT",
+    "scripts": {},
+    "devDependencies": {
+        "@playwright/test": "1.63.0",
+        "@types/node": "24.13.2",
+        "@types/pg": "8.11.10",
+        "ffmpeg-static": "5.3.0",
+        "pg": "8.13.1",
+        "tsx": "4.23.12",
+        "typescript": "7.0.2"
+    }
+}

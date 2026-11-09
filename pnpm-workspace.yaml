@@ -3,6 +3,7 @@ packages:
   - 'packages/frontend/sdk'
   - 'packages/backend/src/ee/services/McpService/mcp-chart-app'
   - 'chart-registry'
+  - 'demo/eng-1799'
 
 # Exact versions on pnpm add. The npm CLI equivalent (save-exact) stays in .npmrc.
 savePrefix: ''
@@ -153,6 +154,8 @@ allowBuilds:
   protobufjs: true
   sharp: true
   ssh2: true
+  # ENG-1799 demo: downloads its pinned ffmpeg binary at install time (never at run time).
+  ffmpeg-static: true
   # Optional native Zstandard addon, pulled in transitively via just-bash → backend.
   # Not compiled; the backend runs without the native build.
   '@mongodb-js/zstd': false
