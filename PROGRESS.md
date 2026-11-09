@@ -768,3 +768,20 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     unchanged. agent=true preview gave 200. agent=false commit gave 200 and applied (control).
   No engine or Postgres left running.
 - 2026-11-09T03:44:03Z supervisor: int-write-agent-commit-refused passed the gate in round 1
+- 2026-11-09 int-write-audit-integrity: **no code change needed.** On arrival the check already passed (1/1). The engine
+  (`federation-engine/src/audit.rs`, `integrity_hash` + S3 body builder) already writes the portal-format item and the
+  Object Lock body. Tested by hand (`../tmp/manual-write-audit-integrity/try.ts`, run from e2e/eng-1799 with tsx,
+  against the real engine and a throwaway Platform Database) with statements different from the check:
+  - My own re-implementation of the portal's computeIntegrityHash (written from CONTRACTS §6, not from support.ts)
+    reproduces all 3 portal-computed fixtures in `federation-engine/tests/acceptance/fixtures/integrity_hash.json`
+    (hmac and sha256).
+  - Commit 1: an UPDATE with quotes, a backslash, ✓ and 🚀 in the SQL, a tab, unicode and an emoji in the description,
+    ticket ENG-1799. Commit 2: no ticket. Both items have mode write, database platform, preview false, action query,
+    status success, the right rowCount (2 and 1), errorMessage null, an integer durationMs, createdAtMonth = the
+    createdAt prefix, and integrityHash equal to my recomputation.
+  - S3 key = `executions/<createdAt>/<id>.json`. The body is JSON.stringify(item, null, 2) in portal key order.
+  - With no ticket, `linearTicketId` is left out of the item and the body but hashed as null, as the portal does.
+    `savedScriptId` is never written (Lightdash has no saved scripts). The check's key-order filter allows for that.
+  The db-query-portal snapshot (`refs/db-query-portal@aea73de`) is not on this machine. The fixtures are the only
+  portal-computed values available. No engine or Postgres left running.
+- 2026-11-09T03:47:02Z supervisor: int-write-audit-integrity passed the gate in round 1
