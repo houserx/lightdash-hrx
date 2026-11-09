@@ -2321,3 +2321,20 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - Checks: `run.sh --stack alerting-seed.spec.ts` passes (1 test). Regression with --stack: portal-script and seed-project
   pass. Typecheck clean. No demo process left.
 - 2026-11-09T09:52:18Z supervisor: demo-alerting-seed passed the gate in round 1
+
+### demo-alert-fires (2026-11-09, run 20261109-013019, round 1)
+
+- **No code change.** The demo-alerting-seed work (rules interval 30s, `for` 0s, contact point on the fake receiver with
+  the token as a secretRef, route groupWait 1s) already makes the rules fire, so this session only verified it.
+- Check: `DEMO_INCIDENT_AT=3600 DEMO_RECOVERY_AT=7200 run.sh --stack alert-lifecycle.spec.ts --grep "demo-alert-fires:"`
+  passes (1 test, 1.1m) on the first try after `bash ./init.sh`.
+- Tested as a user: fresh up.sh with the incident at +3600 s. In Chromium (throwaway script in the run's
+  tmp/alert-fires/) I signed in through /login and opened `/projects/<uuid>/alerting/rules`: the backlog rule was Normal
+  and the error-log rule had no state yet ("—"). Then POST `/scenario/restart {incidentAfterSeconds: 5, recoveryAfterSeconds: 900}`.
+  By the poll at ~32 s after the restart, both rules showed **Firing** in the UI and stayed Firing. The fake incident.io page
+  (`<incidentIo.url>/`) listed 2 FIRING notifications, received ~46 s after the restart: "Fill queue backlog is 144
+  (threshold 100)" and "fill-service logged 11 errors in the last minute (threshold 10)", with labels and startsAt. No page errors.
+- Note for demo-alert-resolves: the error-log rule's value during the incident can sit close to its threshold of 10
+  (11 here, 23 in the earlier hand run), so a scene that needs it firing reliably may want a lower threshold. Change the
+  YAML in `alerting/`, not the API (the rules are Managed). Stack is down.
+- 2026-11-09T10:03:09Z supervisor: demo-alert-fires passed the gate in round 1
