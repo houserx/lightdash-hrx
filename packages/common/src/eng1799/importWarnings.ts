@@ -60,6 +60,8 @@ export type ImportWarningCode =
     | 'rule-state-changed'
     | 'contact-point-integration-unsupported'
     | 'contact-point-skipped'
+    | 'routing-needs-decision'
+    | 'routing-decision-unused'
     | (string & {});
 
 export type ImportWarning = {

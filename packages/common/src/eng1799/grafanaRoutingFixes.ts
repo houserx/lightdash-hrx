@@ -10,6 +10,11 @@
  * earlier, broader matcher catches it first (matcher order) or because an earlier route on another
  * label lacks `continue`. The fix sets `continue: true` on the earlier route: alerts keep every
  * contact point they reach today and also reach the shadowed route.
+ *
+ * Unhandled severities: a severity label value rules carry that no route matches on severity. When
+ * the routing decisions name a contact point for the value, the fix adds a severity route for it
+ * (continue: true, so the alerts still follow the rest of the tree); otherwise the value needs a
+ * decision.
  */
 import type { AlertRuleAsCode } from '../alerting/asCode';
 import {
@@ -39,10 +44,28 @@ export type UnreachableRoute = {
     rules: string[];
 };
 
+/** A severity label value rules carry but no route matches on severity. */
+export type UnhandledSeverity = {
+    value: string;
+    /** Names of the rules with this severity, in import order. */
+    rules: string[];
+    /** The contact point slug the routing decisions assign; undefined when none does. */
+    contactPoint?: string;
+    /** The severity route the fix adds, when decided. */
+    route?: RoutingFixRoute;
+};
+
+/** `--routing-decisions`: contact point (slug or name) per severity value and per team. */
+export type GrafanaRoutingDecisions = {
+    severities?: Record<string, string>;
+    teams?: Record<string, string>;
+};
+
 export type GrafanaRoutingFixes = {
     /** false with --no-routing-fixes: defects are listed but the tree is as Grafana has it. */
     applied: boolean;
     unreachableRoutes: UnreachableRoute[];
+    unhandledSeverities: UnhandledSeverity[];
 };
 
 const describeRoute = (
@@ -154,6 +177,88 @@ export const fixUnreachableRoutes = <T extends NotificationRoute>(
     return { fixed, unreachableRoutes: [...byRoute.values()] };
 };
 
+export const SEVERITY_LABEL = 'severity';
+
+/** Whether any route below the root matches on severity and accepts this value. */
+const severityHandled = (route: NotificationRoute, value: string): boolean =>
+    (route.routes ?? []).some((child) => {
+        const severityMatchers = (child.matchers ?? []).filter(
+            (m) => m.label === SEVERITY_LABEL,
+        );
+        return (
+            (severityMatchers.length > 0 &&
+                matchAlertLabelMatchers(
+                    { [SEVERITY_LABEL]: value },
+                    severityMatchers,
+                )) ||
+            severityHandled(child, value)
+        );
+    });
+
+/**
+ * The severity values these rules carry that no route in the tree matches on severity, in the
+ * order the rules first carry them, with the rules that carry each.
+ */
+export const findUnhandledSeverities = (
+    tree: NotificationRoute,
+    rules: Pick<AlertRuleAsCode, 'name' | 'labels'>[],
+): { value: string; rules: string[] }[] => {
+    const byValue = new Map<string, string[]>();
+    rules.forEach((rule) => {
+        const value = rule.labels?.[SEVERITY_LABEL];
+        if (value === undefined || value === '') return;
+        if (!byValue.has(value)) {
+            if (severityHandled(tree, value)) return;
+            byValue.set(value, []);
+        }
+        const names = byValue.get(value);
+        if (names !== undefined && !names.includes(rule.name))
+            names.push(rule.name);
+    });
+    return [...byValue.entries()].map(([value, names]) => ({
+        value,
+        rules: names,
+    }));
+};
+
+/**
+ * The fix for unhandled severities: a severity route (continue: true) for each decided value,
+ * inserted in order at `insertAt` among the root's routes. Undecided values are returned as they
+ * are. `tree` itself is not changed.
+ */
+export const addSeverityRoutes = <T extends NotificationRoute>(
+    tree: T,
+    unhandled: { value: string; rules: string[]; contactPoint?: string }[],
+    insertAt: number,
+): { fixed: T; unhandledSeverities: UnhandledSeverity[] } => {
+    const fixed = JSON.parse(JSON.stringify(tree)) as T;
+    const added: NotificationRoute[] = [];
+    const unhandledSeverities = unhandled.map((u): UnhandledSeverity => {
+        if (u.contactPoint === undefined) {
+            return { value: u.value, rules: u.rules };
+        }
+        const route: NotificationRoute = {
+            matchers: [
+                { label: SEVERITY_LABEL, operator: '=', value: u.value },
+            ],
+            contactPoint: u.contactPoint,
+            continue: true,
+        };
+        const path = [insertAt + added.length];
+        added.push(route);
+        return { ...u, route: describeRoute(route, path) };
+    });
+    if (added.length > 0) {
+        const routes = fixed.routes ?? [];
+        fixed.routes = [
+            ...routes.slice(0, insertAt),
+            ...added,
+            ...routes.slice(insertAt),
+        ];
+    }
+    return { fixed, unhandledSeverities };
+};
+
 export const formatRouteMatchers = (matchers: readonly AlertLabelMatcher[]) =>
     matchers.length === 0
         ? '(every alert)'
@@ -204,6 +309,30 @@ export const renderGrafanaRoutingFixes = (
                 )} | ${cell(cause)} | ${cell(u.rules.join(', '))} | ${cell(
                     `continue: true on route ${['root', ...u.shadowedBy.path].join('.')}, so its alerts also reach ${formatRouteMatchers(u.route.matchers)}`,
                 )} |`,
+            );
+        });
+    }
+    lines.push('', '## Unhandled severities', '');
+    if (fixes.unhandledSeverities.length === 0) {
+        lines.push(
+            'Every severity value the imported rules carry has a route.',
+        );
+    } else {
+        lines.push(
+            'No route matches these severity values, so their alerts are routed by their other labels only. A value the routing decisions (--routing-decisions, `severities:`) assign gets a severity route with continue: true, so its alerts reach that contact point and still follow the rest of the tree; the others need a decision (routing-needs-decision warning).',
+            '',
+            '| Severity | Affected rules | Fix |',
+            '| --- | --- | --- |',
+        );
+        fixes.unhandledSeverities.forEach((u) => {
+            const fix =
+                u.route !== undefined
+                    ? `severity route ${formatRoute(u.route)}, continue: true`
+                    : `needs a decision: add \`severities: {"${u.value}": <contact point>}\` to --routing-decisions`;
+            lines.push(
+                `| ${cell(`\`${SEVERITY_LABEL} = ${u.value}\``)} | ${cell(
+                    u.rules.join(', '),
+                )} | ${cell(fix)} |`,
             );
         });
     }

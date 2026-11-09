@@ -33,7 +33,10 @@ import {
     type GrafanaTarget,
 } from './grafanaQuery';
 import {
+    addSeverityRoutes,
+    findUnhandledSeverities,
     fixUnreachableRoutes,
+    type GrafanaRoutingDecisions,
     type GrafanaRoutingFixes,
 } from './grafanaRoutingFixes';
 import type { ImportWarning } from './importWarnings';
@@ -72,6 +75,8 @@ export type GrafanaAlertingImportInput = {
     datasources?: GrafanaDatasource[];
     /** false (--no-routing-fixes): routing defects are listed but not fixed. Default true. */
     routingFixes?: boolean;
+    /** --routing-decisions: contact points for the defects that need a decision. */
+    routingDecisions?: GrafanaRoutingDecisions;
 };
 
 export type GrafanaAlertingImport = {
@@ -1710,13 +1715,64 @@ export const convertGrafanaAlerting = (
     const policyRouted = alertRules.filter(
         (r) => !notifySlugs.has(r.labels?.[NOTIFY_LABEL] ?? ''),
     );
-    const { fixed, unreachableRoutes } = fixUnreachableRoutes(
+
+    // Unhandled severities: a decided value gets a severity route (continue: true) right after the
+    // notify=<slug> routes, ahead of the policies; the others need a decision.
+    const severityDecisions = input.routingDecisions?.severities ?? {};
+    const unhandled = findUnhandledSeverities(
         notificationRoutes,
+        policyRouted,
+    ).map((u) => {
+        const decided = Object.prototype.hasOwnProperty.call(
+            severityDecisions,
+            u.value,
+        )
+            ? severityDecisions[u.value]
+            : undefined;
+        if (decided === undefined) {
+            warn({
+                code: 'routing-needs-decision',
+                message: `No route handles severity = ${u.value} (${u.rules.join(
+                    ', ',
+                )}); assign it a contact point under severities: in --routing-decisions.`,
+            });
+            return u;
+        }
+        const contactPoint = contactPoints.find(
+            (c) => c.slug === decided || c.name === decided,
+        );
+        if (contactPoint === undefined) {
+            throw new GrafanaAlertingImportError(
+                `The routing decisions assign severity ${u.value} to ${JSON.stringify(
+                    decided,
+                )}, which is not one of the imported contact points (${contactPoints
+                    .map((c) => c.slug)
+                    .join(', ')}).`,
+            );
+        }
+        return { ...u, contactPoint: contactPoint.slug };
+    });
+    Object.keys(severityDecisions)
+        .filter((value) => !unhandled.some((u) => u.value === value))
+        .forEach((value) =>
+            warn({
+                code: 'routing-decision-unused',
+                message: `The routing decision for severity ${value} is not used: no imported rule has severity = ${value} without a route that handles it.`,
+            }),
+        );
+    const withSeverityRoutes = addSeverityRoutes(
+        notificationRoutes,
+        unhandled,
+        notifySlugs.size,
+    );
+    const { fixed, unreachableRoutes } = fixUnreachableRoutes(
+        applyRoutingFixes ? withSeverityRoutes.fixed : notificationRoutes,
         policyRouted,
     );
     const routingFixes: GrafanaRoutingFixes = {
         applied: applyRoutingFixes,
         unreachableRoutes,
+        unhandledSeverities: withSeverityRoutes.unhandledSeverities,
     };
 
     return {

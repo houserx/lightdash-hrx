@@ -6,6 +6,7 @@ import {
     parseHcl,
     renderGrafanaAlertsImportReport,
     renderGrafanaRoutingFixes,
+    type GrafanaRoutingDecisions,
     type TerraformSourceFile,
 } from '@lightdash/common';
 import { promises as fs } from 'fs';
@@ -64,8 +65,34 @@ const readTerraformFile = async (
     return { file, text };
 };
 
-/** `--routing-decisions <file.yml>`: checked to be a YAML mapping. */
-const readRoutingDecisionsFile = async (file: string) => {
+/** One `severities:` or `teams:` mapping: value -> contact point slug or name. */
+const readDecisionMap = (
+    file: string,
+    key: string,
+    value: unknown,
+): Record<string, string> | undefined => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+        throw new ParseError(
+            `${key}: in ${file} must be a mapping of ${key === 'severities' ? 'severity values' : 'teams'} to contact points.`,
+        );
+    }
+    const map: Record<string, string> = {};
+    Object.entries(value).forEach(([k, v]) => {
+        if (typeof v !== 'string' || v.trim() === '') {
+            throw new ParseError(
+                `${key}: ${k} in ${file} must name a contact point (its slug or name).`,
+            );
+        }
+        map[k] = v.trim();
+    });
+    return map;
+};
+
+/** `--routing-decisions <file.yml>`: a YAML mapping with severities: and teams: keys. */
+const readRoutingDecisionsFile = async (
+    file: string,
+): Promise<GrafanaRoutingDecisions> => {
     let text: string;
     try {
         text = await fs.readFile(file, 'utf8');
@@ -93,6 +120,21 @@ const readRoutingDecisionsFile = async (file: string) => {
             `${file} must be a YAML mapping (severities: and teams: keys).`,
         );
     }
+    const mapping = (doc ?? {}) as Record<string, unknown>;
+    const unknownKeys = Object.keys(mapping).filter(
+        (k) => k !== 'severities' && k !== 'teams',
+    );
+    if (unknownKeys.length > 0) {
+        throw new ParseError(
+            `${file} has unknown keys (${unknownKeys.join(', ')}); only severities: and teams: are read.`,
+        );
+    }
+    const severities = readDecisionMap(file, 'severities', mapping.severities);
+    const teams = readDecisionMap(file, 'teams', mapping.teams);
+    return {
+        ...(severities !== undefined ? { severities } : {}),
+        ...(teams !== undefined ? { teams } : {}),
+    };
 };
 
 // The JSON round trip drops `undefined` fields (js-yaml can't dump them).
@@ -135,9 +177,10 @@ export const importGrafanaAlertsHandler = async (
         options.datasources === undefined
             ? undefined
             : await readGrafanaDatasourcesFile(options.datasources);
-    if (options.routingDecisions !== undefined) {
-        await readRoutingDecisionsFile(options.routingDecisions);
-    }
+    const routingDecisions =
+        options.routingDecisions === undefined
+            ? undefined
+            : await readRoutingDecisionsFile(options.routingDecisions);
 
     let result;
     try {
@@ -149,6 +192,7 @@ export const importGrafanaAlertsHandler = async (
             folders,
             datasources,
             routingFixes: options.routingFixes,
+            routingDecisions,
         });
     } catch (e) {
         if (e instanceof GrafanaAlertingImportError) {
@@ -221,20 +265,44 @@ export const importGrafanaAlertsHandler = async (
             `See ${path.join(options.out, 'IMPORT-REPORT.md')} for every warning.`,
         );
     }
-    const routingDefects = result.routingFixes.unreachableRoutes.length;
-    if (routingDefects > 0) {
+    const { unreachableRoutes, unhandledSeverities, applied } =
+        result.routingFixes;
+    const decided = unhandledSeverities.filter(
+        (u) => u.contactPoint !== undefined,
+    ).length;
+    const fixedOrFound = applied
+        ? 'fixed'
+        : 'found and not fixed (--no-routing-fixes)';
+    const routingNotes = [
+        ...(unreachableRoutes.length > 0
+            ? [
+                  `${plural(unreachableRoutes.length, 'unreachable route')} ${fixedOrFound}`,
+              ]
+            : []),
+        ...(decided > 0
+            ? [`${plural(decided, 'unhandled severity value')} ${fixedOrFound}`]
+            : []),
+        ...(unhandledSeverities.length > decided
+            ? [
+                  `${plural(
+                      unhandledSeverities.length - decided,
+                      'unhandled severity value',
+                  )} needing a routing decision`,
+              ]
+            : []),
+    ];
+    if (routingNotes.length > 0) {
         console.info(
-            `${plural(routingDefects, 'unreachable route')} ${
-                result.routingFixes.applied
-                    ? 'fixed'
-                    : 'found and not fixed (--no-routing-fixes)'
-            }; see ${path.join(options.out, 'ROUTING-FIXES.md')}.`,
+            `${routingNotes.join('; ')}; see ${path.join(
+                options.out,
+                'ROUTING-FIXES.md',
+            )}.`,
         );
     }
-    if (options.routingDecisions !== undefined) {
+    if (routingDecisions?.teams !== undefined) {
         console.warn(
             styles.warning(
-                'Routing decisions are not implemented in this version of the importer: --routing-decisions has no effect yet.',
+                'Team routing decisions (teams: in --routing-decisions) are not implemented in this version of the importer and have no effect yet.',
             ),
         );
     }

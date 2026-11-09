@@ -1571,3 +1571,34 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   alongside fixUnreachableRoutes. Decide whether new routes go before or after the fix; continue: true routes don't
   shadow anything.
 - 2026-11-09T05:21:16Z supervisor: imp-routing-unreachable-routes passed the gate in round 1
+
+## imp-routing-unhandled-severity (2026-11-09, round 1)
+- grafanaRoutingFixes.ts: findUnhandledSeverities(tree, rules) returns the severity label values policy-routed rules
+  carry that no route below the root matches on severity. A route "handles" a value if it has severity matchers and
+  they all accept it, at any depth, regex included. Values are listed in the order rules first carry them, with their
+  rules. addSeverityRoutes(tree, unhandled, insertAt) inserts `severity = <v>` -> <slug>, continue: true, for each
+  decided value. GrafanaRoutingFixes gains unhandledSeverities: {value, rules, contactPoint?, route?}.
+  renderGrafanaRoutingFixes adds "## Unhandled severities" (severity, affected rules, and the fix or "needs a decision").
+- convertGrafanaAlerting takes routingDecisions?: GrafanaRoutingDecisions ({severities?, teams?}, value -> contact point
+  slug or name). Undecided value: a routing-needs-decision warning (one per value). Decided value: the contact point
+  resolves by slug, then by name; an unknown one throws GrafanaAlertingImportError (the CLI exits 1 before writing). A
+  decision for a value that is not unhandled gives a routing-decision-unused warning. Both codes are added to
+  ImportWarningCode. Severity routes go right after the notify=<slug> routes, ahead of the policies, and only when
+  fixes are applied. fixUnreachableRoutes then runs on that tree, so report paths are final-tree paths. With
+  --no-routing-fixes, decided values are listed with their route but the tree is unchanged.
+- CLI: --routing-decisions is parsed. It must be a mapping with only severities:/teams:, and each value a non-empty
+  string. The parsed decisions go to the converter. The console prints "N unhandled severity values fixed / needing a
+  routing decision". The "not implemented" warning now fires only when teams: is given (imp-routing-default-only-rules
+  must implement teams and remove it).
+- Full fixtures: the policy has no severity routes, so severity 1, 2, 3, 4, critical and low are all unhandled, giving
+  6 routing-needs-decision warnings (78 warnings total, was 72). imp-roundtrip-warning-snapshot must record this.
+- Tested as a user: ran the test's Terraform (generated with tmp/sev-script/gen.ts) through the CLI.
+  - Undecided: ROUTING-FIXES.md lists severity = 1 and severity = low, IMPORT-REPORT.md has 2 routing-needs-decision.
+  - Decided ("1": pager): route root.0 is severity=1 -> pager, continue: true.
+  - routeAlert results (tmp/sev-script/route.cjs). Web+1: pager (was slack-infra-alerts). Infra+1: pager,slack-alerts.
+    Low: unchanged. Infra+critical: unchanged.
+  - --no-routing-fixes leaves the tree as Grafana has it. "1": nope fails with a clear error and writes nothing.
+- Checks: routing-unhandled-severity 2/2 after init. Regression: routing-unreachable-routes 3/3,
+  alerts-notification-settings 2/2, -routes 3/3, -full-ruleset 3/3, -command 3/3, -contact-points 4/4.
+  grafanaRoutingFixes.test.ts 11/11, grafanaAlertImport.test.ts 10/10. common and cli tsc clean, oxlint and oxfmt clean.
+- 2026-11-09T05:28:20Z supervisor: imp-routing-unhandled-severity passed the gate in round 1

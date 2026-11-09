@@ -1,5 +1,7 @@
 import { routeAlert, type NotificationRoute } from '../alerting/routingTree';
 import {
+    addSeverityRoutes,
+    findUnhandledSeverities,
     fixUnreachableRoutes,
     renderGrafanaRoutingFixes,
 } from './grafanaRoutingFixes';
@@ -160,6 +162,7 @@ describe('renderGrafanaRoutingFixes', () => {
         const md = renderGrafanaRoutingFixes({
             applied: true,
             unreachableRoutes,
+            unhandledSeverities: [],
         });
         expect(md).toMatch(/## Unreachable routes/);
         expect(md).toContain('team = platform');
@@ -174,8 +177,107 @@ describe('renderGrafanaRoutingFixes', () => {
         const md = renderGrafanaRoutingFixes({
             applied: false,
             unreachableRoutes: [],
+            unhandledSeverities: [],
         });
         expect(md).toContain('--no-routing-fixes');
         expect(md).toContain('No route is unreachable');
+        expect(md).toContain('Every severity value');
+    });
+
+    it('lists unhandled severities with their fix or the decision they need', () => {
+        const { unhandledSeverities } = addSeverityRoutes(
+            TREE,
+            [
+                { value: '1', rules: ['Sev one'], contactPoint: 'pager' },
+                { value: 'low', rules: ['Low'] },
+            ],
+            0,
+        );
+        const md = renderGrafanaRoutingFixes({
+            applied: true,
+            unreachableRoutes: [],
+            unhandledSeverities,
+        });
+        expect(md).toMatch(/## Unhandled severities/);
+        expect(md).toContain('`severity = 1`');
+        expect(md).toContain(
+            'severity route `severity = 1` -> pager (route root.0)',
+        );
+        expect(md).toContain('`severity = low`');
+        expect(md).toContain('needs a decision');
+    });
+});
+
+describe('findUnhandledSeverities', () => {
+    const rules: { name: string; labels: Record<string, string> }[] = [
+        { name: 'Critical', labels: { severity: 'critical' } },
+        { name: 'Sev one', labels: { team: 'web', severity: '1' } },
+        { name: 'Low', labels: { severity: 'low' } },
+        { name: 'Low again', labels: { severity: 'low' } },
+        { name: 'No severity', labels: { team: 'infra' } },
+    ];
+
+    it('lists the values no route matches on severity, with their rules', () => {
+        expect(findUnhandledSeverities(TREE, rules)).toEqual([
+            { value: '1', rules: ['Sev one'] },
+            { value: 'low', rules: ['Low', 'Low again'] },
+        ]);
+    });
+
+    it('counts nested routes and regex matchers as handling a value', () => {
+        const tree: NotificationRoute = {
+            contactPoint: 'default',
+            routes: [
+                {
+                    matchers: [eq('team', 'web')],
+                    routes: [
+                        {
+                            matchers: [
+                                {
+                                    label: 'severity',
+                                    operator: '=~',
+                                    value: '1|low',
+                                },
+                            ],
+                            contactPoint: 'pager',
+                        },
+                    ],
+                },
+            ],
+        };
+        expect(findUnhandledSeverities(tree, rules)).toEqual([
+            { value: 'critical', rules: ['Critical'] },
+        ]);
+    });
+});
+
+describe('addSeverityRoutes', () => {
+    it('adds a continue route per decided value and leaves the input alone', () => {
+        const before = JSON.stringify(TREE);
+        const { fixed, unhandledSeverities } = addSeverityRoutes(
+            TREE,
+            [
+                { value: 'low', rules: ['Low'] },
+                { value: '1', rules: ['Sev one'], contactPoint: 'pager' },
+            ],
+            0,
+        );
+        expect(JSON.stringify(TREE)).toBe(before);
+        expect(fixed.routes![0]).toEqual({
+            matchers: [eq('severity', '1')],
+            contactPoint: 'pager',
+            continue: true,
+        });
+        expect(fixed.routes).toHaveLength(TREE.routes!.length + 1);
+        expect(unhandledSeverities[0]).toEqual({
+            value: 'low',
+            rules: ['Low'],
+        });
+        expect(unhandledSeverities[1].route?.path).toEqual([0]);
+        expect(sent(fixed, { team: 'platform', severity: '1' })).toEqual([
+            'pager',
+            'pager',
+        ]);
+        expect(sent(fixed, { team: 'web', severity: '1' })).toContain('pager');
     });
 });
