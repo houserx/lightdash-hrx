@@ -2092,3 +2092,18 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   against a running stack (not this feature's gate). `tsc --ignoreConfig --strict --module nodenext --types node
   stack/*.ts` clean; no demo process left.
 - 2026-11-09T08:32:57Z supervisor: demo-dashboard-pharmacy-ops passed the gate in round 1
+
+## demo-dashboard-pharmacy-ops-ui (functional) — 2026-11-09
+
+- No code change: the dashboard content from demo-dashboard-pharmacy-ops (e3d40f853) already renders live and
+  meets every step. This session only verified it and wrote this entry.
+- Tested as a user: `init.sh` ok; `up.sh` by hand; in Chromium (a throwaway Playwright script under the run's tmp/,
+  not in the repo) signed in through the /login form, went to the project's dashboards list and clicked "Pharmacy Ops
+  overview". Baseline (scenario restarted with the incident 900 s out): header "Last 30 minutes" + Refresh 30s, four
+  Tiles with no error text, stat 27 in near-black rgb(24,24,27), line ~20–48 under the red dashed threshold at 100,
+  Status OK (green). Incident (restart -120/900, a few reloads): stat 143 in rgb(224,47,68), the line jumps above
+  100, Peak fill 160, Status "Backlogged" in red. 0 page errors. down.sh afterwards; no demo process left.
+- Check: `run.sh --stack dashboard-pharmacy-ops.spec.ts --grep "demo-dashboard-pharmacy-ops-ui:"` passes (11.9 s).
+- For the next session: after a scenario restart the stat can take one or two reloads to go red. Results are
+  cached per rounded Dashboard Time Range, which is why the spec reloads in a loop. Keep that in mind for scene specs.
+- 2026-11-09T08:39:26Z supervisor: demo-dashboard-pharmacy-ops-ui passed the gate in round 1
