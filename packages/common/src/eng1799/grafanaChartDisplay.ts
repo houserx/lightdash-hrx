@@ -11,6 +11,13 @@ import { Format } from '../types/field';
  *   base step (`greaterThanOrEqual` the step value, highest first, since the first matching rule
  *   wins). The base step's colour has no rule: values below the first step keep the default
  *   colour. Line and bar charts have no threshold lines or bands.
+ * - Legend: line and bar charts take the legend placement (bottom or right). They show the
+ *   legend whenever there is more than one series, so a hidden legend is a warning.
+ * - Stacking: normal stacking (timeseries `custom.stacking.mode`, barchart `options.stacking`,
+ *   the legacy graph `stack` flag) stacks, and percent stacking (or the legacy graph
+ *   `percentage` flag) stacks to 100%. Per-series stacking from overrides is a warning.
+ * - Value mappings: SQL tables and pies show the raw values, so value mappings on them are
+ *   warnings naming the option path.
  */
 import { FilterOperator } from '../types/filter';
 import { ChartKind } from '../types/savedCharts';
@@ -19,10 +26,11 @@ import type {
     VizBigNumberConditionalRule,
     VizBigNumberDisplay,
 } from '../visualizations/types';
+import { StackType } from '../visualizations/types';
 import { resolveGrafanaColor } from './grafanaThresholds';
 import type { ImportWarning } from './importWarnings';
 
-type Warning = Pick<ImportWarning, 'code' | 'message'>;
+type Warning = Pick<ImportWarning, 'code' | 'message' | 'path'>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -93,6 +101,11 @@ export type GrafanaPanelForDisplay = {
     fieldConfig?: { defaults?: unknown; overrides?: unknown };
     /** Legacy graph panel thresholds. */
     thresholds?: unknown;
+    /** Legacy graph panel stacking, legend and per-series overrides. */
+    stack?: unknown;
+    percentage?: unknown;
+    legend?: unknown;
+    seriesOverrides?: unknown;
 };
 
 export type GrafanaChartDisplay = {
@@ -200,8 +213,140 @@ const overridesUnit = (overrides: unknown): boolean =>
                 ),
         );
 
+type Legend = NonNullable<CartesianChartDisplay['legend']>;
+
 /**
- * The SQL chart display for a panel's unit and thresholds, and a warning for each the chart
+ * Where a line or bar panel puts its legend: Grafana places it at the bottom or on the right.
+ * A hidden legend (`showLegend: false`, `displayMode: hidden`, legacy `legend.show: false`)
+ * is a warning: SQL charts show the legend whenever there is more than one series.
+ */
+const cartesianLegend = (
+    panel: GrafanaPanelForDisplay,
+    panelType: string,
+    warnings: Warning[],
+): Legend | undefined => {
+    const options = isRecord(panel.options) ? panel.options : {};
+    const legend = isRecord(options.legend) ? options.legend : undefined;
+    const legacy = isRecord(panel.legend) ? panel.legend : undefined;
+    const hidden =
+        legend?.showLegend === false ||
+        legend?.displayMode === 'hidden' ||
+        legacy?.show === false;
+    if (hidden) {
+        warnings.push({
+            code: 'legend-unsupported',
+            message: `The ${panelType} panel hides its legend, which SQL charts cannot do: they show the legend whenever there is more than one series`,
+            path: legend ? 'options.legend' : 'legend',
+        });
+        return undefined;
+    }
+    const placement =
+        legend?.placement ?? (legacy?.rightSide ? 'right' : undefined);
+    if (placement === 'right') return { position: 'right', align: 'start' };
+    if (placement === 'bottom') return { position: 'bottom', align: 'start' };
+    return undefined;
+};
+
+const stackType = (mode: unknown): StackType | undefined => {
+    if (mode === 'normal') return StackType.NORMAL;
+    if (mode === 'percent') return StackType.PERCENT;
+    return undefined;
+};
+
+/** Whether field overrides set stacking per series. */
+const overridesStacking = (overrides: unknown): boolean =>
+    (Array.isArray(overrides) ? overrides : [])
+        .filter(isRecord)
+        .some(
+            (override) =>
+                Array.isArray(override.properties) &&
+                override.properties.some(
+                    (property: unknown) =>
+                        isRecord(property) && property.id === 'custom.stacking',
+                ),
+        );
+
+/**
+ * How a line or bar panel stacks: the timeseries field config, the barchart option or the
+ * legacy graph flags. Stacking set per series (field overrides, legacy series overrides) is a
+ * warning: SQL charts stack all series or none.
+ */
+const cartesianStack = (
+    defaults: Record<string, unknown>,
+    panel: GrafanaPanelForDisplay,
+    panelType: string,
+    warnings: Warning[],
+): StackType | undefined => {
+    const options = isRecord(panel.options) ? panel.options : {};
+    const custom = isRecord(defaults.custom) ? defaults.custom : {};
+    const stacking = isRecord(custom.stacking) ? custom.stacking : {};
+    const seriesStacking =
+        overridesStacking(panel.fieldConfig?.overrides) ||
+        (Array.isArray(panel.seriesOverrides) &&
+            panel.seriesOverrides.some(
+                (override) => isRecord(override) && 'stack' in override,
+            ));
+    if (seriesStacking) {
+        warnings.push({
+            code: 'stacking-unsupported',
+            message: `The ${panelType} panel stacks some series differently from the others, which SQL charts cannot do: they stack all series or none`,
+        });
+    }
+    const fromOptions = stackType(options.stacking);
+    if (fromOptions) return fromOptions;
+    const fromField = stackType(stacking.mode);
+    if (fromField) return fromField;
+    if (panel.stack === true) {
+        return panel.percentage === true ? StackType.PERCENT : StackType.NORMAL;
+    }
+    return undefined;
+};
+
+const hasMappings = (value: unknown) =>
+    Array.isArray(value) && value.length > 0;
+
+/** Whether any field override sets value mappings. */
+const overridesMappings = (overrides: unknown): boolean =>
+    (Array.isArray(overrides) ? overrides : [])
+        .filter(isRecord)
+        .some(
+            (override) =>
+                Array.isArray(override.properties) &&
+                override.properties.some(
+                    (property: unknown) =>
+                        isRecord(property) &&
+                        property.id === 'mappings' &&
+                        hasMappings(property.value),
+                ),
+        );
+
+/**
+ * Value mappings on a table or pie: SQL tables and pies show the raw values. Each warning
+ * carries the option path so the converter can skip paths it already reports as dropped.
+ */
+const valueMappingWarnings = (
+    defaults: Record<string, unknown>,
+    panel: GrafanaPanelForDisplay,
+    panelType: string,
+    kind: ChartKind,
+): Warning[] => {
+    const paths = [
+        ...(hasMappings(defaults.mappings)
+            ? ['fieldConfig.defaults.mappings']
+            : []),
+        ...(overridesMappings(panel.fieldConfig?.overrides)
+            ? ['fieldConfig.overrides.mappings']
+            : []),
+    ];
+    return paths.map((path) => ({
+        code: 'option-dropped',
+        message: `The ${panelType} panel option ${path} is not imported. ${kind === ChartKind.PIE ? 'SQL pie charts' : 'SQL tables'} show the raw values; they do not apply value mappings.`,
+        path,
+    }));
+};
+
+/**
+ * The SQL chart display for a panel's unit, thresholds, legend, stacking and value mappings, and a warning for each the chart
  * kind can't show.
  */
 export const grafanaChartDisplay = (
@@ -241,10 +386,22 @@ export const grafanaChartDisplay = (
                 message: `The ${panelType} panel draws threshold lines or bands, which ${kind} SQL charts cannot show; they are not imported`,
             });
         }
+        const legend = cartesianLegend(panel, panelType, warnings);
+        const stack = cartesianStack(defaults, panel, panelType, warnings);
+        const cartesian: CartesianChartDisplay = {
+            ...(format ? { yAxis: [{ format }] } : {}),
+            ...(legend ? { legend } : {}),
+            ...(stack ? { stack } : {}),
+        };
         return {
-            ...(format ? { cartesian: { yAxis: [{ format }] } } : {}),
+            ...(Object.keys(cartesian).length > 0 ? { cartesian } : {}),
             warnings,
         };
+    }
+    if (kind === ChartKind.TABLE || kind === ChartKind.PIE) {
+        warnings.push(
+            ...valueMappingWarnings(defaults, panel, panelType, kind),
+        );
     }
     return { warnings };
 };

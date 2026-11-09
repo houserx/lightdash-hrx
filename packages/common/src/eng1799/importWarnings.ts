@@ -41,6 +41,8 @@ export type ImportWarningCode =
     | 'chart-kind-fallback'
     | 'unit-unsupported'
     | 'thresholds-unsupported'
+    | 'legend-unsupported'
+    | 'stacking-unsupported'
     | 'link-unsupported'
     | 'dashboard-link-unsupported'
     | 'time-range-adjusted'

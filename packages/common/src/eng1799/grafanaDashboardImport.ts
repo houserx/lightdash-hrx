@@ -236,7 +236,10 @@ const chartKindForPanel = (
     }
 };
 
-/** The SQL chart config for a kind, with the display from the panel's unit and thresholds. */
+/**
+ * The SQL chart config for a kind, with the display from the panel's unit, thresholds, legend
+ * and stacking.
+ */
 const chartConfig = (
     kind: ChartKind,
     display: GrafanaChartDisplay,
@@ -768,7 +771,8 @@ export const convertGrafanaDashboard = (
             );
             return;
         }
-        droppedPanelOptions(panel, type).forEach(({ path, reason }) =>
+        const droppedOptions = droppedPanelOptions(panel, type);
+        droppedOptions.forEach(({ path, reason }) =>
             warn(
                 'option-dropped',
                 `The ${type} panel option ${path} is not imported. ${reason}`,
@@ -813,7 +817,11 @@ export const convertGrafanaDashboard = (
             );
         }
         const display = grafanaChartDisplay(panel, kind);
-        display.warnings.forEach((w) => warn(w.code, w.message));
+        // The panel mapping may already report an option the chart kind can't show.
+        const droppedPaths = new Set(droppedOptions.map(({ path }) => path));
+        display.warnings
+            .filter((w) => !(w.path && droppedPaths.has(w.path)))
+            .forEach((w) => warn(w.code, w.message));
         const chart: SqlChartAsCode = {
             version: 1,
             contentType: ContentAsCodeType.SQL_CHART,

@@ -1095,3 +1095,32 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: dashboard-thresholds-units 3/3, dashboard-panel-kinds 3/3, dashboard-report 4/4. tsc (common),
   oxlint, oxfmt clean.
 - 2026-11-09T03:50:30Z supervisor: imp-dashboard-thresholds-units passed the gate in round 1
+
+## imp-dashboard-legend-stacking (round 1)
+- eng1799/grafanaChartDisplay.ts now also sets, on line/vertical_bar `config.display`: `legend` (`{position:
+  'right'|'bottom', align: 'start'}` from `options.legend.placement`, or legacy `legend.rightSide`) and `stack`
+  (StackType: `stack` for normal, `stack100` for percent). Sources, first wins: barchart `options.stacking`,
+  timeseries `fieldConfig.defaults.custom.stacking.mode`, legacy graph `stack: true` (+ `percentage: true` ->
+  `stack100`). `none`/unset -> no stack key.
+- New warnings: `legend-unsupported` (legend hidden via showLegend false / displayMode hidden / legacy legend.show
+  false; SQL charts show a legend whenever there is more than one series), `stacking-unsupported` (per-series
+  stacking in field overrides `custom.stacking` or legacy `seriesOverrides[].stack`). Added to importWarnings.ts;
+  imp-docs must catalogue them, the warning-count snapshot will include them.
+- Value mappings on table/pie SQL charts -> `option-dropped` naming `fieldConfig.defaults.mappings` (and
+  `fieldConfig.overrides.mappings` when an override sets them). Display warnings now carry `path`; the converter
+  skips a display warning whose path droppedPanelOptions already reported (no duplicates for panel types whose
+  mapping already marks mappings as dropped).
+- Trap: the SQL chart renderer (CartesianChartDataModel.getSpec) reads `display.stack` but ignores
+  `display.legend` today (legend shown iff >1 series, default position). The legend is stored per the type
+  contract; rendering it is outside this line. grafanaPanelMapping.ts notes still say "Lightdash has no 100%
+  stacking" (true for the saved-chart path, not SQL charts); left as is.
+- Trap: the CLI loads built @lightdash/common; re-run `bash ./init.sh` after editing common before the check.
+- Unit tests: grafanaChartDisplay.test.ts +3 cases (legend/stack mapping, hidden legend + per-series stacking
+  warnings, table mappings warnings).
+- Tested as a user: CLI from source on a synthetic 4-panel dashboard (the feature's panels). Chart YAML: stacked
+  timeseries -> display {legend right/start, stack: stack}; barchart -> vertical_bar {legend bottom, stack:
+  stack100}; legacy graph -> line {stack: stack} + legend-unsupported warning; table -> IMPORT-REPORT row
+  "option-dropped | Status table | The table panel option fieldConfig.defaults.mappings is not imported...".
+- Acceptance: dashboard-legend-stacking 4/4; thresholds-units, panel-kinds, report, dropped-panels, charts all
+  pass. tsc (common), oxlint, oxfmt clean.
+- 2026-11-09T03:55:07Z supervisor: imp-dashboard-legend-stacking passed the gate in round 1

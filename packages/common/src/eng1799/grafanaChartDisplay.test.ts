@@ -196,4 +196,115 @@ describe('grafanaChartDisplay', () => {
             ).warnings.map((w) => w.code),
         ).toEqual(['thresholds-unsupported']);
     });
+
+    it('places the legend and stacks timeseries, barchart and legacy graph panels', () => {
+        expect(
+            grafanaChartDisplay(
+                {
+                    type: 'timeseries',
+                    fieldConfig: {
+                        defaults: { custom: { stacking: { mode: 'normal' } } },
+                    },
+                    options: { legend: { placement: 'right' } },
+                },
+                ChartKind.LINE,
+            ),
+        ).toEqual({
+            cartesian: {
+                legend: { position: 'right', align: 'start' },
+                stack: 'stack',
+            },
+            warnings: [],
+        });
+        expect(
+            grafanaChartDisplay(
+                { type: 'barchart', options: { stacking: 'percent' } },
+                ChartKind.VERTICAL_BAR,
+            ).cartesian,
+        ).toEqual({ stack: 'stack100' });
+        expect(
+            grafanaChartDisplay(
+                { type: 'graph', stack: true, percentage: true },
+                ChartKind.LINE,
+            ).cartesian,
+        ).toEqual({ stack: 'stack100' });
+        expect(
+            grafanaChartDisplay(
+                {
+                    type: 'timeseries',
+                    fieldConfig: {
+                        defaults: { custom: { stacking: { mode: 'none' } } },
+                    },
+                },
+                ChartKind.LINE,
+            ).cartesian,
+        ).toBeUndefined();
+    });
+
+    it('warns about hidden legends and per-series stacking', () => {
+        const graph = grafanaChartDisplay(
+            {
+                type: 'graph',
+                stack: true,
+                legend: { show: false },
+                seriesOverrides: [{ alias: 'b', stack: false }],
+            },
+            ChartKind.LINE,
+        );
+        expect(graph.cartesian).toEqual({ stack: 'stack' });
+        expect(graph.warnings.map((w) => w.code)).toEqual([
+            'legend-unsupported',
+            'stacking-unsupported',
+        ]);
+        expect(
+            grafanaChartDisplay(
+                {
+                    type: 'timeseries',
+                    options: { legend: { showLegend: false } },
+                    fieldConfig: {
+                        overrides: [
+                            {
+                                properties: [
+                                    {
+                                        id: 'custom.stacking',
+                                        value: { mode: 'normal' },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+                ChartKind.LINE,
+            ).warnings.map((w) => w.code),
+        ).toEqual(['legend-unsupported', 'stacking-unsupported']);
+    });
+
+    it('warns that SQL tables and pies do not apply value mappings', () => {
+        const mappings = [{ type: 'value', options: { '1': { text: 'Up' } } }];
+        const table = grafanaChartDisplay(
+            {
+                type: 'table',
+                fieldConfig: {
+                    defaults: { mappings },
+                    overrides: [
+                        { properties: [{ id: 'mappings', value: mappings }] },
+                    ],
+                },
+            },
+            ChartKind.TABLE,
+        );
+        expect(table.warnings.map((w) => [w.code, w.path])).toEqual([
+            ['option-dropped', 'fieldConfig.defaults.mappings'],
+            ['option-dropped', 'fieldConfig.overrides.mappings'],
+        ]);
+        expect(table.warnings[0].message).toContain(
+            'fieldConfig.defaults.mappings',
+        );
+        expect(
+            grafanaChartDisplay(
+                { type: 'table', fieldConfig: { defaults: { mappings: [] } } },
+                ChartKind.TABLE,
+            ).warnings,
+        ).toEqual([]);
+    });
 });
