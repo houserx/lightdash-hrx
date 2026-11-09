@@ -778,3 +778,23 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   dashboard-command 4/4, dashboard-charts 4/4, dashboard-panel-kinds 3/3, dashboard-dropped-panels 4/4. tsc (common) and
   oxlint are clean, and oxfmt was applied.
 - 2026-11-09T02:49:17Z supervisor: imp-dashboard-layout passed the gate in round 1
+
+### imp-dashboard-rows (2026-11-08)
+
+- packages/common/src/eng1799/grafanaDashboardImport.ts: an expanded row panel (`type: 'row'`, `collapsed` not true)
+  now becomes a `heading` tile with `properties.text` set to the row title. It sits at x 0, w 36, and keeps the
+  row's gridPos y and h (Grafana rows are h 1). The panels in an expanded row follow it at the top level of the
+  export, so they land below it. `flattenPanels` keeps expanded rows in the list. Collapsed rows are still replaced
+  by their panels. `tabs` stays `[]`.
+- Decision: an expanded row with a blank title gets no heading and no warning, because Grafana shows nothing for
+  it. If an expanded row's `panels` array is non-empty (unusual), those panels are listed after the heading.
+- Heading tiles go through `resolveTileOverlaps` like every other tile, and that is still the last step.
+- Next, imp-dashboard-collapsed-rows: use `isExpandedRow` to split the cases. Collapsed rows become tabs, and with
+  --no-tabs they become headings, which can reuse the heading tile built here.
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard with a top panel, a Traffic row
+  with two panels, an Errors row with one panel, and a blank-title row. dashboards/rows-demo.yml had the headings
+  Traffic (y 6) and Errors (y 15), both x 0 w 36 h 1. Requests and Latency were at y 7, Error ratio at y 16, and
+  tabs was []. The blank row added no tile, and the report had no row warnings. `lightdash lint` said all files
+  are valid. Acceptance: dashboard-rows 2/2, dashboard-layout 3/3, dashboard-command 4/4, dashboard-charts 4/4,
+  dashboard-panel-kinds 3/3, dashboard-dropped-panels 4/4. tsc (common) and oxlint are clean, and oxfmt was applied.
+- 2026-11-09T02:53:47Z supervisor: imp-dashboard-rows passed the gate in round 1

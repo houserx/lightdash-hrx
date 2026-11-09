@@ -47,6 +47,8 @@ export type GrafanaDashboardPanel = GrafanaPanelWithTargets & {
     gridPos?: { x?: number; y?: number; w?: number; h?: number };
     /** A collapsed row holds its panels here. */
     panels?: GrafanaDashboardPanel[];
+    /** Row panels: whether the row is collapsed. */
+    collapsed?: boolean;
     options?: Record<string, unknown>;
     /** Legacy graph panel series styles. */
     bars?: unknown;
@@ -354,13 +356,21 @@ const droppedPanelOptions = (
     return [...found].map(([path, reason]) => ({ path, reason }));
 };
 
-/** Panels in dashboard order, with the panels of collapsed rows in place of the row. */
+const isExpandedRow = (panel: GrafanaDashboardPanel) =>
+    panel.type === 'row' && panel.collapsed !== true;
+
+/**
+ * Panels in dashboard order. An expanded row stays in the list (it becomes a heading); its
+ * panels follow it in the export. A collapsed row is replaced by the panels it holds.
+ */
 const flattenPanels = (
     panels: GrafanaDashboardPanel[],
 ): GrafanaDashboardPanel[] =>
-    panels.flatMap((panel) =>
-        panel.type === 'row' ? flattenPanels(panel.panels ?? []) : [panel],
-    );
+    panels.flatMap((panel) => {
+        if (panel.type !== 'row') return [panel];
+        const held = flattenPanels(panel.panels ?? []);
+        return isExpandedRow(panel) ? [panel, ...held] : held;
+    });
 
 /** Converts one Grafana dashboard into dashboard and SQL chart content as code. */
 export const convertGrafanaDashboard = (
@@ -401,6 +411,20 @@ export const convertGrafanaDashboard = (
                 panel: panelName,
             });
         const position = tilePosition(panel);
+        if (isExpandedRow(panel)) {
+            // A row with no title shows nothing in Grafana, so it gets no heading.
+            if (!panelTitle) return;
+            tiles.push({
+                ...position,
+                x: 0,
+                w: LIGHTDASH_GRID_COLUMNS,
+                uuid: undefined,
+                type: DashboardTileTypes.HEADING,
+                tileSlug: uniqueSlug(panelTitle, 'heading', takenTileSlugs),
+                properties: { text: panelTitle },
+            });
+            return;
+        }
         const todoTile = (text: string) => {
             todos.push({ panel: panelName, text });
             tiles.push({
