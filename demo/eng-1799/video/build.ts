@@ -11,9 +11,12 @@
 // and <out>/thumbnail.png (1920x1080: the incident scene's closing frame under a title band).
 // Every frame of every scene is used. When the scenes together run longer than MAX_SCENES_SECONDS, the whole video is
 // sped up by one uniform factor so it stays inside the 2-4 minute budget. Without --music the MP4 has no audio track.
+// With --music the file is checked first (it must exist and be readable), then becomes one AAC stereo track: looped if
+// it is shorter than the video, cut to the video's length, faded in over MUSIC_FADE_IN_SECONDS and out over
+// MUSIC_FADE_OUT_SECONDS. The repo never ships or downloads audio; the music is whatever the person rendering supplies.
 // Relative paths resolve against the directory pnpm was started from.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -65,6 +68,8 @@ const FONT_CANDIDATES = [
 /** Shorter than this the video is under 2 minutes; it is still built, with a warning. */
 const MIN_SECONDS = 120;
 const THREADS = '2';
+const MUSIC_FADE_IN_SECONDS = 3;
+const MUSIC_FADE_OUT_SECONDS = 4;
 
 const log = (msg: string) => process.stderr.write(`eng-1799-demo video: ${msg}\n`);
 
@@ -114,6 +119,22 @@ function resolveFromInvocation(p: string): string {
     return path.resolve(process.env.INIT_CWD ?? process.cwd(), p);
 }
 
+/** The --music file, resolved: refused unless it is an existing, readable, non-empty regular file. */
+function musicFile(arg: string): string {
+    if (!arg.trim()) throw new Error('--music needs a file: the path to a music file you are licensed to use');
+    const file = resolveFromInvocation(arg);
+    if (!existsSync(file)) throw new Error(`--music file not found: ${file}`);
+    const st = statSync(file);
+    if (!st.isFile()) throw new Error(`--music is not a file: ${file}`);
+    try {
+        accessSync(file, constants.R_OK);
+    } catch {
+        throw new Error(`--music file is not readable: ${file}`);
+    }
+    if (st.size === 0) throw new Error(`--music file is empty: ${file}`);
+    return file;
+}
+
 function main(): void {
     const { values } = parseArgs({
         options: {
@@ -122,9 +143,8 @@ function main(): void {
             music: { type: 'string' },
         },
     });
-    if (values.music !== undefined) {
-        throw new Error('--music is not supported by this build yet (it comes with demo-video-music); build without it for a silent video');
-    }
+    // --music is checked before anything else, so a wrong music path is the first thing reported
+    const music = values.music === undefined ? undefined : musicFile(values.music);
     const scenesDir = values['scenes-dir'] ? resolveFromInvocation(values['scenes-dir']) : path.join(DEMO, 'out', 'scenes');
     const outDir = values.out ? resolveFromInvocation(values.out) : path.join(DEMO, 'out');
 
@@ -177,6 +197,15 @@ function main(): void {
         chains.push(`[${last}][s${i}]xfade=transition=fade:duration=${XFADE_SECONDS}:offset=${starts[i].toFixed(6)}[${next}]`);
         last = next;
     }
+    if (music) {
+        // the music input comes after the end card; looped so it always covers the video, re-timed by sample count (no
+        // gaps at the loop points), then cut to the video's exact length. No -shortest: it cuts the audio seconds early.
+        const fadeOut = Math.max(videoSeconds - MUSIC_FADE_OUT_SECONDS, 0);
+        chains.push(
+            `[${segs}:a:0]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=N/SR/TB,atrim=duration=${videoSeconds.toFixed(6)},` +
+                `afade=t=in:st=0:d=${MUSIC_FADE_IN_SECONDS},afade=t=out:st=${fadeOut.toFixed(6)}:d=${MUSIC_FADE_OUT_SECONDS}[aout]`,
+        );
+    }
     const cardInput = (seconds: number) => ['-f', 'lavfi', '-i', `color=c=${CARD_COLOUR}:s=${WIDTH}x${HEIGHT}:r=${FPS}:d=${seconds}`];
 
     // CHAPTERS.md: chapter k starts where the crossfade into it starts (whole seconds; strictly increasing).
@@ -195,9 +224,10 @@ function main(): void {
             ...cardInput(TITLE_SECONDS),
             ...clips.flatMap((f) => ['-i', f]),
             ...cardInput(END_SECONDS),
+            ...(music ? ['-stream_loop', '-1', '-i', music] : []),
             '-filter_complex', chains.join(';'),
             '-map', '[out]',
-            '-an',
+            ...(music ? ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k'] : ['-an']),
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
             '-r', String(FPS), '-threads', THREADS, '-filter_complex_threads', THREADS,
             '-movflags', '+faststart',
@@ -230,6 +260,7 @@ function main(): void {
         rmSync(thumbPartial, { force: true });
     }
     log(`video ${videoSeconds.toFixed(1)} s: title card, ${SCENES.length} captioned scenes, end card, ${XFADE_SECONDS} s crossfades`);
+    log(music ? `music from ${music}: AAC, ${MUSIC_FADE_IN_SECONDS} s fade in, ${MUSIC_FADE_OUT_SECONDS} s fade out` : 'no --music: silent');
     log(`wrote ${target}, ${thumb} and ${path.join(outDir, 'CHAPTERS.md')}`);
 }
 

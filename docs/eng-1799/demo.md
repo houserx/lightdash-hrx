@@ -254,7 +254,7 @@ Chromium outlives the run.
 
 ## Video build
 
-`pnpm -F eng-1799-demo video [--scenes-dir <dir>] [--out <dir>]` (`demo/eng-1799/video/build.ts`) joins the eight
+`pnpm -F eng-1799-demo video [--scenes-dir <dir>] [--out <dir>] [--music <file>]` (`demo/eng-1799/video/build.ts`) joins the eight
 scene recordings, `<scenes-dir>/<scene-id>/video.webm`, in walkthrough order into `<out>/eng-1799-demo.mp4`: H.264
 (yuv420p), 1920x1080, 30 fps, with ffmpeg from `ffmpeg-static`. `--scenes-dir` defaults to `demo/eng-1799/out/scenes`
 and `--out` to `demo/eng-1799/out`. Relative paths resolve against the directory you ran pnpm from.
@@ -274,8 +274,13 @@ operations" on a light band across the top. `THUMBNAIL_SCENE` in `build.ts` pick
 Every frame of every scene is kept. When the scenes together run longer than 225 s, the whole video is sped up by
 one uniform factor to 225 s. With the cards that comes to about 226 s, inside 4 minutes. A full walkthrough records
 about 300 s, so the scenes play at about 1.3x. Under 2 minutes the build still writes the video but prints a warning.
-A missing recording fails the build and names the file. The MP4 has no audio track. The demo ships no music, and
-`--music <file>` (music supplied by the person rendering the video) is refused until demo-video-music adds it.
+A missing recording fails the build and names the file.
+
+Without `--music` the MP4 has no audio track. The demo never ships or downloads audio. To add music, pass
+`--music <file>` with a file you are licensed to use (any format ffmpeg reads: mp3, wav, m4a, flac...). The build
+checks it before anything else: a missing, unreadable, empty or non-file path is refused with a message naming it.
+The music becomes one AAC stereo track (48 kHz, 192 kb/s). It loops if it is shorter than the video, is cut to the
+video's length, fades in over the first 3 s and fades out over the last 4 s.
 
 ## Known limits
 

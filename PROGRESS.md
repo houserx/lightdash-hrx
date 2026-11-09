@@ -2778,3 +2778,31 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **For demo-video-music:** the thumbnail step reads the finished MP4 with `-ss`, so adding an audio track does not
   affect it.
 - 2026-11-09T13:09:41Z supervisor: demo-video-thumbnail-chapters passed the gate in round 1
+
+### demo-video-music (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/video/build.ts`. `--music <file>` is now accepted. `musicFile()` runs first in `main()`, before
+    `--scenes-dir` is looked at. It resolves the path against INIT_CWD and refuses an empty argument or a path that is
+    missing, not a regular file, unreadable (`accessSync R_OK`) or empty, with "--music file not found: <path>" and similar.
+    The music is the input after the end card (`-stream_loop -1`), and its chain is `aformat 48k stereo, asetpts=N/SR/TB,
+    atrim=duration=<videoSeconds>, afade in 3 s, afade out over the last 4 s`. It is encoded as AAC at 192k. Without
+    --music it is still `-an` (silent), as before.
+  - docs/eng-1799/demo.md "Video build" describes --music.
+- **Trap: do not add `-shortest`.** With the filtergraph, `-shortest` cut the audio at 218.6 s of a 226.3 s video, so
+  the fade-out was lost. atrim already sets the exact length. `asetpts=N/SR/TB` keeps the looped input's timestamps
+  continuous across loop points.
+- **Decision: a music file shorter than the video loops.** Nothing in the spec covers this. Looping keeps music under
+  the whole video.
+- **No audio in the repo:** `git ls-files` lists no mp3/wav/aac/m4a/ogg/flac/opus files, and nothing downloads audio.
+  A file with no audio stream fails at ffmpeg ("matches no streams"). That is raw ffmpeg text, and it is acceptable.
+- **Tested as a user.** I made my own 60 s 330 Hz tone (mp3) and ran `pnpm -F eng-1799-demo video --scenes-dir
+  demo/eng-1799/out/scenes --out tmp/music-test/out --music tmp/music-test/my-tone.mp3` on the real recordings (31 s).
+  ffprobe shows h264 1920x1080 30 fps plus `Audio: aac (LC) 48000 Hz stereo`. The audio runs to 03:46.24 of 03:46.27.
+  volumedetect gives -46.8 dB at 0-0.4 s, -27 dB at 2 s, a steady -24.5 dB at 60/113/220 s (the loop is seamless) and
+  -47.8 dB in the last 0.5 s. A missing file, a directory, an unreadable file and `--music ""` are each refused with a
+  clear message, even with a bad --scenes-dir. I deleted the scratch outputs.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `run.sh video.spec.ts --grep "demo-video-music:"`
+  passed (19 s). `demo-video-build:`, `demo-video-cards-captions:` and `demo-video-thumbnail-chapters:` still pass. No
+  ffmpeg process is left.
+- 2026-11-09T13:19:14Z supervisor: demo-video-music passed the gate in round 1
