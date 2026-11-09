@@ -1204,3 +1204,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Next sessions must know: the rule's own labels include `__name__` from the series (here `db_cpu`) next to
   alertname/instance/team. The check uses toMatchObject, so this is fine, but it is visible in incident.io payloads.
 - 2026-11-09T05:18:56Z supervisor: int-alert-incident-io-lifecycle passed the gate in round 1
+- 2026-11-09 int-alert-engine-down (round 1): with the engine down, an Alert Rule goes to `error` with a DatasourceError
+  instance, a history transition and a DatasourceError notification.
+  Changed and why: nothing in the app or harness. The errorState handling, the DatasourceError instance, history and
+  notification flush already worked from the alerting merge and earlier integration features. The check passed on the
+  first run after init (1/1).
+  Tested as a user (`../tmp/manual-alert-engine-down/try.mts`, run from e2e/eng-1799 with `pnpm exec node --import tsx`,
+  TZ=UTC and absolute `E2E_REPO_ROOT`/`E2E_ENGINE_BINARY`). The webhook contact point, routes and rule returned 200
+  (rule errorState defaults to `error`). One cycle with the engine up gave `normal`. I then stopped the engine, waited
+  for the next 30s slot and ran two cycles. The rule became `error` with one instance {alertname: DatasourceError,
+  rulename: <rule name>, state error, annotations.error "connect ECONNREFUSED 127.0.0.1:<port>"}. History held one
+  `transition` normal -> error. The webhook got one POST /hook with version "4", status firing and the DatasourceError
+  alert carrying the same error annotation.
+  Next sessions must know: a rule is evaluated only once per `interval` slot. Cycles run again inside the same 30s slot
+  after a successful evaluation do not re-evaluate it, so a rule that went normal and then lost the engine in the
+  same slot stays `normal` until the next slot. The check avoids this because the engine stops before the first evaluation.
+- 2026-11-09T05:23:02Z supervisor: int-alert-engine-down passed the gate in round 1
