@@ -1645,3 +1645,30 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - Note: demo-package-workspace halted earlier in this run (no `typecheck` script / `tsconfig.json` yet); this
   feature does not depend on it.
 - 2026-11-09T06:51:17Z supervisor: demo-config-validation passed the gate in round 1
+
+### demo-scenario-clock (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/clock.ts`: `ScenarioClock` (timeline = startedAt/incidentAt/recoveryAt in epoch ms,
+  `phaseAt(t)`, `restart(incidentAfterSeconds, recoveryAfterSeconds)`, `view()` = the pinned JSON plus
+  `incidentAfterSeconds`/`recoveryAfterSeconds`) and `validateOffsets` (finite numbers, |x| <= 999999999,
+  recovery > incident; negative allowed). **Fakes must read `clock.current()` / `phaseAt(t)` per request** so data
+  at t is a pure function of t and the current timeline.
+- New `demo/eng-1799/stack/telemetry-fakes.ts`: the one "scenario + telemetry fakes" process. Serves
+  `GET /scenario`, `POST /scenario/restart` (400 with `{error}` on bad offsets or bad JSON), `GET /healthz` on an
+  ephemeral 127.0.0.1 port, then writes `--ready-file` (`.state/run/telemetry-fakes.json`, `{scenario:{url}}`)
+  atomically. **Add Prometheus/Loki/Tempo/CloudWatch here** as more `http.Server`s on their own ports, add them to
+  `servers` and to the ready-file JSON. Runs as `node --import tsx` (one process, cwd = demo dir, no
+  `"type": "module"`, so no top-level await). The clock starts when this process starts (T = process start).
+- `up.sh` `# ---- stack` section now: if `stack.json` exists and every recorded pid is alive and the clock answers,
+  it says "already running; nothing changed" and exits 0 (same pids); otherwise it runs `down.sh` first. Services
+  start through `start <name> <cmd...>` (perl `setpgrp` + `exec`: own process group, pid kept, log in
+  `.state/logs/<name>.log`) and `wait_ready`; on failure the EXIT trap TERMs what this run started. `stack.json`
+  is written by a `node -e` block at the end with **only** `scenario` and `processes` so far: later features add
+  their keys there. The `Lightdash: <url>` line is not printed yet (the Lightdash feature adds it in `report()`).
+- Tested as a user: `DEMO_INCIDENT_AT=100 DEMO_RECOVERY_AT=400 up.sh` → GET shows offsets 100/400, phase
+  baseline; restart 3/7 → baseline, incident from ~3 s, recovered from ~7 s (polled once a second); restart
+  -120/-30 → recovered with incidentAt 2 min ago; -60/600 → incident; 10/5, a string offset and non-JSON → 400;
+  second `up.sh` kept pid; `down.sh` stopped it, no process left. Check `scenario-clock.spec.ts` (--stack) passes;
+  `config-validation.spec.ts` still passes. `tsc --strict --module nodenext` over `stack/*.ts` is clean
+  (pass `--ignoreConfig`: a parent tsconfig is picked up otherwise; the demo still has no `tsconfig.json`).
+- 2026-11-09T06:54:45Z supervisor: demo-scenario-clock passed the gate in round 1
