@@ -727,3 +727,33 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   Acceptance: dashboard-panel-kinds 3/3, dashboard-charts 4/4, dashboard-command 4/4. tsc (common) and oxlint are clean,
   and oxfmt was applied.
 - 2026-11-09T02:40:31Z supervisor: imp-dashboard-panel-kinds passed the gate in round 1
+
+### imp-dashboard-dropped-panels (2026-11-08)
+
+- Panel drops already worked: since imp-cli-grafana-dashboard, alertlist, dashlist and news give one `panel-dropped`
+  warning carrying the mapping's reason (alertlist cites ADR 0001) and no tile.
+- New: `droppedPanelOptions` in packages/common/src/eng1799/grafanaDashboardImport.ts walks each imported panel
+  (chart, markdown and TODO-tile panels; never dropped panels) and checks each path with
+  `getGrafanaPanelOptionMapping`. It stops at the first path the mapping knows, so a dropped array or object such as
+  `options.legend.calcs` gives one warning. Override properties are looked up as `fieldConfig.overrides.<id>`. Each
+  option the mapping drops gives one `option-dropped` warning: "The <type> panel option <path> is not imported.
+  <reason>". Unset, null and blank-string values are skipped: Grafana exports `description: ""` on text panels, and a
+  blank value sets nothing.
+- Decision: per-panel time overrides (`timeFrom`, `timeShift`) use the `option-dropped` code too. The panel mapping
+  already lists them as dropped common options with their own reasons, so I didn't add a new code.
+- Decision: `transformations` is skipped in the option walk. The transform-* features own that warning
+  (`transformation-unsupported`), and skipping it avoids a double warning. Until those features land, transformations
+  are still dropped without a warning. Options the mapping *keeps* (legend placement, units, ...) aren't reported here,
+  even though the SQL chart config can't hold them yet. Later features (legend-stacking, thresholds-units) own those.
+- `ImportWarningCode` now lists panel-type-unsupported, panel-dropped, option-dropped and chart-kind-fallback.
+- Trap: the CLI loads the *built* @lightdash/common. After you edit common, rerun init.sh before the acceptance
+  tests, or the old build runs.
+- Heads-up for imp-roundtrip-warning-snapshot and imp-docs: option-dropped is now the largest code. golden-signals
+  gives 71 of its 89 warnings.
+- Tested as a user: ran the CLI from source on a synthetic dashboard with alertlist, dashlist, news and a timeseries
+  that sets lineWidth, gradientMode, tooltip.mode, legend.calcs, an override with custom.lineStyle, timeFrom and
+  timeShift. The run wrote 1 chart and a dashboard with 1 tile. IMPORT-REPORT.md listed 3 panel-dropped rows (ADR 0001
+  on alertlist) and 7 option-dropped rows, each naming its path and reason. Acceptance: dashboard-dropped-panels 4/4,
+  dashboard-command 4/4, dashboard-charts 4/4, dashboard-panel-kinds 3/3. tsc (common) and oxlint are clean, and oxfmt
+  was applied.
+- 2026-11-09T02:45:18Z supervisor: imp-dashboard-dropped-panels passed the gate in round 1

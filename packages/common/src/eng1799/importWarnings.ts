@@ -33,6 +33,10 @@ export type ImportWarningCode =
     | 'variable-unsupported'
     | 'variable-multi-value'
     | 'variable-format-ignored'
+    | 'panel-type-unsupported'
+    | 'panel-dropped'
+    | 'option-dropped'
+    | 'chart-kind-fallback'
     | (string & {});
 
 export type ImportWarning = {

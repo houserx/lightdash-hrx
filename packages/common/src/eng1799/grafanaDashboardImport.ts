@@ -19,6 +19,7 @@ import {
 import type { AllVizChartConfig } from '../visualizations/types';
 import {
     getGrafanaPanelMapping,
+    getGrafanaPanelOptionMapping,
     type GrafanaPanelMapping,
 } from './grafanaPanelMapping';
 import {
@@ -229,6 +230,80 @@ const tilePosition = (panel: GrafanaDashboardPanel) => {
     };
 };
 
+/**
+ * Panel keys the importer reads itself (identity, layout, queries) rather than options the
+ * panel mapping lists. `transformations` belong to the transformation importer.
+ */
+const NON_OPTION_PANEL_KEYS = new Set([
+    'id',
+    'type',
+    'title',
+    'gridPos',
+    'datasource',
+    'targets',
+    'panels',
+    'pluginVersion',
+    'libraryPanel',
+    'transformations',
+]);
+
+/**
+ * The options a panel sets that the panel mapping drops, with the mapping's reason. Walks
+ * the panel JSON from the top and stops at the first path the mapping knows, so a dropped
+ * object (`options.legend.calcs`) is one warning, not one per key. Override properties
+ * are looked up as `fieldConfig.overrides.<property id>`. Per-panel time overrides
+ * (`timeFrom`, `timeShift`) are dropped options too. Options the mapping keeps are not
+ * reported here, even where a SQL chart cannot hold them yet.
+ */
+const droppedPanelOptions = (
+    panel: GrafanaDashboardPanel,
+    type: string,
+): { path: string; reason: string }[] => {
+    const found = new Map<string, string>();
+    const visit = (path: string, value: unknown) => {
+        // Unset, null and blank values (Grafana exports `description: ""`) set nothing.
+        if (value === undefined || value === null) return;
+        if (typeof value === 'string' && value.trim() === '') return;
+        const mapping = getGrafanaPanelOptionMapping(type, path);
+        if (mapping) {
+            if (mapping.target === 'dropped' && !found.has(path)) {
+                found.set(path, mapping.reason);
+            }
+            return;
+        }
+        if (isRecord(value)) {
+            Object.entries(value).forEach(([key, child]) =>
+                visit(`${path}.${key}`, child),
+            );
+        }
+    };
+    Object.entries(panel).forEach(([key, value]) => {
+        if (NON_OPTION_PANEL_KEYS.has(key)) return;
+        if (key === 'fieldConfig' && isRecord(value)) {
+            visit('fieldConfig.defaults', value.defaults);
+            const overrides = Array.isArray(value.overrides)
+                ? value.overrides
+                : [];
+            overrides.forEach((override: unknown) => {
+                const properties =
+                    isRecord(override) && Array.isArray(override.properties)
+                        ? override.properties
+                        : [];
+                properties.forEach((property: unknown) => {
+                    if (isRecord(property) && typeof property.id === 'string')
+                        visit(
+                            `fieldConfig.overrides.${property.id}`,
+                            property.value ?? true,
+                        );
+                });
+            });
+            return;
+        }
+        visit(key, value);
+    });
+    return [...found].map(([path, reason]) => ({ path, reason }));
+};
+
 /** Panels in dashboard order, with the panels of collapsed rows in place of the row. */
 const flattenPanels = (
     panels: GrafanaDashboardPanel[],
@@ -309,6 +384,12 @@ export const convertGrafanaDashboard = (
             );
             return;
         }
+        droppedPanelOptions(panel, type).forEach(({ path, reason }) =>
+            warn(
+                'option-dropped',
+                `The ${type} panel option ${path} is not imported. ${reason}`,
+            ),
+        );
         if (mapping.target === 'markdown_tile') {
             const content = panel.options?.content;
             tiles.push({
