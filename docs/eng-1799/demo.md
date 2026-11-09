@@ -257,12 +257,23 @@ Chromium outlives the run.
 `pnpm -F eng-1799-demo video [--scenes-dir <dir>] [--out <dir>]` (`demo/eng-1799/video/build.ts`) joins the eight
 scene recordings, `<scenes-dir>/<scene-id>/video.webm`, in walkthrough order into `<out>/eng-1799-demo.mp4`: H.264
 (yuv420p), 1920x1080, 30 fps, with ffmpeg from `ffmpeg-static`. `--scenes-dir` defaults to `demo/eng-1799/out/scenes`
-and `--out` to `demo/eng-1799/out`. Relative paths resolve against the directory you ran pnpm from. Every frame of
-every scene is kept. When the scenes together run longer than 225 s, the whole video is sped up by one uniform factor
-to 225 s, which keeps it inside 4 minutes. A full walkthrough records about 296 s, so it plays at about 1.3x. Under
-2 minutes the build still writes the video but prints a warning. A missing recording fails the build and names the
-file. The MP4 has no audio track. The demo ships no music, and `--music <file>` (music supplied by the person
-rendering the video) is refused until demo-video-music adds it.
+and `--out` to `demo/eng-1799/out`. Relative paths resolve against the directory you ran pnpm from.
+
+The video opens on a 4 s title card, "Lightdash for HouseRx operations". Each scene carries a plain-language caption
+in a dark band across the lower third. The video ends on a 4 s end card. Neighbouring parts (title card, scenes, end
+card) crossfade for 0.75 s. The cards are light with dark text, like the Lightdash UI. The captions and chapter titles
+are in the `SCENES` list at the top of `build.ts`. Text uses the first system font found (Helvetica on macOS, DejaVu or
+Liberation Sans on Linux), else fontconfig's default sans.
+
+Next to the MP4 the build writes `<out>/CHAPTERS.md`, one `<mm:ss> <title>` line per chapter: the title card at 00:00,
+the eight scenes, then the end card. A chapter starts where the crossfade into it starts, rounded down to whole
+seconds.
+
+Every frame of every scene is kept. When the scenes together run longer than 225 s, the whole video is sped up by
+one uniform factor to 225 s. With the cards that comes to about 226 s, inside 4 minutes. A full walkthrough records
+about 300 s, so the scenes play at about 1.3x. Under 2 minutes the build still writes the video but prints a warning.
+A missing recording fails the build and names the file. The MP4 has no audio track. The demo ships no music, and
+`--music <file>` (music supplied by the person rendering the video) is refused until demo-video-music adds it.
 
 ## Known limits
 

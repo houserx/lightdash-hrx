@@ -2722,3 +2722,35 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
 - **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh video.spec.ts --grep
   "demo-video-build:"` passed (11.7 s). No ffmpeg process is left.
 - 2026-11-09T12:48:25Z supervisor: demo-video-build passed the gate in round 1
+
+### demo-video-cards-captions (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/video/build.ts`. The ffmpeg graph is now: title card (4 s, lavfi `color` + drawtext "Lightdash for
+    HouseRx operations" and a subtitle) → eight scenes, each with a lower-third caption (drawbox dark band at
+    y=ih-220, h=120, plus a white 48 px drawtext) → end card (4 s). Neighbouring segments are joined with `xfade`
+    (fade, 0.75 s). Every segment is normalised (fps 30, yuv420p, `tpad` clone + `trim` to an exact length, settb), so
+    the xfade offsets are exact. `SCENES` is now `{ id, chapter, caption }`, and the captions and chapter titles live
+    there. The build also writes `<out>/CHAPTERS.md`: 10 lines of `mm:ss title`. A chapter starts where the crossfade
+    into it starts, floored and kept strictly increasing. The build fails if the video would run over 240 s, and
+    still warns under 120 s.
+  - docs/eng-1799/demo.md "Video build" now describes the cards, captions, crossfades, CHAPTERS.md and the font
+    lookup.
+- **Decision / trap: the cards are light (0xf5f6fa, dark text), not dark.** A navy card failed the demo-video-build
+  order check. Fading navy into scene 1's synthetic blue passes, on average, through scene 8's colour (0,0,128), so the
+  colour sequence started with 7. Any dark card fading into blue does this. Keep the cards light.
+- **Fonts.** drawtext uses the first existing file of Helvetica.ttc / Arial / DejaVuSans / LiberationSans, else
+  `font=Sans` (fontconfig). Text goes through `filterValue()`, which does ffmpeg's two escaping levels, with
+  `expansion=none`, so captions may contain `:`, `,` and `'`.
+- **For demo-video-thumbnail-chapters:** CHAPTERS.md already meets that spec's chapter part: 10 unique titles, the
+  first containing "Lightdash for HouseRx operations" at 00:00. Only the thumbnail is left. **For demo-video-music:**
+  the video length is `starts[last] + END_SECONDS` (logged as "video N s"), so the audio fade-out can use it.
+- **Tested as a user.** I ran `pnpm -F eng-1799-demo video --scenes-dir demo/eng-1799/out/scenes` on the real
+  recordings (31 s wall). Scenes 301 s, sped up x1.339, video 226.3 s, h264 1920x1080 30 fps, no audio. In a contact
+  sheet, 1.5 s shows the title card. 9/50/89/102/117/140/162/200 s show each scene with its caption band in the lower
+  third. 15.2 and 15.5 s show scene 1 dissolving into scene 2, and 225.5 s shows the end card. CHAPTERS.md runs
+  00:00 title … 02:30 Recovery, 03:42 End card. I rebuilt the default demo/eng-1799/out/ outputs (gitignored).
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `run.sh video.spec.ts --grep
+  "demo-video-cards-captions:"` passed (19 s), and `--grep "demo-video-build:"` still passes. hygiene.spec.ts and
+  docs.spec.ts fail for reasons outside this feature, which belong to later features (no run-all.sh yet, no prerequisites section).
+- 2026-11-09T12:59:49Z supervisor: demo-video-cards-captions passed the gate in round 1
