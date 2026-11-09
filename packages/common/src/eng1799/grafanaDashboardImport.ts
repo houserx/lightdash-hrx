@@ -112,6 +112,26 @@ export const readGrafanaDashboardJson = (
 /** A panel that became a TODO tile: what the reader has to do by hand. */
 export type ImportTodo = { panel: string; text: string };
 
+/** The separate things a TODO asks for: a panel's translator joins one per target with newlines. */
+const todoItems = (text: string): string[] => {
+    const items = text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    return items.length > 0 ? items : [text];
+};
+
+/**
+ * A TODO tile's markdown. One TODO is a plain paragraph. Several TODOs become a list:
+ * markdown joins lines split by single newlines into one paragraph, which would run them together.
+ */
+const todoMarkdown = (text: string): string => {
+    const items = todoItems(text);
+    return items.length === 1
+        ? items[0]
+        : items.map((item) => `- ${item}`).join('\n');
+};
+
 export type GrafanaDashboardImportOptions = {
     spaceSlug: string;
     /** Datasources and Ops Marts for query translation (variables come from the dashboard). */
@@ -692,7 +712,7 @@ export const convertGrafanaDashboard = (
                     'todo',
                     takenTileSlugs,
                 ),
-                properties: { title: panelName, content: text },
+                properties: { title: panelName, content: todoMarkdown(text) },
             });
         };
 
@@ -859,9 +879,15 @@ export const renderGrafanaImportReport = (
     if (todos.length === 0) {
         lines.push('No TODOs.');
     } else {
-        todos.forEach((t) =>
-            lines.push(`- **${cell(t.panel)}**: ${cell(t.text)}`),
-        );
+        todos.forEach((t) => {
+            const items = todoItems(t.text);
+            if (items.length === 1) {
+                lines.push(`- **${cell(t.panel)}**: ${cell(items[0])}`);
+            } else {
+                lines.push(`- **${cell(t.panel)}**:`);
+                items.forEach((item) => lines.push(`  - ${cell(item)}`));
+            }
+        });
     }
     return `${lines.join('\n')}\n`;
 };

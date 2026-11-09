@@ -910,3 +910,25 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   4/4, plus dashboard-command, -charts, -links, -collapsed-rows, -dropped-panels, -layout, -rows, -text, -panel-kinds all
   passing. tsc (common) and oxlint are clean, and oxfmt was applied.
 - 2026-11-09T03:13:50Z supervisor: imp-dashboard-time-range passed the gate in round 1
+
+### imp-dashboard-todo-tiles (2026-11-08)
+
+- The behaviour was already in place from imp-cli-grafana-dashboard: a panel whose translation has no SQL (or an
+  unknown panel type) becomes a markdown tile at its gridPos, titled after the panel, holding the translator's TODO
+  text, and `todos` counts it. The check passed before any change.
+- Refinement in packages/common/src/eng1799/grafanaDashboardImport.ts: a panel with several untranslatable targets
+  gets one TODO line per target (the translator joins them with `\n`). Markdown folds single newlines into one
+  paragraph, so the tile ran them together, and IMPORT-REPORT.md's `cell()` ran them into one bullet. Now
+  `todoMarkdown` makes them a markdown list in the tile (a single TODO stays a plain paragraph), and the report gives
+  that panel a nested list. `ImportTodo.text` is unchanged, so `todos` still counts tiles, not lines.
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard (a Prometheus timeseries, a GitHub
+  Pull_Requests table, a panel with two GitHub targets, an unknown panel type). The output was one chart, and the
+  "Open pull requests" tile at x 18, y 0, w 18 said "TODO: GitHub Pull_Requests target A needs an Ops Mart: map
+  github.Pull_Requests to an ops_marts table, or rebuild the query by hand". The two-target tile was a two-item list, the
+  report listed the TODOs (nested for the two-target panel), and import-summary.json showed todos 3 and no-ops-mart 3.
+  Acceptance: dashboard-todo-tiles 2/2, dashboard-text 3/3, dashboard-command 4/4. tsc (common) and oxlint are
+  clean, and oxfmt reports nothing to change.
+- Trap: dashboard-report, dashboard-datasources and perses-panels fail at present because their features
+  (`--datasources`, the Perses importer) are not built yet. They failed the same way before this change.
+- Perses (imp-perses-panels) should reuse the same TODO tile path so multi-line TODOs render the same way.
+- 2026-11-09T03:18:10Z supervisor: imp-dashboard-todo-tiles passed the gate in round 1
