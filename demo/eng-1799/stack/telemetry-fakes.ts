@@ -6,20 +6,22 @@
 // Environment: DEMO_INCIDENT_AT, DEMO_RECOVERY_AT (seconds after start; up.sh has validated them).
 // The scenario API listens on an ephemeral 127.0.0.1 port; each telemetry fake listens exactly on the
 // endpoint the engine config reserved for it (`endpoints.*` of --endpoints-file). Once all of them listen,
-// the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}}) atomically;
+// the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}, "loki": {"url": ...}})
+// atomically;
 // up.sh waits for it.
 //
 // Scenario API:
 //   GET  /scenario          -> {startedAt, incidentAt, recoveryAt, now, phase, ...}
 //   POST /scenario/restart  {incidentAfterSeconds, recoveryAfterSeconds} (may be negative) -> same shape
 //
-// The telemetry fakes read the one ScenarioClock below per request. Prometheus is here (stack/prometheus.ts);
-// Loki, Tempo and CloudWatch join this process the same way.
+// The telemetry fakes read the one ScenarioClock below per request. Prometheus (stack/prometheus.ts) and Loki
+// (stack/loki.ts) are here; Tempo and CloudWatch join this process the same way.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parseArgs } from 'node:util';
 import { ScenarioClock, validateOffsets } from './clock.js';
+import { lokiHandler } from './loki.js';
 import { prometheusHandler } from './prometheus.js';
 
 const { values: args } = parseArgs({
@@ -102,6 +104,7 @@ const scenarioServer = http.createServer((req, res) => {
 });
 
 const prometheusServer = http.createServer(prometheusHandler(() => clock.current()));
+const lokiServer = http.createServer(lokiHandler(() => clock.current()));
 
 /** Listens on 127.0.0.1:<port> (0 = ephemeral) and resolves with the server's URL. */
 function listen(server: http.Server, port = 0): Promise<string> {
@@ -114,7 +117,7 @@ function listen(server: http.Server, port = 0): Promise<string> {
     });
 }
 
-const servers = [scenarioServer, prometheusServer];
+const servers = [scenarioServer, prometheusServer, lokiServer];
 
 function shutdown(signal: string): void {
     console.log(`telemetry-fakes: ${signal}, stopping`);
@@ -137,7 +140,8 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     const { endpoints } = JSON.parse(readFileSync(endpointsPath, 'utf8')) as { endpoints: Record<string, unknown> };
     const scenarioUrl = await listen(scenarioServer);
     const prometheusUrl = await listen(prometheusServer, reservedPort(endpoints, 'prometheus'));
-    const ready = { scenario: { url: scenarioUrl }, prometheus: { url: prometheusUrl } };
+    const lokiUrl = await listen(lokiServer, reservedPort(endpoints, 'loki'));
+    const ready = { scenario: { url: scenarioUrl }, prometheus: { url: prometheusUrl }, loki: { url: lokiUrl } };
     writeFileSync(`${file}.tmp`, `${JSON.stringify(ready, null, 2)}\n`);
     renameSync(`${file}.tmp`, file);
     const view = clock.view();
@@ -145,6 +149,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
         `telemetry-fakes: scenario clock at ${scenarioUrl} (started ${view.startedAt}, incident ${view.incidentAt}, recovery ${view.recoveryAt})`,
     );
     console.log(`telemetry-fakes: Prometheus at ${prometheusUrl}`);
+    console.log(`telemetry-fakes: Loki at ${lokiUrl}`);
 }
 
 main(readyFile, endpointsFile).catch((e: unknown) => {

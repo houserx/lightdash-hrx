@@ -27,7 +27,7 @@ const SCRAPE_INTERVAL_S = 15;
 /** Prometheus' own limit on points per series in one query_range. */
 const MAX_POINTS = 11_000;
 
-type Labels = Record<string, string>;
+export type Labels = Record<string, string>;
 type Series = { labels: Labels; value: (t: number, tl: Timeline) => number };
 
 /** Deterministic integer in [0, n) from a key. */
@@ -64,16 +64,17 @@ function sampleAt(s: Series, t: number, tl: Timeline): number {
 
 // ---------------------------------------------------------------- PromQL (the small subset the demo needs)
 
-class BadData extends Error {}
+/** A query or parameter the fake cannot answer (Prometheus: 400 bad_data). Shared with the Loki fake. */
+export class BadData extends Error {}
 
-type Matcher = { name: string; op: '=' | '!=' | '=~' | '!~'; value: string; re?: RegExp };
-type Selector = { metric: string; matchers: Matcher[] };
+export type Matcher = { name: string; op: '=' | '!=' | '=~' | '!~'; value: string; re?: RegExp };
+export type Selector = { metric: string; matchers: Matcher[] };
 type Aggregation = { op: 'sum' | 'min' | 'max' | 'avg' | 'count'; by?: string[]; without?: string[] };
 type Query = { selector: Selector; aggregation?: Aggregation };
 
 const IDENT = /^[a-zA-Z_:][a-zA-Z0-9_:]*/;
 
-function parseSelector(src: string): Selector {
+export function parseSelector(src: string): Selector {
     const m = src.match(IDENT);
     const metric = m ? m[0] : '';
     let rest = src.slice(metric.length).trim();
@@ -108,7 +109,7 @@ function parseSelector(src: string): Selector {
     return { metric, matchers };
 }
 
-function parseGrouping(src: string): { kind: 'by' | 'without'; labels: string[]; rest: string } | undefined {
+export function parseGrouping(src: string): { kind: 'by' | 'without'; labels: string[]; rest: string } | undefined {
     const m = src.match(/^(by|without)\s*\(([^)]*)\)\s*/);
     if (!m) return undefined;
     const labels = m[2].split(',').map((l) => l.trim()).filter(Boolean);
@@ -142,7 +143,7 @@ export function parseQuery(raw: string): Query {
     return { selector: parseSelector(inner), aggregation };
 }
 
-function matches(labels: Labels, ms: Matcher[]): boolean {
+export function matches(labels: Labels, ms: Matcher[]): boolean {
     return ms.every((m) => {
         const v = labels[m.name] ?? '';
         switch (m.op) {
@@ -213,7 +214,7 @@ function parseTime(name: string, raw: string | undefined, fallback?: number): nu
 }
 
 /** Prometheus duration: decimal seconds or e.g. 15s, 1m30s, 500ms. */
-function parseStep(raw: string | undefined): number {
+export function parseStep(raw: string | undefined): number {
     if (raw === undefined || raw === '') throw new BadData('missing parameter "step"');
     let seconds: number;
     if (/^\d+(\.\d+)?$/.test(raw)) seconds = Number(raw);

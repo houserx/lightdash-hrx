@@ -69,6 +69,7 @@ report() {
     scenario_url="$(json_url "$STACK_JSON" scenario)"
     echo "up.sh: scenario clock: $scenario_url/scenario (restart: POST $scenario_url/scenario/restart)"
     echo "up.sh: Prometheus (fake): $(json_url "$STACK_JSON" prometheus)"
+    echo "up.sh: Loki (fake): $(json_url "$STACK_JSON" loki)"
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
@@ -206,6 +207,9 @@ curl -fsS -m 5 "$SCENARIO_URL/scenario" >/dev/null ||
 PROMETHEUS_URL="$(json_url "$RUN/telemetry-fakes.json" prometheus)"
 curl -fsS -m 5 "$PROMETHEUS_URL/-/ready" >/dev/null ||
     { echo "up.sh: the fake Prometheus at $PROMETHEUS_URL does not answer" >&2; exit 1; }
+LOKI_URL="$(json_url "$RUN/telemetry-fakes.json" loki)"
+curl -fsS -m 5 "$LOKI_URL/ready" >/dev/null ||
+    { echo "up.sh: the fake Loki at $LOKI_URL does not answer" >&2; exit 1; }
 
 DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" start engine "$ENGINE_BIN" --config "$ENGINE_CONFIG"
 ENGINE_PID=$STARTED_PID
@@ -236,6 +240,7 @@ const telemetry = JSON.parse(fs.readFileSync(telemetryFile, "utf8"));
 const stack = {
     scenario: telemetry.scenario,
     prometheus: telemetry.prometheus,
+    loki: telemetry.loki,
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
     engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
     processes: [

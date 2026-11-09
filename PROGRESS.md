@@ -1755,3 +1755,35 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   fake-prometheus, engine-boot, platform-db, scenario-clock (--stack, 100/400) and config-validation pass; `tsc
   --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no `.state` process left.
 - 2026-11-09T07:08:15Z supervisor: demo-fake-prometheus passed the gate in round 1
+
+### demo-fake-loki (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/loki.ts`: `lokiHandler(() => clock.current())`, served by telemetry-fakes on
+  `endpoints.loki`. Two streams `{app="fill-service", env="demo", level="info"|"error"}`, logfmt lines. One slot
+  per whole second: the line's ms offset, level and wording are a sha256 hash of the second. Baseline/recovered:
+  ~20 info lines/min plus one ordinary error line every 40 s, **so every 1 m window has 1 or 2 errors, never 0**
+  (an error-rate Alert Rule gets data in the baseline, not NoData). Incident `[incidentAt, recoveryAt)`: an extra
+  error every 3 s plus ~1/6 of the other seconds (~27/min seen), all `msg="create shipping label failed"
+  downstream=shipping-label-api duration_ms=2000..4999`; "label created" info lines carry the same slow
+  durations in the incident and 120..479 ms otherwise (matches the Tempo pin).
+  `fillServiceLogs(fromMs, toMs, timeline)` is exported for the CloudWatch Logs fake ("ERROR follows the
+  error-log numbers"): reuse it rather than writing a second generator.
+- API: `/loki/api/v1/query_range` (streams or matrix), `/loki/api/v1/query` (metric only, like Loki),
+  labels, label values, series, buildinfo, `/ready`; GET or POST form; errors are Loki-style plain-text 400s.
+  Loki defaults: limit 100 (max 5000), direction backward, start = end-1h, step = max(range/250, 1s); times in ns,
+  s or RFC 3339; ranges over 7 days refused (lines are generated on demand). LogQL subset: selector + line
+  filters `|= != |~ !~`; `count_over_time|rate|bytes_over_time(... [range])`, optionally in
+  `sum|min|max|avg|count [by|without (...)]`. Metric points with no lines are omitted, as Loki does. Not yet:
+  `| logfmt`, label filters, `unwrap`; extend `parseLogQuery`/`parseMetricQuery` if a dashboard, rule or MCP needs them.
+- `prometheus.ts` now exports `BadData`, `Labels`, `Matcher`, `Selector`, `parseSelector`, `parseGrouping`,
+  `matches`, `parseStep` (shared with the Loki fake, behaviour unchanged). `up.sh` checks `$LOKI_URL/ready`, puts
+  `loki.url` in stack.json and `report()` prints it.
+- Tested as a user: `up.sh`, restart -240/-90, through the engine (pg-wire, stack.json creds):
+  `logql('{app="fill-service"} |= "level=error"', now-400s, now, 5000, 'forward')` → 76 lines, 1.6/min baseline,
+  27.3/min incident, every incident error mentions shipping-label-api; `{app="fill-service"}` baseline 51 lines
+  (default backward, newest first); `logql_metric('sum(count_over_time(... [1m]))', ..., '30s')` 1-2 in the
+  baseline, 11..28 in the incident, back to 1 after recovery; `sum by (level) (rate(...[1m]))` works; `| json`
+  → engine error "HTTP 400: parse error: ..."; `{app="other"}` → 0 rows; repeated query identical. Checks
+  fake-loki, fake-prometheus, engine-boot, scenario-clock, platform-db (--stack) and config-validation pass;
+  `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no process left.
+- 2026-11-09T07:14:26Z supervisor: demo-fake-loki passed the gate in round 1
