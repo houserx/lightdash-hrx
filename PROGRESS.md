@@ -931,3 +931,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   returns every fixture stream, restricted-looking ones included. That is the fake, not a leak:
   assert on `loki.requests`, not on the rows returned.
 - 2026-11-09T04:17:27Z supervisor: int-mcp-restricted-hidden passed the gate in round 1
+- int-fix-mcp-write-preview (round 1): the MCP now mints confirmation tokens in the engine's encoding.
+  `packages/telemetry-mcp/src/identity/confirmation.ts` payload is now
+  `{v:1, typ:"write_confirmation", statement_sha256, sub, project, iat, exp, nonce}` (was `stmt_sha256`, no
+  `typ`/`iat`), which is the same as the Lightdash backend's minter and `federation-engine/src/write.rs`
+  `verify_confirmation`. Lifetime is still 60 s (`exp = iat + 60`, so within the engine's 120 s limit). New export
+  `CONFIRMATION_TOKEN_TYPE`. Its unit test (`src/engine/write.test.ts`) now checks the new keys (9/9). MCP tsc is clean.
+  Before this, every MCP write_preview got HTTP 403 "confirmation token is missing or not valid".
+  Tested by hand (`../tmp/manual-mcp-write-preview/try.mts`, run from e2e/eng-1799 with tsx; synthetic values unlike
+  the check) through the real MCP over HTTP with the real engine and a Platform Database:
+  `UPDATE ... SET name='renamed' WHERE id=2 RETURNING id, name` gave preview true, rows_affected 1, the returned row;
+  a DELETE without RETURNING gave returning null; a bad column gave a 422 tool error. The Platform Database was
+  unchanged. There were 3 audit items, all action ai_ask, mode write, preview true (the bad one has status error).
+  The only write tool listed is write_preview; there is no commit tool. A user without platform_write is refused by
+  the MCP before it calls the engine. The check passes (1/1).
+  Trap: only the exact value "true" makes an attribute true (decision 8). A user with `platform_write: 'yes'` is refused.
+- 2026-11-09T04:20:42Z supervisor: int-fix-mcp-write-preview passed the gate in round 1
