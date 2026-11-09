@@ -40,6 +40,8 @@ export type StartEngineOptions = {
     prometheus?: { url: string };
     /** A fake Loki: the `loki` source points at its `url`. */
     loki?: { url: string };
+    /** A fake Tempo: the `tempo` source points at its `url`. */
+    tempo?: { url: string };
     /**
      * A Platform Database: the `platform` source reads through `readUrl` and writes through
      * `writeUrl` (Write Mode is off without it), passed as `HRX_PLATFORM_READ_URL` /
@@ -58,7 +60,6 @@ export type StartEngineOptions = {
 const NOT_YET_SUPPORTED = [
     'cloudwatch',
     'cloudwatchLogs',
-    'tempo',
     'bigquery',
     'restrictedLokiSelectors',
     'restrictedLogGroups',
@@ -144,6 +145,11 @@ function renderConfig(
     if (opts.loki) {
         tables.push(
             `[[sources]]\nname = "loki"\nkind = "loki"\nurl = ${tomlString(opts.loki.url)}\n`,
+        );
+    }
+    if (opts.tempo) {
+        tables.push(
+            `[[sources]]\nname = "tempo"\nkind = "tempo"\nurl = ${tomlString(opts.tempo.url)}\n`,
         );
     }
     if (opts.platform) {

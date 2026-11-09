@@ -368,3 +368,28 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   - The engine always sends `limit` and `direction` for logql() (defaults 1000 / backward), so
     the fake's own defaults matter only for direct HTTP calls.
 - 2026-11-09T02:19:09Z supervisor: int-harness-fake-loki passed the gate in round 1
+- 2026-11-09 int-harness-fake-tempo: new `harness/tempo.ts` (`startFakeTempo({ traces })`, exported
+  from `index.ts` with its types; input shape = `syntheticTrace` in fixtures.ts). `/api/search`
+  answers every fixture trace in fixture order cut to `limit` (default 20), with `traceID` hex,
+  `startTimeUnixNano` string, `durationMs`, and `spanSet` + `spanSets[0]` whose `matched` = span
+  count. The TraceQL query and the time range are NOT evaluated (every trace in every answer, as
+  the Harness API table says). `/api/traces/<id>` → `{ batches }`, `/api/v2/traces/<id>` →
+  `{ trace: { resourceSpans } }`: one resource per service (first-seen order), base64 ids,
+  `start/endTimeUnixNano` strings, `STATUS_CODE_*` names, attributes as OTLP AnyValues (integers
+  as `intValue` text). Ids are case-insensitive, leading zeros optional; unknown id → 404 (the
+  engine turns that into 0 rows); non-hex id or bad limit/start/end → 400 plain text. Extras:
+  `setTraces`, `/ready`. `engine.ts`: `tempo` option renders `[[sources]] name = "tempo"
+  kind = "tempo"` (removed from `NOT_YET_SUPPORTED`).
+  Tested by hand with a tsx script outside the repo through the real engine over pg-wire:
+  traceql() → 1 row (root refills-api / POST /refills, start 10:00:01, 120 ms, span_count 2), the
+  engine sent q/start/end (unix s)/limit=20; `limit 1` sent limit=1; trace() → 2 spans, root with
+  NULL parent and status ok, child parent b7ad…, pharmacy-db, error, attributes
+  `{"http.status_code":201}` / `{"db.system":"postgresql"}`, durations 120/80; an upper-case id
+  works; unknown id → 0 rows, no error; v2 path answers `trace.resourceSpans`; setTraces([]) →
+  0 rows. Checks: fake-tempo 1/1, engine 2/2, fake-loki 1/1, fake-prometheus 2/2; e2e typecheck
+  clean; no engine left running, `tmp/e2e` empty.
+  Next sessions must know:
+  - The engine only calls `/api/traces/<id>` (not v2) and sends `Accept: application/json`.
+  - Fixture `durationMs` on a span sets `endTimeUnixNano`; the engine computes `duration_ms` from
+    start/end, so sub-ns precision is lost only beyond 1e-6 ms.
+- 2026-11-09T02:22:34Z supervisor: int-harness-fake-tempo passed the gate in round 1

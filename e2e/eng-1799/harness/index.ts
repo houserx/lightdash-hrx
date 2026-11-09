@@ -27,6 +27,14 @@ export type {
     LokiStream,
     StartFakeLokiOptions,
 } from './loki';
+export { startFakeTempo } from './tempo';
+export type {
+    FakeTempo,
+    StartFakeTempoOptions,
+    TempoAttributeValue,
+    TempoSpan,
+    TempoTrace,
+} from './tempo';
 export { startFakePrometheus } from './prometheus';
 export type {
     FakePrometheus,
