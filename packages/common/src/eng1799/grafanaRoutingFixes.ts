@@ -19,6 +19,12 @@
  * Unreached contact points: an imported contact point that no route in the tree (the root's
  * default included) names, so no alert reaches it. The fix adds a notify=<contact point slug> route
  * for it (continue: true), so a rule can opt in with that label and keep the rest of its routing.
+ *
+ * Default route only: a rule whose alerts match no route, so they reach only the root's default
+ * contact point. When the rule's team label matches a route's `team = <team>` matcher but the rule
+ * lacks that route's other equality matchers, the fix adds those labels to the rule. When no route
+ * matches on its team, a team the routing decisions name gets a team route (continue: true);
+ * otherwise the team needs a decision. A rule with no team label stays on the default route.
  */
 import type { AlertRuleAsCode } from '../alerting/asCode';
 import {
@@ -26,7 +32,7 @@ import {
     type AlertLabelMatcher,
     type AlertLabels,
 } from '../alerting/routingMatchers';
-import type { NotificationRoute } from '../alerting/routingTree';
+import { routeAlert, type NotificationRoute } from '../alerting/routingTree';
 
 /** A route as ROUTING-FIXES.md names it. */
 export type RoutingFixRoute = {
@@ -71,6 +77,7 @@ export type GrafanaRoutingFixes = {
     unreachableRoutes: UnreachableRoute[];
     unhandledSeverities: UnhandledSeverity[];
     unreachedContactPoints: UnreachedContactPoint[];
+    defaultOnlyRules: DefaultOnlyRule[];
 };
 
 /** A contact point no route names, so no alert reaches it. */
@@ -80,6 +87,38 @@ export type UnreachedContactPoint = {
     /** The notify=<slug> route the fix adds. */
     route: RoutingFixRoute;
 };
+
+export const TEAM_LABEL = 'team';
+
+/** A rule whose alerts reach only the default (root) route, and the fix for it. */
+export type DefaultOnlyRule = {
+    /** The rule's name. */
+    rule: string;
+    /** The rule's labels as imported, before any fix. */
+    labels: AlertLabels;
+} & (
+    | {
+          /** The fix adds these labels so the rule reaches `route`. */
+          fix: 'add-labels';
+          addedLabels: Record<string, string>;
+          route: RoutingFixRoute;
+      }
+    | {
+          /** The routing decisions name a contact point for the team: the fix adds `route`. */
+          fix: 'team-route';
+          team: string;
+          route: RoutingFixRoute;
+      }
+    | {
+          /** No route matches the team and no decision names one: `team = <team>` is proposed. */
+          fix: 'needs-decision';
+          team: string;
+      }
+    | {
+          /** No team label to infer a route from: the rule stays on the default route. */
+          fix: 'none';
+      }
+);
 
 const describeRoute = (
     route: NotificationRoute,
@@ -329,6 +368,136 @@ export const addNotifyRoutes = <T extends NotificationRoute>(
     };
 };
 
+/** The labels routing sees for a rule's alerts: its labels plus alertname. */
+const alertLabels = (rule: { name: string; labels?: AlertLabels }) => ({
+    ...(rule.labels ?? {}),
+    alertname: rule.name,
+});
+
+/** The rules, in the given order, whose alerts match no route and so reach only the root. */
+export const findDefaultOnlyRules = <
+    R extends Pick<AlertRuleAsCode, 'name' | 'labels'>,
+>(
+    tree: NotificationRoute,
+    rules: readonly R[],
+): R[] =>
+    rules.filter((rule) =>
+        routeAlert(tree, alertLabels(rule)).every((r) => r.path.length === 0),
+    );
+
+/**
+ * The fix for a default-only rule with a team label: the first route, in tree order, with a
+ * `team = <team>` matcher whose equality matchers (its ancestors' included) the rule can satisfy
+ * by adding the labels it lacks, and does reach with them. Undefined when there is none.
+ */
+export const findTeamLabelFix = (
+    tree: NotificationRoute,
+    rule: Pick<AlertRuleAsCode, 'name' | 'labels'>,
+):
+    | { addedLabels: Record<string, string>; route: RoutingFixRoute }
+    | undefined => {
+    const labels = rule.labels ?? {};
+    const team = labels[TEAM_LABEL];
+    if (team === undefined || team === '') return undefined;
+    const visit = (
+        route: NotificationRoute,
+        path: number[],
+        inherited: AlertLabelMatcher[],
+    ):
+        | { addedLabels: Record<string, string>; route: RoutingFixRoute }
+        | undefined => {
+        const children = route.routes ?? [];
+        for (let index = 0; index < children.length; index += 1) {
+            const child = children[index];
+            const childPath = [...path, index];
+            const matchers = [...inherited, ...(child.matchers ?? [])];
+            const namesTeam = (child.matchers ?? []).some(
+                (m) =>
+                    m.label === TEAM_LABEL &&
+                    m.operator === '=' &&
+                    m.value === team,
+            );
+            if (namesTeam) {
+                const addedLabels: Record<string, string> = {};
+                const consistent = matchers
+                    .filter((m) => m.operator === '=')
+                    .every((m) => {
+                        const current = labels[m.label] ?? addedLabels[m.label];
+                        if (current === undefined) {
+                            addedLabels[m.label] = m.value;
+                            return true;
+                        }
+                        return current === m.value;
+                    });
+                const reaches =
+                    consistent &&
+                    Object.keys(addedLabels).length > 0 &&
+                    routeAlert(
+                        tree,
+                        alertLabels({
+                            name: rule.name,
+                            labels: { ...labels, ...addedLabels },
+                        }),
+                    ).some((r) =>
+                        childPath.every((step, i) => r.path[i] === step),
+                    );
+                if (reaches) {
+                    return {
+                        addedLabels,
+                        route: describeRoute(child, childPath),
+                    };
+                }
+            }
+            const deeper = visit(child, childPath, matchers);
+            if (deeper !== undefined) return deeper;
+        }
+        return undefined;
+    };
+    return visit(tree, [], []);
+};
+
+/**
+ * The fix for teams no route matches: a `team = <team>` route (continue: true) to each decided
+ * contact point, inserted in order at `insertAt` among the root's routes. `tree` itself is not
+ * changed.
+ */
+export const addTeamRoutes = <T extends NotificationRoute>(
+    tree: T,
+    teams: readonly { team: string; contactPoint: string }[],
+    insertAt: number,
+): { fixed: T; routes: { team: string; route: RoutingFixRoute }[] } => {
+    const fixed = JSON.parse(JSON.stringify(tree)) as T;
+    const added = teams.map(
+        (t): NotificationRoute => ({
+            matchers: [{ label: TEAM_LABEL, operator: '=', value: t.team }],
+            contactPoint: t.contactPoint,
+            continue: true,
+        }),
+    );
+    if (added.length > 0) {
+        const routes = fixed.routes ?? [];
+        fixed.routes = [
+            ...routes.slice(0, insertAt),
+            ...added,
+            ...routes.slice(insertAt),
+        ];
+    }
+    return {
+        fixed,
+        routes: added.map((route, index) => ({
+            team: teams[index].team,
+            route: describeRoute(route, [insertAt + index]),
+        })),
+    };
+};
+
+const formatLabels = (labels: AlertLabels) =>
+    Object.keys(labels).length === 0
+        ? '(no labels)'
+        : `\`${Object.entries(labels)
+              .map(([label, value]) => `${label} = ${value}`)
+              .join(', ')}\``;
+
 export const formatRouteMatchers = (matchers: readonly AlertLabelMatcher[]) =>
     matchers.length === 0
         ? '(every alert)'
@@ -420,6 +589,41 @@ export const renderGrafanaRoutingFixes = (
             lines.push(
                 `| ${cell(`\`${u.contactPoint}\``)} | ${cell(
                     `route ${formatRoute(u.route)}, continue: true`,
+                )} |`,
+            );
+        });
+    }
+    lines.push('', '## Default route only', '');
+    if (fixes.defaultOnlyRules.length === 0) {
+        lines.push('Every imported rule reaches a route below the default.');
+    } else {
+        lines.push(
+            "These rules match no route, so their alerts reach the default route only (the root's contact point). When a route matches on the rule's team but needs other labels the rule lacks, the fix adds those labels. When no route matches on its team, the routing decisions (--routing-decisions, `teams:`) can add a team route with continue: true; otherwise the proposed route needs a decision (routing-needs-decision warning).",
+            '',
+            '| Rule | Labels | Fix |',
+            '| --- | --- | --- |',
+        );
+        fixes.defaultOnlyRules.forEach((d) => {
+            let fix: string;
+            switch (d.fix) {
+                case 'add-labels':
+                    fix = `add the labels ${formatLabels(
+                        d.addedLabels,
+                    )}, so it reaches ${formatRoute(d.route)}`;
+                    break;
+                case 'team-route':
+                    fix = `team route ${formatRoute(d.route)}, continue: true`;
+                    break;
+                case 'needs-decision':
+                    fix = `needs a decision: proposed route \`${TEAM_LABEL} = ${d.team}\`; add \`teams: {"${d.team}": <contact point>}\` to --routing-decisions`;
+                    break;
+                default:
+                    fix =
+                        'none: no team label to infer a route from, so it stays on the default route';
+            }
+            lines.push(
+                `| ${cell(d.rule)} | ${cell(formatLabels(d.labels))} | ${cell(
+                    fix,
                 )} |`,
             );
         });

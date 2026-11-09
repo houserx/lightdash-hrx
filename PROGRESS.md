@@ -1632,3 +1632,49 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   -full-ruleset 3/3. grafanaRoutingFixes.test.ts 14/14, grafanaAlertImport.test.ts 10/10. common and cli tsc clean,
   oxlint and oxfmt clean.
 - 2026-11-09T05:33:53Z supervisor: imp-routing-unreached-contact-points passed the gate in round 1
+
+## imp-routing-default-only-rules (2026-11-09, round 1)
+- grafanaRoutingFixes.ts: findDefaultOnlyRules(tree, rules) returns the rules whose labels plus alertname reach only
+  the root (routeAlert gives only path []). findTeamLabelFix(tree, rule) finds the first route (tree order, nested
+  included) with an own `team = <team>` equality matcher. The rule must be able to satisfy that route's equality
+  matchers, ancestors' included, by adding the labels it lacks, with no conflicting values, and must then actually
+  reach the route. It returns {addedLabels, route}. addTeamRoutes(tree, [{team, contactPoint}], insertAt) adds
+  `team = <team>` -> slug, continue: true. GrafanaRoutingFixes gains defaultOnlyRules: DefaultOnlyRule[]
+  (fix: add-labels | team-route | needs-decision | none, with the labels as imported). renderGrafanaRoutingFixes adds
+  "## Default route only" (rule, labels, fix; proposed route `team = X` for undecided teams).
+- convertGrafanaAlerting: default-only rules are found on the tree after the decided severity routes, so a severity
+  decision that routes a rule counts. For each rule, in order: (1) label fix: unless --no-routing-fixes, the emitted
+  rule's labels get the missing labels (the rule object is mutated in place, since policyRouted and alertRules share it);
+  (2) team in `teams:` decisions: a team route; (3) team with no decision: routing-needs-decision, one warning per team;
+  (4) no team label: listed only, with no warning. A label fix wins over a team decision. A team decision not used
+  gives routing-decision-unused. An unknown contact point throws, with the same message helper the severity
+  decisions now share (resolveContactPoint).
+- Route order is now: notification_settings notify routes, severity routes, team routes, unreached notify routes,
+  policies. Unreached contact points are computed after the team routes, so a team decision that names a contact
+  point counts as reaching it (in the test, slack-platform is then no longer unreached). Label-fix paths in
+  ROUTING-FIXES.md are shifted to the final tree. fixUnreachableRoutes still runs last, on the relabelled rules.
+- Decision (the spec doesn't say): team routes have continue: true and go ahead of the policies, like severity
+  routes. Every team=X alert reaches the decided contact point and keeps the rest of its routing, and the team route
+  can never be shadowed. Rules without a team label get no warning, because there is nothing to decide for them.
+- CLI: removed the "teams: not implemented" warning. The console adds "N default-route-only rules fixed / found and
+  not fixed", "... needing a team routing decision" and "... without a team label, left on the default route".
+- Full fixtures: pg_cron Job Duration and Failures get channel=#alerts (-> slack-alerts). Dialpad Bad Webhook
+  Requests, Dialpad Error Logs and Documo Error Logs (team=Support) need a decision. Two ALB Unhealthy Hosts rules
+  have no team label. Warnings go from 78 to 79 (+1 routing-needs-decision for team Support);
+  imp-roundtrip-warning-snapshot must record this. routing-fixture-fixes.test.ts (the next feature's check) already
+  passes 3/3 on this tree.
+- Tested as a user: generated the test's Terraform with alertsupport (scratch in tmp/default-only, removed), ran the
+  CLI and routed every rule through notification-routes.yml with routeAlert from common's dist.
+  - Undecided: ROUTING-FIXES.md lists pg_cron (add `channel = #alerts` -> slack-alerts, root.2), Support (proposed
+    `team = Support`) and Unlabelled (none), but not Routed rule. The pg_cron yml has channel: "#alerts". Routing:
+    pg_cron -> slack-alerts, Routed -> pager, Support and Unlabelled -> slack-infra-alerts. 1 routing-needs-decision.
+  - teams: {Support: slack-platform}: Support -> slack-platform (root.0, continue), and slack-platform is no longer
+    listed as unreached. The others are unchanged.
+  - --no-routing-fixes: the tree and labels are unchanged (pg_cron -> slack-infra-alerts); console says "found and
+    not fixed". Support: nope fails with a clear error and writes nothing. teams: {infra: ...} gives
+    routing-decision-unused.
+- Checks: routing-default-only-rules 3/3 after init. Regression: routing-unreached-contact-points 2/2,
+  -unhandled-severity 2/2, -unreachable-routes 3/3, alerts-notification-settings 2/2, -routes 3/3, -full-ruleset 3/3,
+  -command 3/3, -contact-points 4/4. grafanaRoutingFixes.test.ts 19/19, grafanaAlertImport.test.ts 10/10. common and
+  cli tsc clean, oxlint and oxfmt clean.
+- 2026-11-09T05:43:18Z supervisor: imp-routing-default-only-rules passed the gate in round 1

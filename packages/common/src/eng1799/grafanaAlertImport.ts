@@ -35,9 +35,14 @@ import {
 import {
     addNotifyRoutes,
     addSeverityRoutes,
+    addTeamRoutes,
+    findDefaultOnlyRules,
+    findTeamLabelFix,
     findUnhandledSeverities,
     findUnreachedContactPoints,
     fixUnreachableRoutes,
+    TEAM_LABEL,
+    type DefaultOnlyRule,
     type GrafanaRoutingDecisions,
     type GrafanaRoutingFixes,
 } from './grafanaRoutingFixes';
@@ -1718,6 +1723,23 @@ export const convertGrafanaAlerting = (
         (r) => !notifySlugs.has(r.labels?.[NOTIFY_LABEL] ?? ''),
     );
 
+    // A decision names a contact point by slug or name; anything else is an error.
+    const resolveContactPoint = (what: string, decided: string) => {
+        const contactPoint = contactPoints.find(
+            (c) => c.slug === decided || c.name === decided,
+        );
+        if (contactPoint === undefined) {
+            throw new GrafanaAlertingImportError(
+                `The routing decisions assign ${what} to ${JSON.stringify(
+                    decided,
+                )}, which is not one of the imported contact points (${contactPoints
+                    .map((c) => c.slug)
+                    .join(', ')}).`,
+            );
+        }
+        return contactPoint.slug;
+    };
+
     // Unhandled severities: a decided value gets a severity route (continue: true) right after the
     // notify=<slug> routes, ahead of the policies; the others need a decision.
     const severityDecisions = input.routingDecisions?.severities ?? {};
@@ -1740,19 +1762,10 @@ export const convertGrafanaAlerting = (
             });
             return u;
         }
-        const contactPoint = contactPoints.find(
-            (c) => c.slug === decided || c.name === decided,
-        );
-        if (contactPoint === undefined) {
-            throw new GrafanaAlertingImportError(
-                `The routing decisions assign severity ${u.value} to ${JSON.stringify(
-                    decided,
-                )}, which is not one of the imported contact points (${contactPoints
-                    .map((c) => c.slug)
-                    .join(', ')}).`,
-            );
-        }
-        return { ...u, contactPoint: contactPoint.slug };
+        return {
+            ...u,
+            contactPoint: resolveContactPoint(`severity ${u.value}`, decided),
+        };
     });
     Object.keys(severityDecisions)
         .filter((value) => !unhandled.some((u) => u.value === value))
@@ -1767,29 +1780,122 @@ export const convertGrafanaAlerting = (
         unhandled,
         notifySlugs.size,
     );
-    // Unreached contact points: one notify=<slug> route (continue: true) each, right after the
-    // severity routes. A severity route a decision adds counts as reaching its contact point.
-    const withNotifyRoutes = addNotifyRoutes(
+    const severityRouteCount = withSeverityRoutes.unhandledSeverities.filter(
+        (u) => u.route !== undefined,
+    ).length;
+
+    // Default route only: rules whose alerts match no route once the decided severity routes are
+    // in. A rule whose team a route matches on gets that route's missing equality labels; a team no
+    // route matches gets a team route (continue: true) after the severity routes when decided, and
+    // needs a decision otherwise.
+    const teamDecisions = input.routingDecisions?.teams ?? {};
+    const decidedTeams: { team: string; contactPoint: string }[] = [];
+    const undecidedTeams = new Map<string, string[]>();
+    // A team route's path is known once the decided teams are; it is filled in below.
+    type DefaultOnlyFinding =
+        | Exclude<DefaultOnlyRule, { fix: 'team-route' }>
+        | (Omit<Extract<DefaultOnlyRule, { fix: 'team-route' }>, 'route'> & {
+              route?: undefined;
+          });
+    const defaultOnlyFindings = findDefaultOnlyRules(
         withSeverityRoutes.fixed,
+        policyRouted,
+    ).map((rule): DefaultOnlyFinding => {
+        const labels = { ...(rule.labels ?? {}) };
+        const team = labels[TEAM_LABEL];
+        if (team === undefined || team === '') {
+            return { rule: rule.name, labels, fix: 'none' };
+        }
+        const labelFix = findTeamLabelFix(withSeverityRoutes.fixed, rule);
+        if (labelFix !== undefined) {
+            if (applyRoutingFixes) {
+                // The emitted rule (alertRules holds the same object) carries the added labels.
+                // eslint-disable-next-line no-param-reassign
+                rule.labels = { ...labels, ...labelFix.addedLabels };
+            }
+            return { rule: rule.name, labels, fix: 'add-labels', ...labelFix };
+        }
+        if (Object.prototype.hasOwnProperty.call(teamDecisions, team)) {
+            if (!decidedTeams.some((t) => t.team === team)) {
+                decidedTeams.push({
+                    team,
+                    contactPoint: resolveContactPoint(
+                        `team ${team}`,
+                        teamDecisions[team],
+                    ),
+                });
+            }
+            return { rule: rule.name, labels, fix: 'team-route', team };
+        }
+        const names = undecidedTeams.get(team) ?? [];
+        names.push(rule.name);
+        undecidedTeams.set(team, names);
+        return { rule: rule.name, labels, fix: 'needs-decision', team };
+    });
+    undecidedTeams.forEach((names, team) =>
+        warn({
+            code: 'routing-needs-decision',
+            message: `No route matches team = ${team}, so ${names.join(', ')} ${
+                names.length === 1 ? 'reaches' : 'reach'
+            } only the default route; assign the team a contact point under teams: in --routing-decisions (proposed route team = ${team}).`,
+        }),
+    );
+    Object.keys(teamDecisions)
+        .filter((team) => !decidedTeams.some((t) => t.team === team))
+        .forEach((team) =>
+            warn({
+                code: 'routing-decision-unused',
+                message: `The routing decision for team ${team} is not used: no imported rule with team = ${team} reaches only the default route for want of a team route.`,
+            }),
+        );
+    const withTeamRoutes = addTeamRoutes(
+        withSeverityRoutes.fixed,
+        decidedTeams,
+        notifySlugs.size + severityRouteCount,
+    );
+
+    // Unreached contact points: one notify=<slug> route (continue: true) each, right after the
+    // severity and team routes. A route a decision adds counts as reaching its contact point.
+    const withNotifyRoutes = addNotifyRoutes(
+        withTeamRoutes.fixed,
         findUnreachedContactPoints(
-            withSeverityRoutes.fixed,
+            withTeamRoutes.fixed,
             contactPoints.map((c) => c.slug),
         ),
         NOTIFY_LABEL,
-        notifySlugs.size +
-            withSeverityRoutes.unhandledSeverities.filter(
-                (u) => u.route !== undefined,
-            ).length,
+        notifySlugs.size + severityRouteCount + decidedTeams.length,
     );
     const { fixed, unreachableRoutes } = fixUnreachableRoutes(
         applyRoutingFixes ? withNotifyRoutes.fixed : notificationRoutes,
         policyRouted,
     );
+    // Label fixes name a route of the tree before the team and notify routes went in ahead of it;
+    // give its path in the tree the fixes produce.
+    const shift =
+        decidedTeams.length + withNotifyRoutes.unreachedContactPoints.length;
+    const defaultOnlyRules = defaultOnlyFindings.map((d): DefaultOnlyRule => {
+        if (d.fix === 'add-labels') {
+            const [first, ...rest] = d.route.path;
+            return {
+                ...d,
+                route: { ...d.route, path: [first + shift, ...rest] },
+            };
+        }
+        if (d.fix === 'team-route') {
+            const added = withTeamRoutes.routes.find((t) => t.team === d.team);
+            if (added === undefined) {
+                throw new Error(`No team route was added for ${d.team}.`);
+            }
+            return { ...d, route: added.route };
+        }
+        return d;
+    });
     const routingFixes: GrafanaRoutingFixes = {
         applied: applyRoutingFixes,
         unreachableRoutes,
         unhandledSeverities: withSeverityRoutes.unhandledSeverities,
         unreachedContactPoints: withNotifyRoutes.unreachedContactPoints,
+        defaultOnlyRules,
     };
 
     return {

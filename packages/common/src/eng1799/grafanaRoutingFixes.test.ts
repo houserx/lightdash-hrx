@@ -2,6 +2,9 @@ import { routeAlert, type NotificationRoute } from '../alerting/routingTree';
 import {
     addNotifyRoutes,
     addSeverityRoutes,
+    addTeamRoutes,
+    findDefaultOnlyRules,
+    findTeamLabelFix,
     findUnhandledSeverities,
     findUnreachedContactPoints,
     fixUnreachableRoutes,
@@ -166,6 +169,7 @@ describe('renderGrafanaRoutingFixes', () => {
             unreachableRoutes,
             unhandledSeverities: [],
             unreachedContactPoints: [],
+            defaultOnlyRules: [],
         });
         expect(md).toMatch(/## Unreachable routes/);
         expect(md).toContain('team = platform');
@@ -182,11 +186,13 @@ describe('renderGrafanaRoutingFixes', () => {
             unreachableRoutes: [],
             unhandledSeverities: [],
             unreachedContactPoints: [],
+            defaultOnlyRules: [],
         });
         expect(md).toContain('--no-routing-fixes');
         expect(md).toContain('No route is unreachable');
         expect(md).toContain('Every severity value');
         expect(md).toContain('Every imported contact point');
+        expect(md).toContain('Every imported rule reaches a route');
     });
 
     it('lists unhandled severities with their fix or the decision they need', () => {
@@ -203,6 +209,7 @@ describe('renderGrafanaRoutingFixes', () => {
             unreachableRoutes: [],
             unhandledSeverities,
             unreachedContactPoints: [],
+            defaultOnlyRules: [],
         });
         expect(md).toMatch(/## Unhandled severities/);
         expect(md).toContain('`severity = 1`');
@@ -348,10 +355,176 @@ describe('unreached contact points', () => {
             unreachableRoutes: [],
             unhandledSeverities: [],
             unreachedContactPoints,
+            defaultOnlyRules: [],
         });
         expect(md).toMatch(/## Unreached contact points/);
         expect(md).toContain(
             '| `slack-sec` | route `notify = slack-sec` -> slack-sec (route root.0), continue: true |',
         );
+    });
+});
+
+describe('default route only', () => {
+    const POLICY: NotificationRoute = {
+        contactPoint: 'default',
+        routes: [
+            {
+                matchers: [eq('team', 'engineering'), eq('channel', '#alerts')],
+                contactPoint: 'slack-alerts',
+                continue: true,
+            },
+            {
+                matchers: [eq('app', 'web')],
+                routes: [
+                    {
+                        matchers: [eq('team', 'web'), eq('env', 'prod')],
+                        contactPoint: 'slack-web',
+                    },
+                ],
+            },
+            { matchers: [eq('team', 'infra')], contactPoint: 'pager' },
+        ],
+    };
+    const rule = (name: string, labels: Record<string, string>) => ({
+        name,
+        labels,
+    });
+
+    it('finds the rules that match no route', () => {
+        const rules = [
+            rule('pg_cron', { team: 'engineering', app: 'platform' }),
+            rule('Support', { team: 'Support' }),
+            rule('Unlabelled', {}),
+            rule('Routed', { team: 'infra' }),
+            rule('Web without team', { app: 'web' }),
+        ];
+        expect(findDefaultOnlyRules(POLICY, rules).map((r) => r.name)).toEqual([
+            'pg_cron',
+            'Support',
+            'Unlabelled',
+        ]);
+        expect(
+            findDefaultOnlyRules(
+                {
+                    contactPoint: 'default',
+                    routes: [
+                        {
+                            matchers: [eq('alertname', 'Unlabelled')],
+                            contactPoint: 'pager',
+                        },
+                    ],
+                },
+                rules,
+            ).map((r) => r.name),
+        ).not.toContain('Unlabelled');
+    });
+
+    it("adds the team route's missing equality labels, its ancestors' included", () => {
+        const pgCron = findTeamLabelFix(
+            POLICY,
+            rule('pg_cron', { team: 'engineering', app: 'platform' }),
+        );
+        expect(pgCron).toEqual({
+            addedLabels: { channel: '#alerts' },
+            route: {
+                path: [0],
+                matchers: [eq('team', 'engineering'), eq('channel', '#alerts')],
+                contactPoint: 'slack-alerts',
+            },
+        });
+        expect(
+            sent(POLICY, {
+                team: 'engineering',
+                app: 'platform',
+                channel: '#alerts',
+            }),
+        ).toEqual(['slack-alerts']);
+        expect(
+            findTeamLabelFix(POLICY, rule('Web', { team: 'web' })),
+        ).toMatchObject({
+            addedLabels: { app: 'web', env: 'prod' },
+            route: { path: [1, 0] },
+        });
+    });
+
+    it('leaves a rule alone when its labels conflict or no route has its team', () => {
+        expect(
+            findTeamLabelFix(
+                POLICY,
+                rule('Other channel', {
+                    team: 'engineering',
+                    channel: '#other',
+                }),
+            ),
+        ).toBeUndefined();
+        expect(
+            findTeamLabelFix(POLICY, rule('Support', { team: 'Support' })),
+        ).toBeUndefined();
+        expect(findTeamLabelFix(POLICY, rule('None', {}))).toBeUndefined();
+    });
+
+    it('adds a continue team route per decided team and leaves the input alone', () => {
+        const before = JSON.stringify(POLICY);
+        const { fixed, routes } = addTeamRoutes(
+            POLICY,
+            [{ team: 'Support', contactPoint: 'slack-platform' }],
+            0,
+        );
+        expect(JSON.stringify(POLICY)).toBe(before);
+        expect(fixed.routes![0]).toEqual({
+            matchers: [eq('team', 'Support')],
+            contactPoint: 'slack-platform',
+            continue: true,
+        });
+        expect(routes).toEqual([
+            {
+                team: 'Support',
+                route: {
+                    path: [0],
+                    matchers: [eq('team', 'Support')],
+                    contactPoint: 'slack-platform',
+                },
+            },
+        ]);
+        expect(sent(fixed, { team: 'Support' })).toEqual(['slack-platform']);
+        expect(sent(fixed, { team: 'infra' })).toEqual(['pager']);
+    });
+
+    it('renders each rule with its fix', () => {
+        const md = renderGrafanaRoutingFixes({
+            applied: true,
+            unreachableRoutes: [],
+            unhandledSeverities: [],
+            unreachedContactPoints: [],
+            defaultOnlyRules: [
+                {
+                    rule: 'pg_cron',
+                    labels: { team: 'engineering' },
+                    fix: 'add-labels',
+                    addedLabels: { channel: '#alerts' },
+                    route: {
+                        path: [0],
+                        matchers: [
+                            eq('team', 'engineering'),
+                            eq('channel', '#alerts'),
+                        ],
+                        contactPoint: 'slack-alerts',
+                    },
+                },
+                {
+                    rule: 'Support queue',
+                    labels: { team: 'Support' },
+                    fix: 'needs-decision',
+                    team: 'Support',
+                },
+                { rule: 'Unlabelled', labels: {}, fix: 'none' },
+            ],
+        });
+        expect(md).toMatch(/## Default route only/);
+        expect(md).toContain(
+            '| pg_cron | `team = engineering` | add the labels `channel = #alerts`, so it reaches `team = engineering, channel = #alerts` -> slack-alerts (route root.0) |',
+        );
+        expect(md).toContain('proposed route `team = Support`');
+        expect(md).toContain('| Unlabelled | (no labels) | none:');
     });
 });

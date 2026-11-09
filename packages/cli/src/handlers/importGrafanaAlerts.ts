@@ -269,8 +269,17 @@ export const importGrafanaAlertsHandler = async (
         unreachableRoutes,
         unhandledSeverities,
         unreachedContactPoints,
+        defaultOnlyRules,
         applied,
     } = result.routingFixes;
+    const defaultOnlyFixed = defaultOnlyRules.filter(
+        (d) => d.fix === 'add-labels' || d.fix === 'team-route',
+    ).length;
+    const defaultOnlyUndecided = defaultOnlyRules.filter(
+        (d) => d.fix === 'needs-decision',
+    ).length;
+    const defaultOnlyLeft =
+        defaultOnlyRules.length - defaultOnlyFixed - defaultOnlyUndecided;
     const decided = unhandledSeverities.filter(
         (u) => u.contactPoint !== undefined,
     ).length;
@@ -302,6 +311,27 @@ export const importGrafanaAlertsHandler = async (
                   )} ${fixedOrFound}`,
               ]
             : []),
+        ...(defaultOnlyFixed > 0
+            ? [
+                  `${plural(defaultOnlyFixed, 'default-route-only rule')} ${fixedOrFound}`,
+              ]
+            : []),
+        ...(defaultOnlyUndecided > 0
+            ? [
+                  `${plural(
+                      defaultOnlyUndecided,
+                      'default-route-only rule',
+                  )} needing a team routing decision`,
+              ]
+            : []),
+        ...(defaultOnlyLeft > 0
+            ? [
+                  `${plural(
+                      defaultOnlyLeft,
+                      'default-route-only rule',
+                  )} without a team label, left on the default route`,
+              ]
+            : []),
     ];
     if (routingNotes.length > 0) {
         console.info(
@@ -309,13 +339,6 @@ export const importGrafanaAlertsHandler = async (
                 options.out,
                 'ROUTING-FIXES.md',
             )}.`,
-        );
-    }
-    if (routingDecisions?.teams !== undefined) {
-        console.warn(
-            styles.warning(
-                'Team routing decisions (teams: in --routing-decisions) are not implemented in this version of the importer and have no effect yet.',
-            ),
         );
     }
     console.info(
