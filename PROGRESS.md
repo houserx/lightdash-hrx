@@ -829,3 +829,22 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   4/4, dashboard-panel-kinds 3/3, dashboard-dropped-panels 4/4. tsc (common) and oxlint are clean, and oxfmt was
   applied.
 - 2026-11-09T02:59:03Z supervisor: imp-dashboard-collapsed-rows passed the gate in round 1
+
+### imp-dashboard-text (2026-11-08)
+
+- packages/common/src/eng1799/grafanaDashboardImport.ts: new `textPanelMarkdown` builds the markdown tile content for
+  text panels. markdown and html (and any other mode) content is copied exactly. With `mode: 'code'`, the content is
+  wrapped in a fence with `options.code.language` (trimmed; a blank language gives a bare fence). The fence is one
+  backtick longer than the longest backtick run in the content (at least 3), so embedded ``` can't close it early. A
+  trailing newline is added before the closing fence only if one isn't already there. `mode` and `content` are read
+  from `options` first, then from the panel root (old schema). `mode`/`content` were added to `GrafanaDashboardPanel`.
+- Root-level legacy `mode`/`content` produce no option-dropped warning: the walk finds no mapping for them and they
+  are strings, not records. `options.code.showLineNumbers`/`showMiniMap` still warn as dropped (the mapping says so).
+  The panel mapping module and docs are unchanged.
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard with markdown, html, code (sql,
+  content containing ```) and legacy root-content text panels. dashboards/text-demo.yml had 4 markdown tiles and no
+  charts. Markdown and html were copied exactly, the code tile was a ````sql fence (4 backticks, because of the
+  embedded ```), and the legacy tile held the root content. The only warning was option-dropped for
+  options.code.showLineNumbers. Acceptance: dashboard-text 3/3, dashboard-dropped-panels 4/4, dashboard-charts 4/4,
+  dashboard-collapsed-rows 2/2. tsc (common) and oxlint are clean, and oxfmt was applied.
+- 2026-11-09T03:02:00Z supervisor: imp-dashboard-text passed the gate in round 1

@@ -54,6 +54,9 @@ export type GrafanaDashboardPanel = GrafanaPanelWithTargets & {
     /** Legacy graph panel series styles. */
     bars?: unknown;
     lines?: unknown;
+    /** Legacy text panels keep these at the panel root instead of under `options`. */
+    mode?: unknown;
+    content?: unknown;
     fieldConfig?: { defaults?: { custom?: { drawStyle?: unknown } } };
 };
 
@@ -306,6 +309,33 @@ const NON_OPTION_PANEL_KEYS = new Set([
     'libraryPanel',
     'transformations',
 ]);
+
+/**
+ * The markdown tile content for a Grafana text panel. markdown and html content are copied
+ * exactly (Lightdash markdown renders inline html). code mode is wrapped in a fenced code
+ * block with `options.code.language`; the fence is longer than any backtick run in the
+ * content so the block can't close early. Old dashboards keep `mode` and `content` at the
+ * panel root instead of under `options`; those are read when `options` doesn't set them.
+ */
+const textPanelMarkdown = (panel: GrafanaDashboardPanel): string => {
+    const options = isRecord(panel.options) ? panel.options : {};
+    const pick = (key: 'mode' | 'content'): string | undefined => {
+        const value = options[key] ?? panel[key];
+        return typeof value === 'string' ? value : undefined;
+    };
+    const content = pick('content') ?? '';
+    if (pick('mode') !== 'code') return content;
+    const code = isRecord(options.code) ? options.code : {};
+    const language =
+        typeof code.language === 'string' ? code.language.trim() : '';
+    const longestRun = Math.max(
+        0,
+        ...(content.match(/`+/g) ?? []).map((run) => run.length),
+    );
+    const fence = '`'.repeat(Math.max(3, longestRun + 1));
+    const body = content.endsWith('\n') ? content : `${content}\n`;
+    return `${fence}${language}\n${body}${fence}`;
+};
 
 /**
  * The options a panel sets that the panel mapping drops, with the mapping's reason. Walks
@@ -572,7 +602,6 @@ export const convertGrafanaDashboard = (
             ),
         );
         if (mapping.target === 'markdown_tile') {
-            const content = panel.options?.content;
             tiles.push({
                 ...position,
                 uuid: undefined,
@@ -580,7 +609,7 @@ export const convertGrafanaDashboard = (
                 tileSlug: uniqueSlug(panelName, 'text', takenTileSlugs),
                 properties: {
                     title: panelTitle,
-                    content: typeof content === 'string' ? content : '',
+                    content: textPanelMarkdown(panel),
                 },
             });
             return;
