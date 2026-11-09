@@ -1697,3 +1697,35 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   `.state` process left. Checks `platform-db.spec.ts` and `scenario-clock.spec.ts` (--stack), `config-validation.spec.ts`
   pass; `tsc --ignoreConfig --strict --module nodenext --types node stack/*.ts` clean.
 - 2026-11-09T06:58:14Z supervisor: demo-platform-db passed the gate in round 1
+
+### demo-engine-boot (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/engine-config.ts` (CLI): `--dir .state/engine --platform-file .state/run/platform-db.json
+  --ready-file .state/run/engine-config.json`. Picks 9 distinct free ports at once (engine pg + http, and one per
+  endpoint the engine points at) and writes `federation-engine.toml` (sources `prometheus`, `loki`, `tempo`,
+  `cloudwatch`, `cloudwatch-logs` (kind `cloudwatch_logs`), `platform` (`platform_postgres`, read as `engine_read`,
+  Write Mode as `engine_write`), `[audit]` table/bucket `demo-federation-audit`, region us-east-2, integrity key),
+  `engine.env` (0600: the engine's whole env: fake secrets, fake AWS creds, `AWS_ENDPOINT_URL` at dead port 9,
+  no user AWS config, Platform URLs) and the ready file `{engine: {...stack.json engine...}, endpoints: {prometheus,
+  loki, tempo, cloudwatch, cloudwatchLogs, auditDynamodb, auditS3}}`.
+- **Endpoint ports are reservations.** The fake features (prometheus, loki, tempo, cloudwatch(-logs), audit-store)
+  must make their servers listen on exactly `endpoints.*` from `.state/run/engine-config.json` (up.sh writes it
+  before starting the engine; today it runs after the telemetry-fakes process starts: either pass the ports to that
+  process, or move the engine-config step before it). Until then `/healthz` is 503 with those sources unreachable
+  (only `platform` reachable) and Audited Queries fail closed (no audit store).
+- `up.sh`: after the Platform Database, writes the config, runs `engine --check-config`, then `start engine`. `start`
+  now honours `DEMO_START_ENV_FILE=<file>` (perl clears `%ENV` and loads `KEY=value` lines; no secret on a command
+  line). Ready = `/healthz` answers any status (60 s). `stack.json` gains `engine` (host, pgPort, httpUrl, user
+  `lightdash-operations`, password, database `operations`, identitySecret) and process `engine`; it is now written
+  0600. `report()` prints the engine URL.
+- **Binary path decision:** the spec pgreps `federation-engine/target/(debug|release)/engine`, but the one build is
+  `tmp/cargo-target/debug/engine`. up.sh runs `federation-engine/target/debug/engine`, a symlink (gitignored dir) it
+  (re)creates to the tmp/cargo-target build; a real file there (the engine line's own build) is used as is;
+  `DEMO_ENGINE_BIN` overrides. No second cargo build.
+- Tested as a user: `up.sh` → engine log "serving, sources 6"; pg-wire with stack.json engine creds: `version()` =
+  `PostgreSQL 16.0 (hrx-federation-engine 0.1.0)`, wrong password refused; `/healthz` 503 naming all six sources;
+  pgrep shows the symlink path with `--config .state/engine/federation-engine.toml`; the same config minus `[audit]`
+  → `--check-config` exit 1 "audited sources "platform" need an [audit] table"; second up.sh kept the pids;
+  down.sh left no process. Checks engine-boot, platform-db, scenario-clock (--stack) and config-validation pass;
+  `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean.
+- 2026-11-09T07:03:29Z supervisor: demo-engine-boot passed the gate in round 1

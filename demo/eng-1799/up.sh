@@ -69,6 +69,7 @@ report() {
     scenario_url="$(json_url "$STACK_JSON" scenario)"
     echo "up.sh: scenario clock: $scenario_url/scenario (restart: POST $scenario_url/scenario/restart)"
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
+    "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
 }
 
@@ -104,10 +105,23 @@ trap on_exit EXIT
 
 # start <name> <command...>: runs the command in its own process group (perl setpgrp + exec keeps the pid),
 # detached from up.sh's stdio, logging to .state/logs/<name>.log. Sets STARTED_PID.
+# With DEMO_START_ENV_FILE=<file> set for the call, the command gets exactly the KEY=value lines of that file
+# as its environment (nothing of up.sh's environment leaks in, and no secret appears on a command line).
+EXEC_WITH_ENV_FILE='
+    if (defined(my $file = delete $ENV{DEMO_START_ENV_FILE})) {
+        open(my $fh, "<", $file) or die "open $file: $!\n";
+        %ENV = ();
+        while (my $line = <$fh>) {
+            chomp $line;
+            $ENV{$1} = $2 if $line =~ /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
+        }
+        close($fh);
+    }
+    exec @ARGV or die "exec $ARGV[0]: $!\n";'
 start() {
     local name="$1"
     shift
-    (cd "$DEMO" && exec perl -e 'setpgrp(0, 0); exec @ARGV or die "exec $ARGV[0]: $!\n"' "$@") \
+    (cd "$DEMO" && exec perl -e "setpgrp(0, 0); $EXEC_WITH_ENV_FILE" "$@") \
         </dev/null >"$LOGS/$name.log" 2>&1 &
     STARTED_PID=$!
     STARTED_PIDS="$STARTED_PIDS $STARTED_PID"
@@ -159,23 +173,72 @@ PLATFORM_PID=$STARTED_PID
 }
 echo "up.sh: Platform Database seeded (synthetic orders, fills, queues, shipments)"
 
-# Later demo features start the Federation Engine, remaining fakes, Lightdash and telemetry-mcp here
-# and add them to stack.json below.
+# Federation Engine: this repo's federation-engine binary with a config under .state/engine listing every demo
+# Telemetry Source and the Platform Database. The root init.sh builds the binary into tmp/cargo-target (one build
+# for the e2e and demo lines); it is run as federation-engine/target/debug/engine, a symlink to that build, unless
+# the engine line's own build is there. DEMO_ENGINE_BIN overrides the binary.
+ROOT="$(cd "$DEMO/../.." && pwd)"
+ENGINE_BIN="${DEMO_ENGINE_BIN:-}"
+if [ -z "$ENGINE_BIN" ]; then
+    ENGINE_BIN="$ROOT/federation-engine/target/debug/engine"
+    ENGINE_BUILD="$ROOT/tmp/cargo-target/debug/engine"
+    if [ ! -f "$ENGINE_BIN" ] || [ -L "$ENGINE_BIN" ]; then
+        [ -x "$ENGINE_BUILD" ] ||
+            { echo "up.sh: no Federation Engine binary at ${ENGINE_BUILD#"$ROOT"/}; run bash ./init.sh at the repo root" >&2; exit 1; }
+        mkdir -p "$(dirname "$ENGINE_BIN")"
+        ln -sfn "$ENGINE_BUILD" "$ENGINE_BIN"
+    fi
+fi
+[ -x "$ENGINE_BIN" ] || { echo "up.sh: the Federation Engine binary $ENGINE_BIN is not executable" >&2; exit 1; }
+ENGINE_DIR="$STATE/engine"
+ENGINE_CONFIG="$ENGINE_DIR/federation-engine.toml"
+rm -f "$RUN/engine-config.json"
+(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/engine-config.ts" --dir "$ENGINE_DIR" \
+    --platform-file "$RUN/platform-db.json" --ready-file "$RUN/engine-config.json") ||
+    { echo "up.sh: writing the Federation Engine config failed" >&2; exit 1; }
+DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" perl -e "$EXEC_WITH_ENV_FILE" "$ENGINE_BIN" --check-config --config "$ENGINE_CONFIG" >"$LOGS/engine-check.log" 2>&1 || {
+    echo "up.sh: the Federation Engine refused its config (${ENGINE_CONFIG#"$DEMO"/}):" >&2
+    tail -20 "$LOGS/engine-check.log" >&2
+    exit 1
+}
+DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" start engine "$ENGINE_BIN" --config "$ENGINE_CONFIG"
+ENGINE_PID=$STARTED_PID
+ENGINE_HTTP_URL="$("$NODE" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine.httpUrl)' "$RUN/engine-config.json")"
+# Ready when the HTTP side port answers /healthz at all (503 is fine: fakes that later features add may be absent).
+deadline=$((SECONDS + 60))
+until [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$ENGINE_HTTP_URL/healthz" || true)" != "000" ]; do
+    if ! kill -0 "$ENGINE_PID" 2>/dev/null; then
+        echo "up.sh: the Federation Engine exited during start-up; last lines of ${LOGS#"$DEMO"/}/engine.log:" >&2
+        tail -20 "$LOGS/engine.log" >&2
+        exit 1
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "up.sh: the Federation Engine did not answer within 60 s (see ${LOGS#"$DEMO"/}/engine.log)" >&2
+        exit 1
+    fi
+    sleep 0.2
+done
+echo "up.sh: Federation Engine running (${ENGINE_BIN#"$ROOT"/}, config ${ENGINE_CONFIG#"$DEMO"/})"
+
+# Later demo features start the remaining fakes (on the endpoints in .state/run/engine-config.json),
+# Lightdash and telemetry-mcp here and add them to stack.json below.
 
 "$NODE" -e '
-const [file, scenarioUrl, telemetryPid, platformFile, platformPid] = process.argv.slice(1);
+const [file, scenarioUrl, telemetryPid, platformFile, platformPid, engineFile, enginePid] = process.argv.slice(1);
 const fs = require("fs");
 const stack = {
     scenario: { url: scenarioUrl },
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
+    engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
     processes: [
         { name: "telemetry-fakes", pid: Number(telemetryPid) },
         { name: "platform-db", pid: Number(platformPid) },
+        { name: "engine", pid: Number(enginePid) },
     ],
 };
-fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n");
+fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n", { mode: 0o600 });
 fs.renameSync(file + ".tmp", file);
-' "$STACK_JSON" "$SCENARIO_URL" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID"
+' "$STACK_JSON" "$SCENARIO_URL" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID"
 
 echo "up.sh: demo stack is up (state: ${STATE#"$DEMO"/}, stop with demo/eng-1799/down.sh)"
 report
