@@ -1,6 +1,6 @@
 // demo-run-all. PROTECTED. No --stack: run-all.sh brings the stack up and down itself.
 // The full run is the one check allowed past 3 minutes: it records all eight scenes on a compressed timeline.
-// Check: DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=150 bash demo/eng-1799/acceptance/run.sh run-all.spec.ts
+// Check: DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 bash demo/eng-1799/acceptance/run.sh run-all.spec.ts
 import { expect, test } from '@playwright/test';
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';

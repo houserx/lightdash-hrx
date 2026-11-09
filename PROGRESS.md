@@ -2885,3 +2885,10 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   `mcp-ask` and `dashboard-service-health` (heatmap still renders) passed. `pnpm -F eng-1799-demo typecheck` was clean.
 - 2026-11-09T13:37:56Z supervisor: demo-hygiene passed the gate in round 1
 - 2026-11-09T13:50:32Z supervisor: demo-run-all halted: the worker halted on demo-run-all
+
+## Decision by the controls engineer (2026-11-09, after the demo-run-all halt)
+
+- demo-run-all: the protected check's compressed timeline is now `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240` (was
+  45/150), the timeline `docs/eng-1799/demo.md` already gives as its example. The measured need was about 140–150 s
+  of incident for scenes 02–06; 195 s leaves margin on a loaded machine. No other feature changes: no faster refresh,
+  no scene reordering. Redo the feature: run the check; fix only what still fails.
