@@ -730,3 +730,16 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   **Still open (next feature, int-fix-mcp-write-preview):** the MCP's `packages/telemetry-mcp/src/identity/confirmation.ts`
   still uses `stmt_sha256` and has no `typ`/`iat`. It needs the same change.
 - 2026-11-09T03:37:15Z supervisor: int-fix-write-confirmation-token passed the gate in round 1
+- 2026-11-09 int-write-preview: **no code change needed.** On arrival the check already passed (1/1). The previous
+  feature's confirmation-token fix (`typ`/`iat`) was the only thing in the way. The Preview goes
+  FederationService.createWriteConfirmation → FederationService.write (mode `preview`) → engine
+  POST /v1/write and works end to end. Tested by hand (`../tmp/manual-write-preview/try.ts`, run from
+  e2e/eng-1799 with tsx, against the real engine and a throwaway Platform Database) using a different statement
+  from the check, `UPDATE widgets SET qty = qty + 1 WHERE id IN (3, 7) RETURNING id, qty`. It gave preview true,
+  rows_affected 2, returning = the before-values + 1, and the Platform Database unchanged. The audit item had
+  mode write, preview true, status success, rowCount 2, the exact sql and the description. The ticket is
+  stored as `linearTicketId` (portal format), not `ticket`. Reusing the spent token for a preview or a commit
+  gives 409 "already been used", the DB stays unchanged, and the token on a different statement is refused.
+  The HTTP route (`FederationWriteController`, POST /api/v2/projects/{uuid}/write) can't be driven until
+  int-lightdash-boot. No engine or Postgres left running.
+- 2026-11-09T03:39:39Z supervisor: int-write-preview passed the gate in round 1
