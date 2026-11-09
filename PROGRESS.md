@@ -596,3 +596,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   Next sessions: any check that imports backend services pulling in lightdashConfig now parses with
   these placeholders. If a later parseConfig needs more env, add it to setupEnv.ts.
 - 2026-11-09T03:09:21Z supervisor: int-identity-agent-restricted passed the gate in round 1
+- 2026-11-09 int-client-platform-functions: **no code change needed.** The check passed on the first
+  run after `init.sh` (1/1, ~7 s).
+  Tested by hand with a tsx script outside the repo (`../tmp/manual-platform/try.ts`, run from
+  e2e/eng-1799 with `../../node_modules/.bin/tsx`; it imports setupEnv.ts first). It starts a real
+  engine and a throwaway Platform Database, then builds `FederationIdentityService.createTokenProvider`
+  from a synthetic user with `platform_read: ['true']`, and `warehouseClientFromCredentials`
+  (postgres/federation) with `{ getIdentityToken }`. Results: `platform_query` count → 200 (max qty 6);
+  `platform_tables()` → public.widgets; `platform_columns('public','widgets')` → id/name/qty, all
+  NOT NULL; `platform_explain(...)` → a JSON plan (Seq Scan on widgets, Filter qty > 3). Audit store:
+  4 items, each with sub/email = the user, the provider's description, `action: query`,
+  `status: success`. The same client without a token provider got `... needs platform_read` on
+  platform_tables(), and that wrote no audit item.
+  Trap: `count(*)` comes back from the client as a JS BigInt, so `JSON.stringify` of the rows throws
+  "Do not know how to serialize a BigInt". Use `Number()` or a replacer.
+  No engine or Postgres left running, `tmp/e2e` empty.
+- 2026-11-09T03:11:29Z supervisor: int-client-platform-functions passed the gate in round 1
