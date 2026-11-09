@@ -689,3 +689,20 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   missing file each exited 1 naming the file, with no output written. Leaving out --out gives commander's
   required-option error. Acceptance: dashboard-command 4/4. tsc clean (common, cli), oxlint clean, oxfmt applied.
 - 2026-11-09T02:35:46Z supervisor: imp-cli-grafana-dashboard passed the gate in round 1
+
+### imp-dashboard-chart-per-panel (2026-11-08)
+
+- No code change: `convertGrafanaDashboard` (packages/common/src/eng1799/grafanaDashboardImport.ts), written for
+  imp-cli-grafana-dashboard, already does this. Each chart panel becomes one SQL chart: the name is the panel title,
+  or `Untitled <type> <id>` when the title is blank. The trimmed description is kept, or set to null. The slug is
+  `<dashboard-slug>-<panel-name>`, made unique across the run (`-2`, ...). The chart holds the translated SQL, limit
+  500, and a config.type equal to chartKind. Each chart also gets one `sql_chart` tile with a unique tileSlug,
+  `properties.chartSlug` set to the chart slug and `chartName` set to the chart name.
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard. It had two `Requests`
+  timeseries panels (one with a description) and an untitled table panel, all Prometheus. The run wrote
+  chart-per-panel-requests.yml, -requests-2.yml and -untitled-table-3.yml. The description was kept on the first
+  chart, each SQL is `SELECT * FROM promql('<expr>', __from, __to, __interval)`, and the dashboard has 3 sql_chart
+  tiles (requests, requests-2, untitled-table-3) that reference the charts by chartSlug. `lightdash lint` passed. The
+  3 warnings are datasource-unresolved, which is expected without a datasources mapping.
+  Acceptance: dashboard-charts 4/4.
+- 2026-11-09T02:37:24Z supervisor: imp-dashboard-chart-per-panel passed the gate in round 1
