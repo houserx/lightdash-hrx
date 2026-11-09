@@ -1908,3 +1908,15 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   each 2 pages, newest first, no duplicates; no platform_read → 403. Checks audit-store, engine-boot,
   fake-cloudwatch-logs (--stack) and config-validation pass; `tsc ... stack/*.ts` clean; no demo process left.
 - 2026-11-09T07:39:20Z supervisor: demo-audit-store passed the gate in round 1
+
+### demo-engine-healthy (2026-11-09, run 20261109-013019)
+
+- No code change needed: the earlier fakes (prometheus, loki, tempo, cloudwatch, cloudwatch-logs) plus the Platform
+  Database already make the engine's `/healthz` return 200 `status: ok` with every source `reachable: true`
+  (sources: prometheus, loki, tempo, cloudwatch, cloudwatch_logs, platform_postgres; `unhealthy: []`).
+  The audit store is not a health source in the engine.
+- Tested as a user: `init.sh`, `up.sh`, `curl $engine.httpUrl/healthz` → 200 with all six sources reachable. Negative
+  check: killed the telemetry-fakes process → `/healthz` 503 `status: unhealthy`, the five telemetry sources
+  "unreachable: Connection refused", platform still reachable (so health is probed live, not hardcoded). `down.sh`
+  stopped everything. `run.sh --stack engine-healthy.spec.ts` passes; no demo process left.
+- 2026-11-09T07:41:23Z supervisor: demo-engine-healthy passed the gate in round 1
