@@ -743,3 +743,13 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   The HTTP route (`FederationWriteController`, POST /api/v2/projects/{uuid}/write) can't be driven until
   int-lightdash-boot. No engine or Postgres left running.
 - 2026-11-09T03:39:39Z supervisor: int-write-preview passed the gate in round 1
+- 2026-11-09 int-write-commit-once: **no code change needed.** On arrival the check already passed (1/1). The
+  int-fix-write-confirmation-token fix plus the engine's single-use token store were all it needed. Tested by hand
+  (`../tmp/manual-write-commit-once/try.ts`, run from e2e/eng-1799 with tsx, against the real engine and a throwaway
+  Platform Database) using a different statement from the check, `UPDATE widgets SET qty = qty + 10 WHERE id IN (4, 5)
+  RETURNING id, qty`. Commit 1 gave preview false, rows_affected 2, returning = the new values, and the DB changed.
+  Reusing the same token raised a LightdashError with statusCode 409 "this confirmation token has already been used",
+  and the DB was unchanged. A fresh token for the same statement committed again (+10 more). The audit store holds
+  exactly 2 write items (preview false, status success). The refused reuse is not audited as a write. Commit with
+  RETURNING returns rows (the check's statement has no RETURNING, so returning is null). No engine or Postgres left running.
+- 2026-11-09T03:41:47Z supervisor: int-write-commit-once passed the gate in round 1
