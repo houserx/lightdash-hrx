@@ -990,3 +990,53 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   the engine stops. Note: a `severity` label is NOT read as a level. That is the viz line's documented rule (the
   `level` column, then the `level` label, then `detected_level`, else `unknown`), so it was left alone.
 - 2026-11-09T04:33:59Z supervisor: int-viz-engine-results passed the gate in round 1
+- int-lightdash-boot (round 1): **full boot, not service-layer** (so `docs/eng-1799/integration.md` was not
+  needed yet). New harness files:
+  - `harness/s3.ts` `startFakeS3()`: in-process path-style fake S3 (PutObject with aws-chunked decoding,
+    GetObject, HeadObject, ListObjectsV2 with prefix/max-keys/continuation-token, DeleteObject because the
+    backend's results client calls it). Other sub-resources (multipart, ACLs) answer 501, so a new need is
+    visible. `objects()` lists what is stored. `decodeAwsChunked` is now exported from `auditStore.ts`.
+  - `harness/lightdashDatabase.ts`: the migrated **template cluster** at `tmp/lightdash-template/<key>/pgdata`.
+    `<key>` hashes the migration files (recursive), the graphile-worker version and `postgres --version`.
+    It is built once (initdb, `CREATE DATABASE lightdash`, then the child in `migrate` mode runs
+    `knex.migrate.latest()` with the backend's knexfile (non-ee) and graphile-worker `runMigrations`), and
+    later runs reuse it. While building it lives under `tmp/e2e/lightdash-template-build-*` so init.sh reaps a
+    killed build. Older keys are deleted when a new one is built. Each boot copies it with `cp -cR` (APFS clone)
+    into `tmp/e2e/lightdash-*/pgdata` and starts it on a free port. A cold build costs about 6 s more.
+  - `harness/lightdashServer.ts`: the child entry. lightdash.ts forks it with `node --import tsx`, cwd
+    `packages/backend` (so tsx uses the backend tsconfig, like `pnpm dev`). In `serve` mode it seeds the cloned
+    DB with knex inserts modelled on `database/seeds/development/01_initial_user.ts` + `13_personal_access_token.ts`.
+    It creates an org, an admin user (`e2e.admin@example.test`), a PAT (`ldpat_<random>`), the Operations
+    Project (`dbt_connection_type none`; the federation creds encrypted with the child's LIGHTDASH_SECRET), a
+    space and space admin access. Then it runs `new App({...}).start()` (no ee arguments) and sends
+    `{type:'ready', seeded}` over IPC. SIGTERM, SIGINT or a parent disconnect runs `app.stop()` and exits.
+  - `harness/lightdash.ts` `startLightdash({ engine, env? })`. It returns `{ baseUrl, mode: 'full-boot', pid,
+    projectUuid, organizationUuid, userUuid, userEmail, spaceUuid, apiKey, s3, close() }`. The env is minimal
+    and inherits only PATH (HOME = repo tmp/): NODE_ENV=development, LIGHTDASH_SECRET (test value),
+    SCHEDULER_ENABLED=false, analytics and update check off, S3_* and RESULTS_S3_* pointing at the fake, PORT,
+    SITE_URL, PGCONNECTIONURI, then `env`. `close()` sends SIGTERM (SIGKILL after 15 s), waits for exit, then
+    stops the fake S3 and the cluster and removes the dir.
+  Tested as a user (`../tmp/manual-lightdash-boot/try.mts` and `twice.mts`, run from e2e/eng-1799 with tsx): a cold
+  boot took 12.7 s and later boots about 5 s. `/api/v1/health` gave 200 (`healthy`, `requiresMigration: false`).
+  The project gave 200 with `type postgres`, `flavor federation`, the engine's pg port and `httpBaseUrl`, and
+  no password, user or identitySigningSecret. Federation access gave 200 with `isFederation: true` and all
+  attrs false. Alerting health gave 200 `never_run`. With no auth the API gave 401. The child pid was gone
+  after close. Two boots in one process with different env (`ALERTING_EVALUATOR_ATTRS`) both worked. In each,
+  a SQL Runner `query/sql` `SELECT 1` came back `ready` with its row, and its results file was in the fake S3.
+  The backend's own `@aws-sdk/client-s3` worked against the fake for put, get, head, list paging, the
+  404s (NotFound and NoSuchKey) and delete. Checks: this one 1/1 (about 8 s warm, 14 s cold);
+  int-harness-audit-store 1/1; e2e typecheck clean. `tmp/e2e` empty and no processes left.
+  Next sessions must know:
+  - **Not built yet** (named in the Harness API row): `setUserAttributes`, `runAlertingCycle` and
+    `createSqlChart`. The backend runs in a separate process, so add each as an IPC op in
+    lightdashServer.ts (for example a `{id, op, args}` request and a `{id, ok, result|error}` reply over
+    `process.send`) using the App's services (`app.getServiceRepository()`) or knex, and add a parent method in
+    lightdash.ts that calls it. `runAlertingCycle` needs the scheduler's tasks run by hand, because the
+    scheduler worker is off. The graphile-worker schema is already in the template.
+  - Seeding uses knex inserts, not services. `organization_homepage_settings` is an ee table, so it is not
+    seeded. ee migrations are not applied, because there is no license key.
+  - When a boot fails, the error includes the tail of the child's log. The cluster dir, with the log in it,
+    is removed afterwards. A thrown error with a long message can make vitest report only a source-map
+    `SyntaxError` ("Unexpected token"). When that happens, run the harness from a tsx script to see the
+    real error.
+- 2026-11-09T04:44:50Z supervisor: int-lightdash-boot passed the gate in round 1

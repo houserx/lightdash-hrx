@@ -238,7 +238,7 @@ class QueryError extends Error {}
 // ---------------------------------------------------------------------------------------------
 
 /** Undoes `Content-Encoding: aws-chunked` (SigV4 streaming, with or without trailers). */
-function decodeAwsChunked(body: Buffer): Buffer {
+export function decodeAwsChunked(body: Buffer): Buffer {
     const out: Buffer[] = [];
     let i = 0;
     while (i < body.length) {

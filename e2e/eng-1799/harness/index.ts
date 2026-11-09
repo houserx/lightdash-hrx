@@ -80,3 +80,9 @@ export type {
 // Loads packages/telemetry-mcp only inside startTelemetryMcp (dynamic import).
 export { MCP_PUBLIC_URL, startTelemetryMcp } from './telemetryMcp';
 export type { StartTelemetryMcpOptions, TelemetryMcp } from './telemetryMcp';
+export { startFakeS3 } from './s3';
+export type { FakeS3, FakeS3Object } from './s3';
+// Forks the Lightdash backend in a child process only inside startLightdash; nothing from
+// packages/backend is imported into this process.
+export { startLightdash } from './lightdash';
+export type { Lightdash, StartLightdashOptions } from './lightdash';
