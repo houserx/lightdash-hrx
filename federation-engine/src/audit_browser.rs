@@ -10,11 +10,17 @@
 //!   both, the cursor is the portal's: base64 of the JSON of DynamoDB's `LastEvaluatedKey`;
 //! - else `month=YYYY-MM` queries the `byMonth` index (`createdAtMonth`, `createdAt`), that one
 //!   partition. A month that is not `YYYY-MM` with a month 01-12 is 400. Its cursor is the
-//!   portal's: base64 of the JSON `{month, key}`, `key` being DynamoDB's `LastEvaluatedKey`.
+//!   portal's: base64 of the JSON `{month, key}`, `key` being DynamoDB's `LastEvaluatedKey`;
+//! - with none of the three (an empty parameter counts as absent), the portal's recent-history
+//!   browse: the last 30 days, newest first, walking the `byMonth` partitions from the current
+//!   month back to the month 30 days ago (contract assumption A14). A page may span two
+//!   partitions. Its cursor is base64 of the JSON `{recent: {since, month, key}}`: `since` is the
+//!   window's start, fixed by the first page; `key` is the `LastEvaluatedKey` in `month`, or null
+//!   to start that month from its newest record.
 //!
-//! An empty parameter counts as absent; with none of the three the answer is 400 (the portal's
-//! last-30-days browse is not built). `nextCursor` is null on the last page. A cursor that does
-//! not decode, or a month cursor that belongs to another month, is 400. A store that cannot be queried is 502; an engine without `[audit]` 503.
+//! `nextCursor` is null on the last page. A cursor that does not decode, a month cursor that
+//! belongs to another month, or a recent cursor used with a filter (or the reverse) is 400. A
+//! store that cannot be queried is 502; an engine without `[audit]` 503.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,6 +39,9 @@ use crate::identity;
 
 /// Items per page, as in the portal.
 const PAGE_SIZE: i32 = 25;
+
+/// How far back the no-parameter browse reaches, as in the portal.
+const RECENT_DAYS: i64 = 30;
 
 /// The audit browser's state: the identity secret and the audit store.
 pub struct AuditBrowser {
@@ -99,13 +108,7 @@ async fn browse(
     } else if let Some(user) = param("user") {
         let start = cursor.map(|c| plain_cursor_key(c)).transpose()?;
         ("byUser", "executedByEmail", user, start, None)
-    } else {
-        let month = param("month").ok_or_else(|| {
-            refuse(
-                StatusCode::BAD_REQUEST,
-                "one of ticket, user or month=YYYY-MM is required",
-            )
-        })?;
+    } else if let Some(month) = param("month") {
         if !is_month(month) {
             return Err(refuse(
                 StatusCode::BAD_REQUEST,
@@ -114,23 +117,18 @@ async fn browse(
         }
         let start = cursor.map(|c| month_cursor_key(c, month)).transpose()?;
         ("byMonth", "createdAtMonth", month, start, Some(month))
+    } else {
+        let position = match cursor {
+            Some(c) => recent_cursor(c)?,
+            None => Recent::first(chrono::Utc::now()),
+        };
+        return recent(store(browser)?, position).await;
     };
-    let store = browser.store.as_ref().ok_or_else(|| {
-        refuse(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "the audit store is not configured ([audit])",
-        )
-    })?;
+    let store = store(browser)?;
     let (items, next) = store
         .query_page(index, key_attr, key_value, PAGE_SIZE, start.as_ref())
         .await
-        .map_err(|e| {
-            crate::log::error(
-                "audit browser query failed",
-                &[("error", serde_json::json!(e.to_string()))],
-            );
-            refuse(StatusCode::BAD_GATEWAY, "audit store query failed")
-        })?;
+        .map_err(store_failed)?;
     let next_cursor = next.map(|key| {
         let cursor = match month {
             Some(month) => json!({"month": month, "key": key}),
@@ -139,6 +137,120 @@ async fn browse(
         base64::engine::general_purpose::STANDARD.encode(cursor.to_string())
     });
     Ok(json!({"items": items, "nextCursor": next_cursor}))
+}
+
+/// The audit store, or 503 for an engine without `[audit]`.
+fn store(browser: &AuditBrowser) -> Result<&AuditWriter, Refusal> {
+    browser.store.as_ref().ok_or_else(|| {
+        refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the audit store is not configured ([audit])",
+        )
+    })
+}
+
+/// 502 for a store that cannot be queried; the store's own error is logged, not returned.
+fn store_failed(e: String) -> Refusal {
+    crate::log::error(
+        "audit browser query failed",
+        &[("error", serde_json::json!(e))],
+    );
+    refuse(StatusCode::BAD_GATEWAY, "audit store query failed")
+}
+
+/// Where a recent-history page starts: records created at or after `since` (a `createdAt`
+/// string), in the `month` partition, after `key` (or from that month's newest record).
+#[derive(Debug, PartialEq)]
+struct Recent {
+    since: String,
+    month: String,
+    key: Option<Map<String, Value>>,
+}
+
+impl Recent {
+    /// The first page at `now`: the last `RECENT_DAYS` days, from the current month.
+    fn first(now: chrono::DateTime<chrono::Utc>) -> Recent {
+        let since = (now - chrono::Duration::days(RECENT_DAYS))
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
+        Recent {
+            since,
+            month: now.format("%Y-%m").to_string(),
+            key: None,
+        }
+    }
+
+    fn cursor(&self) -> String {
+        let value = json!({"recent": {"since": self.since, "month": self.month, "key": self.key}});
+        base64::engine::general_purpose::STANDARD.encode(value.to_string())
+    }
+}
+
+/// The month before a `YYYY-MM` month.
+fn previous_month(month: &str) -> String {
+    let year: i32 = month[..4].parse().unwrap_or(0);
+    match month[5..].parse::<u8>().unwrap_or(1) {
+        1 => format!("{:04}-12", year - 1),
+        m => format!("{year:04}-{:02}", m - 1),
+    }
+}
+
+/// The position a recent-history cursor encodes.
+fn recent_cursor(cursor: &str) -> Result<Recent, Refusal> {
+    let value = decode_cursor(cursor)?;
+    let recent = value.get("recent").ok_or_else(bad_cursor)?;
+    let since = recent.get("since").and_then(Value::as_str);
+    let month = recent.get("month").and_then(Value::as_str);
+    let (Some(since), Some(month)) = (since, month) else {
+        return Err(bad_cursor());
+    };
+    if !is_month(month) || since.len() < 7 || !is_month(&since[..7]) || month < &since[..7] {
+        return Err(bad_cursor());
+    }
+    let key = match recent.get("key") {
+        None | Some(Value::Null) => None,
+        Some(Value::Object(key)) => Some(key.clone()),
+        Some(_) => return Err(bad_cursor()),
+    };
+    Ok(Recent {
+        since: since.to_string(),
+        month: month.to_string(),
+        key,
+    })
+}
+
+/// One page of the recent-history browse: up to `PAGE_SIZE` records created at or after
+/// `since`, newest first, continuing into the previous month's partition when one runs out.
+async fn recent(store: &AuditWriter, mut at: Recent) -> Result<Value, Refusal> {
+    let mut items = Vec::new();
+    loop {
+        let limit = PAGE_SIZE - items.len() as i32;
+        let (page, next) = store
+            .query_page("byMonth", "createdAtMonth", &at.month, limit, at.key.as_ref())
+            .await
+            .map_err(store_failed)?;
+        for item in page {
+            let created = item.get("createdAt").and_then(Value::as_str).unwrap_or("");
+            if created < at.since.as_str() {
+                return Ok(json!({"items": items, "nextCursor": null}));
+            }
+            items.push(item);
+        }
+        match next {
+            Some(Value::Object(key)) => at.key = Some(key),
+            _ => {
+                let previous = previous_month(&at.month);
+                if previous.as_str() < &at.since[..7] {
+                    return Ok(json!({"items": items, "nextCursor": null}));
+                }
+                at.month = previous;
+                at.key = None;
+            }
+        }
+        if items.len() as i32 >= PAGE_SIZE {
+            return Ok(json!({"items": items, "nextCursor": at.cursor()}));
+        }
+    }
 }
 
 /// `YYYY-MM` with a month 01-12.
@@ -224,6 +336,50 @@ mod tests {
             month_cursor_key("not base64!", "2026-10").unwrap_err().0,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[test]
+    fn recent_browse_starts_thirty_days_back_in_the_current_month() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-03-01T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let first = Recent::first(now);
+        assert_eq!(first.since, "2026-01-30T12:00:00.000Z");
+        assert_eq!(first.month, "2026-03");
+        assert_eq!(first.key, None);
+    }
+
+    #[test]
+    fn previous_months_cross_the_year() {
+        assert_eq!(previous_month("2026-03"), "2026-02");
+        assert_eq!(previous_month("2026-10"), "2026-09");
+        assert_eq!(previous_month("2026-01"), "2025-12");
+    }
+
+    #[test]
+    fn recent_cursors_round_trip_and_refuse_other_cursors() {
+        let key = json!({"id": "x", "createdAtMonth": "2026-10", "createdAt": "2026-10-05T10:00:00.000Z"});
+        let at = Recent {
+            since: "2026-09-20T00:00:00.000Z".into(),
+            month: "2026-10".into(),
+            key: key.as_object().cloned(),
+        };
+        assert_eq!(recent_cursor(&at.cursor()).unwrap(), at);
+        let fresh = Recent { key: None, ..at };
+        assert_eq!(recent_cursor(&fresh.cursor()).unwrap(), fresh);
+        let month = base64::engine::general_purpose::STANDARD
+            .encode(json!({"month": "2026-10", "key": key}).to_string());
+        let since = "2026-09-20T00:00:00.000Z";
+        let before_since = base64::engine::general_purpose::STANDARD.encode(
+            json!({"recent": {"since": since, "month": "2026-08", "key": null}}).to_string(),
+        );
+        for bad in [month.as_str(), before_since.as_str(), "not base64!"] {
+            assert_eq!(
+                recent_cursor(bad).unwrap_err().0,
+                StatusCode::BAD_REQUEST,
+                "{bad}"
+            );
+        }
     }
 
     #[test]

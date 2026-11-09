@@ -89,12 +89,14 @@ describe('createEngineWriter', () => {
         const [payloadB64, signature] = String(confirmation).split('.');
         expect(signature).toBe(crypto.createHmac('sha256', SECRET).update(payloadB64).digest('base64url'));
         const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-        expect(Object.keys(payload)).toEqual(['v', 'stmt_sha256', 'sub', 'project', 'exp', 'nonce']);
+        expect(Object.keys(payload)).toEqual(['v', 'typ', 'statement_sha256', 'sub', 'project', 'iat', 'exp', 'nonce']);
         expect(payload).toMatchObject({
             v: 1,
-            stmt_sha256: crypto.createHash('sha256').update(STATEMENT).digest('hex'),
+            typ: 'write_confirmation',
+            statement_sha256: crypto.createHash('sha256').update(STATEMENT).digest('hex'),
             sub: 'user-uuid-1',
             project: 'project-uuid-1',
+            iat: NOW_MS / 1000,
             exp: NOW_MS / 1000 + 60,
         });
     });

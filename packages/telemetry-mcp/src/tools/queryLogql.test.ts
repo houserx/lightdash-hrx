@@ -22,9 +22,9 @@ describe('buildLogqlQuery', () => {
         expect(q.params).toEqual([Q, S, E]);
     });
 
-    it('sends limit and direction as parameters', () => {
+    it('sends limit (cast to int) and direction as parameters', () => {
         const q = buildLogqlQuery(config, { query: Q, start: START, end: END, limit: 50, direction: 'forward' }, NOW);
-        expect(q.sql).toBe('SELECT * FROM logql($1, $2, $3, $4, $5)');
+        expect(q.sql).toBe('SELECT * FROM logql($1, $2, $3, $4::int, $5)');
         expect(q.params).toEqual([Q, S, E, '50', 'forward']);
     });
 

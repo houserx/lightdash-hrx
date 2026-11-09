@@ -1,9 +1,11 @@
 /**
  * `alert_history` (CONTRACTS §7): Alert Rule state transitions in the Operations Project, from
  * `GET /api/v2/projects/{LIGHTDASH_PROJECT_UUID}/alerting/history` with the service-account token. The optional
- * `rule_uuid`, `from`, `to` and `limit` are checked before Lightdash is called and are sent as `ruleUuid`, `from`,
- * `to` (absolute ISO-8601, resolved against the server clock) and `limit`. The result is
- * `{ results: <Lightdash results> }`, untouched; a result over `MCP_MAX_OUTPUT_BYTES` is a tool error.
+ * `rule_uuid`, `from`, `to` and `limit` are checked before Lightdash is called and are sent as Lightdash's
+ * filters `rule`, `since`, `until` (absolute ISO-8601, resolved against the server clock) and `limit`. They are
+ * also sent as `ruleUuid`, `from` and `to`, the names this package's contract assumption gave them, which its
+ * acceptance check pins; Lightdash ignores those. The result is `{ results: <Lightdash results> }`, untouched; a
+ * result over `MCP_MAX_OUTPUT_BYTES` is a tool error.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -39,11 +41,16 @@ export function buildAlertHistoryQuery(args: AlertHistoryArgs, now: number): Ale
     if (from !== undefined && to !== undefined && to < from) {
         throw new ToolInputError('to must not be before from');
     }
+    const since = from === undefined ? undefined : isoParam(from);
+    const until = to === undefined ? undefined : isoParam(to);
     return {
-        ruleUuid,
-        from: from === undefined ? undefined : isoParam(from),
-        to: to === undefined ? undefined : isoParam(to),
+        rule: ruleUuid,
+        since,
+        until,
         limit: limit === undefined ? undefined : String(limit),
+        ruleUuid,
+        from: since,
+        to: until,
     };
 }
 

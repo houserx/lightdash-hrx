@@ -15,7 +15,7 @@ It listens on two ports:
     histograms, errors and audit write failures.
   - `POST /v1/write`: Write Mode (Preview and commit) on the Platform Database.
   - `POST /v1/write/confirmations/verify`: only with `test_mode = true`.
-  - `GET /v1/audit`: the audit browser (`?month=`, `?ticket=`, `?user=`).
+  - `GET /v1/audit`: the audit browser (`?month=`, `?ticket=`, `?user=`, or none for the last 30 days).
 
 ## SQL functions
 
@@ -37,6 +37,15 @@ SELECT series, avg(value)
 FROM promql('rate(http_requests_total[5m])', '2026-11-08T00:00:00Z', '2026-11-08T01:00:00Z', '1m')
 GROUP BY series;
 ```
+
+Function arguments must be constants when a query is planned. Through the extended protocol they
+may also be bind parameters (`FROM promql($1, $2, $3, $4)`). Such a statement is planned at Bind,
+with each `$n` replaced by its bound value as a literal in the parsed statement (never pasted as
+text). Its parameters are text unless the client declares a type in Parse, so a non-text argument
+takes a cast (`logql($1, $2, $3, $4::int)`). Describing the statement reports no result columns
+because they are known only at Bind; describing the portal reports them. The audit record of
+such a statement holds the SQL with the bound values in place. The SQL type `json` is planned as
+text marked as JSON, so `$1::json` and `'{}'::json` work.
 
 ## Building and running it
 
@@ -225,7 +234,9 @@ the SQL, the source, the description and ticket, the status, the row count and t
 `action` is `query`, `ai_ask` (agents) or `assertion` (system). Failed statements are recorded too,
 with `status: error`. Statements the guard rejects never run and are not recorded.
 `GET /v1/audit` browses these records with a bearer identity holding `platform_read`. Without a
-valid bearer it returns 401, and without that claim it returns 403.
+valid bearer it returns 401, and without that claim it returns 403. With no `ticket`, `user` or
+`month` it pages the last 30 days, newest first, across the monthly partitions (the portal's
+recent-history browse, used by the MCP's example queries).
 
 **58000: audit fails closed.** If the DynamoDB write or the S3 write fails, the query fails with
 SQLSTATE `58000 "audit write failed"` and returns no rows. Results are never sent before their

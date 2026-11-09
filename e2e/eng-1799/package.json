@@ -1,0 +1,21 @@
+{
+  "name": "@lightdash/e2e-eng-1799",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "ENG-1799 integration line: end-to-end checks across the Federation Engine, Lightdash, alerting and the telemetry MCP server.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@casl/ability": "6.8.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "@types/node": "24.13.2",
+    "@types/pg": "8.11.10",
+    "jose": "6.1.3",
+    "pg": "8.13.1",
+    "pg-cursor": "2.10.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}

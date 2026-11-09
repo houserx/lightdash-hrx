@@ -68,9 +68,10 @@ else
     log "frontend build up to date"
 fi
 
-# 4. The Federation Engine binary the stack runs (built by init-engine.sh; debug is fine for the demo).
-[ -x federation-engine/target/debug/engine ] || [ -x federation-engine/target/release/engine ] || {
-    log "no federation-engine binary (init-engine.sh should have built it)"
+# 4. The Federation Engine binary the stack runs: tmp/cargo-target/debug/engine, built by the root
+#    init.sh (the same binary the e2e/eng-1799 harness uses; debug is fine for the demo).
+[ -x tmp/cargo-target/debug/engine ] || {
+    log "no federation-engine binary at tmp/cargo-target/debug/engine (the root init.sh builds it)"
     exit 1
 }
 

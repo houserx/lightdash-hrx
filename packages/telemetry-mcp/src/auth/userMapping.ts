@@ -5,7 +5,7 @@
  * `GET /api/v1/org/users?searchQuery=<email>&includeGroups=<n>`. Lightdash's search is a substring match, so only
  * the active user whose email equals the claim (case-insensitively) counts. The four §3 attrs come from
  * `GET /api/v1/org/attributes`, resolved like Lightdash does (the user's direct and group values, else the attribute
- * defaults); an attr is true only when that resolves to exactly `"true"` (see `resolveAttrs`).
+ * defaults); an attr is true when any resolved value is exactly `"true"`, as in Lightdash (see `resolveAttrs`).
  *
  * A caller that does not map gets no tools at all (see `serveMcpRequest`). The server puts the per-user TTL cache
  * (`createCachedUserResolver`) in front of this resolver.
@@ -97,9 +97,10 @@ function defaultValues(attribute: LightdashAttribute): string[] {
  *
  * The values are resolved the way Lightdash resolves them for its own queries
  * (`UserAttributesModel.getAttributeValuesForOrgMember`): the user's direct values together with the values of every
- * group the user is in, or, only when there are none, the attribute's defaults. An attr is true only when that
- * resolves to the single value `"true"` (Contract assumption: CONTRACTS §3 "the value `"true"` is true; anything
- * else is false", so a conflicting set such as `["false", "true"]` is false).
+ * group the user is in, or, only when there are none, the attribute's defaults. An attr is true when any resolved
+ * value is exactly `"true"` (CONTRACTS §3 "the value `"true"` is true; anything else is false"), the same reading as
+ * Lightdash's `identityAttrsFromUserAttributes`, so a person gets the same claims through Lightdash and through MCP.
+ * A mixed set such as `["false", "true"]` is therefore true; `"TRUE"`, `" true"` or `"yes"` alone are false.
  */
 export function resolveAttrs(
     attributes: readonly LightdashAttribute[],
@@ -115,8 +116,8 @@ export function resolveAttrs(
                 .filter((g) => typeof g.groupUuid === 'string' && groupUuids.has(g.groupUuid))
                 .flatMap(entryValues),
         ];
-        const resolved = new Set(assigned.length > 0 ? assigned : defaultValues(attribute));
-        return resolved.size === 1 && resolved.has('true');
+        const resolved = assigned.length > 0 ? assigned : defaultValues(attribute);
+        return resolved.includes('true');
     };
     return {
         telemetry_restricted: value('telemetry_restricted'),

@@ -14,8 +14,8 @@ query: |
   SELECT timestamp, value, labels
   FROM cloudwatch(
       '{"Id": "unhealthy", "MetricStat": {"Metric": {"Namespace": "AWS/ApplicationELB", "MetricName": "UnHealthyHostCount"}, "Period": 60, "Stat": "Maximum"}}',
-      '${ld.parameters.__from}',
-      '${ld.parameters.__to}'
+      ${ld.parameters.__from},
+      ${ld.parameters.__to}
   )
 reducer: max
 condition:

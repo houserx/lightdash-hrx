@@ -319,10 +319,22 @@ export const ALERT_HISTORY_MAX_LIMIT = 1000;
 
 export type AlertHistoryQuery = AlertHistoryFilters & { limit: number };
 
+/** An ISO 8601 time query parameter, at most once. */
+const parseHistoryTime = (name: string, raw: unknown): Date | undefined => {
+    const value = singleQueryValue(name, raw);
+    if (value === undefined) return undefined;
+    const time = new Date(value);
+    if (!/^\d{4}-\d{2}-\d{2}T/.test(value) || Number.isNaN(time.getTime())) {
+        throw new ParameterError(`${name} must be an ISO 8601 time`);
+    }
+    return time;
+};
+
 /**
  * Reads the project history's query string: `rule=<uuid>`,
- * `since=<ISO 8601 time>` and `limit=<1..1000>` (default 100), each at most
- * once. Other parameters are ignored.
+ * `since=<ISO 8601 time>`, `until=<ISO 8601 time>` (not before `since`) and
+ * `limit=<1..1000>` (default 100), each at most once. Other parameters are
+ * ignored.
  */
 export const parseAlertHistoryQuery = (
     query: Record<string, unknown>,
@@ -331,14 +343,10 @@ export const parseAlertHistoryQuery = (
     if (ruleUuid !== undefined && !UUID_PATTERN.test(ruleUuid)) {
         throw new ParameterError('rule must be a uuid');
     }
-    const sinceValue = singleQueryValue('since', query.since);
-    const since = sinceValue === undefined ? undefined : new Date(sinceValue);
-    if (
-        since !== undefined &&
-        (!/^\d{4}-\d{2}-\d{2}T/.test(sinceValue ?? '') ||
-            Number.isNaN(since.getTime()))
-    ) {
-        throw new ParameterError('since must be an ISO 8601 time');
+    const since = parseHistoryTime('since', query.since);
+    const until = parseHistoryTime('until', query.until);
+    if (since !== undefined && until !== undefined && until < since) {
+        throw new ParameterError('until must not be before since');
     }
     const limitValue = singleQueryValue('limit', query.limit);
     const limit =
@@ -357,8 +365,25 @@ export const parseAlertHistoryQuery = (
     return {
         ...(ruleUuid !== undefined && { ruleUuid }),
         ...(since !== undefined && { since }),
+        ...(until !== undefined && { until }),
         limit,
     };
+};
+
+export type AlertStateQuery = { ruleUuid?: string };
+
+/**
+ * Reads the project state's query string: `rule=<uuid>`, at most once.
+ * Other parameters are ignored.
+ */
+export const parseAlertStateQuery = (
+    query: Record<string, unknown>,
+): AlertStateQuery => {
+    const ruleUuid = singleQueryValue('rule', query.rule);
+    if (ruleUuid !== undefined && !UUID_PATTERN.test(ruleUuid)) {
+        throw new ParameterError('rule must be a uuid');
+    }
+    return ruleUuid === undefined ? {} : { ruleUuid };
 };
 
 const matchesFilters = (
@@ -472,9 +497,13 @@ export class AlertRuleService {
     async listState(
         user: SessionUser,
         projectUuid: string,
+        { ruleUuid }: AlertStateQuery = {},
     ): Promise<{ instances: AlertStateInstance[] }> {
         await this.assertAbility(user, 'view', projectUuid);
-        const rules = await this.deps.alertRuleModel.list(projectUuid);
+        const rules =
+            ruleUuid === undefined
+                ? await this.deps.alertRuleModel.list(projectUuid)
+                : [await this.getRuleOrThrow(projectUuid, ruleUuid)];
         const withInstances = await this.withInstances(rules);
         return {
             instances: withInstances.flatMap((rule) =>

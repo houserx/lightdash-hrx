@@ -56,7 +56,8 @@ export function buildTraceqlQuery(
     if (args.limit !== undefined || source.length > 0) {
         params.push(String(args.limit ?? TRACEQL_DEFAULT_LIMIT), ...source);
     }
-    return { sql: `SELECT * FROM traceql(${placeholders(params.length)})`, params };
+    // `limit` ($4) is an int in the engine signature; parameters arrive as text.
+    return { sql: `SELECT * FROM traceql(${placeholders(params.length, { 4: 'int' })})`, params };
 }
 
 export function registerSearchTraces(

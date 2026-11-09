@@ -16,7 +16,7 @@ const MS_PER_DAY = 24 * MS_PER_HOUR;
 const MS_PER_WEEK = 7 * MS_PER_DAY;
 const MS_PER_YEAR = 365 * MS_PER_DAY;
 
-// Largest unit first: parsing requires this order, formatting uses it.
+// Largest unit first: parsing requires this order.
 const DURATION_UNITS: ReadonlyArray<readonly [string, number]> = [
     ['y', MS_PER_YEAR],
     ['w', MS_PER_WEEK],
@@ -58,25 +58,9 @@ export const parsePrometheusDuration = (value: string): number => {
 };
 
 /**
- * Formats milliseconds as a Prometheus duration string using the largest
- * units first (`3600000` → `1h`, `5400000` → `1h30m`, `0` → `0s`).
+ * Formats milliseconds as a Prometheus duration string. This is ldq's
+ * formatter (`utils/timeRange`), re-exported so alerting and dashboards give
+ * the engine the same strings: the largest unit is the day (`7d`, not `1w`),
+ * e.g. `3600000` → `1h`, `5400000` → `1h30m`, `0` → `0s`.
  */
-export const formatPrometheusDuration = (ms: number): string => {
-    if (!Number.isSafeInteger(ms) || ms < 0) {
-        throw new Error(
-            `Invalid duration ${ms}: expected a non-negative whole number of milliseconds`,
-        );
-    }
-    if (ms === 0) {
-        return '0s';
-    }
-    let remaining = ms;
-    return DURATION_UNITS.reduce((out, [unit, unitMs]) => {
-        const amount = Math.floor(remaining / unitMs);
-        if (amount === 0) {
-            return out;
-        }
-        remaining -= amount * unitMs;
-        return `${out}${amount}${unit}`;
-    }, '');
-};
+export { formatPrometheusDuration } from '../utils/timeRange';

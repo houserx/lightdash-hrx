@@ -63,6 +63,13 @@ Scalar helpers:
 - `label(labels json, key text) -> text`: one label's value, or NULL.
 - `series_name(labels json) -> text`: canonical `{k="v",...}`, with keys sorted.
 
+**`cloudwatch()` query shapes (amended 2026-11-09, int-fix-cloudwatch-query-shape).** "The `MetricDataQuery` shape that Grafana's CloudWatch datasource stores" was read two ways. The engine accepts both shapes:
+
+- **Grafana's stored target** (camelCase keys). Builder mode (`metricEditorMode = 0`, no `expression`) becomes a `MetricStat` from `namespace`, `metricName`, `dimensions`, `statistic` and `period`. Code mode (`metricEditorMode = 1`, or a non-empty `expression`) sends the `expression` whole as the `Expression`, with the `period`. A non-empty `label` is the `series` of every row. Metrics Insights targets (`metricQueryType = 1`) are refused with `0A000`.
+- **The AWS `MetricDataQuery`** (PascalCase keys), which Investigate's CloudWatch form and the MCP `query_cloudwatch` tool send. An object with any of `Id`, `MetricStat` or `Expression` is read as this shape: `MetricStat{Metric{Namespace, MetricName, Dimensions: [{Name, Value}]}, Period, Stat, Unit?}`, or `Expression` with an optional `Period`, plus `Label`. Having both or neither of `MetricStat` and `Expression`, a `MetricStat` without `Period`, or `ReturnData: false` fails with `22023`. `AccountId` fails with `0A000`.
+
+The two shapes of one metric reach CloudWatch as the same `MetricStat`.
+
 BigQuery Ops Marts appear as ordinary tables in the catalog `ops_marts`, one per allowlisted table in the config (`ops_marts.<dataset>.<table>`). Nothing outside the allowlist is visible.
 
 Results are capped by `max_rows` in the source config (default 100000). Hitting the cap is an error, not silent truncation: SQLSTATE `54000`, "result exceeds max_rows".
@@ -153,6 +160,8 @@ The Dashboard Time Range and Investigate resolve to absolute values **before** a
 | `ld.parameters.__interval` | Prometheus duration string: (to − from) / max data points (default 1000), rounded up to a nice step (1s, 5s, 15s, 30s, 1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 1d), floor 15s |
 | `ld.parameters.__range` | duration string for (to − from) |
 
+**Quoting in SQL (amended 2026-11-09, int-fix-alert-sql-parameters).** SQL references the parameters bare, as in `${ld.parameters.__from}` (or `${lightdash.parameters.__from}`, with no whitespace inside the braces). The substitution writes each value as a single-quoted SQL string literal, with any `'` doubled. Alert Rule queries follow Lightdash's convention and get exactly the SQL Lightdash would compile, so a query saved from Investigate works as an Alert Rule query. For compatibility, the alert evaluator also accepts a legacy reference that is already in quotes (`'${ld.parameters.__from}'`): the reference and its quotes become one literal. Lightdash would write invalid SQL for that form, so alerting and Lightdash differ only on SQL that Lightdash cannot run. `__range` and `__interval` come from one formatter in both, so 7 days is `7d` (int-fix-alert-time-params-agree).
+
 Relative ranges (`now-6h`) are resolved to absolute timestamps rounded down to the dashboard's refresh interval, or to 10s when there is none. Cache keys therefore change exactly when the data should.
 
 ## 3. Identity token (Lightdash → engine, MCP → engine)
@@ -174,6 +183,10 @@ Encoding uses base64url without padding. The engine rejects a token whose `exp` 
 - **Lifetime:** at most 300 s (`exp − iat`).
 - **On the pg path:** Lightdash sends `SET hrx.identity = '<token>'` immediately before each query on the connection that runs it.
 - **Where `attrs` come from:** Lightdash user attributes with the same names, managed through groups. The value `"true"` is true; anything else is false.
+
+**Amended 2026-11-09 (int-fix-attr-truthiness, int-fix-query-path-identity).**
+- **Several values.** A user can hold several values for one attribute, directly and through groups. The claim is true when any of them is exactly `"true"`. `"TRUE"`, `" true"` and `"yes"` are false. Lightdash and the MCP server derive the same claims from the same values.
+- **No identity.** When a federation-flavour query runs with no identity in scope, Lightdash sends `RESET hrx.identity` instead of the `SET`. The engine keeps the setting for the life of a pooled connection, so a query with no identity must not inherit the previous user's identity.
 
 ## 4. Lightdash
 
@@ -200,7 +213,7 @@ The Federation Engine is **not** a new `WarehouseTypes` member. It is the Postgr
 ### 4.2 Write Mode and Preview (never through `AsyncQueryService`)
 
 - **Routes.**
-  - `POST /api/v2/projects/{projectUuid}/write/confirmations` takes `{statement}` and returns `{confirmationToken, expiresAt}`. The token is an HMAC over (sha256(statement), user uuid, project uuid, exp ≤ 120 s, nonce) under the identity secret.
+  - `POST /api/v2/projects/{projectUuid}/write/confirmations` takes `{statement}` and returns `{confirmationToken, expiresAt}`. The token is an HMAC over (sha256(statement), user uuid, project uuid, exp ≤ 120 s, nonce) under the identity secret. Its encoding is fixed in the note below.
   - `POST /api/v2/projects/{projectUuid}/write` takes `{statement, mode: "preview"|"commit", confirmationToken, description, ticket?}`. It forwards to the engine's `POST /v1/write` with a fresh identity token and returns the engine's result.
 - **Who may call.** It requires the user attribute `platform_write`. A request from an AI agent context (`agent = true`) may only use `mode = "preview"`. The engine enforces this too.
 - **Engine `POST /v1/write`:**
@@ -212,12 +225,32 @@ The Federation Engine is **not** a new `WarehouseTypes` member. It is the Postgr
     3. Run the statement on the write pool. Preview runs `BEGIN; <stmt>; ROLLBACK` and returns at most 100 `RETURNING` rows.
     4. Write the audit record (§6).
 
+**Confirmation token encoding (amended 2026-11-09, int-fix-write-confirmation-token, int-fix-mcp-write-preview).** Lightdash, the MCP server and the engine each read the HMAC list above differently. All three now use the engine's encoding. The token uses the §3 envelope (`<base64url(payload_json)>.<base64url(HMAC-SHA256(identity secret, base64url(payload_json)))>`, no padding), with this payload:
+
+```json
+{"v": 1, "typ": "write_confirmation", "statement_sha256": "<hex sha256 of the statement>",
+ "sub": "<user uuid>", "project": "<project uuid>", "iat": 1767225600, "exp": 1767225720,
+ "nonce": "<random, base64url>"}
+```
+
+- `typ` is always `write_confirmation`, so an identity token is never accepted as a confirmation.
+- `iat` is the mint time in unix seconds. The engine refuses an `iat` more than 60 s in the future, and `exp − iat` is at most 120 s.
+- The key is `statement_sha256` (lower-case hex of the statement as sent), not `stmt_sha256`. `nonce` must be non-empty.
+- Single use is enforced only by the engine, which spends a token (by its signature) before the statement runs. Lightdash and the MCP server keep no record of used tokens.
+- The MCP `write_preview` tool mints the same token for the mapped user and only ever sends `mode = "preview"`.
+
 ### 4.3 Alert Rules (alerting line), for the integration contract only
 
 - **Identity.** The evaluator queries the engine as `sub = "system:alert-evaluator"`, `sys = true`. Its `audit.description` is the rule's saved description and `audit.source` is `alert_rule`.
 - **States** per series: `normal | pending | firing | resolved | nodata | error`.
 - **incident.io payload.** Alertmanager webhook v4: `status`, `alerts[].labels`, `annotations`, `startsAt`, `endsAt`, `fingerprint`.
 - **Heartbeat.** A `GET` or `POST` to the configured heartbeat URL after every completed evaluation cycle.
+
+**Evaluator identity and attrs (amended 2026-11-09, int-fix-alert-evaluator-identity).** §1.2 says the system identity "is configured with the attrs its rules need", but not where. This is now settled:
+
+- **Attrs.** The env var `ALERTING_EVALUATOR_ATTRS` on the Lightdash backend lists the claims, separated by commas, for example `ALERTING_EVALUATOR_ATTRS=telemetry_restricted,platform_read`. Each name must be one of `telemetry_restricted`, `platform_read`, `platform_write` and `platform_explain`. Listed claims are true and the others are false. Unset or empty means no claims. An unknown name stops the alerting module from starting.
+- **Token.** Every rule query, both evaluation and the "Test rule" preview, runs with a minted identity token: `iss = "lightdash"`, `sub = "system:alert-evaluator"`, `sys = true`, `agent = false`, and the attrs above. In the `audit` block, `description` is the rule's saved description, `source` is `alert_rule` and `resource_uuid` is the rule uuid. The engine audits these queries with `action = assertion`.
+- **Email.** §3 names no email for the system identity, and the engine refuses a blank one. The token's `email` is therefore the subject, `system:alert-evaluator`. This value also becomes the audit's `executedByEmail`, so no address is invented.
 
 ## 5. Write guard (a port of db-query-portal `api/src/services/query-guard.ts`)
 
@@ -256,8 +289,10 @@ Port the portal's tests case for case. The source of truth is `refs/db-query-por
   - `list_sources`
   - `query_promql`, `query_logql`, `query_cloudwatch`, `query_cloudwatch_logs`
   - `search_traces`, `get_trace`
-  - `alert_state`, `alert_history` (Lightdash API)
+  - `alert_state`, `alert_history` (Lightdash API; see the note below)
   - `platform_query` (needs `description`), `platform_schema`
   - `platform_explain` with plan advice (a port of the portal's plan-advisor)
   - `ask_data` (a port of the portal's data assistant and its memory)
   - `write_preview` (Preview only; there is no commit tool)
+
+**Alert tools and the alerting API (amended 2026-11-09, int-fix-mcp-real-lightdash).** The MCP alert tools read `GET /api/v2/projects/{projectUuid}/alerting/state?rule=` and `GET /api/v2/projects/{projectUuid}/alerting/history?rule=&since=&until=&limit=`. `rule` is a rule uuid. `since` and `until` are ISO-8601 date-times, and `until` means at or before. `limit` defaults to 100, with a maximum of 1000. The MCP also sends `ruleUuid`, `from` and `to`, which Lightdash ignores, because the MCP line's protected acceptance check pins them. Drop them once that check may change.

@@ -29,11 +29,13 @@ describe('mintWriteConfirmationToken', () => {
         expect(decode(token)).toEqual(payload);
         expect(payload).toEqual({
             v: 1,
+            typ: 'write_confirmation',
             statement_sha256: createHash('sha256')
                 .update(base.statement)
                 .digest('hex'),
             sub: 'user-uuid',
             project: 'project-uuid',
+            iat: now.getTime() / 1000,
             exp: now.getTime() / 1000 + MAX_WRITE_CONFIRMATION_TTL_SECONDS,
             nonce: nonce.toString('base64url'),
         });

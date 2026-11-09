@@ -22,16 +22,16 @@ describe('buildTraceqlQuery', () => {
         expect(q.params).toEqual([Q, S, E]);
     });
 
-    it('sends the limit as a parameter', () => {
+    it('sends the limit as a parameter cast to int', () => {
         const q = buildTraceqlQuery(config, { query: Q, start: START, end: END, limit: 10 }, NOW);
-        expect(q.sql).toBe('SELECT * FROM traceql($1, $2, $3, $4)');
+        expect(q.sql).toBe('SELECT * FROM traceql($1, $2, $3, $4::int)');
         expect(q.params).toEqual([Q, S, E, '10']);
         expect(q.sql).not.toContain('resource.service.name');
     });
 
     it('fills the limit with the contract default when only a source is given', () => {
         const q = buildTraceqlQuery(config, { query: Q, start: START, end: END, source: 'tempo-production' }, NOW);
-        expect(q.sql).toBe('SELECT * FROM traceql($1, $2, $3, $4, $5)');
+        expect(q.sql).toBe('SELECT * FROM traceql($1, $2, $3, $4::int, $5)');
         expect(q.params).toEqual([Q, S, E, '20', 'tempo-production']);
         expect(
             buildTraceqlQuery(config, { query: Q, start: START, end: END, limit: 1000, source: 'tempo-production' }, NOW)

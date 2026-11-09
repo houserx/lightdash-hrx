@@ -172,12 +172,14 @@ export type AlertProjectHistoryEntry = AlertStateHistoryEntry & {
 };
 
 /**
- * Filters of GET .../alerting/history (`?rule=<uuid>&since=<ISO time>`):
- * entries of that rule only, and entries at or after `since`.
+ * Filters of GET .../alerting/history
+ * (`?rule=<uuid>&since=<ISO time>&until=<ISO time>`): entries of that rule
+ * only, entries at or after `since`, and entries at or before `until`.
  */
 export type AlertHistoryFilters = {
     ruleUuid?: string;
     since?: Date;
+    until?: Date;
 };
 
 /** One series of a rule preview ("Test rule"). */
