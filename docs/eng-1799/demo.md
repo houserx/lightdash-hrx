@@ -109,7 +109,27 @@ restart. To look at another trace, open the Trace ID parameter, paste the id (fo
 `traceql('{ duration > 2s }', ...)`) and pick "Add ...". The waterfall then reruns with that trace, like a Grafana
 trace-id variable.
 
+### Portal saved script
+
+`demo/eng-1799/seed/portal-scripts.json` is a synthetic db-query-portal saved-scripts export with one script, **Open
+fills past target by queue**. Its SQL is Platform Database SQL. On every fresh start, `up.sh` copies `content/` to
+`.state/run/content` and runs the CLI from source:
+`lightdash import portal-scripts seed/portal-scripts.json --path .state/run/content --space platform-saved-sql`.
+This adds one SQL chart, with the SQL kept verbatim, in the space "Platform saved sql". The seed then uploads that
+folder with `lightdash upload`. The importer leaves out the export's author and execution fields.
+
+To run it: in the SQL Runner, switch to **Investigate**. **Saved SQL** lists the chart. Choose **Platform
+Database**, paste the script's SQL into **Platform SQL**, add a Description, and press **Run**. Investigate wraps the
+SQL in `platform_query(...)`, so it runs on the Platform Database as an Audited Query, and the audit browser lists it.
+
 ## Known limits
+
+- **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's
+  SQL verbatim, and portal SQL reads Platform Database tables directly. The Operations Project only reaches those
+  tables through `platform_query()`. So opening the SQL chart, or opening it from Investigate's Saved SQL into the
+  SQL box, fails with "table 'datafusion.public.fills' not found". Run it as Platform SQL instead (see above). To
+  fix this, the importer could wrap the SQL, or the SQL Runner could mark a chart as Platform SQL. Either change has
+  to keep the portal text unchanged.
 
 - **ENG-1799 follow-up: no "latest slow trace" waterfall.** Table-function arguments must be constants in the
   Federation Engine, so `trace((SELECT trace_id FROM traceql(...) LIMIT 1))` is refused. A Tile can't follow the

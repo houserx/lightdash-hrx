@@ -1,0 +1,14 @@
+[
+  {
+    "id": "demo-script-0001",
+    "title": "Open fills past target by queue",
+    "description": "Synthetic db-query-portal saved script for the ENG-1799 demo: open fills per queue, and how many are older than the queue's target minutes.",
+    "sql": "SELECT q.name AS queue,\n       q.target_minutes,\n       count(*)::int AS open_fills,\n       count(*) FILTER (WHERE f.queued_at < now() - make_interval(mins => q.target_minutes))::int AS past_target\nFROM fills f\nJOIN queues q ON q.id = f.queue_id\nWHERE f.completed_at IS NULL\nGROUP BY q.name, q.target_minutes\nORDER BY q.name",
+    "database": "platform",
+    "tags": ["demo", "fills"],
+    "createdBy": "demo.operator@example.com",
+    "createdAt": "2026-11-01T12:00:00.000Z",
+    "updatedAt": "2026-11-01T12:00:00.000Z",
+    "executionCount": 0
+  }
+]

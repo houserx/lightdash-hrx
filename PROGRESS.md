@@ -2256,3 +2256,34 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   dashboard-pharmacy-ops.spec.ts` passes (2 tests). Typecheck is clean. `docs.spec.ts` fails as it did before this
   change (no "prerequisites" heading yet, which is demo-docs' job).
 - 2026-11-09T09:26:56Z supervisor: demo-grafana-fixture passed the gate in round 1
+
+### demo-portal-script (2026-11-09, run 20261109-013019, round 1)
+
+- The importer already exists: `packages/cli/src/handlers/importPortalScripts.ts` (ldq line). Nothing changed in
+  packages/.
+- New `demo/eng-1799/seed/portal-scripts.json` is a synthetic export with one script, **"Open fills past target by
+  queue"** (id `demo-script-0001`). Its SQL is Platform SQL over `fills`/`queues` with aggregates only: no names, no
+  addresses, no single quotes. It also has the extra portal fields (tags, a synthetic example.com `createdBy`,
+  timestamps), which the importer leaves out.
+- `up.sh`: before the seed, it copies `content/` to `.state/run/content` and runs the CLI from source
+  (`import portal-scripts … --path .state/run/content --space platform-saved-sql`) on the pinned Node, with HOME
+  `.state/cli-home`, `no-network.mjs` preloaded and output in `seed.log`. Then `seed.ts` gets
+  `--content-dir .state/run/content`, so one `lightdash upload` covers dashboards and imported charts. **Trap:**
+  `content/` itself must stay free of imported charts. The spec greps up.sh/seed.sh for `import portal-scripts`, so
+  the call has to stay in up.sh, not move into seed.ts.
+- `docs/eng-1799/demo.md`: new "Portal saved script" subsection and a **Known limits** entry.
+- **Known limit (ENG-1799 follow-up; the spec settles it, so this is not a halt):** portal SQL is kept verbatim and reads
+  Platform tables directly. Opening the SQL chart itself, or loading it into the SQL box from Investigate's Saved
+  SQL, fails with "table 'datafusion.public.fills' not found". It returns rows when run as Platform SQL
+  (Investigate → Platform Database, which wraps it in `platform_query`), and that is what the spec does too.
+  A fix belongs to the ldq line: a "Platform SQL" marker on saved SQL, or the importer wrapping the SQL. The spec
+  requires `saved.sql` to equal the portal text, so a fix can't just rewrite the stored SQL.
+- Tested as a user: fresh up.sh, then Chromium via throwaway scripts in the run's tmp/portal-ui/, signed in through
+  /login. Spaces → "Platform saved sql" → the chart opens at `/sql-runner/open-fills-past-target-by-queue` and shows
+  the DataFusion error above (the known limit). SQL Runner → Investigate → Saved SQL lists the chart. Platform
+  Database → pasted the chart's saved SQL, added a Description and ticket ENG-1799, then Run: columns queue /
+  target_minutes / open_fills / past_target and 2 queue rows, no errors. The engine audit has 2 `query | success
+  | platform` records with that description.
+- Checks: `run.sh --stack portal-script.spec.ts` passes (1 test). Regression with --stack: seed-project,
+  dashboard-platform-db and grafana-fixture all pass. Typecheck is clean. Stack is down.
+- 2026-11-09T09:38:55Z supervisor: demo-portal-script passed the gate in round 1

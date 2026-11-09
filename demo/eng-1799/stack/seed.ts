@@ -15,7 +15,8 @@
 //      /api/v1/org/attributes), which the engine reads from the identity token for the Platform Database;
 //   4. checks the result as the user sees it: GET /api/v2/projects/<uuid>/federation/access;
 //   5. defines the project parameters the content references (PROJECT_PARAMETERS: trace_id), then
-//      uploads the demo's content as code (demo/eng-1799/content: virtual views, charts, dashboards) with the
+//      uploads the demo's content as code (--content-dir: up.sh passes a copy of demo/eng-1799/content, virtual
+//      views, charts and dashboards, plus the SQL charts `lightdash import portal-scripts` wrote) with the
 //      Lightdash CLI from source (`lightdash upload`, on the Node given by --cli-node: the workspace's pinned Node),
 //      on a personal access token of the demo user, then checks that every dashboard in CONTENT_DASHBOARDS is
 //      there with each chart Tile resolving to its saved chart and each SQL chart Tile to its saved SQL chart.

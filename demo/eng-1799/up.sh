@@ -317,10 +317,28 @@ LIGHTDASH_UI_HTML="$(curl -fsS -m 10 "$LIGHTDASH_URL/login" 2>/dev/null || true)
 
 # Seed (through Lightdash's HTTP API; the database is new on every fresh up.sh): the demo user and its organization,
 # the Operations Project on the Federation Engine flavour, the user attributes platform_read/platform_write, then
-# the dashboards in content/ through `lightdash upload` (the CLI from source; see stack/seed.ts).
+# the dashboards in content/ and the imported portal scripts through `lightdash upload` (the CLI from source; see
+# stack/seed.ts).
+# The upload reads a copy of content/ under .state/run/content, to which `lightdash import portal-scripts` adds one SQL
+# chart per saved script of the synthetic db-query-portal export seed/portal-scripts.json (SQL kept verbatim, in the
+# space platform-saved-sql). The CLI runs from source on the pinned Node, with HOME under .state and no network.
+CLI_DIR="$ROOT/packages/cli"
+SEED_CONTENT="$RUN/content"
+rm -rf "$SEED_CONTENT"
+cp -R "$DEMO/content" "$SEED_CONTENT"
+mkdir -p "$STATE/cli-home"
+chmod 700 "$STATE/cli-home"
+(cd "$CLI_DIR" && HOME="$STATE/cli-home" CI=true NODE_OPTIONS="--import $DEMO/stack/no-network.mjs" \
+    "$LIGHTDASH_NODE" "$CLI_DIR/node_modules/tsx/dist/cli.mjs" src/index.ts \
+    import portal-scripts "$DEMO/seed/portal-scripts.json" --path "$SEED_CONTENT" --space platform-saved-sql) \
+    >>"$LOGS/seed.log" 2>&1 || {
+    echo "up.sh: lightdash import portal-scripts failed; last lines of ${LOGS#"$DEMO"/}/seed.log:" >&2
+    tail -20 "$LOGS/seed.log" >&2
+    exit 1
+}
 rm -f "$RUN/seed.json"
 (cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/seed.ts" --lightdash-url "$LIGHTDASH_URL" \
-    --engine-file "$RUN/engine-config.json" --content-dir "$DEMO/content" --cli-home "$STATE/cli-home" \
+    --engine-file "$RUN/engine-config.json" --content-dir "$SEED_CONTENT" --cli-home "$STATE/cli-home" \
     --cli-node "$LIGHTDASH_NODE" \
     --ready-file "$RUN/seed.json") >>"$LOGS/seed.log" 2>&1 || {
     echo "up.sh: seeding Lightdash failed; last lines of ${LOGS#"$DEMO"/}/seed.log:" >&2
