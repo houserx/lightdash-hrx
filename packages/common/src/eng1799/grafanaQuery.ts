@@ -97,7 +97,9 @@ const MIXED_DATASOURCE_UID = '-- Mixed --';
 
 const isUsableRef = (ref: GrafanaDatasourceRef): boolean => {
     if (ref === null || ref === undefined) return false;
-    if (typeof ref === 'string') return ref.trim() !== '';
+    if (typeof ref === 'string') {
+        return ref.trim() !== '' && ref !== MIXED_DATASOURCE_UID;
+    }
     if (ref.uid === MIXED_DATASOURCE_UID || ref.type === 'datasource') {
         return false;
     }
@@ -130,10 +132,12 @@ const resolveDatasource = (
             label: ref,
         };
     }
+    // Dashboards migrated from the legacy name string can carry the name in `uid`.
     const found =
         ref.uid === undefined
             ? undefined
-            : datasources.find((ds) => ds.uid === ref.uid);
+            : (datasources.find((ds) => ds.uid === ref.uid) ??
+              datasources.find((ds) => ds.name === ref.uid));
     return {
         type: ref.type ?? found?.type,
         source: found ? telemetrySourceName(found.name) : undefined,

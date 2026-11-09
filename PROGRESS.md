@@ -400,3 +400,25 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   CloudWatch → promql UNION ALL cloudwatch plus `panel-targets-not-combined` for the log target; all hidden →
   TODO. tsc clean, oxlint clean, oxfmt applied.
 - 2026-11-09T01:56:28Z supervisor: imp-query-panel-targets passed the gate in round 1
+
+### imp-query-datasources (2026-11-08)
+
+- The resolution itself (`resolveDatasource`/`isUsableRef`/`translateTarget` in `grafanaQuery.ts`) was already
+  built by imp-query-prometheus and imp-query-panel-targets; `query-datasources.test.ts` was 6/6 on arrival.
+  Order: the target's ref if usable, else the panel's. Mixed (`-- Mixed --`, type `datasource`) is not usable.
+  An object ref is looked up by uid; a string ref by name, then uid. Type comes from the ref, else the list.
+  Outcomes: no type → TODO + `datasource-unresolved`; type with no translator → TODO + `datasource-unsupported`;
+  translator but not in the list → the engine default source (no last argument) + `datasource-unresolved`.
+- Changed here (two small gaps): the legacy string `'-- Mixed --'` now falls through to the panel the way the object
+  form does (before, it was a name lookup that failed and gave a TODO). An object ref whose `uid` holds the datasource
+  name (seen in dashboards migrated from the name string) now resolves by name when no uid matches.
+- Not here: datasource variables (`${datasource}`, `$DS_X`) belong to imp-query-variables. For now they give
+  the default source + `datasource-unresolved` when the ref has a type, and a TODO when it has none.
+- Tested: rebuilt common via init.sh. Called the built `dist/cjs` translators from node: a panel inheriting
+  Prometheus-Staging (an absent and a null target datasource) → both `'prometheus-staging'`; unknown uid → 4-arg
+  promql + `datasource-unresolved`; elasticsearch → TODO + `datasource-unsupported`; a mixed panel with
+  Prometheus, Loki and CloudWatch → all three unioned; legacy name, uid-only, name-in-uid and legacy-mixed-string
+  cases. Acceptance: datasources 6/6; prometheus, loki and cloudwatch-metrics 5/5; panel-targets 3/3. tsc clean,
+  oxlint clean (run from packages/common with `-c .oxlintrc.json`), oxfmt applied. `npx` fails here with
+  EBADDEVENGINES (node 26 vs 24), so call `node_modules/.bin/*` directly.
+- 2026-11-09T01:58:29Z supervisor: imp-query-datasources passed the gate in round 1
