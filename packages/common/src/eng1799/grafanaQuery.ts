@@ -17,6 +17,7 @@ import {
     type LogqlDirection,
 } from '../utils/telemetrySql';
 import { parseTimeRangeDuration } from '../utils/timeRange';
+import { mergesGrafanaTargets } from './grafanaTransformations';
 import type { ImportWarning } from './importWarnings';
 
 /** A Grafana datasource as `grafana_data_sources.tf` defines it. */
@@ -2354,6 +2355,10 @@ const unionAll = (queries: string[]): string =>
  * `panel-targets-not-combined` warning. Targets that don't translate are left out with their
  * warnings; when none translates, the panel is a TODO. `shape` names the result's columns, for
  * the transformations that rewrite them.
+ *
+ * Targets whose columns their queries name (Postgres, Ops Marts: no known shape) are combined
+ * only when the panel merges them (a `merge` transformation), and then by position: Grafana's
+ * merge expects the targets to return the same columns.
  */
 export const translateGrafanaPanelQueries = (
     panel: GrafanaPanelWithTargets,
@@ -2385,6 +2390,7 @@ export const translateGrafanaPanelQueries = (
         translate: (target) => translateTarget(target, targetCtx),
     };
     let shape: GrafanaResultShape | undefined;
+    const merge = mergesGrafanaTargets(panel.transformations);
     visible.forEach((target) => {
         const result = translateTarget(target, targetCtx, panelScope);
         warnings.push(...result.warnings);
@@ -2395,7 +2401,7 @@ export const translateGrafanaPanelQueries = (
         if (queries.length === 0) {
             shape = result.shape;
             queries.push(result.sql);
-        } else if (shape !== undefined && result.shape === shape) {
+        } else if (result.shape === shape && (shape !== undefined || merge)) {
             queries.push(result.sql);
         } else {
             warnings.push({

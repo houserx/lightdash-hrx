@@ -1209,3 +1209,37 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   row in IMPORT-REPORT.md naming the panel, also counted in import-summary byCode.
 - Acceptance: transform-filter 3/3, transform-rename-organize 3/3. tsc (common), oxlint, oxfmt clean.
 - 2026-11-09T04:08:44Z supervisor: imp-transform-filter passed the gate in round 1
+
+## imp-transform-calculate-reduce-merge (round 1)
+- grafanaTransformations.ts: new `calculateField`, `reduce` and `merge` cases, and an exported `mergesGrafanaTargets`.
+  `applyGrafanaTransformations` now tracks the result shape: a `SqlRewrite` may return a new `shape` (key present =
+  changed; `undefined` = named columns), and every case reads the current shape, not the translated one.
+- calculateField: binary mode only -> `SELECT *, (<l> <op> <r>) AS "<alias>"\nFROM (<sql>) AS calculated` (only the new
+  column with `replaceFields`). Operands: field name (quoted identifier), number or numeric string, and Grafana 11
+  `{matcher: {id: byName}}` / `{fixed}`. Operators + - * / % ^ (power()). Alias defaults to Grafana's `l op r`.
+  Other modes (reduceRow is Grafana's default when mode is absent), shaped results, missing operands -> reported.
+- Decision: division is written `1.0 * "errors" / "total"`, because Grafana divides in floating point and SQL would
+  truncate two integer columns to 0. The spec step's `(errors / total) AS ratio` is still visible as a substring.
+- reduce: shaped series/number results: seriesToRows (default) -> `SELECT series AS "Field", <agg> AS "<Label>" ...
+  GROUP BY series` (shape becomes named columns); reduceFields with one reducer -> number shape (`value, labels,
+  series`, GROUP BY labels, series). Reducers: mean, min, max, sum (Total), count, range, distinctCount, first/last
+  (series only; ORDER BY "timestamp", as the expressions reducer does). A named-column (Postgres/Ops Mart) query reduces
+  only by `count` in seriesToRows -> `SELECT count(*) AS "Count"` (every field's count is the row count; one row
+  instead of Grafana's one row per numeric field). Any other reducer, labelsToFields/includeTimeField, log shapes ->
+  reported.
+- merge: grafanaQuery.ts `translateGrafanaPanelQueries` reads `panel.transformations`; with an enabled merge, targets
+  with no known shape (Postgres, Ops Marts) are combined by UNION ALL like same-shaped targets, so no
+  panel-targets-not-combined warning. The merge case itself is a no-op. Contract assumption: UNION ALL is positional,
+  so merged targets must return the same columns in the same order (Grafana merge's usual use); not checked, since the
+  importer doesn't parse the raw SQL. Mixed shapes still warn panel-targets-not-combined.
+- Next session (imp-transform-convert-config): `merge`, `calculateField`, `reduce` are now known ids; keep them out of
+  the unknown-transformation warning.
+- Unit tests: grafanaTransformations.test.ts +7 cases (18 total).
+- Tested as a user: ran the CLI from source on a synthetic 5-panel Postgres dashboard (scratch dir since removed).
+  Error ratio: `SELECT *, (1.0 * "errors" / "total") AS "ratio" FROM (platform_query(...)) AS calculated`. Run count
+  (stat -> big_number): `SELECT count(*) AS "Count" FROM (...) AS reduced`. Merged: two platform_query() selects joined
+  by UNION ALL, report has only datasource-unresolved rows for it. Unmerged (same, no merge): still one query plus
+  panel-targets-not-combined. Sum reduce: SQL unchanged, one transformation-unsupported row; import-summary counts it.
+- Acceptance: transform-calculate-reduce-merge 3/3; transform-filter, transform-rename-organize, dashboard-charts,
+  dashboard-report, common query-panel-targets and query-postgres pass. tsc (common), oxlint, oxfmt clean.
+- 2026-11-09T04:15:38Z supervisor: imp-transform-calculate-reduce-merge passed the gate in round 1

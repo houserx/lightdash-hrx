@@ -1,5 +1,8 @@
 import { ChartKind } from '../types/savedCharts';
-import { applyGrafanaTransformations } from './grafanaTransformations';
+import {
+    applyGrafanaTransformations,
+    mergesGrafanaTargets,
+} from './grafanaTransformations';
 
 const SERIES_SQL = "SELECT * FROM promql('up', a, b, c)";
 
@@ -255,6 +258,148 @@ describe('applyGrafanaTransformations', () => {
             });
             expect(result.sql).toBe(PG_SQL);
             expect(result.warnings).toHaveLength(1);
+        });
+    });
+
+    describe('calculateField, reduce and merge', () => {
+        const PG_SQL = "SELECT * FROM platform_query('SELECT a, b FROM t')";
+        const apply = (transformations: object[], shape?: 'series') =>
+            applyGrafanaTransformations(
+                transformations,
+                { sql: shape ? SERIES_SQL : PG_SQL, shape },
+                ChartKind.TABLE,
+            );
+
+        it('adds a binary calculated column, dividing in floating point', () => {
+            const result = apply([
+                {
+                    id: 'calculateField',
+                    options: {
+                        mode: 'binary',
+                        binary: {
+                            left: 'errors',
+                            operator: '/',
+                            right: 'total',
+                        },
+                        alias: 'ratio',
+                    },
+                },
+            ]);
+            expect(result.sql).toBe(
+                `SELECT *, (1.0 * "errors" / "total") AS "ratio"\nFROM (${PG_SQL}) AS calculated`,
+            );
+            expect(result.warnings).toEqual([]);
+        });
+
+        it('reads Grafana 11 operands, defaults the alias and replaces fields', () => {
+            const result = apply([
+                {
+                    id: 'calculateField',
+                    options: {
+                        mode: 'binary',
+                        binary: {
+                            left: { matcher: { id: 'byName', options: 'a' } },
+                            operator: '*',
+                            right: { fixed: '100' },
+                        },
+                        replaceFields: true,
+                    },
+                },
+            ]);
+            expect(result.sql).toBe(
+                `SELECT ("a" * 100) AS "a * 100"\nFROM (${PG_SQL}) AS calculated`,
+            );
+        });
+
+        it('reports calculateField modes other than binary and shaped results', () => {
+            const rowReduce = apply([
+                {
+                    id: 'calculateField',
+                    options: { reduce: { reducer: 'sum' } },
+                },
+            ]);
+            expect(rowReduce.sql).toBe(PG_SQL);
+            expect(rowReduce.warnings[0].message).toContain('reduceRow');
+            const series = apply(
+                [
+                    {
+                        id: 'calculateField',
+                        options: {
+                            mode: 'binary',
+                            binary: { left: 'A', operator: '+', right: 'B' },
+                        },
+                    },
+                ],
+                'series',
+            );
+            expect(series.sql).toBe(SERIES_SQL);
+            expect(series.warnings).toHaveLength(1);
+        });
+
+        it('reduces a named-column query by count only', () => {
+            const count = apply([
+                { id: 'reduce', options: { reducers: ['count'] } },
+            ]);
+            expect(count.sql).toBe(
+                `SELECT count(*) AS "Count"\nFROM (${PG_SQL}) AS reduced`,
+            );
+            expect(count.warnings).toEqual([]);
+            const sum = apply([
+                { id: 'reduce', options: { reducers: ['sum'] } },
+            ]);
+            expect(sum.sql).toBe(PG_SQL);
+            expect(sum.warnings[0].code).toBe('transformation-unsupported');
+        });
+
+        it('reduces series to rows, or to one number per series', () => {
+            expect(
+                apply(
+                    [{ id: 'reduce', options: { reducers: ['max', 'last'] } }],
+                    'series',
+                ).sql,
+            ).toBe(
+                `SELECT series AS "Field", max("value") AS "Max", last_value("value" ORDER BY "timestamp") AS "Last"\nFROM (${SERIES_SQL}) AS reduced\nGROUP BY series`,
+            );
+            // The reduced number shape is what a following renameByRegex sees.
+            const fields = apply(
+                [
+                    {
+                        id: 'reduce',
+                        options: { mode: 'reduceFields', reducers: ['mean'] },
+                    },
+                    {
+                        id: 'renameByRegex',
+                        options: { regex: 'a', renamePattern: 'b' },
+                    },
+                ],
+                'series',
+            );
+            expect(fields.sql).toBe(
+                `SELECT "value", labels, regexp_replace(series, 'a', 'b') AS series\nFROM (SELECT avg("value") AS "value", labels, series\nFROM (${SERIES_SQL}) AS reduced\nGROUP BY labels, series) AS renamed`,
+            );
+            expect(fields.warnings).toEqual([]);
+        });
+
+        it('reports reducers without a SQL aggregate', () => {
+            const result = apply(
+                [{ id: 'reduce', options: { reducers: ['mean', 'stdDev'] } }],
+                'series',
+            );
+            expect(result.sql).toBe(SERIES_SQL);
+            expect(result.warnings[0].message).toContain('stdDev');
+        });
+
+        it('takes merge as done by the query translation', () => {
+            expect(apply([{ id: 'merge', options: {} }])).toEqual({
+                sql: PG_SQL,
+                columns: {},
+                warnings: [],
+            });
+            expect(mergesGrafanaTargets([{ id: 'merge' }])).toBe(true);
+            expect(
+                mergesGrafanaTargets([{ id: 'merge', disabled: true }]),
+            ).toBe(false);
+            expect(mergesGrafanaTargets(undefined)).toBe(false);
         });
     });
 
