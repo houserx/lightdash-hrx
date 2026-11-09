@@ -1982,3 +1982,23 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   byte-exact get, range get, list, delete → 404. `down.sh` stopped everything. Checks lightdash-backend,
   engine-healthy, incident-io-receiver (--stack) pass; `tsc ... stack/*.ts` clean; no demo process left.
 - 2026-11-09T07:59:29Z supervisor: demo-lightdash-backend passed the gate in round 1
+
+### demo-lightdash-frontend (2026-11-09, run 20261109-013019)
+
+- Decision: **production build served by the backend** (no Vite dev server). init-demo.sh already builds
+  `packages/frontend/build` (stamped, skipped when unchanged) and the backend's `App` serves it (`/assets/*` +
+  `index.html` catch-all) regardless of `NODE_ENV`, so the UI is at the URL up.sh prints; no new process or port.
+- New `docs/eng-1799/demo.md` with only a "Frontend mode" section (mode, why, what you see, rebuild after frontend
+  edits). **demo-docs must extend this file**, not replace the section (docs.spec.ts also wants
+  `production build|dev server`).
+- `up.sh`: preflight fails fast if `packages/frontend/build/index.html` is missing (uses `$DEMO/../..`; `ROOT` is
+  only defined later in up.sh); after `/api/v1/health` it fetches `/login` and requires `<div id="root"`
+  (captured into a variable, not `curl | grep -q`, to avoid SIGPIPE under pipefail).
+- Browser notes for scene specs: before sign-in the UI makes 401 calls (`/api/v1/user/account`, `/org`,
+  `/aiAgents/settings`) that log console errors, plus a CSP report-only console error and Intercom warnings;
+  none are page errors. The only off-box requests are Google Fonts (Inter).
+- Tested as a user: up.sh; opened the printed URL in Playwright Chromium → redirected to `/register` ("Register -
+  Lightdash"), Sign up form with Email address field, no page errors, screenshot looked right; down.sh. With the
+  build moved aside up.sh stopped with the "no frontend production build" message and started nothing. Checks
+  lightdash-frontend and lightdash-backend (--stack) pass; no demo process left.
+- 2026-11-09T08:04:44Z supervisor: demo-lightdash-frontend passed the gate in round 1

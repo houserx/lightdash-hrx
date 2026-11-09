@@ -52,6 +52,8 @@ LOGS="$STATE/logs"
 NODE="$(command -v node || true)"
 [ -n "$NODE" ] || { echo "up.sh: node is not on PATH" >&2; exit 1; }
 [ -d "$DEMO/node_modules/tsx" ] || { echo "up.sh: demo dependencies missing; run bash ./init.sh at the repo root" >&2; exit 1; }
+[ -f "$DEMO/../../packages/frontend/build/index.html" ] ||
+    { echo "up.sh: no frontend production build at packages/frontend/build; run bash ./init.sh at the repo root" >&2; exit 1; }
 
 # Pids recorded in stack.json.
 recorded_pids() {
@@ -307,6 +309,10 @@ until curl -fsS -m 5 "$LIGHTDASH_URL/api/v1/health" >/dev/null 2>&1; do
     sleep 1
 done
 echo "up.sh: Lightdash backend running ($LIGHTDASH_URL)"
+# The UI is the frontend's production build, served by the backend itself (docs/eng-1799/demo.md, "Frontend mode").
+LIGHTDASH_UI_HTML="$(curl -fsS -m 10 "$LIGHTDASH_URL/login" 2>/dev/null || true)"
+[[ "$LIGHTDASH_UI_HTML" == *'<div id="root"'* ]] ||
+    { echo "up.sh: the Lightdash backend does not serve the UI at $LIGHTDASH_URL/login (frontend build missing? run bash ./init.sh)" >&2; exit 1; }
 
 # Later demo features start telemetry-mcp here (on ephemeral ports: MCP_PORT and ENGINE_PG_PORT must be set,
 # their defaults are 8080 and 5433) and add it to stack.json below.
