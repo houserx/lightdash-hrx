@@ -95,3 +95,67 @@ describe('renderGrafanaImportReport', () => {
         );
     });
 });
+
+describe('convertGrafanaDashboard over several dashboards', () => {
+    const dashboard = (title: string) => ({
+        dashboard: {
+            title,
+            panels: [
+                {
+                    id: 1,
+                    type: 'timeseries',
+                    title: 'Requests',
+                    gridPos: { x: 0, y: 0, w: 24, h: 8 },
+                    datasource: { type: 'prometheus', uid: 'prom' },
+                    targets: [
+                        {
+                            refId: 'A',
+                            expr: 'sum(rate(http_requests_total[5m]))',
+                        },
+                    ],
+                },
+            ],
+        },
+    });
+    const importAll = (titles: string[]) => {
+        const shared = options();
+        return titles.map((title) =>
+            convertGrafanaDashboard(dashboard(title), shared),
+        );
+    };
+
+    it('gives same-titled dashboards and their charts unique slugs, even past a suffixed title', () => {
+        const results = importAll([
+            'Same Title',
+            'Same Title',
+            'Same Title 2',
+            '!!!',
+            '!!!',
+        ]);
+        expect(results.map((r) => r.dashboard.slug)).toEqual([
+            'same-title',
+            'same-title-2',
+            'same-title-2-2',
+            'grafana-dashboard',
+            'grafana-dashboard-2',
+        ]);
+        const chartSlugs = results.flatMap((r) => r.charts.map((c) => c.slug));
+        expect(chartSlugs).toHaveLength(5);
+        expect(new Set(chartSlugs).size).toBe(5);
+        results.forEach((r) => {
+            const own = new Set(r.charts.map((c) => c.slug));
+            r.dashboard.tiles
+                .filter((t) => t.type === 'sql_chart')
+                .forEach((t) =>
+                    expect(own.has(String(t.properties.chartSlug))).toBe(true),
+                );
+        });
+    });
+
+    it('gives the same output on every run', () => {
+        const titles = ['Same Title', 'Same Title', 'Another'];
+        expect(JSON.stringify(importAll(titles))).toBe(
+            JSON.stringify(importAll(titles)),
+        );
+    });
+});

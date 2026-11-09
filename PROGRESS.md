@@ -1049,3 +1049,22 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: dashboard-spaces 3/3; dashboard-command, -datasources, -report pass. tsc (common, cli), oxlint, oxfmt
   clean. roundtrip-dashboards not run (heavy; its unknown-option failure should now be gone).
 - 2026-11-09T03:41:47Z supervisor: imp-dashboard-spaces passed the gate in round 1
+
+## imp-dashboard-multi-file (round 1)
+- No production code change was needed: the behaviour already came from imp-cli-grafana-dashboard and
+  imp-dashboard-chart-per-panel. The handler shares `takenDashboardSlugs`/`takenChartSlugs` across every file in
+  one run, and `uniqueSlug` in common grafanaDashboardImport.ts is deterministic (`generateSlug`, no random suffix,
+  `-2`, `-3`, ... on collision). Chart slugs are `<dashboard-slug> <panel title>`. The check passed before any edit.
+- Added unit tests (grafanaDashboardImport.test.ts, "convertGrafanaDashboard over several dashboards"): same-titled
+  dashboards; a later title that collides with a generated suffix ("Same Title 2" -> `same-title-2-2`); titles with
+  no slug characters -> `grafana-dashboard`, `grafana-dashboard-2`; unique chart slugs; tiles reference their own
+  charts; identical output on two runs.
+- Tested as a user: CLI from source on three dashboards ("Same Title" x2, "Another", one Requests panel each) ->
+  dashboards same-title, same-title-2, another; charts same-title-requests, same-title-2-requests,
+  another-requests; each tile's chartSlug names an existing chart file. Ran it into a second out dir and again into
+  the first: `diff -r` shows no difference. Five-dashboard edge case (above) gave 5 unique dashboard and chart slugs.
+- Note: slugs depend on the order of the input files (the first "Same Title" gets the bare slug). The same command
+  always gives the same files. Re-running into an existing --out dir overwrites files but does not delete stale ones
+  from an earlier run with other inputs.
+- Acceptance: dashboard-multi 3/3, dashboard-command 4/4. tsc (common), oxlint, oxfmt clean.
+- 2026-11-09T03:45:02Z supervisor: imp-dashboard-multi-file passed the gate in round 1
