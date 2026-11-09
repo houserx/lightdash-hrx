@@ -1412,3 +1412,27 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Acceptance: alerts-rule-fields 3/3, alerts-command 3/3, alerts-rule-conditions 4/4, alerts-hcl 4/4. tsc (common)
   clean, oxlint clean on changed files, oxfmt applied.
 - 2026-11-09T04:52:57Z supervisor: imp-alert-rule-fields passed the gate in round 1
+
+## imp-alert-rule-queries (2026-11-09, round 1)
+- Found on arrival: Loki rules already translated (rule queries go through translateGrafanaTarget since
+  imp-cli-grafana-alerts); the CloudWatch rule failed because `data.grafana_data_source.<label>.uid` (a Terraform
+  *data* block that looks the datasource up by `name`) did not resolve, so the target had no datasource.
+- packages/common/src/eng1799/grafanaAlertImport.ts (TerraformContext): `data "<type>" "<name>"` blocks are now
+  indexed (`dataBlocks`), and `data.grafana_data_source.<label>[.attr]` resolves to `{uid, name, type}` of the
+  --datasources entry whose name equals the block's `name` (exact match, as Grafana looks it up), or whose uid
+  equals the block's `uid`. No match / no --datasources -> unresolved as before: datasource-unresolved +
+  rule-needs-review, rule emitted paused with the placeholder query.
+- Unit test: grafanaAlertImport.test.ts 'resolves a datasource a data block looks up by name' (name, uid, missing).
+- Tested as a user: CLI `import grafana-alerts` on a synthetic group (Loki model string with
+  `${grafana_data_source.loki-production.uid}`; CloudWatch jsonencode model with data-source lookup by name) ->
+  loki-rule.yml `logql_metric('sum by (client_name) (count_over_time({job="auth0-logs"} [24h]))', ..., 'loki-production')`,
+  timeRange 24h; cloudwatch-rule.yml `cloudwatch('{..."MetricName":"UnHealthyHostCount"...,"Period":300...}',
+  ${ld.parameters.__from}, ${ld.parameters.__to}, 'cloudwatch-production')`, timeRange 30m, not paused. Lookup name
+  changed to an unknown one -> rule paused for review with datasource-unresolved.
+- Full fixture rule set (all rule groups + lb rules, --folders): rules to review 19 -> 11 (grafana_lb_rules.tf ALB
+  rules now translate). New warnings are the translator's usual CloudWatch ones (query-match-exact-dropped,
+  query-dimension-values-dropped) and rule-null-handling-changed for replaceNN reducers now reached. Remaining 2
+  datasource-unresolved: pg_cron rules use a literal Postgres uid not in grafana_data_sources.tf.
+- Acceptance: alerts-rule-queries 2/2, alerts-rule-fields 3/3, alerts-hcl 4/4, alerts-rule-conditions 4/4,
+  alerts-command 3/3, dashboard-datasources 3/3. tsc (common) clean, oxlint clean, oxfmt check clean.
+- 2026-11-09T04:57:45Z supervisor: imp-alert-rule-queries passed the gate in round 1

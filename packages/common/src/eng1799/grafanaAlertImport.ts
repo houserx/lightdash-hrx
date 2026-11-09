@@ -196,6 +196,12 @@ class TerraformContext {
         { block: HclBlock; hcl: HclFile }
     >();
 
+    /** `data "<type>" "<name>"` blocks, keyed `<type>.<name>`. */
+    private readonly dataBlocks = new Map<
+        string,
+        { block: HclBlock; hcl: HclFile }
+    >();
+
     private readonly locals = new Map<
         string,
         { expr: HclFile['body']['attributes'][number]['expr']; hcl: HclFile }
@@ -220,6 +226,12 @@ class TerraformContext {
                     const key = block.labels.join('.');
                     if (!this.resources.has(key)) {
                         this.resources.set(key, { block, hcl });
+                    }
+                }
+                if (block.type === 'data' && block.labels.length === 2) {
+                    const key = block.labels.join('.');
+                    if (!this.dataBlocks.has(key)) {
+                        this.dataBlocks.set(key, { block, hcl });
                     }
                 }
                 if (block.type === 'locals') {
@@ -274,6 +286,22 @@ class TerraformContext {
                 );
             }
         }
+        // `data.grafana_data_source.<label>`: the datasource the data block looks up by name or uid.
+        if (
+            root === 'data' &&
+            steps[0] === 'grafana_data_source' &&
+            typeof steps[1] === 'string' &&
+            this.datasources
+        ) {
+            const found = this.dataSourceLookup(steps[1]);
+            if (found) {
+                return traverseHclValue(
+                    { uid: found.uid, name: found.name, type: found.type },
+                    steps.slice(2),
+                    text,
+                );
+            }
+        }
         // An attribute of a resource in the files read (`grafana_contact_point.x.name`).
         if (typeof steps[0] === 'string' && typeof steps[1] === 'string') {
             const resource = this.resources.get(`${root}.${steps[0]}`);
@@ -292,6 +320,21 @@ class TerraformContext {
             }
         }
         return undefined;
+    }
+
+    /** The datasource a `data "grafana_data_source"` block finds by its `name` or `uid`. */
+    private dataSourceLookup(label: string): GrafanaDatasource | undefined {
+        const lookup = this.dataBlocks.get(`grafana_data_source.${label}`);
+        if (lookup === undefined || this.datasources === undefined) {
+            return undefined;
+        }
+        const name = this.attribute(lookup.block.body, 'name', lookup.hcl);
+        const uid = this.attribute(lookup.block.body, 'uid', lookup.hcl);
+        return this.datasources.find((ds) =>
+            typeof name === 'string'
+                ? ds.uid !== '' && ds.name === name
+                : typeof uid === 'string' && uid !== '' && ds.uid === uid,
+        );
     }
 
     evaluate(

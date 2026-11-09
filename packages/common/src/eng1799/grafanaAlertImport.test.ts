@@ -478,6 +478,72 @@ ${rule('Hysteresis', promData('A', 'up') + exprData('C', 'type = "threshold"\n  
         ).toThrow('broken.tf');
     });
 
+    it('resolves a datasource a data block looks up by name', () => {
+        const cloudwatchData = (refId: string, lookup: string) => `
+    data {
+      ref_id         = "${refId}"
+      datasource_uid = data.grafana_data_source.${lookup}.uid
+      model = jsonencode({
+        metricName = "UnHealthyHostCount"
+        namespace  = "AWS/ApplicationELB"
+        period     = "300"
+        queryMode  = "Metrics"
+        refId      = "${refId}"
+        region     = "default"
+        statistic  = "Average"
+      })
+    }`;
+        const rules = `
+data "grafana_data_source" "cw" {
+  name = "Cloudwatch Production"
+}
+data "grafana_data_source" "by_uid" {
+  uid = "JOxT6xE4z"
+}
+data "grafana_data_source" "missing" {
+  name = "Nowhere"
+}
+resource "grafana_rule_group" "cw" {
+  name             = "cw"
+  folder_uid       = grafana_folder.this["AWS"].uid
+  interval_seconds = 60
+${rule('By name', cloudwatchData('A', 'cw') + reduceThreshold('gt', 0))}
+${rule('By uid', cloudwatchData('A', 'by_uid') + reduceThreshold('gt', 0))}
+${rule('Missing', cloudwatchData('A', 'missing') + reduceThreshold('gt', 0))}
+}
+`;
+        const result = convertGrafanaAlerting({
+            rules: [{ file: 'rules.tf', text: rules }],
+            contactPoints: { file: 'contact_points.tf', text: CONTACT_POINTS },
+            policy: { file: 'policy.tf', text: POLICY },
+            locals: [{ file: 'locals.tf', text: LOCALS }],
+            datasources: [
+                ...DATASOURCES,
+                {
+                    uid: 'JOxT6xE4z',
+                    name: 'Cloudwatch Production',
+                    type: 'cloudwatch',
+                },
+            ],
+        });
+        const byName = (name: string) =>
+            result.alertRules.find((r) => r.name === name);
+        ['By name', 'By uid'].forEach((name) => {
+            expect(byName(name)?.query).toContain('FROM cloudwatch(');
+            expect(byName(name)?.query).toContain("'cloudwatch-production'");
+            expect(byName(name)?.paused).toBe(false);
+        });
+        expect(byName('Missing')).toMatchObject({
+            query: PLACEHOLDER_ALERT_QUERY,
+            paused: true,
+        });
+        expect(
+            result.warnings
+                .filter((w) => w.rule === 'Missing')
+                .map((w) => w.code),
+        ).toContain('rule-needs-review');
+    });
+
     it('reports every warning in IMPORT-REPORT.md', () => {
         const result = convert();
         const report = renderGrafanaAlertsImportReport(result);
