@@ -1793,3 +1793,20 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   perses-panels 4/4, dashboard-variables 3/3, dashboard-multi 3/3. persesDashboardImport.test.ts 15/15 (2 new).
   common tsc clean via init; oxlint/oxfmt clean on changed files.
 - 2026-11-09T06:04:42Z supervisor: imp-perses-queries-variables passed the gate in round 1
+
+## imp-perses-layout (2026-11-09)
+
+- No code change: the layout was already built in imp-cli-perses-dashboard (persesToGrafanaDashboard in
+  packages/common/src/eng1799/persesDashboardImport.ts restates Grid layouts as Grafana gridPos/rows, and the
+  Grafana layout code scales 24 -> 36 columns, turns open rows into headings and collapsed rows into tabs).
+  perses-layout passed 2/2 at the start of this session, after init.
+- Tested as a user: `node --import tsx src/index.ts import perses-dashboard node-overview.yaml api-latency.json
+  --out tmp/...` from packages/cli. api-latency: "Request latency p50 and p99" at x 0 w 36, no tabs. node-overview:
+  tabs overview + details; Overview heading (x 0 w 36 h 1) above CPU usage x 0 w 18, Targets up x 18 w 9, Memory
+  used x 27 w 9, About x 18 w 18; Scrape durations, Errors by instance and the Latency heatmap TODO on the details
+  tab. Edge case (made-up file, deleted afterwards): a collapsed titled grid followed by an untitled grid -> the
+  untitled grid's panels go on the overview tab, the collapsed one on its own tab; odd widths 7/17 scale to 11/25
+  (x 0 and 11), so no gaps and no overlaps.
+- Checks: perses-layout 2/2 after init. Regression: perses-command 3/3, perses-panels 4/4,
+  perses-queries-variables 4/4.
+- 2026-11-09T06:07:37Z supervisor: imp-perses-layout passed the gate in round 1
