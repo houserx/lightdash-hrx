@@ -153,6 +153,8 @@ The Dashboard Time Range and Investigate resolve to absolute values **before** a
 | `ld.parameters.__interval` | Prometheus duration string: (to − from) / max data points (default 1000), rounded up to a nice step (1s, 5s, 15s, 30s, 1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 1d), floor 15s |
 | `ld.parameters.__range` | duration string for (to − from) |
 
+SQL references them bare (`${ld.parameters.__from}`); the substitution writes each value as a quoted SQL string literal. Alert Rule queries follow the same convention and get the same SQL (amended 2026-11-09, int-fix-alert-sql-parameters).
+
 Relative ranges (`now-6h`) are resolved to absolute timestamps rounded down to the dashboard's refresh interval, or to 10s when there is none. Cache keys therefore change exactly when the data should.
 
 ## 3. Identity token (Lightdash → engine, MCP → engine)

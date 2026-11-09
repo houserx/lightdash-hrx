@@ -13,8 +13,8 @@ query: |
   SELECT timestamp, value, labels
   FROM logql_metric(
       'sum(count_over_time({app="platform-environment-sweep"} |= "level=error" [5m]))',
-      '${ld.parameters.__from}',
-      '${ld.parameters.__to}',
+      ${ld.parameters.__from},
+      ${ld.parameters.__to},
       '1m'
   )
 reducer: max

@@ -699,3 +699,21 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   promql() step on the real engine and returned rows. The common alerting unit tests pass and
   common's typecheck is clean.
 - 2026-11-09T03:28:11Z supervisor: int-fix-alert-time-params-agree passed the gate in round 1
+- 2026-11-09 int-fix-alert-sql-parameters: implemented decision 3. In `common/src/alerting/queryParameters.ts`,
+  `substituteAlertQueryParameters` now matches references the way Lightdash's `parameterRegex` does
+  (`${ld.parameters.X}` or `${lightdash.parameters.X}`, no inner whitespace) and writes each value as a
+  `'...'` SQL literal (`'` doubled), so it gives the same output as `safeReplaceParametersWithSqlBuilder`.
+  **Decision (compat):** the alerting line's protected `backend/__acceptance__/alerting/evaluation.accept.ts`
+  still uses quoted references (`'${ld.parameters.__from}'`) and expects `ts >= '2026-…Z'`. So a reference
+  that is already in single quotes, together with its quotes, becomes the same single literal.
+  Lightdash itself would write `''…''` there, which is invalid SQL, so the two only differ on SQL that
+  Lightdash can't run anyway. Behaviour change: `${ ld.parameters.__interval }` (with spaces) is no
+  longer substituted, the same as in Lightdash. The unit tests are updated to match. Examples
+  (`alb-unhealthy-hosts.yml`, `platform-environment-sweep-errors.yml`) are unquoted. `alerting.md` gets
+  a paragraph on the convention, and CONTRACTS §2 is amended. Tested: the check passes (2/2). The alerting
+  acceptance tests still pass: backend `alert-eval-query-identity`, plus common `docs.accept.ts` and
+  `ascode-shadow.accept.ts`. The common unit tests pass and its tsc is clean. By hand
+  (`../tmp/manual-alert-sql/try.ts`, run from e2e/eng-1799 with tsx), with a fake Prometheus and the
+  real engine: Investigate promql SQL substituted by alerting and by Lightdash was identical for
+  10m/6h/7d, and each returned 1 row with value 1. A legacy quoted query also ran. No engine left running.
+- 2026-11-09T03:33:51Z supervisor: int-fix-alert-sql-parameters passed the gate in round 1
