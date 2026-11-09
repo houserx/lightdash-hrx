@@ -1729,3 +1729,29 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   down.sh left no process. Checks engine-boot, platform-db, scenario-clock (--stack) and config-validation pass;
   `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean.
 - 2026-11-09T07:03:29Z supervisor: demo-engine-boot passed the gate in round 1
+
+### demo-fake-prometheus (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/prometheus.ts`: `prometheusHandler(() => clock.current())`, served by the telemetry-fakes
+  process. Series `hrx_fill_queue_backlog{job="fill-service", queue="fill"|"pack"|"ship"}`, 15 s scrapes; the value at
+  evaluation time t is the latest scrape <= t, jitter = sha256 of (series, scrape time) (no `Math.random()`).
+  `fill`: baseline 18..48; ramps to 140..175 over 15 s from incidentAt; falls back over 45 s from recoveryAt. **The
+  ramps are 15 s shorter than the pinned bounds because a sample can be one scrape old** (keeps >= 120 from
+  incidentAt+30s, <= 60 from recoveryAt+60s). `pack` 8..22 and `ship` 3..12 always. The CloudWatch fake ("follows
+  the backlog numbers") can reuse `fillBacklog` (export it).
+- API: `/api/v1/query_range` (matrix), `/api/v1/query` (vector), labels, label values, series, metadata, buildinfo,
+  `/-/healthy`, `/-/ready`; GET or POST form. PromQL subset: one selector with `= != =~ !~` matchers, optionally in
+  `sum|min|max|avg|count [by|without (...)] (...)`. Anything else (`rate(...)`, `[5m]`, comparisons) is 400 bad_data;
+  extend `parseQuery` if a later feature (alert rule, dashboards, MCP) needs more.
+- `telemetry-fakes.ts` now requires `--endpoints-file .state/run/engine-config.json` and listens on exactly
+  `endpoints.prometheus`; its ready file is `{scenario:{url}, prometheus:{url}}`. **up.sh order changed**: Platform
+  Database → engine config → telemetry-fakes (clock T starts here, a few seconds later than before) → engine. Later
+  fakes (Loki, Tempo, CloudWatch(-Logs)) should listen on their `endpoints.*` in the same way. `stack.json` gains
+  `prometheus.url`; `report()` prints it.
+- Tested as a user: `up.sh`, restart -240/-90, `promql('hrx_fill_queue_backlog', now-400s, now, '15s')` through the
+  engine (pg-wire, stack.json creds): 81 rows, 3 series; fill 22..48 before the incident, 137..173 during, 117/68 on
+  the way down, 28..47 after; two runs identical; `promql_instant('...{queue="fill"}', now)` = 47; `sum by (job)` works;
+  a broken query gives the engine error "HTTP 400: bad_data: ..."; `/healthz` shows prometheus reachable. Checks
+  fake-prometheus, engine-boot, platform-db, scenario-clock (--stack, 100/400) and config-validation pass; `tsc
+  --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no `.state` process left.
+- 2026-11-09T07:08:15Z supervisor: demo-fake-prometheus passed the gate in round 1

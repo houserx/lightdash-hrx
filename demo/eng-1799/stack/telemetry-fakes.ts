@@ -1,27 +1,34 @@
 // ENG-1799 demo: the scenario + telemetry fakes process (started by up.sh, stopped by down.sh).
 //
-//   node --import tsx stack/telemetry-fakes.ts --ready-file <.state/run/telemetry-fakes.json>
+//   node --import tsx stack/telemetry-fakes.ts --endpoints-file <.state/run/engine-config.json> \
+//       --ready-file <.state/run/telemetry-fakes.json>
 //
 // Environment: DEMO_INCIDENT_AT, DEMO_RECOVERY_AT (seconds after start; up.sh has validated them).
-// Every server listens on an ephemeral 127.0.0.1 port. Once all of them listen, the process writes
-// the ready file ({"scenario": {"url": ...}}) atomically; up.sh waits for it.
+// The scenario API listens on an ephemeral 127.0.0.1 port; each telemetry fake listens exactly on the
+// endpoint the engine config reserved for it (`endpoints.*` of --endpoints-file). Once all of them listen,
+// the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}}) atomically;
+// up.sh waits for it.
 //
 // Scenario API:
 //   GET  /scenario          -> {startedAt, incidentAt, recoveryAt, now, phase, ...}
 //   POST /scenario/restart  {incidentAfterSeconds, recoveryAfterSeconds} (may be negative) -> same shape
 //
-// The telemetry fakes (Prometheus, Loki, Tempo, CloudWatch) join this process on their own ports and
-// read the one ScenarioClock below.
-import { renameSync, writeFileSync } from 'node:fs';
+// The telemetry fakes read the one ScenarioClock below per request. Prometheus is here (stack/prometheus.ts);
+// Loki, Tempo and CloudWatch join this process the same way.
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parseArgs } from 'node:util';
 import { ScenarioClock, validateOffsets } from './clock.js';
+import { prometheusHandler } from './prometheus.js';
 
-const { values: args } = parseArgs({ options: { 'ready-file': { type: 'string' } } });
+const { values: args } = parseArgs({
+    options: { 'ready-file': { type: 'string' }, 'endpoints-file': { type: 'string' } },
+});
 const readyFile = args['ready-file'];
-if (!readyFile) {
-    console.error('telemetry-fakes: --ready-file is required');
+const endpointsFile = args['endpoints-file'];
+if (!readyFile || !endpointsFile) {
+    console.error('telemetry-fakes: --endpoints-file and --ready-file are required');
     process.exit(2);
 }
 
@@ -94,17 +101,20 @@ const scenarioServer = http.createServer((req, res) => {
     }
 });
 
-function listen(server: http.Server): Promise<string> {
+const prometheusServer = http.createServer(prometheusHandler(() => clock.current()));
+
+/** Listens on 127.0.0.1:<port> (0 = ephemeral) and resolves with the server's URL. */
+function listen(server: http.Server, port = 0): Promise<string> {
     return new Promise((resolve, reject) => {
         server.once('error', reject);
-        server.listen(0, '127.0.0.1', () => {
+        server.listen(port, '127.0.0.1', () => {
             const { port } = server.address() as AddressInfo;
             resolve(`http://127.0.0.1:${port}`);
         });
     });
 }
 
-const servers = [scenarioServer];
+const servers = [scenarioServer, prometheusServer];
 
 function shutdown(signal: string): void {
     console.log(`telemetry-fakes: ${signal}, stopping`);
@@ -115,18 +125,29 @@ function shutdown(signal: string): void {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-async function main(file: string): Promise<void> {
+/** The reserved port of one endpoint in the engine config's ready file. */
+function reservedPort(endpoints: Record<string, unknown>, name: string): number {
+    const url = endpoints[name];
+    const port = typeof url === 'string' ? Number(new URL(url).port) : NaN;
+    if (!Number.isInteger(port) || port <= 0) throw new Error(`${endpointsFile} has no endpoints.${name} URL with a port`);
+    return port;
+}
+
+async function main(file: string, endpointsPath: string): Promise<void> {
+    const { endpoints } = JSON.parse(readFileSync(endpointsPath, 'utf8')) as { endpoints: Record<string, unknown> };
     const scenarioUrl = await listen(scenarioServer);
-    const ready = { scenario: { url: scenarioUrl } };
+    const prometheusUrl = await listen(prometheusServer, reservedPort(endpoints, 'prometheus'));
+    const ready = { scenario: { url: scenarioUrl }, prometheus: { url: prometheusUrl } };
     writeFileSync(`${file}.tmp`, `${JSON.stringify(ready, null, 2)}\n`);
     renameSync(`${file}.tmp`, file);
     const view = clock.view();
     console.log(
         `telemetry-fakes: scenario clock at ${scenarioUrl} (started ${view.startedAt}, incident ${view.incidentAt}, recovery ${view.recoveryAt})`,
     );
+    console.log(`telemetry-fakes: Prometheus at ${prometheusUrl}`);
 }
 
-main(readyFile).catch((e: unknown) => {
+main(readyFile, endpointsFile).catch((e: unknown) => {
     console.error('telemetry-fakes: failed to start:', e);
     process.exit(1);
 });

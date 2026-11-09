@@ -68,6 +68,7 @@ report() {
     local scenario_url
     scenario_url="$(json_url "$STACK_JSON" scenario)"
     echo "up.sh: scenario clock: $scenario_url/scenario (restart: POST $scenario_url/scenario/restart)"
+    echo "up.sh: Prometheus (fake): $(json_url "$STACK_JSON" prometheus)"
     "$NODE" -e 'const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).platformDb; console.log(`up.sh: Platform Database: postgres://${p.user}@${p.host}:${p.port}/${p.database} (password in .state/stack.json platformDb)`)' "$STACK_JSON"
     "$NODE" -e 'const e = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine; console.log(`up.sh: Federation Engine: postgres://${e.user}@${e.host}:${e.pgPort}/${e.database} (password in .state/stack.json engine), health ${e.httpUrl}/healthz`)' "$STACK_JSON"
     # The Lightdash feature adds the "Lightdash: <lightdash.url>" line here.
@@ -144,15 +145,6 @@ wait_ready() {
     done
 }
 
-# Scenario clock (+ the telemetry fakes that will share it). The clock starts now: T = this moment.
-rm -f "$RUN/telemetry-fakes.json"
-start telemetry-fakes "$NODE" --import tsx "$DEMO/stack/telemetry-fakes.ts" --ready-file "$RUN/telemetry-fakes.json"
-TELEMETRY_PID=$STARTED_PID
-wait_ready telemetry-fakes "$TELEMETRY_PID" "$RUN/telemetry-fakes.json" 30
-SCENARIO_URL="$(json_url "$RUN/telemetry-fakes.json" scenario)"
-curl -fsS -m 5 "$SCENARIO_URL/scenario" >/dev/null ||
-    { echo "up.sh: the scenario clock at $SCENARIO_URL does not answer" >&2; exit 1; }
-
 # Platform Database: a fresh throwaway cluster under .state/platform-db (synthetic pharmacy operations data).
 PG_BIN="${DEMO_PG_BIN:-}"
 [ -n "$PG_BIN" ] || PG_BIN="$(dirname "$(command -v postgres || echo /opt/homebrew/bin/postgres)")"
@@ -201,6 +193,20 @@ DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" perl -e "$EXEC_WITH_ENV_FILE" "$ENG
     tail -20 "$LOGS/engine-check.log" >&2
     exit 1
 }
+# Scenario clock + telemetry fakes (one process sharing one clock). They listen on the endpoints the engine
+# config just reserved, so they start before the engine. The clock starts now: T = this moment.
+rm -f "$RUN/telemetry-fakes.json"
+start telemetry-fakes "$NODE" --import tsx "$DEMO/stack/telemetry-fakes.ts" --endpoints-file "$RUN/engine-config.json" \
+    --ready-file "$RUN/telemetry-fakes.json"
+TELEMETRY_PID=$STARTED_PID
+wait_ready telemetry-fakes "$TELEMETRY_PID" "$RUN/telemetry-fakes.json" 30
+SCENARIO_URL="$(json_url "$RUN/telemetry-fakes.json" scenario)"
+curl -fsS -m 5 "$SCENARIO_URL/scenario" >/dev/null ||
+    { echo "up.sh: the scenario clock at $SCENARIO_URL does not answer" >&2; exit 1; }
+PROMETHEUS_URL="$(json_url "$RUN/telemetry-fakes.json" prometheus)"
+curl -fsS -m 5 "$PROMETHEUS_URL/-/ready" >/dev/null ||
+    { echo "up.sh: the fake Prometheus at $PROMETHEUS_URL does not answer" >&2; exit 1; }
+
 DEMO_START_ENV_FILE="$ENGINE_DIR/engine.env" start engine "$ENGINE_BIN" --config "$ENGINE_CONFIG"
 ENGINE_PID=$STARTED_PID
 ENGINE_HTTP_URL="$("$NODE" -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).engine.httpUrl)' "$RUN/engine-config.json")"
@@ -220,14 +226,16 @@ until [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$ENGINE_HTTP_URL/healthz
 done
 echo "up.sh: Federation Engine running (${ENGINE_BIN#"$ROOT"/}, config ${ENGINE_CONFIG#"$DEMO"/})"
 
-# Later demo features start the remaining fakes (on the endpoints in .state/run/engine-config.json),
-# Lightdash and telemetry-mcp here and add them to stack.json below.
+# Later demo features add the remaining fakes to the telemetry-fakes process (on the endpoints in
+# .state/run/engine-config.json), start Lightdash and telemetry-mcp here and add them to stack.json below.
 
 "$NODE" -e '
-const [file, scenarioUrl, telemetryPid, platformFile, platformPid, engineFile, enginePid] = process.argv.slice(1);
+const [file, telemetryFile, telemetryPid, platformFile, platformPid, engineFile, enginePid] = process.argv.slice(1);
 const fs = require("fs");
+const telemetry = JSON.parse(fs.readFileSync(telemetryFile, "utf8"));
 const stack = {
-    scenario: { url: scenarioUrl },
+    scenario: telemetry.scenario,
+    prometheus: telemetry.prometheus,
     platformDb: JSON.parse(fs.readFileSync(platformFile, "utf8")).platformDb,
     engine: JSON.parse(fs.readFileSync(engineFile, "utf8")).engine,
     processes: [
@@ -238,7 +246,7 @@ const stack = {
 };
 fs.writeFileSync(file + ".tmp", JSON.stringify(stack, null, 2) + "\n", { mode: 0o600 });
 fs.renameSync(file + ".tmp", file);
-' "$STACK_JSON" "$SCENARIO_URL" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID"
+' "$STACK_JSON" "$RUN/telemetry-fakes.json" "$TELEMETRY_PID" "$RUN/platform-db.json" "$PLATFORM_PID" "$RUN/engine-config.json" "$ENGINE_PID"
 
 echo "up.sh: demo stack is up (state: ${STATE#"$DEMO"/}, stop with demo/eng-1799/down.sh)"
 report
