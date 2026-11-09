@@ -168,6 +168,8 @@ PLATFORM_DIR="$STATE/platform-db"
 rm -f "$RUN/platform-db.json"
 PLATFORM_PORT="$(cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/platform-db.ts" prepare --dir "$PLATFORM_DIR" 2>>"$LOGS/platform-db-init.log")" ||
     { echo "up.sh: creating the Platform Database cluster failed (see ${LOGS#"$DEMO"/}/platform-db-init.log)" >&2; exit 1; }
+[[ "$PLATFORM_PORT" =~ ^[0-9]+$ ]] ||
+    { echo "up.sh: stack/platform-db.ts prepare printed no port (got '$PLATFORM_PORT')" >&2; exit 1; }
 start platform-db "$PG_BIN/postgres" -D "$PLATFORM_DIR/pgdata"
 PLATFORM_PID=$STARTED_PID
 (cd "$DEMO" && "$NODE" --import tsx "$DEMO/stack/platform-db.ts" seed --port "$PLATFORM_PORT" --pid "$PLATFORM_PID" \

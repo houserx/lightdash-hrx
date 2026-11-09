@@ -86,7 +86,9 @@ async function prepare(dir: string): Promise<void> {
             '',
         ].join('\n'),
     );
-    console.log(port);
+    // up.sh captures this line. Not console.log: with FORCE_COLOR set (Playwright sets it for the specs that drive
+    // up.sh) Node colours a logged number even when stdout is a pipe.
+    process.stdout.write(`${port}\n`);
 }
 
 const CREATE_DATABASE_SQL = `CREATE DATABASE ${PLATFORM_DB_DATABASE}`;

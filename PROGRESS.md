@@ -2394,3 +2394,24 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   instant query needs `at` (`"now"` works). A range query needs start, end and step. The MCP response is SSE
   (`event: message` / `data: {...}`), so a client must send `accept: application/json, text/event-stream`.
 - 2026-11-09T10:26:58Z supervisor: demo-mcp-server passed the gate in round 1
+
+### demo-stack-lifecycle (2026-11-09, run 20261109-013019, round 1)
+
+- **What was already there.** Earlier features had built up.sh's idempotency (a live stack, meaning every recorded pid
+  alive and the scenario clock answering, is kept and reported again) and down.sh (pg_ctl stop, then TERM/KILL on the
+  recorded process groups and on anything whose command line mentions `.state`; exits 0 when nothing runs). Run by
+  hand in a shell, all four steps already passed.
+- **The bug the check found.** Under Playwright, up.sh failed with "seed needs --port". Playwright sets `FORCE_COLOR`,
+  which reaches up.sh. With it set, Node's `console.log(<number>)` adds ANSI color codes even when stdout is a pipe, so
+  `PLATFORM_PORT=$(platform-db.ts prepare)` captured `\e[33m<port>\e[39m`. Fix: `stack/platform-db.ts` prepare now
+  writes the port with `process.stdout.write`, and up.sh rejects a non-numeric PLATFORM_PORT with a clear message.
+  Only that capture was affected: the other `$(node ...)` captures print strings, which `console.log` never colors.
+  **Trap for later work:** anything up.sh or a walkthrough script captures from Node must use `process.stdout.write`
+  (or print a string), not `console.log` of a number or object.
+- **Tested as a user.** down.sh with nothing running exited 0. up.sh took about 33 s; all 6 processes in stack.json
+  were alive and all 17 ports open, all ephemeral. A second up.sh printed "already running; nothing changed", with the
+  same pids and the same `Lightdash: http://127.0.0.1:<port>` line. down.sh took about 1.4 s: every pid gone, every
+  port closed, and `pgrep -lf .state` was empty. A second down.sh exited 0.
+- **Checks:** `bash ./init.sh`, then `run.sh lifecycle.spec.ts` passed (1 test, about 49 s). Regression:
+  `run.sh --stack platform-db.spec.ts` passed. Demo typecheck is clean. No process is left.
+- 2026-11-09T10:37:25Z supervisor: demo-stack-lifecycle passed the gate in round 1
