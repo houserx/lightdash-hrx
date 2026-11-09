@@ -310,3 +310,24 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   `__range`, ...) separately from ldq's `utils/timeRange.ts`. The two should agree on every value the engine sees.
 - 2026-11-09T01:14:28Z supervisor: initialized: 61 features, run 20261108-192705
 - 2026-11-09T01:46:23Z supervisor: initialized: 61 features, run 20261108-203649
+
+### imp-query-prometheus (2026-11-08)
+
+- Added `packages/common/src/eng1799/grafanaQuery.ts` (pinned path) and `eng1799/importWarnings.ts`
+  (`ImportWarning`, `ImportWarningCode`); both exported from the common index with one line each.
+- `translateGrafanaTarget(target, ctx)`: resolves the datasource (target, else `ctx.panelDatasource`; object by uid,
+  type from the ref or the lookup; legacy string by name then uid), Telemetry Source = `telemetrySourceName(name)`.
+  Prometheus range → `buildTelemetrySql({kind:'promql'})` (ldq); `instant: true` without `range: true` →
+  `promql_instant(q, ${ld.parameters.__to}[, source])` (CONTRACTS §1.1 `promql_instant(query, at[, source])`, built
+  locally since `buildTelemetrySql` has no instant kind). Both range and instant → range plus `query-instant-dropped`.
+  Empty expr → `sql: null`, TODO, `query-empty`. Unknown uid with a known type → no source arg plus
+  `datasource-unresolved`; no type at all → TODO plus `datasource-unresolved`; any non-Prometheus type is for now a
+  TODO plus `datasource-unsupported` (the Loki/CloudWatch/Postgres/... features replace that `default` branch).
+- `translateGrafanaPanelQueries(panel, ctx)`: placeholder for imp-query-panel-targets. Skips hidden targets, passes
+  `panel.datasource` down, keeps the first translated target and warns `panel-targets-not-combined` for each further
+  one (no silent drop). The next feature should replace this with UNION ALL and drop that code.
+- Not done here (later features): `$datasource` variables, `$__rate_interval`/time macros, legendFormat.
+- Tested: `query-prometheus.test.ts` 5/5; called the built `dist/cjs` exports from node and saw the expected
+  promql/promql_instant SQL, the empty-expr TODO and the staging source from the panel datasource. Typecheck (common)
+  clean; oxlint clean; oxfmt applied.
+- 2026-11-09T01:48:55Z supervisor: imp-query-prometheus passed the gate in round 1
