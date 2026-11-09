@@ -1270,3 +1270,66 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   transform-rename-organize, dashboard-report, -charts, -panel-kinds, -multi, -command, -todo-tiles pass.
   tsc (common), oxlint, oxfmt clean. Note: the CLI loads built common, so run init.sh after editing common.
 - 2026-11-09T04:20:50Z supervisor: imp-transform-convert-config passed the gate in round 1
+
+## imp-cli-grafana-alerts (round 1)
+- New `packages/common/src/eng1799/terraformHcl.ts` (exported): a real HCL parser (`parseHcl(text, file)` -> body of
+  attributes + blocks with labels and line numbers; `HclSyntaxError` message is `<file>:<line>:<col>: ...`) and a
+  never-throwing evaluator (`evaluateHcl(expr, sourceText, {variables, resolve})`). Parses all 17 fixture .tf files.
+  Supports strings with `${}`, heredocs (`<<-` strips common indent), tuples/objects (`=`/`:`), traversal, calls,
+  unary/binary ops, conditionals, `for` (list/object, `if`, grouping `...`), ~40 functions (jsonencode/jsondecode,
+  merge, tolist/toset (sorted), contains, lookup, format, ...). Not supported (syntax error): `%{}` directives, splats.
+  What can't be known (data sources, secrets, `var.*`, unknown functions, missing keys) is an `HclUnknown` holding
+  the source text; `jsonencode` writes unknowns as null so a model with an unresolved uid stays readable.
+- New `packages/common/src/eng1799/grafanaAlertImport.ts` (exported): `convertGrafanaAlerting({rules, contactPoints,
+  policy, locals?, folders?, datasources?})` -> `{alertRules, contactPoints, notificationRoutes, warnings}`, plus
+  `renderGrafanaAlertsImportReport` and `renderGrafanaRoutingFixes`. `TerraformContext` parses every file once,
+  indexes `resource` blocks and `locals` across all files, and resolves `local.x` (lazy, cycle-safe),
+  `grafana_data_source.<resource>.uid` (via --datasources, matched by telemetrySourceName(name) == telemetrySourceName(resource label)),
+  and `<type>.<name>.<attr>` of any resource without for_each (that is how `grafana_contact_point.x.name` resolves).
+  Throws `GrafanaAlertingImportError` (message names the file) for no policy / unresolvable root contact point.
+- What this feature converts (minimal, later features extend it):
+  - Rule: slug unique (`api-down`, `api-down-2`; never random), name, description = summary else generated +
+    `rule-description-generated`, labels (invalid names -> `label-invalid`), annotations, query = the single
+    non-`__expr__` data block through `translateGrafanaTarget`, reducer/condition only for reduce(last|mean|max|min|
+    sum|count)+threshold gt/lt, or threshold gt/lt straight on the query (reducer last). `paused` = is_paused, and
+    anything else (several queries, classic_conditions, ranges, math, unreadable model) -> `paused: true`,
+    `PLACEHOLDER_ALERT_QUERY` / `{>, 0}` where untranslated, and one `rule-needs-review` naming the reasons.
+    Always `shadow: true`. NOT yet read (silently, on purpose; their features own them): folder_uid/spaceSlug,
+    for, interval_seconds, relative_time_range, no_data_state, exec_err_state, notification_settings.
+  - Grafana rule groups with `for_each` and `dynamic` blocks are NOT expanded: `terraform-unsupported` warning and
+    the group (for_each) / dynamic rules are skipped. imp-alerts-hcl: bind `each.key/each.value` via
+    `variables` in `TerraformContext.evaluate` and remove those two warnings. Also `grafana_folder.this["X"].uid`
+    currently resolves to unknown (resource has for_each).
+  - Contact point: slack -> slack_webhook `{secretRef: <slug>-webhook}` + title/text/disableResolveMessage;
+    webhook to api.incident.io -> incident_io with `{secretRef: <slug>-token}`; other webhook -> webhook
+    (authorization secretRef `<slug>-authorization` if authorization_credentials); email; anything else ->
+    `contact-point-integration-unsupported`; no integration left -> `contact-point-skipped`. Unread attributes
+    (e.g. slack `username`) -> one `option-dropped` per integration. Never writes secret values or `local.*`.
+  - Routes: root contact point/group_by/timers, children in order with matchers (match -> operator), continue,
+    timers, nested policies; route `path` like `grafana_notification_policy.p.policy[0].policy[1]` in warnings.
+    Invalid durations and unknown attributes (mute timings...) -> `option-dropped`.
+  - ROUTING-FIXES.md says routing defects are not checked yet (routing features replace it). IMPORT-REPORT.md:
+    `| Code | Rule or resource | Message |`, one row per warning. import-summary.json `todos` = number of
+    rule-needs-review warnings (decision: a rule to review is the alerting counterpart of a dashboard TODO).
+- New warning codes in importWarnings.ts: terraform-unsupported, terraform-unresolved, label-invalid,
+  rule-needs-review, rule-description-generated, contact-point-integration-unsupported, contact-point-skipped.
+- CLI: `packages/cli/src/handlers/importGrafanaAlerts.ts`, registered as `lightdash import grafana-alerts` with all
+  options (--rules, --contact-points, --policy, -o/--out required; --locals, --datasources (reuses
+  readGrafanaDatasourcesFile), --folders, --routing-decisions, --no-routing-fixes). Every file is read and parsed
+  before anything is written; a missing or invalid file exits 1 naming the file. --folders is parsed and indexed
+  but not yet used; --routing-decisions is only checked to be a YAML mapping; with either it or
+  --no-routing-fixes the CLI prints that routing fixes are not implemented yet. Output folder names come from
+  alertingAsCode.ts constants (same layout `upload --alerting-only` reads). Prints
+  `Imported N alert rules, M contact points and the notification routes into <out> (W warnings, R rules to review)`.
+- Unit tests: terraformHcl.test.ts (13), grafanaAlertImport.test.ts (5).
+- Tested as a user: synthetic rule group (API down: reduce last + lt 1), the 5 synthetic contact points with
+  jsondecode'd secret locals, a 2-child policy -> 1 rule (promql_instant(..., 'prometheus-production'), last < 1,
+  shadow), 5 contact point files, routes tree; all 7 documents valid for validateAlertingAsCode; routeAlert
+  {team=infra, severity=critical} -> pager then slack-alerts. Unterminated .tf -> exit 1 "Invalid Terraform in
+  .../broken.tf:2:10: unterminated string"; missing file -> exit 1 naming it; contact points file as --policy ->
+  exit 1 naming it. Full fixture set (all rule groups, locals, folders, datasources): no crash, 15 rules (for_each/
+  dynamic groups skipped with 9 terraform-unsupported), 6 contact points, 22 documents all valid, no secret values.
+- Acceptance: alerts-command 3/3; dashboard-command 4/4. tsc (common, cli) clean; oxlint clean on new files;
+  oxfmt applied. Pre-existing: oxlint flags packages/common/src/index.ts duplicate `formatPrometheusDuration`
+  export (present before this session; see integration notes).
+- 2026-11-09T04:35:46Z supervisor: imp-cli-grafana-alerts passed the gate in round 1

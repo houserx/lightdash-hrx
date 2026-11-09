@@ -39,6 +39,7 @@ import { exportChartImageHandler } from './handlers/exportChartImage';
 import { generateHandler } from './handlers/generate';
 import { generateExposuresHandler } from './handlers/generateExposures';
 import { getProjectHandler } from './handlers/getProject';
+import { importGrafanaAlertsHandler } from './handlers/importGrafanaAlerts';
 import {
     DEFAULT_GRAFANA_DASHBOARD_SPACE,
     importGrafanaDashboardHandler,
@@ -1486,6 +1487,50 @@ importProgram
     )
     .option('--verbose', undefined, false)
     .action(importGrafanaDashboardHandler);
+
+importProgram
+    .command('grafana-alerts')
+    .description(
+        'Converts Grafana alerting Terraform (rule groups, contact points, notification policy) into alert-rules/, contact-points/ and notification-routes/ YAML for `lightdash upload --alerting-only`',
+    )
+    .requiredOption(
+        '--rules <tf...>',
+        'Terraform files with the resource "grafana_rule_group" blocks',
+    )
+    .requiredOption(
+        '--contact-points <tf>',
+        'Terraform file with the resource "grafana_contact_point" blocks',
+    )
+    .requiredOption(
+        '--policy <tf>',
+        'Terraform file with the resource "grafana_notification_policy" block',
+    )
+    .requiredOption(
+        '-o, --out <dir>',
+        'folder to write alert-rules/, contact-points/, notification-routes/, ROUTING-FIXES.md, IMPORT-REPORT.md and import-summary.json into',
+    )
+    .option(
+        '--locals <tf...>',
+        'Terraform files with the locals blocks the other files reference',
+    )
+    .option(
+        '--datasources <tf>',
+        'grafana_data_sources.tf, to resolve datasource references to Telemetry Source names',
+    )
+    .option(
+        '--folders <tf>',
+        'grafana_folders.tf, the Grafana folders the rule groups reference',
+    )
+    .option(
+        '--routing-decisions <yml>',
+        'YAML with routing decisions: severities: {<value>: <contact point slug>} and teams: {<team>: <contact point slug>}',
+    )
+    .option(
+        '--no-routing-fixes',
+        'import the notification routes as Grafana has them, without fixing routing defects',
+    )
+    .option('--verbose', undefined, false)
+    .action(importGrafanaAlertsHandler);
 
 const alertingProgram = program
     .command('alerting')

@@ -51,6 +51,13 @@ export type ImportWarningCode =
     | 'time-range-unsupported'
     | 'refresh-adjusted'
     | 'refresh-unsupported'
+    | 'terraform-unsupported'
+    | 'terraform-unresolved'
+    | 'label-invalid'
+    | 'rule-needs-review'
+    | 'rule-description-generated'
+    | 'contact-point-integration-unsupported'
+    | 'contact-point-skipped'
     | (string & {});
 
 export type ImportWarning = {
