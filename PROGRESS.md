@@ -2806,3 +2806,32 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   passed (19 s). `demo-video-build:`, `demo-video-cards-captions:` and `demo-video-thumbnail-chapters:` still pass. No
   ffmpeg process is left.
 - 2026-11-09T13:19:14Z supervisor: demo-video-music passed the gate in round 1
+
+### demo-docs (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** Only `docs/eng-1799/demo.md`. New sections at the top: Prerequisites (Homebrew Postgres, Node 24+,
+  pnpm 12, cargo, `bash ./init.sh`), The one command (`demo/eng-1799/run-all.sh`, its outputs, and the same steps by
+  hand), Presenting live (`--keep`, sign-in, restarting the clock on cue, `down.sh`), Scenario timeline (a table for
+  baseline, T+90s incident, T+5min recovery, `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT`, the restart API, and the timing
+  room the scenes need). Under "Walkthrough scenes" there is a new "What each scene proves" table, and the old scene
+  list is now "How the scenes run". Under "Video build" there is a new "Adding your own licensed music" subsection
+  (supply a file you hold a licence for, an example `--music` command, no streaming rips). "Frontend mode"
+  (production build, and why not the dev server) was already there.
+- **Glossary fix:** the Grafana fixture sentence said "datasource" (an _Avoid_ term, and docs.spec.ts rejects it).
+  It now says "one Prometheus input in `__inputs`".
+- **For demo-run-all-fails-cleanly / demo-run-all: the doc describes `run-all.sh` before it exists.** It follows the
+  pinned interface: up, a scenario restart with the `DEMO_*` offsets, `walkthrough/run.sh` (all scenes), `pnpm -F
+  eng-1799-demo video`, then down (skipped with `--keep`). It stops at the first failure and exits non-zero, and it
+  still brings the stack down (trap). It checks `DEMO_*` before starting anything. If run-all.sh ends up different
+  (for example its own default offsets or a different restart), update "The one command", "Presenting live" and
+  "Scenario timeline" to match. The doc's example `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240` is my choice, from the
+  scene-08 trap note above. It is not tested with run-all.
+- **Tested as a user.** After `bash ./init.sh` I followed the doc. `DEMO_INCIDENT_AT=soon up.sh` and `300/90` were
+  each refused, exit 2, naming the variable. `up.sh` printed the T+90s/T+300s timeline, the Lightdash URL and the
+  sign-in line, in 44 s. `stack.json` has the documented keys. `GET /scenario` read `baseline`. The doc's curl
+  restart command, copied as written, set incident at 45 s. A second `up.sh` changed nothing. `/login` answered
+  200. `walkthrough/run.sh 01-sign-in` passed (21 s). The documented `ask` question answered (baseline 18-47). Two
+  `down.sh` runs left no `.state` process. I did not run the full walkthrough or the video build in this session:
+  run-all.sh doesn't exist yet, and the video build was verified by the four video features.
+- **Check:** `run.sh docs.spec.ts` passed.
+- 2026-11-09T13:27:59Z supervisor: demo-docs passed the gate in round 1

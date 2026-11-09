@@ -1,8 +1,107 @@
 # ENG-1799 end-to-end demo
 
-The demo stack lives in `demo/eng-1799/`: `demo/eng-1799/up.sh` starts it on ephemeral local ports and prints
-every URL, `demo/eng-1799/down.sh` stops it. Later sections (prerequisites, the one command, presenting live, the
-scenario timeline, the scenes and music) are added as the demo is built.
+The demo stack lives in `demo/eng-1799/`. `demo/eng-1799/up.sh` starts a complete local HouseRx-like observability
+stack on ephemeral local ports and prints every URL. A Playwright walkthrough drives the real Lightdash UI through
+a fill-queue incident in eight recorded scenes, and `pnpm -F eng-1799-demo video` turns the recordings into a short
+promo MP4. `demo/eng-1799/down.sh` stops it all. Everything is local: no Docker, no network, no credentials, and only
+synthetic data.
+
+## Prerequisites
+
+- **macOS with Homebrew Postgres** (`/opt/homebrew/bin/initdb`, `pg_ctl`, `postgres`). The stack starts throwaway
+  Postgres clusters under `demo/eng-1799/.state/` for Lightdash and the Platform Database. `psql` is not needed.
+- **Node 24 or later** and **pnpm 12** (the version in the root `package.json`'s `packageManager`).
+- **A Rust toolchain** (`cargo`), to build the Federation Engine binary into `tmp/cargo-target`.
+- **A prepared tree:** run `bash ./init.sh` from the repo root once, and again after you pull or change code. It
+  installs dependencies, builds the packages, the engine, telemetry-mcp and the frontend production build. It makes
+  sure Playwright's Chromium and `ffmpeg-static`'s binary are there (a one-time download at install time). It starts
+  no server. A cold run takes several minutes; a warm run takes seconds.
+
+Nothing else: Prometheus, Loki, Tempo, CloudWatch, the audit store, incident.io and Okta are local fakes that the
+stack starts itself.
+
+## The one command
+
+```bash
+bash ./init.sh
+demo/eng-1799/run-all.sh
+```
+
+`demo/eng-1799/run-all.sh` does the whole demo end to end: `demo/eng-1799/up.sh` (start and seed the stack), a
+restart of the scenario clock with the `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` offsets (see the timeline below),
+the whole walkthrough (`demo/eng-1799/walkthrough/run.sh`, all eight scenes), the video build (`pnpm -F
+eng-1799-demo video`) and then `demo/eng-1799/down.sh`. It stops at the first step that fails and exits non-zero,
+and it brings the stack down even then. On a warm tree, start-up takes under a minute and the eight scenes
+record for about 5 minutes.
+
+When it exits 0 you have, under `demo/eng-1799/out/` (gitignored):
+
+- `eng-1799-demo.mp4`, the promo video (H.264, 1920x1080, 30 fps, silent unless you add music),
+- `CHAPTERS.md` and `thumbnail.png`,
+- `scenes/<scene-id>/video.webm` and `key-moment.png` for each of the eight scenes, and
+  `scenes/06-ai-question/answer.json`.
+
+The same steps by hand:
+
+```bash
+demo/eng-1799/up.sh                                   # start and seed; prints "up.sh: Lightdash: http://127.0.0.1:<port>"
+curl -s -X POST "$(node -p 'require("./demo/eng-1799/.state/stack.json").scenario.url')/scenario/restart" \
+  -H 'content-type: application/json' -d '{"incidentAfterSeconds": 45, "recoveryAfterSeconds": 240}'
+demo/eng-1799/walkthrough/run.sh                      # record all eight scenes
+pnpm -F eng-1799-demo video                           # build out/eng-1799-demo.mp4
+demo/eng-1799/down.sh                                 # stop everything
+```
+
+## Presenting live
+
+`demo/eng-1799/run-all.sh --keep` does everything above but leaves the stack running at the end instead of running
+`down.sh`, so you can present in your own browser:
+
+1. Run `demo/eng-1799/run-all.sh --keep` (or just `demo/eng-1799/up.sh` if you don't need the recordings).
+2. Open the Lightdash URL that `up.sh` printed (`up.sh: Lightdash: http://127.0.0.1:<port>`; it is also
+   `lightdash.url` in `demo/eng-1799/.state/stack.json`). Sign in as the demo user `up.sh` names (`up.sh: sign in as
+   ...@example.com`), with `demoUser.password` from the same file. Both are fake demo values.
+3. When you are ready to show the incident, restart the scenario clock (`POST <scenario.url>/scenario/restart`, as
+   in the block above, with the offsets you want, for example `{"incidentAfterSeconds": 90,
+   "recoveryAfterSeconds": 300}`). The incident then starts on cue while you
+   present, and recovers on its own. `GET <scenario.url>/scenario` shows the current phase (`baseline`,
+   `incident`, `recovered`).
+4. Walk the same path as the scenes below: Pharmacy Ops overview, the Alert Rules page
+   (`/projects/<lightdash.projectUuid>/alerting/rules`), the fake incident.io page (`incidentIo.url`), Service
+   health, Investigate, Write Mode and the audit browser. For the AI question run `pnpm -F eng-1799-demo ask
+   "How has the fill queue backlog changed over the last 15 minutes?"` in a terminal.
+5. Afterwards run `demo/eng-1799/down.sh`. It is safe to run twice and leaves no process behind.
+
+`up.sh` is idempotent: run on a stack that is already up, it prints the same URL and changes nothing, so the
+scenario clock keeps its timeline.
+
+## Scenario timeline
+
+The fakes generate live synthetic telemetry on one scenario clock. **T** is when the clock starts: when `up.sh`
+starts the fakes, or when you restart it.
+
+| Time | Phase | What happens |
+|---|---|---|
+| T to T+90s | `baseline` | The fill queue backlog moves between about 20 and 50, under the threshold of 100. Logs are mostly info, traces are fast. Both Alert Rules are Normal. |
+| **T+90s** (`DEMO_INCIDENT_AT`) | `incident` | The fill queue backlog climbs to about 150-170, error lines flood the fill-service logs ("create shipping label failed … downstream=shipping-label-api") and `shipping-label-api` spans take over 2 s. Within about a minute both Alert Rules fire and incident.io gets the firing notification. |
+| **T+5min** (`DEMO_RECOVERY_AT`) | `recovered` | The backlog drains back under 100 within a minute, the backlog Alert Rule resolves and incident.io gets the resolve notification. |
+
+Change it with two environment variables, in whole seconds after T:
+
+```bash
+DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 demo/eng-1799/run-all.sh
+DEMO_INCIDENT_AT=120 DEMO_RECOVERY_AT=600 demo/eng-1799/up.sh
+```
+
+The defaults are `DEMO_INCIDENT_AT=90` (T+90s) and `DEMO_RECOVERY_AT=300` (T+5min). Both must be whole numbers with
+`0 <= DEMO_INCIDENT_AT < DEMO_RECOVERY_AT`. `up.sh` and `run-all.sh` check them before starting anything and exit
+non-zero naming the bad variable. On a running stack, `POST <scenario.url>/scenario/restart` with
+`{"incidentAfterSeconds": <s>, "recoveryAfterSeconds": <s>}` sets a new timeline from now (values may be negative,
+to start already inside the incident).
+
+Leave enough room for the scenes: scenes 02 to 06 each check that the incident is still running when they end, and
+together they take about 3 minutes after the incident starts. Scene 08 then waits for the recovery and the resolve,
+which arrives about a minute after `DEMO_RECOVERY_AT`.
 
 ## Frontend mode
 
@@ -61,7 +160,7 @@ which only reach SQL charts, so the view's window is fixed at 6 hours. The Dashb
 on `ts` inside that window, so ranges longer than 6 hours show only the last 6 hours.
 
 Pharmacy Ops overview is the demo's **converted Grafana dashboard**. Its source is the synthetic Grafana export
-`demo/eng-1799/seed/grafana/pharmacy-ops-overview.json` (a Prometheus datasource input, no real hosts). The base has
+`demo/eng-1799/seed/grafana/pharmacy-ops-overview.json` (one Prometheus input in `__inputs`, no real hosts). The base has
 no Grafana importer CLI, so the YAML was converted by hand: one Tile per panel with the same title (`timeseries` →
 cartesian line with the dashed threshold, `table` with range value mappings → table with the same mappings, as in
 `docs/eng-1799/grafana-panel-mapping.md`; `stat` → big number and `bargauge` → horizontal bar, built-in charts
@@ -178,6 +277,21 @@ list. Today both scripted questions are about the fill queue backlog and run `qu
 
 ## Walkthrough scenes (recorded)
 
+### What each scene proves
+
+| Scene | What it proves |
+|---|---|
+| `01-sign-in` | A HouseRx user signs in to Lightdash and opens a converted Grafana dashboard (Pharmacy Ops overview) whose Tiles query live Prometheus metrics through the Federation Engine, with a Dashboard Time Range and auto-refresh like Grafana's. |
+| `02-incident` | The dashboard shows the incident as it happens: the fill queue backlog crosses the threshold line at 100 and the stat turns red, from live data. |
+| `03-alert-fires` | A Lightdash Alert Rule (managed in git) on a PromQL query fires on its own, and the incident.io Contact Point receives the firing notification with the rendered summary. |
+| `04-service-health` | Logs (Loki) and traces (Tempo) sit next to metrics in one dashboard: the error lines filter down to the failing downstream, and the trace waterfall shows the slow `shipping-label-api` span. |
+| `05-investigate` | Investigate runs an ad hoc PromQL query against a Telemetry Source and saves it as a chart, the way someone explores in Grafana's Explore. |
+| `06-ai-question` | An AI client asks a plain-language question through telemetry-mcp, signed in through Okta as the user, and gets the live query, its result and an answer. The demo's client is scripted; there is no model. |
+| `07-write-mode` | Write Mode on the Platform Database: a Preview that rolls back, then a commit confirmed by typing COMMIT, both recorded as Audited Queries in the audit browser with their description and ticket. |
+| `08-recovery` | When the backlog drains, the Alert Rule resolves on its own and incident.io receives the resolve notification, closing the loop. |
+
+### How the scenes run
+
 `bash demo/eng-1799/walkthrough/run.sh [scene-id ...]` (or `pnpm -F eng-1799-demo walkthrough [scene-id ...]`)
 drives the real UI in headless Chromium against the running stack (`up.sh` first). With no scene id it runs every
 scene in order. It never restarts the scenario clock. Each scene is one Playwright spec,
@@ -276,8 +390,19 @@ one uniform factor to 225 s. With the cards that comes to about 226 s, inside 4 
 about 300 s, so the scenes play at about 1.3x. Under 2 minutes the build still writes the video but prints a warning.
 A missing recording fails the build and names the file.
 
-Without `--music` the MP4 has no audio track. The demo never ships or downloads audio. To add music, pass
-`--music <file>` with a file you are licensed to use (any format ffmpeg reads: mp3, wav, m4a, flac...). The build
+### Adding your own licensed music
+
+Without `--music` the MP4 has no audio track. The demo never ships, downloads or names any audio, and no audio file
+may be committed (`.gitignore` refuses every audio extension under `demo/`). To add music, supply a file yourself
+that you hold a licence to use for this purpose: music you own, a track licensed for corporate video, or a
+royalty-free track whose licence allows it. Do not use a track ripped from a streaming site. Then pass it with
+`--music`:
+
+```bash
+pnpm -F eng-1799-demo video --music ~/Music/my-licensed-track.mp3
+```
+
+The file can be any format ffmpeg reads (mp3, wav, m4a, flac...). The build
 checks it before anything else: a missing, unreadable, empty or non-file path is refused with a message naming it.
 The music becomes one AAC stereo track (48 kHz, 192 kb/s). It loops if it is shorter than the video, is cut to the
 video's length, fades in over the first 3 s and fades out over the last 4 s.
