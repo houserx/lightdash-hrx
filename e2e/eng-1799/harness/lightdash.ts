@@ -63,6 +63,12 @@ export type Lightdash = {
     /** A personal access token: `Authorization: ApiKey <apiKey>`. */
     apiKey: string;
     s3: FakeS3;
+    /**
+     * Sets the admin user's own value of each named user attribute through the backend's
+     * `/api/v1/org/attributes` API (creating the attribute when the org has none by that name).
+     * Other users' values and group values are kept.
+     */
+    setUserAttributes(attributes: Record<string, string>): Promise<void>;
     /** Stops the backend (SIGTERM, SIGKILL after a grace period), its Postgres and the fake S3. Idempotent. */
     close(): Promise<void>;
 };
@@ -108,6 +114,90 @@ const tail = (file: string) => {
         return '';
     }
 };
+
+type ApiUserAttribute = {
+    uuid: string;
+    name: string;
+    description?: string;
+    attributeDefaults: string[] | null;
+    users: { userUuid: string; values: string[] }[];
+    groups: { groupUuid: string; values: string[] }[];
+};
+
+/** Calls the backend's API with the personal access token; throws on a non-2xx reply. */
+async function callApi<T>(
+    baseUrl: string,
+    apiKey: string,
+    method: string,
+    route: string,
+    body?: unknown,
+): Promise<T> {
+    const response = await fetch(`${baseUrl}${route}`, {
+        method,
+        headers: {
+            Authorization: `ApiKey ${apiKey}`,
+            ...(body === undefined
+                ? {}
+                : { 'Content-Type': 'application/json' }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    if (!response.ok) {
+        throw new Error(
+            `${method} ${route}: HTTP ${response.status}: ${text.slice(0, 500)}`,
+        );
+    }
+    return (JSON.parse(text) as { results: T }).results;
+}
+
+async function setUserAttributes(
+    baseUrl: string,
+    apiKey: string,
+    userUuid: string,
+    attributes: Record<string, string>,
+): Promise<void> {
+    const route = '/api/v1/org/attributes';
+    const existing = await callApi<ApiUserAttribute[]>(
+        baseUrl,
+        apiKey,
+        'GET',
+        route,
+    );
+    for (const [name, value] of Object.entries(attributes)) {
+        const current = existing.find((attribute) => attribute.name === name);
+        const users = [
+            ...(current?.users ?? [])
+                .filter((user) => user.userUuid !== userUuid)
+                .map((user) => ({
+                    userUuid: user.userUuid,
+                    values: user.values,
+                })),
+            { userUuid, values: [value] },
+        ];
+        const payload = {
+            name,
+            description: current?.description,
+            attributeDefaults: current?.attributeDefaults ?? null,
+            users,
+            groups: (current?.groups ?? []).map((group) => ({
+                groupUuid: group.groupUuid,
+                values: group.values,
+            })),
+        };
+        if (current) {
+            await callApi(
+                baseUrl,
+                apiKey,
+                'PUT',
+                `${route}/${current.uuid}`,
+                payload,
+            );
+        } else {
+            await callApi(baseUrl, apiKey, 'POST', route, payload);
+        }
+    }
+}
 
 function waitForExit(child: ChildProcess, ms: number): Promise<boolean> {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -238,6 +328,8 @@ export async function startLightdash(
             userEmail: USER_EMAIL,
             apiKey,
             s3,
+            setUserAttributes: (attributes) =>
+                setUserAttributes(baseUrl, apiKey, seeded.userUuid, attributes),
             close,
         };
     } catch (error) {

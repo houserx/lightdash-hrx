@@ -529,6 +529,7 @@ import {
 } from '../cliDeploy';
 import type { DirectAccessService } from '../DirectAccess/DirectAccessService';
 import type { DocumentQueryContext } from '../DocumentService/DocumentQueryContext';
+import { FederationIdentityService } from '../FederationIdentity/FederationIdentityService';
 import { inferCliDeploySource } from '../inferCliDeploySource';
 import {
     MultiConnectionCompiler,
@@ -1129,6 +1130,10 @@ export class ProjectService
             aiAccessService,
             credentialSource: this,
             logger: this.logger,
+            federationIdentityService: new FederationIdentityService({
+                userAttributesModel,
+                userModel,
+            }),
         });
         this.savedChartModel = savedChartModel;
         this.jobModel = jobModel;

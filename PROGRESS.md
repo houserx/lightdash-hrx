@@ -1040,3 +1040,60 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     `SyntaxError` ("Unexpected token"). When that happens, run the harness from a tsx script to see the
     real error.
 - 2026-11-09T04:44:50Z supervisor: int-lightdash-boot passed the gate in round 1
+- 2026-11-09 int-fix-query-path-identity: Lightdash's async query path now sends the user's identity token
+  (finding 5). What changed and why:
+  - `packages/backend/src/services/FederationIdentity/federationQueryIdentity.ts` (new): an AsyncLocalStorage
+    scope `withFederationQueryIdentity({ userUuid, organizationUuid, projectUuid, audit })`, and
+    `federationQueryAudit(requestParameters, querySurface)`, which builds the token's `audit` block: a request
+    with `tileUuid` → source `tile`, `resource_uuid` = the tile; the MCP query surface → `mcp`; anything else →
+    `investigate`. Description and ticket come from the `/query/sql` body's `audit`.
+    Why a scope: warehouse clients are cached per project and shared by every user, so a provider can't
+    be bound to one user when the client is built.
+  - `FederationIdentityService.createScopedTokenProvider({ secret, projectUuid })` mints a token for the
+    identity in scope. It reads the user's current attributes and their email (new optional `userModel` dep)
+    on every query. It returns `null` outside a scope or for another project.
+  - `WarehouseClientFactory` (new optional dep `federationIdentityService`, built in ProjectService's
+    constructor) passes that provider as `getIdentityToken` to every client whose credentials are the federation
+    flavour with an `identitySigningSecret`.
+  - `@lightdash/warehouses`: `IdentityTokenProvider` may return `null`. In that case `FederationWarehouseClient`
+    sends `RESET hrx.identity`, because the engine keeps the setting for the life of the pooled connection,
+    and a query with no identity must not inherit the previous user's identity. Without a provider, nothing
+    is sent (as before, and as ldq's checks pin).
+  - `AsyncQueryService`: `executeAsyncSqlQuery` keeps the normalised `audit` in the request parameters, so it
+    is persisted in query_history. `RunAsyncWarehouseQueryArgs.federationAudit` is filled from the request
+    parameters, both on the main loop and when rebuilt from history (`buildWarehouseQueryArgs`).
+    `runAsyncWarehouseQuery` runs inside the scope for registered, non-service-account users. The SQL path's
+    `prepareSqlChartAsyncQueryArgs` also runs inside the scope (`withAccountFederationIdentity`), because its
+    column discovery runs the user's SQL (`LIMIT 1`) on the engine. The results cache is bypassed for
+    federation credentials, because a cached result would skip the engine's per-user check and the audit.
+  - Harness: `startLightdash(...).setUserAttributes(Record<string,string>)` is built. It uses the real
+    `/api/v1/org/attributes` API with the PAT, creates the attribute or PUTs it, and keeps other users' and
+    groups' values. `runAlertingCycle` and `createSqlChart` are still not built.
+  Tested as a user (`../tmp/manual-query-path-identity/try.mts`, run with
+  `pnpm -F @lightdash/e2e-eng-1799 exec node --import tsx <script>`; plain `node` on PATH is v26 and the
+  backend child then fails to load Sentry's native profiler, so use pnpm's pinned node). Before the
+  attribute existed, a `platform_query()` SQL Runner query got POST 400 "source "platform" is the Platform
+  Database and needs platform_read". The attribute API listed `platform_read` = ["true"] for the user. The
+  same query with description and ticket then came back `ready` with n = 200. The engine's audit store then
+  had items with sub and email = the Lightdash user, that description, ticket ENG-1799, action `query`,
+  status `success`. `SELECT 1` with no audit was ready. A blank description gave 400 "An Audited Query
+  needs a description". After `platform_read` = false, the query got POST 400 naming platform_read. Checks:
+  this one 1/1; int-lightdash-boot 1/1; ldq `federation-client-identity` 3/3;
+  `WarehouseClientFactory.test.ts` 282/282; new `federationQueryIdentity.test.ts` 4/4; warehouses,
+  backend and e2e typecheck clean.
+  Next sessions must know:
+  - **Two audit items per SQL Runner run** on the Platform Database: the column-discovery `LIMIT 1` probe
+    and the async run both execute the SQL, and the engine audits each one. A refusal therefore surfaces
+    at POST time (HTTP 400 from the probe), not as an async `error` status. Checks should use
+    `items.find(...)` rather than count on exactly one item.
+  - Only `runAsyncWarehouseQuery` and the SQL path's preparation step are scoped. Other warehouse calls
+    send `RESET hrx.identity` and run with no identity: explore compile, field-value search, the
+    saved/dashboard SQL chart preparation and catalog. For saved SQL charts (int-lightdash-sql-chart), the
+    preparation in `executeAsyncSqlChart*` probably needs the same `withAccountFederationIdentity` wrap.
+  - Service-account and embed (JWT) queries get no identity. Alert queries are a separate feature
+    (int-fix-alert-evaluator-identity).
+  - No prettier config is tracked in this checkout, and a bare `prettier --write` reformats whole files
+    (double quotes, 2 spaces). Use `node node_modules/.pnpm/prettier@3.7.4/node_modules/prettier/bin/prettier.cjs
+    --single-quote --tab-width 4 --trailing-comma all --print-width 80`. That version still expands a few
+    one-line object literals in ProjectService/AsyncQueryService, so check `git diff` for unrelated hunks.
+- 2026-11-09T04:58:22Z supervisor: int-fix-query-path-identity passed the gate in round 1

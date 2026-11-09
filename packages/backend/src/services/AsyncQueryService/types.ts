@@ -52,6 +52,7 @@ import type {
     TotalConfiguration,
 } from '../../utils/QueryBuilder/QueryComposer';
 import type { DocumentQueryContext } from '../DocumentService/DocumentQueryContext';
+import type { FederationQueryAudit } from '../FederationIdentity/federationQueryIdentity';
 import type { MeteredApiConnector } from '../QuerySourceService/api/ApiConnector';
 
 export type CommonAsyncQueryArgs = {
@@ -386,6 +387,8 @@ export type RunAsyncWarehouseQueryArgs = {
     warehouseConnectionUuid?: string | null;
     connectionRoute?: ConnectionRouteWithOriginal | null;
     connectionWarehouseType?: WarehouseTypes | null;
+    /** The identity token's audit block on a federation-flavour connection. */
+    federationAudit?: FederationQueryAudit;
 };
 
 export type RunAsyncPreAggregateQueryArgs = Omit<

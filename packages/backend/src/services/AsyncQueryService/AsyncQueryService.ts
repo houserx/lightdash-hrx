@@ -83,6 +83,7 @@ import {
     isDashboardChartTileType,
     isDateItem,
     isExploreError,
+    isFederationCredentials,
     isField,
     isJwtUser,
     isMergeMetricSource,
@@ -325,6 +326,11 @@ import {
     buildResultReader,
     getContentWriteAgentIdentity,
 } from '../AiAccessService/agentExecutionContext';
+import {
+    federationQueryAudit,
+    withFederationQueryIdentity,
+    type FederationQueryAudit,
+} from '../FederationIdentity/federationQueryIdentity';
 import {
     getQueryResultEntitlementFingerprint,
     getQueryResultEntitlementFingerprintForms,
@@ -4744,6 +4750,33 @@ export class AsyncQueryService extends ProjectService {
         })();
     }
 
+    /**
+     * Runs `fn` with the account's identity for queries it sends to a
+     * federation-flavour connection of `projectUuid` (CONTRACTS §3), e.g. the
+     * column discovery that runs a SQL Runner query before its async run.
+     */
+    private withAccountFederationIdentity<T>(
+        account: Account,
+        {
+            organizationUuid,
+            projectUuid,
+        }: { organizationUuid: string; projectUuid: string },
+        audit: FederationQueryAudit,
+        fn: () => Promise<T>,
+    ): Promise<T> {
+        if (!account.isRegisteredUser() || account.isServiceAccount())
+            return fn();
+        return withFederationQueryIdentity(
+            {
+                userUuid: account.user.id,
+                organizationUuid,
+                projectUuid,
+                audit,
+            },
+            fn,
+        );
+    }
+
     public runAsyncWarehouseQuery(
         args: RunAsyncWarehouseQueryArgs & {
             warehouseClientOverride?: WarehouseClientOverride;
@@ -4753,8 +4786,26 @@ export class AsyncQueryService extends ProjectService {
             onComposerStageTimed?: ComposerStageTimedCallback;
         },
     ) {
-        return this.withQueryConnectionExecution(args, () =>
-            this.runAsyncWarehouseQueryInScope(args),
+        const run = () =>
+            this.withQueryConnectionExecution(args, () =>
+                this.runAsyncWarehouseQueryInScope(args),
+            );
+        // A registered user's query on a federation-flavour connection runs
+        // as that user (CONTRACTS §3); the client's token provider reads this.
+        if (!args.isRegisteredUser || args.isServiceAccount) return run();
+        return withFederationQueryIdentity(
+            {
+                userUuid: args.userUuid,
+                organizationUuid: args.organizationUuid,
+                projectUuid: args.projectUuid,
+                audit:
+                    args.federationAudit ??
+                    federationQueryAudit(
+                        undefined,
+                        args.queryUsage?.querySurface,
+                    ),
+            },
+            run,
         );
     }
 
@@ -5882,6 +5933,10 @@ export class AsyncQueryService extends ProjectService {
                 query.requestParameters.resultEntitlementFingerprint ?? null,
             query: query.compiledSql,
             displayTimezone,
+            federationAudit: federationQueryAudit(
+                query.requestParameters,
+                query.requestParameters.queryUsage?.querySurface,
+            ),
         };
     }
 
@@ -6709,6 +6764,9 @@ export class AsyncQueryService extends ProjectService {
                                     args.querySurface ?? null,
                                 ).kind === 'agent')) ||
                         aiPrincipalUuid !== null ||
+                        // Each Federation Engine query runs and is audited as
+                        // its own user; a cached result would skip both.
+                        isFederationCredentials(warehouseCredentials) ||
                         (await this.isAiAccessCacheBypassEnabled(
                             account,
                             context,
@@ -7174,6 +7232,10 @@ export class AsyncQueryService extends ProjectService {
                         warehouseConnectionUuid,
                         connectionRoute,
                         connectionWarehouseType: warehouseCredentialsType,
+                        federationAudit: federationQueryAudit(
+                            executionRequestParameters,
+                            queryUsage?.querySurface,
+                        ),
                     };
 
                     if (executionPlan.target === 'pre_aggregate') {
@@ -10489,9 +10551,9 @@ export class AsyncQueryService extends ProjectService {
         audit,
     }: ExecuteAsyncSqlQueryArgs): Promise<ApiExecuteAsyncSqlQueryResults> {
         // Refuse a blank Audited Query description before any warehouse work.
-        // The identity token's audit block is not wired to the warehouse
-        // client yet (see PROGRESS.md, ldq-query-routes-time-range-audit).
-        normalizeQueryAudit(audit);
+        // The audit is kept with the request parameters, so the identity token
+        // of a federation-flavour connection carries it (federationQueryAudit).
+        const queryAudit = normalizeQueryAudit(audit);
 
         const { organizationUuid, provisioningSource } =
             await this.projectModel.getSummary(projectUuid);
@@ -10565,19 +10627,25 @@ export class AsyncQueryService extends ProjectService {
             originalColumns,
             parameterReferences,
             usedParameters,
-        } = await this.prepareSqlChartAsyncQueryArgs({
+        } = await this.withAccountFederationIdentity(
             account,
-            context,
-            querySurface,
-            projectUuid,
-            organizationUuid,
-            sql,
-            limit,
-            parameters: combinedParameters,
-            pivotConfiguration,
-            userAttributeOverrides,
-            requestedConnectionUuid,
-        });
+            { organizationUuid, projectUuid },
+            federationQueryAudit({ audit: queryAudit }, querySurface),
+            () =>
+                this.prepareSqlChartAsyncQueryArgs({
+                    account,
+                    context,
+                    querySurface,
+                    projectUuid,
+                    organizationUuid,
+                    sql,
+                    limit,
+                    parameters: combinedParameters,
+                    pivotConfiguration,
+                    userAttributeOverrides,
+                    requestedConnectionUuid,
+                }),
+        );
 
         const { queryUuid, cacheMetadata } = await this.executeAsyncQuery(
             {
@@ -10607,6 +10675,7 @@ export class AsyncQueryService extends ProjectService {
                 parameters: combinedParameters,
                 context,
                 ...(timeRange ? { timeRange } : {}),
+                ...(queryAudit ? { audit: queryAudit } : {}),
             },
         );
 

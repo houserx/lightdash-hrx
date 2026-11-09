@@ -19,6 +19,12 @@ export type FederationWarehouseClientOptions = {
 const getIdentityStatement = (token: string): string =>
     `SET hrx.identity = '${token.replaceAll("'", "''")}'`;
 
+/**
+ * The engine keeps `hrx.identity` for the life of the connection, and pooled connections are
+ * shared by every user's queries; a query with no identity must not inherit the last one.
+ */
+const CLEAR_IDENTITY_STATEMENT = 'RESET hrx.identity';
+
 /** Replace every occurrence of the token (raw or SQL-quoted) with a marker. */
 const redactToken = (text: string, token: string): string =>
     [token, token.replaceAll("'", "''")]
@@ -50,7 +56,8 @@ export class FederationWarehouseClient extends PostgresWarehouseClient {
      * runs it, send a freshly minted identity token. The provider is called
      * once per query (and per retry attempt), so no token is ever reused.
      * Without a provider nothing is sent and the engine applies its own
-     * no-identity rules.
+     * no-identity rules. A provider that has no identity for this query
+     * (`null`) clears the connection's identity instead.
      */
     protected async beforeQuery(client: PoolClient): Promise<void> {
         if (!this.getIdentityToken) {
@@ -59,6 +66,10 @@ export class FederationWarehouseClient extends PostgresWarehouseClient {
         const token = await this.getIdentityToken({
             agent: this.agentSession,
         });
+        if (token === null) {
+            await client.query(CLEAR_IDENTITY_STATEMENT);
+            return;
+        }
         try {
             await client.query(getIdentityStatement(token));
         } catch (error) {
