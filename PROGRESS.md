@@ -947,3 +947,32 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   the MCP before it calls the engine. The check passes (1/1).
   Trap: only the exact value "true" makes an attribute true (decision 8). A user with `platform_write: 'yes'` is refused.
 - 2026-11-09T04:20:42Z supervisor: int-fix-mcp-write-preview passed the gate in round 1
+- int-mcp-ask-data (round 1): two gaps between the MCP's example queries and the engine, both fixed.
+  1. **Engine** (`federation-engine/src/audit_browser.rs`): `GET /v1/audit` with no `ticket`/`user`/`month`
+     answered 400, so ask_data's `find_example_queries` always said "Past-query examples are unavailable
+     right now." It now runs the no-parameter browse that A14 asks for (decision 9): the last 30 days, newest first,
+     25 a page, walking the `byMonth` partitions from the current month back to the month 30 days ago (one page can
+     span more than one partition). Its cursor is base64 of `{recent: {since, month, key}}` (`since` fixed by page 1;
+     `key` null starts that month from its newest record). Using a recent cursor with `month=`, or a month cursor with
+     no filter, is 400. Contract assumption: the portal's exact recent browse was not available here, so this is the
+     narrowest reading (window anchored at the request, no `from`/`to` params). Three new unit tests; README updated.
+  2. **MCP** (`packages/telemetry-mcp/src/ask/example-queries.service.ts`): the engine audits a Platform
+     Database read as `SELECT * FROM platform_query('<sql>')`. Scrubbing literals removed the whole inner query,
+     so no example ever matched. Records in that form are now unwrapped to `<sql>` before the portal's filters and
+     scrubbing. Other `platform_*` calls (tables, columns, explain) are skipped. Each example now also shows
+     `Purpose: <description>` from its newest run, unless `looksSensitive` flags it (capped at 200 chars). The
+     check requires the description. Two new unit tests (12/12).
+  Tested by hand (`../tmp/manual-mcp-ask-data/try.mts` and `browse.mts`, run from e2e/eng-1799 with tsx; synthetic
+  values unlike the check). Through the real MCP over HTTP with a scripted model, find_example_queries returned both
+  seeded widget queries with purpose and unwrapped SQL, run_sql returned rows, and the ai_ask audit items carry the
+  question and the caller's uuid. Directly on the engine, 30 records with no filter gave a 25-item page with a cursor,
+  then a 5-item page with a null cursor and 30 distinct ids, newest first. A recent cursor with `month=` and a
+  garbage cursor each got 400; no platform_read got 403; no token got 401.
+  Checks: this one 1/1; int-audit-browser and int-mcp-platform-tools pass; MCP acceptance
+  `ask-data-example-queries` 2/2 (run with `--config tests/acceptance/vitest.config.ts`); MCP tsc clean; engine
+  audit_browser unit tests pass with no build warnings. rustfmt is not installed here, so the Rust file was not
+  formatted by a tool.
+  For review: descriptions are free text a person wrote. `looksSensitive` catches emails, phone numbers, ids and
+  dates, but not names. ask_data already sends query rows to the model, so this adds no new class of data. It is
+  still worth a look.
+- 2026-11-09T04:28:18Z supervisor: int-mcp-ask-data passed the gate in round 1

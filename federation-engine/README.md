@@ -15,7 +15,7 @@ It listens on two ports:
     histograms, errors and audit write failures.
   - `POST /v1/write`: Write Mode (Preview and commit) on the Platform Database.
   - `POST /v1/write/confirmations/verify`: only with `test_mode = true`.
-  - `GET /v1/audit`: the audit browser (`?month=`, `?ticket=`, `?user=`).
+  - `GET /v1/audit`: the audit browser (`?month=`, `?ticket=`, `?user=`, or none for the last 30 days).
 
 ## SQL functions
 
@@ -234,7 +234,9 @@ the SQL, the source, the description and ticket, the status, the row count and t
 `action` is `query`, `ai_ask` (agents) or `assertion` (system). Failed statements are recorded too,
 with `status: error`. Statements the guard rejects never run and are not recorded.
 `GET /v1/audit` browses these records with a bearer identity holding `platform_read`. Without a
-valid bearer it returns 401, and without that claim it returns 403.
+valid bearer it returns 401, and without that claim it returns 403. With no `ticket`, `user` or
+`month` it pages the last 30 days, newest first, across the monthly partitions (the portal's
+recent-history browse, used by the MCP's example queries).
 
 **58000: audit fails closed.** If the DynamoDB write or the S3 write fails, the query fails with
 SQLSTATE `58000 "audit write failed"` and returns no rows. Results are never sent before their
