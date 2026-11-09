@@ -33,6 +33,8 @@ export type ImportWarningCode =
     | 'variable-unsupported'
     | 'variable-multi-value'
     | 'variable-format-ignored'
+    | 'parameter-default-adjusted'
+    | 'parameter-merged'
     | 'panel-type-unsupported'
     | 'panel-dropped'
     | 'option-dropped'

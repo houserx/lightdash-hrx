@@ -180,7 +180,7 @@ const DATASOURCE_VARIABLE =
     /^\s*(?:\$([A-Za-z_]\w*)|\$\{([A-Za-z_]\w*)(?::[^}]*)?\}|\[\[([A-Za-z_]\w*)\]\])\s*$/;
 
 /** Variable types whose value a chart viewer picks: each becomes a Lightdash parameter. */
-const PARAMETER_VARIABLE_TYPES = new Set([
+export const PARAMETER_VARIABLE_TYPES: ReadonlySet<string> = new Set([
     'custom',
     'query',
     'textbox',
@@ -450,23 +450,61 @@ const legendSeriesSql = (
 };
 
 /**
+ * The datasource a datasource variable's current text names, for when no known datasource
+ * matches: its type is the variable's `query` (the plugin id it lists), else the reference's.
+ * `default`, `All` (`$__all`) and other `$` values name no datasource.
+ */
+const namedByCurrentText = (
+    variable: GrafanaTemplatingVariable,
+    ref: GrafanaDatasourceRef,
+): GrafanaDatasource | undefined => {
+    const name =
+        typeof variable.current?.text === 'string'
+            ? variable.current.text.trim()
+            : '';
+    const refType = typeof ref === 'object' ? ref?.type : undefined;
+    const type =
+        typeof variable.query === 'string' && variable.query.trim() !== ''
+            ? variable.query.trim()
+            : refType;
+    const value = currentValues(variable)[0];
+    if (
+        name === '' ||
+        name.startsWith('$') ||
+        value?.startsWith('$') ||
+        name.toLowerCase() === 'default' ||
+        type === undefined ||
+        telemetrySourceName(name) === ''
+    ) {
+        return undefined;
+    }
+    return { uid: value ?? name, name, type };
+};
+
+/**
  * A datasource reference that is a datasource variable (`${datasource}`) becomes the
  * datasource the variable picks: its current value (a uid or a name), else its current text,
- * else the one datasource of the variable's type. Other references are returned as they are.
+ * else the one datasource of the variable's type. When none of the known datasources matches
+ * (no `--datasources` map), the current text is the Grafana datasource's name, which names the
+ * Telemetry Source by itself: the result then carries that datasource for `resolveDatasource`.
+ * Other references are returned as they are.
  */
 const resolveDatasourceVariable = (
     ref: GrafanaDatasourceRef,
     ctx: GrafanaQueryContext,
     what: string,
     warnings: ImportWarning[],
-): GrafanaDatasourceRef => {
+): { ref: GrafanaDatasourceRef; datasources: GrafanaDatasource[] } => {
+    const datasources = ctx.datasources ?? [];
+    const unchanged = { ref, datasources };
     const text = typeof ref === 'string' ? ref : ref?.uid;
     const match = text === undefined ? null : DATASOURCE_VARIABLE.exec(text);
-    if (match === null) return ref;
+    if (match === null) return unchanged;
     const name = match[1] ?? match[2] ?? match[3];
     const variable = findVariable(ctx.variables ?? [], name);
-    if (variable === undefined || variable.type !== 'datasource') return ref;
-    const datasources = ctx.datasources ?? [];
+    if (variable === undefined || variable.type !== 'datasource') {
+        return unchanged;
+    }
     const values = [
         ...currentValues(variable),
         ...(typeof variable.current?.text === 'string'
@@ -484,8 +522,11 @@ const resolveDatasourceVariable = (
                 datasources.find((ds) => ds.name === value),
         )
         .find((ds) => ds !== undefined);
-    const found = picked ?? (ofType.length === 1 ? ofType[0] : undefined);
-    if (found === undefined) return ref;
+    const found =
+        picked ??
+        (ofType.length === 1 ? ofType[0] : undefined) ??
+        namedByCurrentText(variable, ref);
+    if (found === undefined) return unchanged;
     if (isMultiValue(variable)) {
         warnings.push({
             code: 'variable-multi-value',
@@ -493,8 +534,13 @@ const resolveDatasourceVariable = (
         });
     }
     return {
-        type: typeof ref === 'object' && ref?.type ? ref.type : found.type,
-        uid: found.uid,
+        ref: {
+            type: typeof ref === 'object' && ref?.type ? ref.type : found.type,
+            uid: found.uid,
+        },
+        datasources: datasources.includes(found)
+            ? datasources
+            : [...datasources, found],
     };
 };
 
@@ -2230,7 +2276,7 @@ const translateTarget = (
     if (isExpressionTarget(target)) {
         return translateExpressionTarget(target, warnings, panel);
     }
-    const ref = resolveDatasourceVariable(
+    const { ref, datasources } = resolveDatasourceVariable(
         isUsableRef(target.datasource)
             ? target.datasource
             : ctx.panelDatasource,
@@ -2238,7 +2284,7 @@ const translateTarget = (
         targetLabel(target),
         warnings,
     );
-    const resolved = resolveDatasource(ref, ctx.datasources ?? []);
+    const resolved = resolveDatasource(ref, datasources);
     if (resolved.type === undefined) {
         warnings.push({
             code: 'datasource-unresolved',

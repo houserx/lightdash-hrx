@@ -11,6 +11,7 @@ import type {
     DashboardTileAsCode,
 } from '../types/contentAsCode/dashboards';
 import { DashboardTileTypes } from '../types/dashboard';
+import type { LightdashProjectParameter } from '../types/lightdashProjectConfig';
 import { ChartKind, ChartType } from '../types/savedCharts';
 import {
     generateSlug,
@@ -29,6 +30,7 @@ import {
     type GrafanaQueryContext,
     type GrafanaTemplatingVariable,
 } from './grafanaQuery';
+import { grafanaVariableParameters } from './grafanaVariables';
 import { importDashboardTimeRange } from './importTimeRange';
 import type { ImportWarning } from './importWarnings';
 
@@ -146,6 +148,11 @@ export type GrafanaDashboardImportOptions = {
 export type GrafanaDashboardImport = {
     dashboard: DashboardAsCode;
     charts: SqlChartAsCode[];
+    /**
+     * The project parameters the dashboard's variables define, for lightdash.config.yml
+     * (merge several dashboards' with `mergeProjectParameters`).
+     */
+    parameters: Record<string, LightdashProjectParameter>;
     warnings: ImportWarning[];
     todos: ImportTodo[];
 };
@@ -826,6 +833,14 @@ export const convertGrafanaDashboard = (
         source.refresh,
     );
     timeRangeWarnings.forEach((w) => warnings.push({ ...w, dashboard: title }));
+    const variableParameters = grafanaVariableParameters(
+        queryCtx.variables ?? [],
+    );
+    variableParameters.warnings.forEach((w) =>
+        warnings.push({ ...w, dashboard: title }),
+    );
+    const hasParameters =
+        Object.keys(variableParameters.dashboardParameters).length > 0;
 
     return {
         dashboard: {
@@ -838,8 +853,12 @@ export const convertGrafanaDashboard = (
             tabs: layout.tabs,
             tiles: resolveTileOverlaps(tiles),
             timeRange,
+            ...(hasParameters
+                ? { parameters: variableParameters.dashboardParameters }
+                : {}),
         },
         charts,
+        parameters: variableParameters.parameters,
         warnings,
         todos,
     };

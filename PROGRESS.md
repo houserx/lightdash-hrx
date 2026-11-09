@@ -932,3 +932,46 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   (`--datasources`, the Perses importer) are not built yet. They failed the same way before this change.
 - Perses (imp-perses-panels) should reuse the same TODO tile path so multi-line TODOs render the same way.
 - 2026-11-09T03:18:10Z supervisor: imp-dashboard-todo-tiles passed the gate in round 1
+
+### imp-dashboard-variables (2026-11-08)
+
+- New module packages/common/src/eng1799/grafanaVariables.ts (exported from index.ts):
+  - `grafanaVariableParameters(variables)`: each custom, query, textbox and interval variable (the
+    `PARAMETER_VARIABLE_TYPES` now exported from grafanaQuery.ts, so the query translator and this agree) becomes a
+    project parameter (label = variable label or name, description if set) and a dashboard parameter
+    `{parameterName, value}` at its current value. Custom and interval variables list `options` (saved options without
+    All/auto, else the comma-split `query`; custom `text : value` gives label+value pairs, `\,` escapes); query and
+    textbox variables get `allow_custom_values: true`. The config `default` is the current value (omitted when '').
+    Constants and datasource variables never become parameters (the translator inlines / resolves them).
+  - Decision: All (`$__all`) has no single Lightdash value, so the parameter starts at the variable's `allValue`, else
+    `.*`; an auto interval starts at the first interval option. Each is a `parameter-default-adjusted` warning.
+  - A name a parameter can't have (outside `^[a-zA-Z0-9_-]+$`) is skipped with `variable-unsupported`.
+  - `mergeProjectParameters(sources)`: one lightdash.config.yml for all dashboards in a run. First definition keeps
+    label/description/default, later options are appended, any `allow_custom_values` wins. A difference is a
+    `parameter-merged` warning, returned with the source index; the CLI adds it to that dashboard's warnings so the
+    report and summary agree.
+- grafanaDashboardImport.ts: `GrafanaDashboardImport.parameters` (project parameters) and `dashboard.parameters`
+  (only when there are any).
+- CLI (handlers/importGrafanaDashboard.ts): writes `lightdash.config.yml` (`spotlight: {default_visibility: show}` +
+  `parameters`) only when a dashboard defines parameters, lists it in import-summary.json `files`, and prints a line
+  telling the user to add the parameters to their project's lightdash.config.yml.
+- grafanaQuery.ts: a datasource variable whose current value matches no known datasource (e.g. no `--datasources`
+  map) now names the Telemetry Source from its current text (`Cloudwatch Staging` → `cloudwatch-staging`), typed by
+  the variable's `query`. `default`, All and other `$` values still fall to the engine default with
+  `datasource-unresolved`.
+- New warning codes: parameter-default-adjusted, parameter-merged. Whoever builds the warning docs / snapshot must
+  list them (the 32 fixtures produce 9 and 5 of them without --datasources).
+- Unit test: packages/common/src/eng1799/grafanaVariables.test.ts (8 cases).
+- Tested as a user: ran init.sh, then the CLI from source on the step's dashboard (custom env, constant cluster, query
+  pod, interval agg, textbox queue, datasource variable) plus a second dashboard redefining env/pod/agg with All and
+  auto. lightdash.config.yml had env (Environment, prod/staging/dev), pod and queue (allow_custom_values) and agg
+  (1m/5m/1h/10m), nothing for cluster or datasource; the dashboards' parameters were staging/api-1/5m/fills and
+  dev/.*/1m; the Per env SQL read `${ld.parameters.env}`, pod and agg with `cluster="prod-eks"` inlined; the Queue SQL
+  read `${ld.parameters.queue}` and ended in 'cloudwatch-staging'; reports listed the adjusted/merged warnings.
+  `lightdash lint -p` said all files are valid. All 32 fixture dashboards in one run give a lightdash.config.yml with
+  24 parameters that validates against the project-config schema. Acceptance: dashboard-variables 3/3, plus
+  dashboard-command, -time-range, -charts, -todo-tiles and common query-variables, -datasources,
+  -cloudwatch-metrics passing. tsc (common, cli) and oxlint clean, oxfmt applied.
+- Trap: roundtrip-dashboards still fails only because `--datasources` is not built (unknown option).
+- Perses (imp-perses-queries-variables) should reuse `mergeProjectParameters` and the same lightdash.config.yml write.
+- 2026-11-09T03:26:45Z supervisor: imp-dashboard-variables passed the gate in round 1

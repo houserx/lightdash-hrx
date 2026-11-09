@@ -1,10 +1,13 @@
 import {
     convertGrafanaDashboard,
+    DEFAULT_SPOTLIGHT_CONFIG,
+    mergeProjectParameters,
     ParseError,
     readGrafanaDashboardJson,
     renderGrafanaImportReport,
     type GrafanaDashboardImport,
     type GrafanaDashboardInput,
+    type LightdashProjectConfig,
 } from '@lightdash/common';
 import { promises as fs } from 'fs';
 import * as yaml from 'js-yaml';
@@ -92,6 +95,18 @@ export const importGrafanaDashboardHandler = async (
         }),
     );
 
+    // One lightdash.config.yml holds every dashboard's parameters; a difference between two
+    // dashboards' definitions is a warning on the later dashboard, so it shows in its report.
+    const merged = mergeProjectParameters(
+        results.map((r) => ({
+            dashboard: r.dashboard.name,
+            parameters: r.parameters,
+        })),
+    );
+    merged.warnings.forEach(({ index, warning }) =>
+        results[index].warnings.push(warning),
+    );
+
     const written: string[] = [];
     const write = async (rel: string, contents: string) => {
         const abs = path.join(options.out, rel);
@@ -115,6 +130,14 @@ export const importGrafanaDashboardHandler = async (
             `reports/${result.dashboard.slug}/IMPORT-REPORT.md`,
             renderGrafanaImportReport(result),
         );
+    }
+
+    if (Object.keys(merged.parameters).length > 0) {
+        const config: LightdashProjectConfig = {
+            spotlight: DEFAULT_SPOTLIGHT_CONFIG,
+            parameters: merged.parameters,
+        };
+        await write('lightdash.config.yml', dumpYaml(config));
     }
 
     const warnings = results.flatMap((r) => r.warnings);
@@ -156,4 +179,12 @@ export const importGrafanaDashboardHandler = async (
             'lightdash upload',
         )}.`,
     );
+    if (written.includes('lightdash.config.yml')) {
+        console.info(
+            `Add the parameters in ${path.join(
+                options.out,
+                'lightdash.config.yml',
+            )} to your project's lightdash.config.yml.`,
+        );
+    }
 };
