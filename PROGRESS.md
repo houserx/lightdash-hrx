@@ -1247,3 +1247,15 @@ Plus `GET /api/v1/alerting/health` (no auth): `{status: 'never_run'|'ok'|'stale'
       - Support, engineering and nobody → slack-infra-alerts (1h)
     - Intervals and timers pass the backend `validateAlertRuleDefinition` limits (interval ≥ 30s).
 - 2026-11-08T23:59:46Z supervisor: alert-grafana-port-examples passed the gate in round 1
+- alert-docs (round 1) — 2026-11-08
+  - Changes: new `docs/eng-1799/alerting.md`, formatted with oxfmt. It has four sections:
+    - Model: the Alert Rule fields and defaults from `ALERT_RULE_DEFAULTS`, series states, nodata/error, Contact Points and `secretRef` (the env var `ALERTING_SECRET_<NAME>`), the Notification Route tree, Managed and the as-code layout, `lightdash download/upload --alerting-only`, role permissions, the 15s tick and heartbeat, the `system:alert-evaluator` identity, and `GET /api/v1/alerting/health` (ok/stale/never_run, stale after 60s).
+    - Routing semantics: the root always matches, children are tried in order, the first match wins unless `continue`, the root is the fallback. It covers inherited timers, the root defaults 30s/5m/4h, `groupBy` `'...'` and `[]`, `groupWait`/`groupInterval`/`repeatInterval`, and resolve messages.
+    - Shadow Run: upload with `shadow: true`, export Grafana's state history, write an expected-differences YAML, run `lightdash alerting shadow-report` (5 min tolerance, `--fail-on-unexpected`), and repeat until `unexpectedCount` is 0.
+    - Cutover: ADR 0003's preconditions, then turn shadow off through upload, check health and the heartbeat, turn Grafana's notifications off, and scale Grafana to zero for 30 days.
+  - Every fact comes from CONTRACTS.md, CONTEXT.md, ADR 0001/0003, earlier progress entries or the code. The doc avoids the glossary's banned words (dry run, parallel run, go-live, switchover, canary). The check rejects them, so later doc edits must avoid them too.
+  - The Cutover section describes the procedure only. Per the `no_prod` decision, this program carries none of it out.
+  - Tested:
+    - After init, the check passes (1 passed, 1 skipped). The whole docs.accept.ts passes 2/2.
+    - As a user, I read the doc and checked each CLI command and flag against the real CLI's `--help` (via tsx): `alerting shadow-report` (`--project`, `--since`, `--grafana-history`, `--expected-differences`, `--json`, `--fail-on-unexpected`), and `upload`/`download --alerting-only`. They match.
+- 2026-11-09T00:02:35Z supervisor: alert-docs passed the gate in round 1
