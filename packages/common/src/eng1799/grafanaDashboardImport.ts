@@ -17,7 +17,10 @@ import {
     truncateSlug,
 } from '../utils/slugs';
 import type { AllVizChartConfig } from '../visualizations/types';
-import { getGrafanaPanelMapping } from './grafanaPanelMapping';
+import {
+    getGrafanaPanelMapping,
+    type GrafanaPanelMapping,
+} from './grafanaPanelMapping';
 import {
     translateGrafanaPanelQueries,
     type GrafanaPanelWithTargets,
@@ -44,6 +47,10 @@ export type GrafanaDashboardPanel = GrafanaPanelWithTargets & {
     /** A collapsed row holds its panels here. */
     panels?: GrafanaDashboardPanel[];
     options?: Record<string, unknown>;
+    /** Legacy graph panel series styles. */
+    bars?: unknown;
+    lines?: unknown;
+    fieldConfig?: { defaults?: { custom?: { drawStyle?: unknown } } };
 };
 
 export type GrafanaDashboardInput = {
@@ -127,21 +134,52 @@ const uniqueSlug = (name: string, fallback: string, taken: Set<string>) => {
     return slug;
 };
 
-/** The SQL chart kind a chart panel becomes. */
-const chartKindForPanel = (type: string): ChartKind => {
-    const mapping = getGrafanaPanelMapping(type);
-    if (type === 'barchart' || type === 'bargauge')
-        return ChartKind.VERTICAL_BAR;
-    switch (mapping?.chartType) {
+/** A graph panel with bars on and lines off, or a timeseries panel drawn as bars. */
+const drawsBars = (panel: GrafanaDashboardPanel): boolean => {
+    if (panel.type === 'graph')
+        return panel.bars === true && panel.lines === false;
+    return (
+        panel.type === 'timeseries' &&
+        panel.fieldConfig?.defaults?.custom?.drawStyle === 'bars'
+    );
+};
+
+/**
+ * The SQL chart kind a chart panel becomes, and the Lightdash chart type the panel
+ * mapping module wanted when a SQL chart cannot be it (gauge, log stream, a registry entry).
+ */
+const chartKindForPanel = (
+    panel: GrafanaDashboardPanel,
+    mapping: GrafanaPanelMapping,
+): { kind: ChartKind; fallbackFrom?: string } => {
+    if (mapping.target === 'registry_chart') {
+        return {
+            kind:
+                mapping.registrySlug === 'bar-gauge'
+                    ? ChartKind.VERTICAL_BAR
+                    : ChartKind.BIG_NUMBER,
+            fallbackFrom: mapping.registrySlug,
+        };
+    }
+    switch (mapping.chartType) {
         case ChartType.CARTESIAN:
-            return ChartKind.LINE;
+            return {
+                kind:
+                    panel.type === 'barchart' || drawsBars(panel)
+                        ? ChartKind.VERTICAL_BAR
+                        : ChartKind.LINE,
+            };
         case ChartType.PIE:
-            return ChartKind.PIE;
+            return { kind: ChartKind.PIE };
+        case ChartType.TABLE:
+            return { kind: ChartKind.TABLE };
         case ChartType.GAUGE:
-        case ChartType.CUSTOM:
-            return ChartKind.BIG_NUMBER;
+            return { kind: ChartKind.BIG_NUMBER, fallbackFrom: 'gauge' };
         default:
-            return ChartKind.TABLE;
+            return {
+                kind: ChartKind.TABLE,
+                fallbackFrom: mapping.chartType ?? mapping.target,
+            };
     }
 };
 
@@ -296,7 +334,13 @@ export const convertGrafanaDashboard = (
             );
             return;
         }
-        const kind = chartKindForPanel(type);
+        const { kind, fallbackFrom } = chartKindForPanel(panel, mapping);
+        if (fallbackFrom) {
+            warn(
+                'chart-kind-fallback',
+                `The ${type} panel maps to the ${fallbackFrom} chart type, which SQL charts do not support; it is imported as a ${kind} SQL chart`,
+            );
+        }
         const chart: SqlChartAsCode = {
             version: 1,
             contentType: ContentAsCodeType.SQL_CHART,

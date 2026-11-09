@@ -706,3 +706,24 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   3 warnings are datasource-unresolved, which is expected without a datasources mapping.
   Acceptance: dashboard-charts 4/4.
 - 2026-11-09T02:37:24Z supervisor: imp-dashboard-chart-per-panel passed the gate in round 1
+
+### imp-dashboard-panel-kinds (2026-11-08)
+
+- `chartKindForPanel` in packages/common/src/eng1799/grafanaDashboardImport.ts now takes the panel and its mapping
+  and returns `{ kind, fallbackFrom? }`. The kinds are: cartesian → line, or vertical_bar for barchart, for a graph with
+  `bars: true, lines: false` and for a timeseries with `fieldConfig.defaults.custom.drawStyle: 'bars'`; pie → pie;
+  table → table; gauge → big_number; registry stat-sparkline → big_number; registry bar-gauge → vertical_bar; anything
+  else (log_stream, trace_waterfall) → table. Wherever the SQL chart can't be the mapped type, the panel gets a
+  `chart-kind-fallback` warning (a new code; imp-docs must list it). The warning names the intended type: the registry
+  slug for registry charts, otherwise the ChartType value (gauge, log_stream). It reads: "The <type> panel maps to the
+  <wanted> chart type, which SQL charts do not support; it is imported as a <kind> SQL chart".
+  `GrafanaDashboardPanel` gained typed `bars`, `lines` and `fieldConfig.defaults.custom.drawStyle`.
+- Decision: the spec doesn't name a kind for bargauge (the test accepts any kind), so it stays vertical_bar.
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard with one panel of each of the 10
+  types, plus a bars-only graph and a bars timeseries (Prometheus; Loki for the logs panel). The 12 charts came out as
+  line, line, vertical_bar, pie, table, table, big_number, big_number, vertical_bar (bargauge) and table (logs), and
+  both bar-style panels came out as vertical_bar. IMPORT-REPORT.md has 4 chart-kind-fallback rows naming
+  stat-sparkline, gauge, bar-gauge and log_stream. `lightdash lint` said all files are valid.
+  Acceptance: dashboard-panel-kinds 3/3, dashboard-charts 4/4, dashboard-command 4/4. tsc (common) and oxlint are clean,
+  and oxfmt was applied.
+- 2026-11-09T02:40:31Z supervisor: imp-dashboard-panel-kinds passed the gate in round 1
