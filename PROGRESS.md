@@ -1820,3 +1820,34 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   fake-tempo, fake-loki, fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation pass; `tsc
   --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no process left.
 - 2026-11-09T07:20:16Z supervisor: demo-fake-tempo passed the gate in round 1
+
+### demo-fake-cloudwatch-metrics (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/cloudwatch.ts`: `cloudwatchHandler(() => clock.current())`, served by telemetry-fakes
+  on `endpoints.cloudwatch`. Metric AWS/SQS `ApproximateNumberOfMessagesVisible` {QueueName=hrx-demo-fill-queue}
+  (unit Count): one raw sample every 10 s (epoch-aligned, sha256 jitter), baseline 20..50, from incidentAt a 20 s
+  ramp to 150..190, from recoveryAt a 30 s ramp back. Samples after "now" do not exist; empty buckets are
+  left out. Other metrics/dimensions/units → Complete result with no datapoints; add entries to `METRICS`.
+- **Wire protocol trap:** the engine's aws-sdk-cloudwatch 1.140 speaks **Smithy RPC v2 CBOR**
+  (`POST /service/GraniteServiceVersion20100801/operation/GetMetricData`, `smithy-protocol: rpc-v2-cbor`),
+  not the query protocol. The fake has its own small CBOR codec (no new dependency): timestamps are tag 1 +
+  float seconds, Values are always CBOR doubles, errors are 400 `{__type, message}`. AWS JSON 1.0
+  (`X-Amz-Target: GraniteServiceVersion20100801.GetMetricData`, epoch-second timestamps) is answered too, for curl.
+  The CloudWatch Logs fake (next) will need the same check: look at
+  `~/.cargo/registry/src/*/aws-sdk-cloudwatchlogs-*/src/operation/start_query.rs` for the protocol it sends.
+- Buckets start at StartTime + k·Period (StartTime is NOT rounded to the minute) while they start before
+  EndTime. Stats: Average, Sum, Minimum, Maximum, SampleCount, pNN(.N) (nearest rank). ScanBy both ways;
+  MaxDatapoints/NextToken paging (token = base64 offset); at most 200 000 buckets per request (else 400).
+  Expression queries (SEARCH, metric math) answer 400 InvalidParameterValue; extend `parseQuery` if a dashboard needs them.
+- `up.sh` checks `$CLOUDWATCH_URL/ready` (a non-AWS route), writes `cloudwatch.url` to stack.json, `report()`
+  prints it. `/healthz` now shows only cloudwatch-logs unreachable.
+- Tested as a user: `up.sh`, restart -240/-90, `cloudwatch(<Grafana target>, now-400s, now)` through the engine
+  (pg-wire): 7 one-minute rows at hh:mm:38.762 (the request's StartTime), Maximum 41, 47 (baseline), 119 (the
+  minute straddling incidentAt), 186, 189, 175 (incident), 48 (recovered); Minimum in full incident minutes 150,
+  152; SampleCount 6 per full minute; series and labels.label = metric name, or the Grafana `label` when set;
+  period 300 over an hour → 12 rows; QueueName=nope → 0 rows; a code-mode expression → engine error
+  "GetMetricData failed: InvalidParameterValue: ...". AWS JSON via curl: p90, MaxDatapoints 2 → 2 points +
+  NextToken; StartTime > EndTime → 400 ValidationError. Checks fake-cloudwatch, fake-tempo, fake-loki,
+  fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation pass; `tsc --ignoreConfig --strict
+  --module nodenext --types node --noEmit stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:26:58Z supervisor: demo-fake-cloudwatch-metrics passed the gate in round 1

@@ -7,19 +7,21 @@
 // The scenario API listens on an ephemeral 127.0.0.1 port; each telemetry fake listens exactly on the
 // endpoint the engine config reserved for it (`endpoints.*` of --endpoints-file). Once all of them listen,
 // the process writes the ready file ({"scenario": {"url": ...}, "prometheus": {"url": ...}, "loki": {"url": ...},
-// "tempo": {"url": ...}}) atomically; up.sh waits for it.
+// "tempo": {"url": ...}, "cloudwatch": {"url": ...}}) atomically; up.sh waits for it.
 //
 // Scenario API:
 //   GET  /scenario          -> {startedAt, incidentAt, recoveryAt, now, phase, ...}
 //   POST /scenario/restart  {incidentAfterSeconds, recoveryAfterSeconds} (may be negative) -> same shape
 //
 // The telemetry fakes read the one ScenarioClock below per request. Prometheus (stack/prometheus.ts), Loki
-// (stack/loki.ts) and Tempo (stack/tempo.ts) are here; CloudWatch joins this process the same way.
+// (stack/loki.ts), Tempo (stack/tempo.ts) and CloudWatch metrics (stack/cloudwatch.ts) are here; CloudWatch
+// Logs joins this process the same way.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parseArgs } from 'node:util';
 import { ScenarioClock, validateOffsets } from './clock.js';
+import { cloudwatchHandler } from './cloudwatch.js';
 import { lokiHandler } from './loki.js';
 import { prometheusHandler } from './prometheus.js';
 import { tempoHandler } from './tempo.js';
@@ -106,6 +108,7 @@ const scenarioServer = http.createServer((req, res) => {
 const prometheusServer = http.createServer(prometheusHandler(() => clock.current()));
 const lokiServer = http.createServer(lokiHandler(() => clock.current()));
 const tempoServer = http.createServer(tempoHandler(() => clock.current()));
+const cloudwatchServer = http.createServer(cloudwatchHandler(() => clock.current()));
 
 /** Listens on 127.0.0.1:<port> (0 = ephemeral) and resolves with the server's URL. */
 function listen(server: http.Server, port = 0): Promise<string> {
@@ -118,7 +121,7 @@ function listen(server: http.Server, port = 0): Promise<string> {
     });
 }
 
-const servers = [scenarioServer, prometheusServer, lokiServer, tempoServer];
+const servers = [scenarioServer, prometheusServer, lokiServer, tempoServer, cloudwatchServer];
 
 function shutdown(signal: string): void {
     console.log(`telemetry-fakes: ${signal}, stopping`);
@@ -143,11 +146,13 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     const prometheusUrl = await listen(prometheusServer, reservedPort(endpoints, 'prometheus'));
     const lokiUrl = await listen(lokiServer, reservedPort(endpoints, 'loki'));
     const tempoUrl = await listen(tempoServer, reservedPort(endpoints, 'tempo'));
+    const cloudwatchUrl = await listen(cloudwatchServer, reservedPort(endpoints, 'cloudwatch'));
     const ready = {
         scenario: { url: scenarioUrl },
         prometheus: { url: prometheusUrl },
         loki: { url: lokiUrl },
         tempo: { url: tempoUrl },
+        cloudwatch: { url: cloudwatchUrl },
     };
     writeFileSync(`${file}.tmp`, `${JSON.stringify(ready, null, 2)}\n`);
     renameSync(`${file}.tmp`, file);
@@ -158,6 +163,7 @@ async function main(file: string, endpointsPath: string): Promise<void> {
     console.log(`telemetry-fakes: Prometheus at ${prometheusUrl}`);
     console.log(`telemetry-fakes: Loki at ${lokiUrl}`);
     console.log(`telemetry-fakes: Tempo at ${tempoUrl}`);
+    console.log(`telemetry-fakes: CloudWatch (GetMetricData) at ${cloudwatchUrl}`);
 }
 
 main(readyFile, endpointsFile).catch((e: unknown) => {
