@@ -612,3 +612,22 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   "Do not know how to serialize a BigInt". Use `Number()` or a replacer.
   No engine or Postgres left running, `tmp/e2e` empty.
 - 2026-11-09T03:11:29Z supervisor: int-client-platform-functions passed the gate in round 1
+- 2026-11-09 int-client-limits-and-errors: no engine or Lightdash code needed changing. The
+  max_rows, 42501 and 58000 tests passed on the first run. The timeout test failed only at
+  `prom.cancelled() > 0`. The engine did abandon the request (tokio timeout drops the reqwest
+  future), but the fake Prometheus (`e2e/eng-1799/harness/prometheus.ts`) counted a hang-up only
+  after its whole `delayMs` sleep (20 s). The check stops waiting about 17 s after the request
+  starts. Fix: the fake now counts the hang-up as soon as the response's `close` fires before a
+  reply, and stops waiting then. Its behaviour is otherwise the same (it still sends nothing to a
+  client that hung up), and the unused `sleep` import is gone.
+  Tested by hand with a tsx script outside the repo (`../tmp/manual-limits/try.ts`, run from
+  e2e/eng-1799). Results: the timeout case gave a WarehouseQueryError "canceling statement due to
+  statement timeout" after about 2.0 s, with 1 Prometheus request and 1 abandoned. The max_rows
+  case gave "result exceeds max_rows (1000) for source "prometheus"", and the 1000-row query
+  returned n = 1000. No claim gave "... Platform Database and needs platform_read". No description
+  gave "audited query requires a description". A failing audit store gave "audit write failed". All
+  were WarehouseQueryErrors, and none contained the minted token. The check passes (3/3), and so
+  does int-harness-fake-prometheus (2/2). No engine or Postgres left running, `tmp/e2e` empty.
+  Next sessions: the fake Prometheus is the only fake with a reply delay or cancel count; Loki
+  and Tempo have neither.
+- 2026-11-09T03:15:13Z supervisor: int-client-limits-and-errors passed the gate in round 1

@@ -14,7 +14,6 @@ import {
     type RecordedRequest,
     startFakeServer,
 } from './fakeServer';
-import { sleep } from './util';
 
 export type PrometheusSeries = {
     labels: Record<string, string>;
@@ -156,17 +155,22 @@ export async function startFakePrometheus(
         res: ServerResponse,
     ): Promise<FakeReply | undefined> => {
         if (delayMs > 0) {
-            let hungUp = false;
-            const onClose = () => {
-                if (!res.writableEnded) hungUp = true;
-            };
-            res.once('close', onClose);
-            await sleep(delayMs);
-            res.off('close', onClose);
-            if (hungUp) {
-                cancelled += 1;
-                return undefined;
-            }
+            // A hang-up counts the moment it happens, not after the delay: a check waits for the
+            // count shortly after the client gave up, which can be well before `delayMs` ends.
+            const hungUp = await new Promise<boolean>((resolve) => {
+                const timer = setTimeout(() => {
+                    res.off('close', onClose);
+                    resolve(false);
+                }, delayMs);
+                function onClose() {
+                    if (res.writableEnded) return;
+                    clearTimeout(timer);
+                    cancelled += 1;
+                    resolve(true);
+                }
+                res.once('close', onClose);
+            });
+            if (hungUp) return undefined;
         }
         return answer(request);
     };
