@@ -1,0 +1,45 @@
+version: 1
+contentType: dashboard
+description: Pharmacy operations on the Platform Database for the ENG-1799 demo (synthetic rows). Every Tile is a SQL chart over platform_query(), so each run is an Audited Query.
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Platform DB
+slug: platform-db
+spaceSlug: platform-db
+tabs: []
+tiles:
+  - h: 8
+    properties:
+      chartSlug: orders-by-status
+      chartName: Orders by status
+      hideTitle: false
+      title: Orders by status
+    tileSlug: orders-by-status
+    type: sql_chart
+    w: 18
+    x: 0
+    y: 0
+  - h: 8
+    properties:
+      chartSlug: open-fills-by-queue
+      chartName: Open fills by queue
+      hideTitle: false
+      title: Open fills by queue
+    tileSlug: open-fills-by-queue
+    type: sql_chart
+    w: 18
+    x: 18
+    y: 0
+  - h: 7
+    properties:
+      chartSlug: shipments-by-carrier
+      chartName: Shipments by carrier
+      hideTitle: false
+      title: Shipments by carrier
+    tileSlug: shipments-by-carrier
+    type: sql_chart
+    w: 36
+    x: 0
+    y: 8

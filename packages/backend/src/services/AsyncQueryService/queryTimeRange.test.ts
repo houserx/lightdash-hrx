@@ -6,6 +6,7 @@ import {
 } from '@lightdash/common';
 import {
     normalizeQueryAudit,
+    savedSqlChartAudit,
     withTimeRangeParameters,
     withTimeRangeTileFilter,
 } from './queryTimeRange';
@@ -253,5 +254,20 @@ describe('normalizeQueryAudit', () => {
 
     it('passes no audit through', () => {
         expect(normalizeQueryAudit(undefined)).toBeUndefined();
+    });
+});
+
+describe('savedSqlChartAudit', () => {
+    it("uses the saved chart's trimmed description, with no ticket", () => {
+        expect(savedSqlChartAudit('  Open fills per queue ')).toEqual({
+            description: 'Open fills per queue',
+            ticket: null,
+        });
+    });
+
+    it('sends no audit for a chart without a description', () => {
+        expect(savedSqlChartAudit(null)).toBeUndefined();
+        expect(savedSqlChartAudit(undefined)).toBeUndefined();
+        expect(savedSqlChartAudit('   ')).toBeUndefined();
     });
 });

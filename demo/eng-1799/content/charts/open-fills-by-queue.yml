@@ -1,0 +1,28 @@
+version: 1
+contentType: sql_chart
+name: Open fills by queue
+description: Platform DB demo tile - synthetic fills not yet completed, per queue (Audited Query, read only).
+slug: open-fills-by-queue
+spaceSlug: platform-db
+sql: >-
+  SELECT queue, open_fills
+  FROM platform_query('SELECT q.name AS queue, count(*)::int AS open_fills FROM fills f JOIN queues q ON q.id = f.queue_id WHERE f.completed_at IS NULL GROUP BY q.name ORDER BY q.name')
+limit: 500
+chartKind: vertical_bar
+config:
+  metadata:
+    version: 1
+  type: vertical_bar
+  fieldConfig:
+    x:
+      reference: queue
+      type: category
+    y:
+      - reference: open_fills
+        aggregation: sum
+    groupBy: []
+  display:
+    xAxis:
+      label: Queue
+    yAxis:
+      - label: Open fills

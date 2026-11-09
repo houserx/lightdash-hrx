@@ -17,7 +17,7 @@
 //   5. uploads the demo's content as code (demo/eng-1799/content: virtual views, charts, dashboards) with the
 //      Lightdash CLI from source (`lightdash upload`, on the Node given by --cli-node: the workspace's pinned Node),
 //      on a personal access token of the demo user, then checks that every dashboard in CONTENT_DASHBOARDS is
-//      there with each chart Tile resolving to its saved chart.
+//      there with each chart Tile resolving to its saved chart and each SQL chart Tile to its saved SQL chart.
 //      The CLI runs with HOME=<cli-home> (it writes ~/.config/lightdash) and stack/no-network.mjs preloaded (it
 //      would post usage analytics and check GitHub for upgrades).
 // Then it writes the ready file atomically (mode 0600):
@@ -39,7 +39,10 @@ const ORGANIZATION_NAME = 'HouseRx Demo (synthetic)';
 const PROJECT_NAME = 'Operations Project';
 const PLATFORM_ATTRIBUTES = ['platform_read', 'platform_write'] as const;
 /** Dashboards the content upload must produce (names pinned in PROGRESS.md), with their chart Tile count. */
-const CONTENT_DASHBOARDS = [{ name: 'Pharmacy Ops overview', chartTiles: 4 }] as const;
+const CONTENT_DASHBOARDS = [
+    { name: 'Pharmacy Ops overview', chartTiles: 4, sqlChartTiles: 0 },
+    { name: 'Platform DB', chartTiles: 0, sqlChartTiles: 3 },
+] as const;
 const CLI_DIR = path.resolve(__dirname, '..', '..', '..', 'packages', 'cli');
 const CLI_TSX = path.join(CLI_DIR, 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const NO_NETWORK = path.join(__dirname, 'no-network.mjs');
@@ -114,7 +117,7 @@ function uploadContent(lightdashUrl: string, apiToken: string, projectUuid: stri
     }
 }
 
-/** Every dashboard of CONTENT_DASHBOARDS exists in the project and its chart Tiles open their saved charts. */
+/** Every dashboard of CONTENT_DASHBOARDS exists in the project and its (SQL) chart Tiles open their saved charts. */
 async function checkContent(session: Session, projectUuid: string) {
     const listed = await session.call<{ data: { uuid: string; name: string }[] }>(
         'GET',
@@ -123,7 +126,9 @@ async function checkContent(session: Session, projectUuid: string) {
     for (const expected of CONTENT_DASHBOARDS) {
         const hit = listed.data.find((d) => d.name === expected.name);
         if (!hit) throw new Error(`content upload: no dashboard "${expected.name}"`);
-        const dashboard = await session.call<{ tiles: { type: string; properties: { savedChartUuid?: string | null } }[] }>(
+        const dashboard = await session.call<{
+            tiles: { type: string; properties: { savedChartUuid?: string | null; savedSqlUuid?: string | null } }[];
+        }>(
             'GET',
             `/api/v1/dashboards/${hit.uuid}`,
         );
@@ -134,6 +139,16 @@ async function checkContent(session: Session, projectUuid: string) {
         for (const tile of charts) {
             if (!tile.properties.savedChartUuid) throw new Error(`content upload: a Tile of "${expected.name}" has no chart`);
             await session.call('GET', `/api/v1/saved/${tile.properties.savedChartUuid}`);
+        }
+        const sqlCharts = dashboard.tiles.filter((t) => t.type === 'sql_chart');
+        if (sqlCharts.length !== expected.sqlChartTiles) {
+            throw new Error(
+                `content upload: "${expected.name}" has ${sqlCharts.length} SQL chart Tiles, expected ${expected.sqlChartTiles}`,
+            );
+        }
+        for (const tile of sqlCharts) {
+            if (!tile.properties.savedSqlUuid) throw new Error(`content upload: a SQL Tile of "${expected.name}" has no chart`);
+            await session.call('GET', `/api/v1/projects/${projectUuid}/sqlRunner/saved/${tile.properties.savedSqlUuid}`);
         }
     }
 }

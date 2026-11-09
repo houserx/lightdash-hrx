@@ -119,3 +119,18 @@ export const normalizeQueryAudit = (
     const ticket = audit.ticket?.trim() || null;
     return { description, ticket };
 };
+
+/**
+ * The Audited Query fields of a saved SQL chart: its description, so a
+ * saved or dashboard SQL chart over an audited source (e.g. the Platform
+ * Database) carries the description its author gave it. A chart without a
+ * description sends none; the engine refuses it only if the source is audited.
+ */
+export const savedSqlChartAudit = (
+    description: string | null | undefined,
+): QueryAudit | undefined => {
+    const trimmed = description?.trim() ?? '';
+    return trimmed.length > 0
+        ? { description: trimmed, ticket: null }
+        : undefined;
+};

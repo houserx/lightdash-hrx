@@ -471,6 +471,7 @@ import {
 import { canReuseApiResult, canReuseQueryResult } from './queryResultReuse';
 import {
     normalizeQueryAudit,
+    savedSqlChartAudit,
     withTimeRangeParameters,
     withTimeRangeTileFilter,
 } from './queryTimeRange';
@@ -15392,6 +15393,9 @@ export class AsyncQueryService extends ProjectService {
             args.parameters,
         );
 
+        // The saved chart's description is its Audited Query description, and
+        // the column discovery runs as the account (CONTRACTS §3).
+        const queryAudit = savedSqlChartAudit(sqlChart.description);
         const {
             warehouseCredentials,
             warehouseConnectionUuid,
@@ -15403,18 +15407,27 @@ export class AsyncQueryService extends ProjectService {
             originalColumns,
             parameterReferences,
             usedParameters,
-        } = await this.prepareSqlChartAsyncQueryArgs({
+        } = await this.withAccountFederationIdentity(
             account,
-            context,
-            querySurface,
-            projectUuid: sqlChart.project.projectUuid,
-            organizationUuid: sqlChart.organization.organizationUuid,
-            sql: sqlChart.sql,
-            config: sqlChart.config,
-            limit: limit ?? sqlChart.limit,
-            parameters: combinedParameters,
-            chartUuid: sqlChart.savedSqlUuid,
-        });
+            {
+                organizationUuid: sqlChart.organization.organizationUuid,
+                projectUuid: sqlChart.project.projectUuid,
+            },
+            federationQueryAudit({ audit: queryAudit }, querySurface),
+            () =>
+                this.prepareSqlChartAsyncQueryArgs({
+                    account,
+                    context,
+                    querySurface,
+                    projectUuid: sqlChart.project.projectUuid,
+                    organizationUuid: sqlChart.organization.organizationUuid,
+                    sql: sqlChart.sql,
+                    config: sqlChart.config,
+                    limit: limit ?? sqlChart.limit,
+                    parameters: combinedParameters,
+                    chartUuid: sqlChart.savedSqlUuid,
+                }),
+        );
 
         const { queryUuid, cacheMetadata } = await this.executeAsyncQuery(
             {
@@ -15447,6 +15460,7 @@ export class AsyncQueryService extends ProjectService {
                 query: metricQuery,
                 parameters: combinedParameters,
                 invalidateCache,
+                ...(queryAudit ? { audit: queryAudit } : {}),
             },
         );
 
@@ -15557,6 +15571,20 @@ export class AsyncQueryService extends ProjectService {
             args.timeRange,
         );
 
+        const resolvedDashboardFilters = await resolveDashboardDateFilters({
+            tileUuid,
+            dashboardFilters,
+            findExploreContainingTable: (tableName) =>
+                this.projectModel.findExploreContainingTable(
+                    projectUuid,
+                    tableName,
+                ),
+        });
+
+        // The saved chart's description is the tile's Audited Query
+        // description, and the column discovery runs as the account, audited
+        // as this tile (CONTRACTS §3).
+        const queryAudit = savedSqlChartAudit(savedChart.description);
         const {
             warehouseCredentials,
             warehouseConnectionUuid,
@@ -15569,30 +15597,31 @@ export class AsyncQueryService extends ProjectService {
             originalColumns,
             parameterReferences,
             usedParameters,
-        } = await this.prepareSqlChartAsyncQueryArgs({
+        } = await this.withAccountFederationIdentity(
             account,
-            context,
-            querySurface,
-            projectUuid: savedChart.project.projectUuid,
-            organizationUuid: savedChart.organization.organizationUuid,
-            sql: savedChart.sql,
-            config: savedChart.config,
-            tileUuid,
-            dashboardFilters: await resolveDashboardDateFilters({
-                tileUuid,
-                dashboardFilters,
-                findExploreContainingTable: (tableName) =>
-                    this.projectModel.findExploreContainingTable(
-                        projectUuid,
-                        tableName,
-                    ),
-            }),
-            dashboardSorts,
-            limit: limit ?? savedChart.limit,
-            parameters: combinedParameters,
-            chartUuid: savedChart.savedSqlUuid,
-            dashboardUuid,
-        });
+            {
+                organizationUuid: savedChart.organization.organizationUuid,
+                projectUuid: savedChart.project.projectUuid,
+            },
+            federationQueryAudit({ audit: queryAudit, tileUuid }, querySurface),
+            () =>
+                this.prepareSqlChartAsyncQueryArgs({
+                    account,
+                    context,
+                    querySurface,
+                    projectUuid: savedChart.project.projectUuid,
+                    organizationUuid: savedChart.organization.organizationUuid,
+                    sql: savedChart.sql,
+                    config: savedChart.config,
+                    tileUuid,
+                    dashboardFilters: resolvedDashboardFilters,
+                    dashboardSorts,
+                    limit: limit ?? savedChart.limit,
+                    parameters: combinedParameters,
+                    chartUuid: savedChart.savedSqlUuid,
+                    dashboardUuid,
+                }),
+        );
 
         const { queryUuid, cacheMetadata } = await this.executeAsyncQuery(
             {
@@ -15625,6 +15654,8 @@ export class AsyncQueryService extends ProjectService {
                 query: metricQuery,
                 parameters: combinedParameters,
                 invalidateCache,
+                tileUuid,
+                ...(queryAudit ? { audit: queryAudit } : {}),
             },
         );
 

@@ -2108,3 +2108,38 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   cached per rounded Dashboard Time Range, which is why the spec reloads in a loop. Keep that in mind for scene specs.
 - 2026-11-09T08:39:26Z supervisor: demo-dashboard-pharmacy-ops-ui passed the gate in round 1
 - 2026-11-09T08:43:02Z supervisor: demo-dashboard-service-health halted: the worker halted on demo-dashboard-service-health
+
+## demo-dashboard-platform-db (content) — 2026-11-09
+
+- Content: `demo/eng-1799/content/charts/{orders-by-status,open-fills-by-queue,shipments-by-carrier}.yml` (saved SQL
+  charts, `contentType: sql_chart`, space `platform-db`) and `dashboards/platform-db.yml` ("Platform DB", three
+  `sql_chart` Tiles). Each SQL is `SELECT ... FROM platform_query('<aggregate over orders | fills+queues |
+  shipments>')`. They are aggregates only, with no row-level column. Two bar charts and one table. Every chart has a
+  `description`, **which is required**, see below.
+- **Backend fix (outside ee/)**, as anticipated by risk 4: saved SQL charts carry no audit block, and
+  `executeAsyncSqlChartQuery` / `executeAsyncDashboardSqlChartQuery` ran their column-discovery probe with no
+  identity (`RESET hrx.identity`). A `platform_query` Tile would therefore have been refused. Both methods now:
+  - take the Audited Query description from the saved chart's description (new `savedSqlChartAudit` in
+    `queryTimeRange.ts`, trimmed, `ticket: null`, and undefined for a blank description);
+  - run `prepareSqlChartAsyncQueryArgs` inside `withAccountFederationIdentity`. A dashboard Tile is audited with
+    source `tile` and `resource_uuid` = the tile uuid; a standalone saved chart as `investigate`;
+  - persist `audit` (and `tileUuid` for the dashboard path) in the request parameters, so the async run (and a
+    rebuild from history) mints the same audit block through `federationQueryAudit`.
+  A SQL chart with no description over a non-audited source works as before. Over the Platform Database, the
+  engine refuses it with "audited query requires a description".
+- Seed: `CONTENT_DASHBOARDS` entries now have `sqlChartTiles`, and `checkContent` also resolves each SQL Tile's
+  `savedSqlUuid` (`GET /api/v1/projects/<p>/sqlRunner/saved/<uuid>`). Platform DB = 0 chart + 3 SQL Tiles.
+- Docs: `docs/eng-1799/demo.md` "Dashboards as code" gains a Platform DB paragraph (the Tiles, the description rule).
+- Unit: `queryTimeRange.test.ts` +2 tests (15/15). Backend `pnpm run typecheck` clean; demo `tsc ... stack/*.ts`
+  clean.
+- Tested as a user: fresh `up.sh` (the seed accepted 3 SQL Tiles). In Chromium (a throwaway script in the run's tmp/),
+  signed in through the /login form, went to Browse → dashboards → "Platform DB". Orders by status shows 5 bars,
+  Open fills by queue shows 2 bars (demo-intake, demo-fill), and Shipments by carrier is a 4-row table. No error
+  text, no 5xx (only the pre-sign-in 401s and the unrelated aiAgents 422s). Engine audit browser: 6 records, 2 per
+  Tile (probe + run), action `query`, status `success`, database `platform`, executed by the demo user, with each
+  chart's description.
+- Checks: `run.sh --stack dashboard-platform-db.spec.ts` passes. Regression: `seed-project.spec.ts` and
+  `dashboard-pharmacy-ops.spec.ts` (both tests) pass with --stack.
+- For the next session: SQL chart Tiles on audited sources need a chart `description`. A Tile's results are not
+  cached (federation bypasses the results cache), so each dashboard load writes 2 audit records per Tile.
+- 2026-11-09T08:54:36Z supervisor: demo-dashboard-platform-db passed the gate in round 1

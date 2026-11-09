@@ -59,3 +59,19 @@ The charts query the virtual view `hrx_fill_queue_backlog`: `promql('hrx_fill_qu
 now(), '15s')` on the Federation Engine. Explore charts don't receive the reserved `__from`/`__to` parameters,
 which only reach SQL charts, so the view's window is fixed at 6 hours. The Dashboard Time Range filters each Tile
 on `ts` inside that window, so ranges longer than 6 hours show only the last 6 hours.
+
+**Platform DB** has three SQL chart Tiles over the synthetic Platform Database. Each one wraps an aggregate in
+`platform_query('...')`, so it is an Audited Query that runs as the signed-in user, who needs `platform_read`. No
+Tile selects a row-level column:
+
+| Tile | Chart | Inner SQL (Platform Database) |
+|---|---|---|
+| Orders by status | vertical bar | `count(*)` of `orders` per `status` |
+| Open fills by queue | vertical bar | `fills` with no `completed_at`, joined to `queues`, counted per queue name |
+| Shipments by carrier | table | `count(*)` of `shipments` per `carrier` and `status` |
+
+The engine refuses an Audited Query that has no description, and saved SQL charts don't carry an audit block of
+their own. Lightdash therefore sends the **saved chart's description** as the Audited Query description, for a
+saved SQL chart and for a dashboard SQL chart Tile (the Tile's uuid goes in as the resource). That is why every
+chart here has a description. Each Tile run leaves two audit records, one for the column-discovery probe and one
+for the run.

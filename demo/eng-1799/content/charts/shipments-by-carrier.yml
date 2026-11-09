@@ -1,0 +1,17 @@
+version: 1
+contentType: sql_chart
+name: Shipments by carrier
+description: Platform DB demo tile - synthetic shipments per carrier and status (Audited Query, read only).
+slug: shipments-by-carrier
+spaceSlug: platform-db
+sql: >-
+  SELECT carrier, status, shipments
+  FROM platform_query('SELECT carrier, status, count(*)::int AS shipments FROM shipments GROUP BY carrier, status ORDER BY carrier, status')
+limit: 500
+chartKind: table
+config:
+  metadata:
+    version: 1
+  type: table
+  columns: {}
+  display: {}
