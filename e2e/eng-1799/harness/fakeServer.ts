@@ -30,10 +30,14 @@ export type FakeReply = {
     body?: string;
 };
 
-/** Answers a recorded request; `res` is there for handlers that must notice a client hang-up. */
+/**
+ * Answers a recorded request; `res` is there for handlers that must notice a client hang-up,
+ * `rawBody` for handlers that decode a binary or byte-framed body (e.g. aws-chunked).
+ */
 export type FakeHandler = (
     request: RecordedRequest,
     res: http.ServerResponse,
+    rawBody: Buffer,
 ) => FakeReply | undefined | Promise<FakeReply | undefined>;
 
 function headerRecord(raw: http.IncomingHttpHeaders): Record<string, string> {
@@ -92,13 +96,11 @@ export async function startFakeServer(
         const chunks: Buffer[] = [];
         req.on('data', (chunk: Buffer) => chunks.push(chunk));
         req.on('end', () => {
-            const recorded = record(
-                req,
-                Buffer.concat(chunks).toString('utf8'),
-            );
+            const rawBody = Buffer.concat(chunks);
+            const recorded = record(req, rawBody.toString('utf8'));
             requests.push(recorded);
             Promise.resolve()
-                .then(() => handler(recorded, res))
+                .then(() => handler(recorded, res, rawBody))
                 .catch(
                     (error: unknown): FakeReply => ({
                         status: 500,

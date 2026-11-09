@@ -132,10 +132,12 @@ function renderConfig(
         `[[users]]\nname = "${ENGINE_USER}"\npassword_env = "HRX_PG_PASSWORD_OPERATIONS"\n`,
     ];
     if (opts.prometheus) {
-        // `prometheus-restricted` (same URL, `restricted = true`) is added by feature
-        // int-harness-audit-store together with the full fake audit store.
+        // `prometheus-restricted` is Restricted Telemetry at the same fake: every query on it is
+        // an Audited Query (the engine needs `[audit]` for it, which is always configured).
+        const url = tomlString(opts.prometheus.url);
         tables.push(
-            `[[sources]]\nname = "prometheus"\nkind = "prometheus"\ndefault = true\nurl = ${tomlString(opts.prometheus.url)}\n`,
+            `[[sources]]\nname = "prometheus"\nkind = "prometheus"\ndefault = true\nurl = ${url}\n`,
+            `[[sources]]\nname = "prometheus-restricted"\nkind = "prometheus"\nrestricted = true\nurl = ${url}\n`,
         );
     }
     if (opts.platform) {

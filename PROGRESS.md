@@ -316,3 +316,30 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     S3 bodies/58000) and adds `prometheus-restricted` to `renderConfig` (now possible: `[audit]` is
     always there).
 - 2026-11-09T02:10:59Z supervisor: int-harness-platform-database passed the gate in round 1
+- 2026-11-09 int-harness-audit-store: `harness/auditStore.ts` is now the full fake from the Harness API
+  (mirrors `federation-engine/tests/acceptance/harness/aws.rs`): DynamoDB JSON 1.0 `PutItem` (table
+  check, duplicate `id` → `ConditionalCheckFailedException`) and `Query` (table or GSIs `byMonth`/
+  `byTicket`/`byUser`, `createdAt` range, simple FilterExpression, ScanIndexForward, Limit,
+  `ExclusiveStartKey`/`LastEvaluatedKey`, `Select: COUNT`); S3 path-style `PutObject` with the key
+  percent-decoded and aws-chunked bodies decoded from the raw bytes; `items()` (plain JSON, N →
+  number, write order), `objects()` (`{ key, body, headers }`), `setFailing(bool)` → every PutItem
+  answers 500 `InternalServerError` and every PutObject 500 `InternalError` (Query keeps working).
+  `fakeServer.ts`: handlers get a third argument `rawBody: Buffer` (the utf-8 `body` string can't
+  undo byte-counted framing). `engine.ts`: renders `prometheus-restricted` (`restricted = true`,
+  same fake URL) next to `prometheus` whenever `prometheus` is given.
+  Tested by hand with tsx scripts outside the repo: one platform_query → 1 item (status success,
+  mode read, database platform, non-ASCII description intact) + 1 object at
+  `executions/<createdAt>/<id>.json` whose body parses to the item (Object Lock COMPLIANCE header);
+  `promql(..., 'prometheus-restricted')` is audited (database `prometheus-restricted`); 28 items
+  then engine `GET /v1/audit?ticket=` pages 25 + 3 (cursor null at end), `month=` and `user=` work;
+  `setFailing(true)` → 58000 `audit write failed`, 0 rows, ~2 s (SDK retries the 5xx), no item
+  stored; `setFailing(false)` recovers. A hand-framed aws-chunked PUT (chunk split inside a
+  multibyte char, checksum trailer) decodes exactly. Checks: audit-store 1/1; engine 2/2,
+  fake-prometheus 2/2, platform-database 1/1; e2e typecheck clean; `tmp/e2e` empty afterwards.
+  Next sessions must know:
+  - The engine's S3 SDK sent a plain (not aws-chunked) body here; the decoder is there for SDK
+    versions/checksum settings that stream.
+  - `items()` key order is whatever the engine's PutItem map had (not portal order); checks that
+    need portal order re-order themselves (int-write-audit-integrity does).
+  - A failing store costs ~2 s per Audited Query (SDK retries); keep that in mind for timeouts.
+- 2026-11-09T02:15:34Z supervisor: int-harness-audit-store passed the gate in round 1
