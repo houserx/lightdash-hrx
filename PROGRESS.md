@@ -802,3 +802,17 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     sees no request. Straight to the engine: 403 without platform_read, 401 without a bearer.
   No engine or Postgres left running.
 - 2026-11-09T03:49:42Z supervisor: int-audit-browser passed the gate in round 1
+- 2026-11-09 int-fix-attr-truthiness: decision row 8 applied as recommended: **the MCP adopts ldq's reading**. An
+  attr is true when any resolved value is exactly `"true"` (so `["false","true"]` and `["true","x"]` are true;
+  `"TRUE"`, `" true"`, `"yes"`, `[]` alone are false). Changed `resolveAttrs` in
+  `packages/telemetry-mcp/src/auth/userMapping.ts` (Set-size check → `includes('true')`, doc comments), its unit
+  test `src/auth/resolveAttrs.test.ts` (the old "conflicting set is false" cases now expect true; added a mixed set
+  with no exact "true" → false) and the attrs sentence in `docs/eng-1799/telemetry-mcp.md`. ldq
+  (`identityAttrsFromUserAttributes`) is unchanged; its acceptance test pins this reading. Resolution order (direct +
+  group values, defaults only when there are none) is unchanged, so defaults never add a "true" next to an
+  assigned "false". Tested by hand (`../tmp/manual-attr-truthiness/try.mts`, run from e2e/eng-1799 with tsx) with
+  cases different from the check, through defaults, through several groups, and through the full
+  `createLightdashUserResolver` against a stub `/api/v1/org/users` + `/api/v1/org/attributes` server: every case gave
+  identical claims on both sides. MCP `tests/acceptance/user-attributes.test.ts` (3/3) and the unit test (4/4) pass;
+  MCP tsc clean. No server left running.
+- 2026-11-09T03:52:37Z supervisor: int-fix-attr-truthiness passed the gate in round 1

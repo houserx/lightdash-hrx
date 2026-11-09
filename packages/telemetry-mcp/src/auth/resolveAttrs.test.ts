@@ -28,11 +28,11 @@ describe('resolveAttrs (Lightdash user attributes -> §3 attrs)', () => {
         );
     });
 
-    it('is true only when the resolved values are exactly "true"', () => {
+    it('is true when any resolved value is exactly "true", like Lightdash', () => {
         for (const v of ['TRUE', 'True', ' true', 'yes', '1', '']) {
             expect(read({ users: [{ userUuid: 'u1', value: v }] }), v).toBe(false);
         }
-        // the same "true" from the user and two groups is still one value
+        // the same "true" from the user and two groups
         expect(
             read(
                 {
@@ -45,14 +45,15 @@ describe('resolveAttrs (Lightdash user attributes -> §3 attrs)', () => {
                 ['g1', 'g2'],
             ),
         ).toBe(true);
-        // a conflicting set is false
-        const conflicting = {
+        // a mixed set is true as soon as one value is "true" (identityAttrsFromUserAttributes' reading)
+        const mixed = {
             users: [{ userUuid: 'u1', value: 'false' }],
             groups: [{ groupUuid: 'g1', value: 'true' }],
         };
-        expect(read(conflicting, ['g1'])).toBe(false);
-        expect(read({ users: [{ userUuid: 'u1', values: ['true', 'false'] }] })).toBe(false);
-        expect(read({ attributeDefaults: ['true', 'x'] })).toBe(false);
+        expect(read(mixed, ['g1'])).toBe(true);
+        expect(read({ users: [{ userUuid: 'u1', values: ['true', 'false'] }] })).toBe(true);
+        expect(read({ attributeDefaults: ['true', 'x'] })).toBe(true);
+        expect(read({ users: [{ userUuid: 'u1', values: ['false', 'TRUE', 'yes'] }] })).toBe(false);
     });
 
     it('ignores other users, unknown attributes and malformed entries', () => {
