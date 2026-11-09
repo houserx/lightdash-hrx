@@ -1787,3 +1787,36 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   fake-loki, fake-prometheus, engine-boot, scenario-clock, platform-db (--stack) and config-validation pass;
   `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no process left.
 - 2026-11-09T07:14:26Z supervisor: demo-fake-loki passed the gate in round 1
+
+### demo-fake-tempo (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/tempo.ts`: `tempoHandler(() => clock.current())`, served by telemetry-fakes on
+  `endpoints.tempo`. One slot per whole second: a trace starts in every second divisible by 15 plus ~1/8 of the
+  others (~11/min); offset, ids and timings are sha256 hashes of the second. Spans: root fill-service SERVER
+  `POST /fills/{fill_id}/ship` → fill-service `SELECT demo.fills` (3..32 ms), fill-service CLIENT
+  `POST shipping-label-api /v1/labels` → **shipping-label-api SERVER `POST /v1/labels`** (120..479 ms, 2000..4999 ms
+  for traces starting in `[incidentAt, recoveryAt)`), and `publish fill.label_created` when the call succeeded.
+  About half of the incident traces fail (`context deadline exceeded`, status error on root/client/server, 504,
+  no publish span). So the shipping-label-api span's parent is the fill-service client span, not the root.
+- **Trace id = slot second as 8 hex + 24 hex hash**, so `trace(id)` needs no time range; ids are a function of
+  the second, but the spans (slow/fast) follow the current timeline, so a restart can change an old id's trace.
+  Exported for later fakes/scenes: `fillServiceTraces(fromMs, toMs, timeline)`, `traceById(id, timeline)`.
+  Traces are NOT correlated with the Loki lines (different hash keys; only the same duration ranges).
+- API: `/api/search` (q, start/end unix s, default last 1 h, max 168 h; limit default 20; minDuration/maxDuration;
+  newest first; `matched` = matching span count), `/api/traces/<id>` (`batches`) and `/api/v2/traces/<id>`,
+  `/api/search/tags`, `/api/v2/search/tags`, `/api/(v2/)search/tag/<t>/values`, `/api/echo`, buildinfo, `/ready`;
+  errors are plain-text 400s, unknown id 404. TraceQL subset: spanset filters `{...}` (several joined by one of
+  && / ||), conditions with && / || / parentheses, ops `= != > >= < <= =~ !~`, intrinsics name, status, kind,
+  duration (span duration, as Tempo), rootName, rootServiceName, traceDuration, attributes `resource.x`,
+  `span.x`, `.x`. Pipelines (`| count()`) and structural operators answer 400; extend `parseQuery` if needed.
+- `up.sh` checks `$TEMPO_URL/ready`, writes `tempo.url` to stack.json, `report()` prints it. `/healthz` now shows
+  tempo reachable (only cloudwatch/cloudwatch-logs unreachable).
+- Tested as a user: `up.sh`, restart -240/-90, through the engine (pg-wire, stack.json creds), 400 s window, limit
+  500: `{ resource.service.name = "fill-service" }` → 76 traces (27 baseline, 35 incident, 14 recovered), all root
+  fill-service; `&& duration > 2s` → 35, all in the incident, min 2027 ms; default limit → 20 rows;
+  `{ status = error }` → 16, all incident; `trace(<slow id>)` → 5 spans, shipping-label-api 2757 ms under the
+  fill-service client span (2760 ms) under the root (2774 ms); a baseline trace's label span 285 ms; unknown id →
+  0 rows; a pipeline → engine error "HTTP 400: invalid TraceQL query: ..."; repeated query identical. Checks
+  fake-tempo, fake-loki, fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation pass; `tsc
+  --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no process left.
+- 2026-11-09T07:20:16Z supervisor: demo-fake-tempo passed the gate in round 1
