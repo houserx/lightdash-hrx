@@ -321,6 +321,54 @@ const pushReferenceWarnings = (
     }
 };
 
+const emptyFindings = (): ReferenceFindings => ({
+    unmappedMacros: [],
+    undefinedVariables: [],
+    unsupportedVariables: [],
+    multiValueVariables: [],
+    formatsIgnored: [],
+});
+
+/** The SQL string expression for `text` with its references resolved (see queryExpressionSql). */
+const referencesSql = (
+    text: string,
+    variables: GrafanaTemplatingVariable[],
+    options: ReferenceOptions,
+    findings: ReferenceFindings,
+): string => {
+    const parts: string[] = [];
+    let literal = '';
+    let last = 0;
+    for (const match of text.matchAll(VARIABLE_REFERENCE)) {
+        const [ref, plain, braced, bracedFormat, bracketed, bracketedFormat] =
+            match;
+        const replacement = replaceReference(
+            ref,
+            plain ?? braced ?? bracketed,
+            bracedFormat ?? bracketedFormat,
+            variables,
+            options,
+            findings,
+        );
+        literal += text.slice(last, match.index);
+        last = match.index + ref.length;
+        if (replacement.kind === 'keep') {
+            literal += ref;
+        } else if (replacement.kind === 'inline') {
+            literal += replacement.value;
+        } else {
+            if (literal !== '') parts.push(sqlStringLiteral(literal));
+            parts.push(`\${ld.parameters.${replacement.name}}`);
+            literal = '';
+        }
+    }
+    literal += text.slice(last);
+    if (literal !== '' || parts.length === 0) {
+        parts.push(sqlStringLiteral(literal));
+    }
+    return parts.join(' || ');
+};
+
 /**
  * A query expression as a SQL string expression, with Grafana's variables and macros
  * resolved:
@@ -342,44 +390,55 @@ const queryExpressionSql = (
     warnings: ImportWarning[],
     options: ReferenceOptions = {},
 ): string => {
-    const findings: ReferenceFindings = {
-        unmappedMacros: [],
-        undefinedVariables: [],
-        unsupportedVariables: [],
-        multiValueVariables: [],
-        formatsIgnored: [],
-    };
-    const parts: string[] = [];
-    let literal = '';
-    let last = 0;
-    for (const match of expr.matchAll(VARIABLE_REFERENCE)) {
-        const [text, plain, braced, bracedFormat, bracketed, bracketedFormat] =
-            match;
-        const replacement = replaceReference(
-            text,
-            plain ?? braced ?? bracketed,
-            bracedFormat ?? bracketedFormat,
-            variables,
-            options,
-            findings,
-        );
-        literal += expr.slice(last, match.index);
-        last = match.index + text.length;
-        if (replacement.kind === 'keep') {
-            literal += text;
-        } else if (replacement.kind === 'inline') {
-            literal += replacement.value;
-        } else {
-            if (literal !== '') parts.push(sqlStringLiteral(literal));
-            parts.push(`\${ld.parameters.${replacement.name}}`);
-            literal = '';
-        }
-    }
-    literal += expr.slice(last);
-    if (literal !== '' || parts.length === 0) {
-        parts.push(sqlStringLiteral(literal));
-    }
+    const findings = emptyFindings();
+    const sql = referencesSql(expr, variables, options, findings);
     pushReferenceWarnings(what, findings, warnings);
+    return sql;
+};
+
+/** Grafana's legend label reference, `{{status}}` or `{{ status }}` (as Grafana parses it). */
+const LEGEND_LABEL = /\{\{\s*(.+?)\s*\}\}/g;
+
+/** Grafana's automatic legend: the series is named by its labels, as the engine names it. */
+const AUTO_LEGEND = '__auto';
+
+/**
+ * A target's `legendFormat` as a SQL expression for the `series` column, or undefined when
+ * the engine's own series name is kept (no legend, an empty one, or `__auto`). Each
+ * `{{label}}` reads `label(labels, 'label')` (CONTRACTS §1.1), empty when the series has no
+ * such label, as Grafana renders it; dashboard variables in the text resolve as in the query.
+ */
+const legendSeriesSql = (
+    target: GrafanaTarget,
+    what: string,
+    variables: GrafanaTemplatingVariable[],
+    warnings: ImportWarning[],
+): string | undefined => {
+    const { legendFormat } = target;
+    if (
+        typeof legendFormat !== 'string' ||
+        legendFormat.trim() === '' ||
+        legendFormat.trim() === AUTO_LEGEND
+    ) {
+        return undefined;
+    }
+    const findings = emptyFindings();
+    const parts: string[] = [];
+    let last = 0;
+    const pushText = (text: string) => {
+        if (text !== '') {
+            parts.push(referencesSql(text, variables, {}, findings));
+        }
+    };
+    for (const match of legendFormat.matchAll(LEGEND_LABEL)) {
+        pushText(legendFormat.slice(last, match.index));
+        last = match.index + match[0].length;
+        parts.push(
+            `COALESCE(label(labels, ${sqlStringLiteral(match[1])}), '')`,
+        );
+    }
+    pushText(legendFormat.slice(last));
+    pushReferenceWarnings(`The legend of ${what}`, findings, warnings);
     return parts.join(' || ');
 };
 
@@ -432,17 +491,25 @@ const resolveDatasourceVariable = (
     };
 };
 
-/** `SELECT * FROM name(args[, source])`, the args already SQL. */
+/**
+ * `SELECT * FROM name(args[, source])`, the args already SQL. With `series`, a series-shaped
+ * result keeps its columns in order and names each series by that SQL expression instead.
+ */
 const tableFunctionSql = (
     name: string,
     args: string[],
     source: string | undefined,
+    series?: string,
 ): string => {
     const allArgs =
         source === undefined || source === ''
             ? args
             : [...args, sqlStringLiteral(source)];
-    return `SELECT * FROM ${name}(${allArgs.join(', ')})`;
+    const columns =
+        series === undefined
+            ? '*'
+            : `"timestamp", "value", labels, ${series} AS series`;
+    return `SELECT ${columns} FROM ${name}(${allArgs.join(', ')})`;
 };
 
 const translatePrometheusTarget = (
@@ -469,6 +536,12 @@ const translatePrometheusTarget = (
         variables,
         warnings,
     );
+    const series = legendSeriesSql(
+        target,
+        `Prometheus ${targetLabel(target)}`,
+        variables,
+        warnings,
+    );
     if (target.instant === true && target.range !== true) {
         // promql_instant(query, time[, source]) evaluates at the end of the time range.
         return {
@@ -476,6 +549,7 @@ const translatePrometheusTarget = (
                 'promql_instant',
                 [query, TELEMETRY_SQL_TO],
                 source,
+                series,
             ),
             todo: null,
             warnings,
@@ -498,6 +572,7 @@ const translatePrometheusTarget = (
                 TELEMETRY_SQL_INTERVAL,
             ],
             source,
+            series,
         ),
         todo: null,
         warnings,
@@ -587,6 +662,13 @@ const translateLokiTarget = (
             shape: 'log-lines',
         };
     }
+    // A legend names metric series; Grafana does not apply it to log lines.
+    const series = legendSeriesSql(
+        target,
+        `Loki ${targetLabel(target)}`,
+        variables,
+        warnings,
+    );
     if (target.queryType === 'instant' || target.instant === true) {
         // No instant LogQL function in CONTRACTS §1.1: a range query from __to to __to
         // yields the one value at the end of the time range.
@@ -600,6 +682,7 @@ const translateLokiTarget = (
                     TELEMETRY_SQL_INTERVAL,
                 ],
                 source,
+                series,
             ),
             todo: null,
             warnings,
@@ -616,6 +699,7 @@ const translateLokiTarget = (
                 TELEMETRY_SQL_INTERVAL,
             ],
             source,
+            series,
         ),
         todo: null,
         warnings,

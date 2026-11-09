@@ -485,3 +485,24 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   kept silently; `$nope` → `variable-undefined`. Acceptance: query-variables 6/6; time-macros 5/5, prometheus 5/5,
   loki 5/5, cloudwatch-metrics 5/5, panel-targets 3/3, datasources 6/6. tsc clean, oxlint clean, oxfmt applied.
 - 2026-11-09T02:06:03Z supervisor: imp-query-variables passed the gate in round 1
+
+### imp-query-legend-format (2026-11-08)
+
+- `grafanaQuery.ts`: a Prometheus target (range or instant) or a Loki metric target with a `legendFormat` now
+  selects `"timestamp", "value", labels, <name> AS series` instead of `*`, so the column order (CONTRACTS §1.1)
+  and UNION ALL across targets stay intact. `<name>` is the legend split on Grafana's `{{\s*(.+?)\s*}}`: each
+  `{{label}}` → `COALESCE(label(labels, 'label'), '')` (Grafana renders a missing label as empty), text between →
+  a string literal, joined with `||`. `timestamp`/`value` are quoted as the engine's own tests do.
+- Dashboard variables in the legend text (`$env`) resolve like in the query (parameter / inlined constant /
+  warnings, prefixed "The legend of …"). For this, `queryExpressionSql` was split into `emptyFindings` +
+  `referencesSql` (no behaviour change); `tableFunctionSql` takes an optional `series` expression.
+- `__auto`, empty, whitespace-only or missing legend → `SELECT *` (engine's `series` kept). Loki log queries and
+  CloudWatch ignore legendFormat (CloudWatch already carries its `label` in the MetricDataQuery).
+- Tested: rebuilt common via init.sh, called the built `dist/cjs` `translateGrafanaTarget` from node:
+  `{{status}} responses` → `COALESCE(label(labels, 'status'), '') || ' responses' AS series FROM promql(...)`;
+  `__auto`/''/undefined → `SELECT * FROM promql(...)`; instant with `{{ pod }} in $env ($nope)` → parameter env +
+  `variable-undefined`; Loki metric `{{level}}'s` quoted correctly; Loki log query unchanged; a panel mixing a
+  legend target and a plain one UNIONs with matching columns. Acceptance: legend-format 2/2; prometheus 5/5,
+  loki 5/5, cloudwatch-metrics 5/5, panel-targets 3/3, datasources 6/6, time-macros 5/5, variables 6/6. tsc clean,
+  oxlint clean, oxfmt applied.
+- 2026-11-09T02:08:54Z supervisor: imp-query-legend-format passed the gate in round 1
