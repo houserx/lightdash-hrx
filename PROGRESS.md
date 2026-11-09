@@ -559,3 +559,19 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   `stop()`). My first run threw on `prom.stop` and left the Postgres running; I stopped it with
   pg_ctl and removed its tmp/e2e dir. No engine or Postgres left running, `tmp/e2e` empty.
 - 2026-11-09T03:04:07Z supervisor: int-identity-refused-tokens passed the gate in round 1
+- 2026-11-09 int-identity-claims-scope: **no code change needed.** The check passed on the first
+  run after `init.sh` (1/1, ~4 s).
+  Tested by hand with a tsx script outside the repo (`../tmp/manual-claims/try.ts`: real engine +
+  throwaway Platform Database, synthetic identities, tokens from the backend's `mintIdentityToken`).
+  platform_explain-only token: `platform_explain('SELECT * FROM widgets')` → 1 row (`plan`);
+  `platform_query('SELECT 1')` and `platform_tables()` → 42501 `... needs platform_read`. The explain
+  wrote 1 audit item (`action: query`, which matches CONTRACTS §2/§6: platform_explain is an
+  Audited Query). Sys token (`sub: system:alert-evaluator`, `sys: true`, platform_read,
+  `source: alert_rule`): `count(*)` over `platform_query('SELECT id FROM widgets')` worked, and the
+  last audit item had `executedBySub: system:alert-evaluator`, `action: assertion`, `mode: read`,
+  `status: success`, and the token's description.
+  Trap: `email` is a required string even for system identities. My first try used `email: null`,
+  so the token was invalid and the engine treated the connection as having no identity (42501 on
+  platform_query), not as a bad token. Give system tokens a placeholder email.
+  No engine or Postgres left running, `tmp/e2e` empty.
+- 2026-11-09T03:06:35Z supervisor: int-identity-claims-scope passed the gate in round 1
