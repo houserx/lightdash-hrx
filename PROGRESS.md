@@ -2835,3 +2835,28 @@ The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration
   run-all.sh doesn't exist yet, and the video build was verified by the four video features.
 - **Check:** `run.sh docs.spec.ts` passed.
 - 2026-11-09T13:27:59Z supervisor: demo-docs passed the gate in round 1
+
+### demo-run-all-fails-cleanly (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** A new `demo/eng-1799/run-all.sh` (executable, shellcheck clean). It does what docs/eng-1799/demo.md
+  "The one command" already describes: up.sh, `POST <scenario.url>/scenario/restart` with the `DEMO_*` offsets,
+  `walkthrough/run.sh` (all scenes), `pnpm --silent -F eng-1799-demo video`, then down.sh (skipped with `--keep`, but
+  only when every step passed). It checks `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` with the same rules and defaults
+  (90/300) as up.sh, plus unknown arguments, before it starts anything. Each of these fails with exit 2 and a message
+  that names the problem. Each step runs as a background job that the script waits on, so TERM/INT/HUP reach the script
+  at once. It then TERMs the running step, waits for it and runs down.sh from its EXIT trap. A failing step exits 1
+  and names the step. If down.sh fails, the exit is also non-zero. The docs did not need changes.
+- **Tested as a user.** `DEMO_INCIDENT_AT=soon demo/eng-1799/run-all.sh` exited 2 in 0.3 s, naming DEMO_INCIDENT_AT,
+  and no `.state` process was running. `90/60` and `--bogus` were also refused with exit 2. A failure after the stack
+  was up (`DEMO_SCENE_TIMEOUT=bad`, so walkthrough/run.sh refuses): up ran, then the restart, then the walkthrough
+  failed with exit 1 at 25 s and down.sh stopped both Postgres clusters and every process. `pgrep -f .state` was empty.
+  TERM sent to run-all 12 s into up.sh gave exit 143, with up.sh stopped and down.sh run, and nothing left running.
+- **Check:** `run.sh run-all-failure.spec.ts` passed.
+- **For demo-run-all:** I did NOT run the full happy path (walkthrough plus video). That is the next feature's check
+  (`DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=150`). The scenario restart happens right after up.sh, so T=0 is just before
+  scene 01.
+- **For demo-hygiene:** `run.sh hygiene.spec.ts` fails today on
+  `demo/eng-1799/content/charts/log-level-heatmap.yml`. It holds a `$schema` URL `https://vega.github.io/...`, and
+  the hygiene check counts that as a remote reference. That file came from demo-dashboard-service-health, not from
+  this feature. run-all.sh itself has no URL other than 127.0.0.1-style ones it reads at run time.
+- 2026-11-09T13:32:15Z supervisor: demo-run-all-fails-cleanly passed the gate in round 1
