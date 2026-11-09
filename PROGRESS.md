@@ -1810,3 +1810,18 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Checks: perses-layout 2/2 after init. Regression: perses-command 3/3, perses-panels 4/4,
   perses-queries-variables 4/4.
 - 2026-11-09T06:07:37Z supervisor: imp-perses-layout passed the gate in round 1
+
+## imp-roundtrip-dashboards (2026-11-09)
+
+- No code change: roundtrip-dashboards passed 4/4 after init at the start of this session. The earlier dashboard,
+  query, transform and datasource features already cover all 32 fixture dashboards.
+- Tested as a user: from packages/cli, `node --import tsx src/index.ts import grafana-dashboard <all 32
+  grafana_config/**/*.json> --out ../../tmp/rt-manual --datasources fixtures/terraform/grafana_data_sources.tf
+  --dashboards-tf fixtures/terraform/grafana_dashboards.tf` exited 0: "Imported 32 dashboards and 297 charts
+  (4035 warnings, 18 TODOs)", 32 dashboard YAMLs, 297 chart YAMLs, lightdash.config.yml, 32 reports. A quick script
+  over the output found 297 sql_chart tiles, 0 with a missing chart, 0 charts with a leftover Grafana macro or [[var]],
+  and all 294 charts with a telemetry call reference ${ld.parameters.__to}. Schema validation is what the check covers.
+  Scratch output was deleted afterwards.
+- Follow-up: 4035 warnings is a lot. roundtrip-warning-snapshot (a later feature) is where to look at that.
+- Checks: roundtrip-dashboards 4/4 after init.
+- 2026-11-09T06:09:47Z supervisor: imp-roundtrip-dashboards passed the gate in round 1
