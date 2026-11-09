@@ -610,3 +610,40 @@ Each one has a "Contract assumptions" section that the integration line reconcil
 - Next: imp-dashboard-datasources reads `--ops-marts ops-marts.yml` (YAML `github: {Pull_Requests: table}`) into
   `opsMarts`; imp-dashboard-todo-tiles expects the TODO text to mention the Ops Mart (it does).
 - 2026-11-09T02:23:41Z supervisor: imp-query-ops-marts passed the gate in round 1
+
+### imp-query-expressions (2026-11-08)
+
+- `grafanaQuery.ts`: a target whose datasource is Grafana's expressions datasource (`type: '__expr__'`, uid
+  `__expr__` or legacy `-100`) goes to `translateExpressionTarget` before datasource resolution. Inputs are the
+  panel's targets by refId (hidden ones included, `A`/`$A`/`${A}`), translated as usual. An input that is itself an
+  expression is translated recursively, and a cycle is caught. A hidden input's warnings are passed on, as for
+  CloudWatch math. New `ResultShape` `'number'` = `value, labels, series` (no timestamp) for reduced results.
+  - `math`: numbers, `$refs`, `+ - * / %`, parens, unary +/-, abs/ceil/floor/round/log(→ln). The token
+    sequence is validated. Inputs JOIN on `timestamp` (series inputs) and on `series_name(labels)` equal OR either
+    side `'{}'`. **Decision**: this approximates Grafana's label-subset join; `labels` is json/Utf8, so it is compared
+    through `series_name`. The result's labels come from the first input with labels, and `series` = series_name(labels), or
+    the refId when unlabeled. All number inputs → number shape; no inputs → constant.
+  - `reduce`: mean→avg, min, max, sum, count→count(*), last→`last_value(v ORDER BY "timestamp")` (DataFusion
+    syntax), `GROUP BY labels, series`. `settings.mode: replaceNN` → `COALESCE("value", n)`. Strict and dropNN both
+    use SQL aggregates (they skip NULL), with no warning.
+  - `threshold` (exactly one condition; gt, lt, within/outside_range[_included], range bounds min/max of the params)
+    → `CASE WHEN value IS NULL THEN NULL WHEN cond THEN 1.0 ELSE 0.0 END`, keeping the input's shape.
+    `unloadEvaluator` → `expression-hysteresis-dropped`.
+  - `classic_conditions` with **one** condition (reducer avg/min/max/sum/count/count_non_null/last; gt/lt/
+    within/outside_range) → reduce per series, then `max(<1/0>)` as one number labelled `'{}'` (fires if any
+    series does). **Decision**: step 4 only names multi-condition classic as untranslatable, so a single one is translated.
+  - resample, sql, multi-condition classic, unknown types, unsupported math (`**`, `&&`, comparisons, is_nan, …),
+    missing or failing inputs, cycles, and an expression translated without its panel (`translateGrafanaTarget`)
+    → `TODO: translate the Grafana <type> expression (target X) by hand` + `expression-unsupported`.
+  - New codes in `ImportWarningCode`: `expression-unsupported`, `expression-hysteresis-dropped`.
+- Tested: ran init.sh, then drove the built `dist/cjs` translator from node (script in work/importers/tmp/exprcheck) with
+  12 panels: math `$A / ${B} * 100` (by-code over total), reduce max, reduce last with replaceNN, threshold with a
+  hysteresis, a reduce→threshold chain, single classic, resample, sql, multi classic, bad math (`&&`, `is_nan`,
+  `**`), a self-reference, and visible A plus math (UNION ALL). The output was as described above. I could not
+  run the SQL: starting a throwaway Postgres was denied by the sandbox this session. Acceptance: query-expressions 5/5;
+  panel-targets 3/3, cloudwatch-expressions 3/3, prometheus 5/5, datasources 6/6, ops-marts 3/3. tsc clean,
+  oxlint clean, oxfmt applied.
+- Next: imp-alert-rule-conditions / imp-alert-rule-math can reuse `translateExpressionTarget` semantics. Alert rules
+  need classic conditions and hysteresis as rule state, not SQL. The generated SQL has not run on the engine yet
+  (`last_value(... ORDER BY ...)` is DataFusion aggregate syntax).
+- 2026-11-09T02:29:54Z supervisor: imp-query-expressions passed the gate in round 1

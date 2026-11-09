@@ -27,6 +27,8 @@ export type ImportWarningCode =
     | 'no-ops-mart'
     | 'ops-mart-invalid'
     | 'ops-mart-filters-dropped'
+    | 'expression-unsupported'
+    | 'expression-hysteresis-dropped'
     | 'variable-undefined'
     | 'variable-unsupported'
     | 'variable-multi-value'

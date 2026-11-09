@@ -83,7 +83,9 @@ type ResultShape =
     /** `timestamp, line, labels, stream`: logql. */
     | 'log-lines'
     /** `timestamp, message, fields`: cloudwatch_logs. */
-    | 'log-events';
+    | 'log-events'
+    /** `value, labels, series`: one number per series (a Grafana reduce or classic condition). */
+    | 'number';
 
 /** A target's translation plus the shape of its result, when it has SQL. */
 type TargetTranslation = GrafanaQueryTranslation & { shape?: ResultShape };
@@ -1672,6 +1674,534 @@ const translateOpsMartTarget = (
     return { sql: `SELECT * FROM ${table}`, todo: null, warnings };
 };
 
+/**
+ * Grafana's server-side expressions datasource: `{type: '__expr__', uid: '__expr__'}`, or the
+ * legacy uid `-100`.
+ */
+const EXPRESSION_DATASOURCE_IDS: ReadonlySet<string> = new Set([
+    '__expr__',
+    '-100',
+]);
+
+const isExpressionTarget = (target: GrafanaTarget): boolean => {
+    const ref = target.datasource;
+    if (ref === null || ref === undefined) return false;
+    if (typeof ref === 'string') return EXPRESSION_DATASOURCE_IDS.has(ref);
+    return (
+        ref.type === '__expr__' ||
+        (ref.uid !== undefined && EXPRESSION_DATASOURCE_IDS.has(ref.uid))
+    );
+};
+
+/** A translated input of an expression, read under its refId as the table alias. */
+type ExpressionInput = {
+    refId: string;
+    sql: string;
+    shape: 'series' | 'number';
+};
+
+/** `A`, `$A` or `${A}` → `A`. */
+const expressionRefId = (text: unknown): string =>
+    typeof text === 'string'
+        ? text
+              .trim()
+              .replace(/^\$\{(.*)\}$/, '$1')
+              .replace(/^\$/, '')
+              .trim()
+        : '';
+
+/** A finite number from an evaluator parameter (`5` or `'5'`), else undefined. */
+const finiteNumber = (value: unknown): number | undefined => {
+    let n = NaN;
+    if (typeof value === 'number') n = value;
+    else if (typeof value === 'string' && value.trim() !== '') {
+        n = Number(value);
+    }
+    return Number.isFinite(n) ? n : undefined;
+};
+
+/**
+ * A threshold evaluator (`{type: 'gt', params: [5]}`) as a SQL condition over `"value"`, or
+ * undefined when its type or parameters have no translation. Ranges read the lower and upper
+ * bound whichever order the parameters are in, as Grafana's classic conditions do.
+ */
+const evaluatorCondition = (
+    evaluator: unknown,
+    types: ReadonlySet<string>,
+): string | undefined => {
+    if (typeof evaluator !== 'object' || evaluator === null) return undefined;
+    const { type, params } = evaluator as { type?: unknown; params?: unknown };
+    if (typeof type !== 'string' || !types.has(type)) return undefined;
+    const values = (Array.isArray(params) ? params : []).map(finiteNumber);
+    const [a, b] = values;
+    if (a === undefined) return undefined;
+    if (type === 'gt') return `"value" > ${a}`;
+    if (type === 'lt') return `"value" < ${a}`;
+    if (b === undefined) return undefined;
+    const low = Math.min(a, b);
+    const high = Math.max(a, b);
+    switch (type) {
+        case 'within_range':
+            return `"value" > ${low} AND "value" < ${high}`;
+        case 'outside_range':
+            return `("value" < ${low} OR "value" > ${high})`;
+        case 'within_range_included':
+            return `"value" >= ${low} AND "value" <= ${high}`;
+        case 'outside_range_included':
+            return `("value" <= ${low} OR "value" >= ${high})`;
+        default:
+            return undefined;
+    }
+};
+
+const THRESHOLD_EVALUATORS: ReadonlySet<string> = new Set([
+    'gt',
+    'lt',
+    'within_range',
+    'outside_range',
+    'within_range_included',
+    'outside_range_included',
+]);
+
+const CLASSIC_EVALUATORS: ReadonlySet<string> = new Set([
+    'gt',
+    'lt',
+    'within_range',
+    'outside_range',
+]);
+
+/** 1 where the condition holds, 0 where not, NULL for a missing value (as Grafana's threshold). */
+const conditionValueSql = (condition: string): string =>
+    `CASE WHEN "value" IS NULL THEN NULL WHEN ${condition} THEN 1.0 ELSE 0.0 END`;
+
+/** Aggregates over an input's `"value"` (`value` may be a COALESCE of it) by reducer name. */
+const reducerSql = (reducer: string, value: string): string | undefined => {
+    switch (reducer) {
+        case 'mean':
+        case 'avg':
+            return `avg(${value})`;
+        case 'min':
+        case 'max':
+        case 'sum':
+            return `${reducer}(${value})`;
+        case 'count':
+            return 'count(*)';
+        case 'count_non_null':
+            return `count(${value})`;
+        case 'last':
+            return `last_value(${value} ORDER BY "timestamp")`;
+        default:
+            return undefined;
+    }
+};
+
+/** Grafana's reduce reducers (`reducer`) that have a SQL aggregate. */
+const REDUCE_REDUCERS: ReadonlySet<string> = new Set([
+    'mean',
+    'min',
+    'max',
+    'sum',
+    'count',
+    'last',
+]);
+
+/** Grafana's classic condition reducers (`reducer.type`) that have a SQL aggregate. */
+const CLASSIC_REDUCERS: ReadonlySet<string> = new Set([
+    'avg',
+    'min',
+    'max',
+    'sum',
+    'count',
+    'count_non_null',
+    'last',
+]);
+
+/** A token of a Grafana math expression. */
+const EXPRESSION_MATH_TOKEN =
+    /\s+|(\d+(?:\.\d*)?(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)|\$\{([^}]*)\}|\$([A-Za-z0-9_]+)|([A-Za-z_][A-Za-z0-9_]*)|([-+*/%()])|(.)/g;
+
+/** Grafana math functions with a SQL equivalent (Grafana's `log` is the natural logarithm). */
+const EXPRESSION_MATH_FUNCTIONS: ReadonlyMap<string, string> = new Map([
+    ['abs', 'abs'],
+    ['ceil', 'ceil'],
+    ['floor', 'floor'],
+    ['round', 'round'],
+    ['log', 'ln'],
+]);
+
+type ExpressionMathToken =
+    | { kind: 'number' | 'operator'; text: string }
+    | { kind: 'reference'; refId: string }
+    | { kind: 'function'; text: string }
+    | { kind: 'other'; text: string };
+
+/**
+ * A math expression's tokens, or the text SQL cannot evaluate. Only numbers, `$refs`,
+ * `+ - * / %`, parentheses and abs/ceil/floor/round/log calls are supported; the token
+ * sequence is checked so the SQL is well formed.
+ */
+const expressionMathTokens = (
+    expression: string,
+): { tokens: ExpressionMathToken[] } | { why: string } => {
+    const tokens: ExpressionMathToken[] = [];
+    const unsupported: string[] = [];
+    if (expression.includes('**')) unsupported.push('** (power)');
+    for (const match of expression.matchAll(EXPRESSION_MATH_TOKEN)) {
+        const [, num, braced, bare, identifier, operator, other] = match;
+        if (num !== undefined) tokens.push({ kind: 'number', text: num });
+        else if (braced !== undefined || bare !== undefined) {
+            tokens.push({
+                kind: 'reference',
+                refId: (braced ?? bare ?? '').trim(),
+            });
+        } else if (identifier !== undefined) {
+            const fn = EXPRESSION_MATH_FUNCTIONS.get(identifier);
+            const rest = expression.slice(match.index + identifier.length);
+            if (fn !== undefined && /^\s*\(/.test(rest)) {
+                tokens.push({ kind: 'function', text: fn });
+            } else {
+                addOnce(unsupported, identifier);
+            }
+        } else if (operator !== undefined) {
+            tokens.push({ kind: 'operator', text: operator });
+        } else if (other !== undefined) {
+            addOnce(unsupported, other);
+        }
+    }
+    if (unsupported.length > 0) {
+        return {
+            why: `uses ${unsupported.join(', ')}; SQL evaluates only numbers, $references, + - * / %, parentheses and ${[
+                ...EXPRESSION_MATH_FUNCTIONS.keys(),
+            ].join('/')}()`,
+        };
+    }
+    // Operands and binary operators alternate; unary +/- and calls open an operand.
+    let expectOperand = true;
+    let depth = 0;
+    for (const t of tokens) {
+        const text = t.kind === 'reference' ? '' : t.text;
+        if (expectOperand) {
+            if (t.kind === 'number' || t.kind === 'reference') {
+                expectOperand = false;
+            } else if (text === '(') {
+                depth += 1;
+            } else if (t.kind === 'function') {
+                // The '(' that follows opens the argument.
+            } else if (text !== '-' && text !== '+') {
+                return { why: `is not a well-formed expression near ${text}` };
+            }
+        } else if (text === ')') {
+            depth -= 1;
+            if (depth < 0) return { why: 'has unbalanced parentheses' };
+        } else if (t.kind === 'operator' && text !== '(') {
+            expectOperand = true;
+        } else {
+            return {
+                why: `is not a well-formed expression near ${t.kind === 'reference' ? `$${t.refId}` : text}`,
+            };
+        }
+    }
+    if (tokens.length === 0) return { why: 'is empty' };
+    if (expectOperand || depth !== 0) {
+        return { why: 'is not a well-formed expression' };
+    }
+    return { tokens };
+};
+
+/**
+ * Translates a Grafana server-side expression (`__expr__` datasource) into SQL over the panel's
+ * other targets it reads (hidden ones included), each translated as usual:
+ *
+ * - `math` (`$A / $B * 100`): the inputs are joined on `timestamp` (when both are series) and on
+ *   labels, where equal labels pair up and an input without labels pairs with every series, an
+ *   approximation of Grafana's label-subset join; the arithmetic is evaluated over their values.
+ *   The result is named by its labels, else by the expression's refId.
+ * - `reduce` (`reducer` mean/min/max/sum/count/last, `settings.mode` replaceNN): one number per
+ *   series, `GROUP BY labels, series`. Strict and dropNN modes both read SQL's aggregates, which
+ *   skip missing values.
+ * - `threshold` (one condition): 1 where the evaluator holds, 0 where not; a hysteresis
+ *   `unloadEvaluator` only matters to alert state and is dropped with a warning.
+ * - `classic_conditions` with one condition: the reducer per series, then 1 when any series
+ *   meets the evaluator (Grafana's classic condition fires on any series).
+ *
+ * Resample, SQL expressions, multi-condition classic conditions and anything else become a
+ * TODO with an `expression-unsupported` warning, as does an expression whose input does not
+ * translate or that reads itself back.
+ */
+const translateExpressionTarget = (
+    target: GrafanaTarget,
+    warnings: ImportWarning[],
+    panel: PanelScope | undefined,
+    visiting: string[] = [],
+): TargetTranslation => {
+    const type =
+        typeof target.type === 'string' && target.type.trim() !== ''
+            ? target.type.trim()
+            : 'untyped';
+    const refId = target.refId ?? '';
+    const fail = (why: string): TargetTranslation => {
+        warnings.push({
+            code: 'expression-unsupported',
+            message: `The Grafana ${type} expression ${targetLabel(target)} ${why}, so it has no translation`,
+        });
+        return {
+            sql: null,
+            todo: `TODO: translate the Grafana ${type} expression (${targetLabel(target)}) by hand`,
+            warnings,
+        };
+    };
+    if (panel === undefined) {
+        return fail(
+            "reads other queries of its panel; translate it with the panel's queries",
+        );
+    }
+    const path = [...visiting, refId];
+    const resolveInput = (
+        text: unknown,
+    ): { input: ExpressionInput } | { why: string } => {
+        const id = expressionRefId(text);
+        if (id === '') return { why: 'names no input query' };
+        if (path.includes(id))
+            return { why: `reads ${id}, which reads it back` };
+        const input = panel.targets.find((t) => t.refId === id);
+        if (input === undefined) {
+            return { why: `reads ${id}, which is not a query of the panel` };
+        }
+        const translated = isExpressionTarget(input)
+            ? translateExpressionTarget(input, [], panel, path)
+            : panel.translate(input);
+        // A visible input reports its own warnings as a query of the panel.
+        if (input.hide === true) warnings.push(...translated.warnings);
+        if (translated.sql === null) {
+            return { why: `reads ${id}, which does not translate` };
+        }
+        if (translated.shape !== 'series' && translated.shape !== 'number') {
+            return { why: `reads ${id}, which returns no numbers` };
+        }
+        return {
+            input: { refId: id, sql: translated.sql, shape: translated.shape },
+        };
+    };
+    const alias = (input: ExpressionInput) => quoteIdentifier(input.refId);
+    const seriesInput = (
+        text: unknown,
+    ): { input: ExpressionInput } | { why: string } => {
+        const resolved = resolveInput(text);
+        if ('input' in resolved && resolved.input.shape !== 'series') {
+            return {
+                why: `reads ${resolved.input.refId}, which is already one number per series`,
+            };
+        }
+        return resolved;
+    };
+
+    switch (type) {
+        case 'math': {
+            const expression =
+                typeof target.expression === 'string'
+                    ? target.expression.trim()
+                    : '';
+            const parsed = expressionMathTokens(expression);
+            if ('why' in parsed) return fail(parsed.why);
+            const inputs: ExpressionInput[] = [];
+            for (const t of parsed.tokens) {
+                if (
+                    t.kind === 'reference' &&
+                    !inputs.some((i) => i.refId === t.refId)
+                ) {
+                    const resolved = resolveInput(t.refId);
+                    if ('why' in resolved) return fail(resolved.why);
+                    inputs.push(resolved.input);
+                }
+            }
+            const value = parsed.tokens
+                .map((t) =>
+                    t.kind === 'reference'
+                        ? `${quoteIdentifier(t.refId)}."value"`
+                        : t.text,
+                )
+                .join(' ');
+            if (inputs.length === 0) {
+                return {
+                    sql: `SELECT ${value} AS "value", '{}' AS labels, ${sqlStringLiteral(refId)} AS series`,
+                    todo: null,
+                    warnings,
+                    shape: 'number',
+                };
+            }
+            const timed = inputs.find((i) => i.shape === 'series');
+            const labelsOf = (i: ExpressionInput) =>
+                `series_name(${alias(i)}.labels)`;
+            const from = inputs
+                .map((input, index) => {
+                    if (index === 0) return `(${input.sql}) AS ${alias(input)}`;
+                    const conditions = inputs
+                        .slice(0, index)
+                        .map(
+                            (prev) =>
+                                `(${labelsOf(input)} = ${labelsOf(prev)} OR ${labelsOf(input)} = '{}' OR ${labelsOf(prev)} = '{}')`,
+                        );
+                    if (
+                        timed !== undefined &&
+                        timed !== input &&
+                        input.shape === 'series'
+                    ) {
+                        conditions.unshift(
+                            `${alias(input)}."timestamp" = ${alias(timed)}."timestamp"`,
+                        );
+                    }
+                    return `JOIN (${input.sql}) AS ${alias(input)} ON ${conditions.join(' AND ')}`;
+                })
+                .join('\n');
+            const labels =
+                inputs.length === 1
+                    ? `${alias(inputs[0])}.labels`
+                    : `CASE ${inputs
+                          .map(
+                              (i) =>
+                                  `WHEN ${labelsOf(i)} <> '{}' THEN ${alias(i)}.labels`,
+                          )
+                          .join(' ')} ELSE ${alias(inputs[0])}.labels END`;
+            const time = timed === undefined ? '' : '"timestamp", ';
+            const inner = `SELECT ${
+                timed === undefined ? '' : `${alias(timed)}."timestamp", `
+            }${value} AS "value", ${labels} AS labels\nFROM ${from}`;
+            return {
+                sql: `SELECT ${time}"value", labels, CASE WHEN series_name(labels) = '{}' THEN ${sqlStringLiteral(refId)} ELSE series_name(labels) END AS series\nFROM (${inner}) AS ${quoteIdentifier(refId)}`,
+                todo: null,
+                warnings,
+                shape: timed === undefined ? 'number' : 'series',
+            };
+        }
+        case 'reduce': {
+            const reducer =
+                typeof target.reducer === 'string' ? target.reducer : '';
+            if (!REDUCE_REDUCERS.has(reducer)) {
+                return fail(
+                    `reduces with ${reducer || 'no reducer'}, which has no SQL aggregate`,
+                );
+            }
+            const settings =
+                typeof target.settings === 'object' && target.settings !== null
+                    ? (target.settings as {
+                          mode?: unknown;
+                          replaceWithValue?: unknown;
+                      })
+                    : {};
+            let value = '"value"';
+            if (settings.mode === 'replaceNN') {
+                const replacement = finiteNumber(settings.replaceWithValue);
+                if (replacement === undefined) {
+                    return fail(
+                        'replaces missing values with a value that is not a number',
+                    );
+                }
+                value = `COALESCE("value", ${replacement})`;
+            }
+            const resolved = seriesInput(target.expression);
+            if ('why' in resolved) return fail(resolved.why);
+            return {
+                sql: `SELECT ${reducerSql(reducer, value)} AS "value", labels, series\nFROM (${resolved.input.sql}) AS ${alias(resolved.input)}\nGROUP BY labels, series`,
+                todo: null,
+                warnings,
+                shape: 'number',
+            };
+        }
+        case 'threshold': {
+            const conditions = Array.isArray(target.conditions)
+                ? (target.conditions as {
+                      evaluator?: unknown;
+                      unloadEvaluator?: unknown;
+                  }[])
+                : [];
+            if (conditions.length !== 1) {
+                return fail(
+                    `has ${conditions.length} conditions; a threshold has exactly one`,
+                );
+            }
+            const condition = evaluatorCondition(
+                conditions[0]?.evaluator,
+                THRESHOLD_EVALUATORS,
+            );
+            if (condition === undefined) {
+                return fail('has an evaluator with no SQL comparison');
+            }
+            const resolved = resolveInput(target.expression);
+            if ('why' in resolved) return fail(resolved.why);
+            if (
+                conditions[0].unloadEvaluator !== undefined &&
+                conditions[0].unloadEvaluator !== null
+            ) {
+                warnings.push({
+                    code: 'expression-hysteresis-dropped',
+                    message: `The Grafana threshold expression ${targetLabel(target)} has a recovery threshold, which only alert state uses; the chart shows the threshold alone`,
+                });
+            }
+            const time =
+                resolved.input.shape === 'series' ? '"timestamp", ' : '';
+            return {
+                sql: `SELECT ${time}${conditionValueSql(condition)} AS "value", labels, series\nFROM (${resolved.input.sql}) AS ${alias(resolved.input)}`,
+                todo: null,
+                warnings,
+                shape: resolved.input.shape,
+            };
+        }
+        case 'classic_conditions': {
+            const conditions = Array.isArray(target.conditions)
+                ? (target.conditions as {
+                      evaluator?: unknown;
+                      query?: { params?: unknown };
+                      reducer?: { type?: unknown };
+                  }[])
+                : [];
+            if (conditions.length !== 1) {
+                return fail(
+                    `has ${conditions.length} conditions; only a classic condition with exactly one is translated`,
+                );
+            }
+            const [classic] = conditions;
+            const reducer =
+                typeof classic.reducer?.type === 'string'
+                    ? classic.reducer.type
+                    : '';
+            if (!CLASSIC_REDUCERS.has(reducer)) {
+                return fail(
+                    `reduces with ${reducer || 'no reducer'}, which has no SQL aggregate`,
+                );
+            }
+            const condition = evaluatorCondition(
+                classic.evaluator,
+                CLASSIC_EVALUATORS,
+            );
+            if (condition === undefined) {
+                return fail('has an evaluator with no SQL comparison');
+            }
+            const params = classic.query?.params;
+            const resolved = seriesInput(
+                Array.isArray(params) ? params[0] : undefined,
+            );
+            if ('why' in resolved) return fail(resolved.why);
+            const reduced = `SELECT ${reducerSql(reducer, '"value"')} AS "value"\nFROM (${resolved.input.sql}) AS ${alias(resolved.input)}\nGROUP BY labels, series`;
+            return {
+                sql: `SELECT max(${conditionValueSql(condition)}) AS "value", '{}' AS labels, ${sqlStringLiteral(refId)} AS series\nFROM (${reduced}) AS ${quoteIdentifier(refId)}`,
+                todo: null,
+                warnings,
+                shape: 'number',
+            };
+        }
+        case 'resample':
+            return fail(
+                "resamples its input to a fixed window; SQL has no equivalent of Grafana's down- and upsampling yet",
+            );
+        case 'sql':
+            return fail(
+                "is a SQL query over Grafana's in-memory query results, which the engine does not have",
+            );
+        default:
+            return fail('has a type with no translation');
+    }
+};
+
 /** The datasource types with a translation; anything else is `datasource-unsupported`. */
 const TARGET_TRANSLATORS = new Map<
     string,
@@ -1697,6 +2227,9 @@ const translateTarget = (
     panel?: PanelScope,
 ): TargetTranslation => {
     const warnings: ImportWarning[] = [];
+    if (isExpressionTarget(target)) {
+        return translateExpressionTarget(target, warnings, panel);
+    }
     const ref = resolveDatasourceVariable(
         isUsableRef(target.datasource)
             ? target.datasource
@@ -1766,8 +2299,8 @@ const unionAll = (queries: string[]): string =>
 
 /**
  * Translates a panel's targets into one chart's SQL. Hidden targets are skipped. The visible
- * targets that translate become one result set (UNION ALL); CloudWatch metric math evaluates
- * over the targets it references, hidden or not. A target whose result has other
+ * targets that translate become one result set (UNION ALL); CloudWatch metric math and Grafana
+ * expressions evaluate over the targets they reference, hidden or not. A target whose result has other
  * columns than the first translated target's (log lines next to series) is left out with a
  * `panel-targets-not-combined` warning. Targets that don't translate are left out with their
  * warnings; when none translates, the panel is a TODO.
