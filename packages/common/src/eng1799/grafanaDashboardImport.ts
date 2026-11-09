@@ -209,18 +209,29 @@ const chartConfig = (kind: ChartKind): AllVizChartConfig => {
 
 const DEFAULT_GRID = { x: 0, y: 0, w: 12, h: 8 };
 
-/** The tile rectangle for a panel's gridPos, kept inside the dashboard grid. */
-const tilePosition = (panel: GrafanaDashboardPanel) => {
+/** Grafana lays panels out on 24 columns; Lightdash dashboards have 36. */
+const GRAFANA_GRID_COLUMNS = 24;
+const LIGHTDASH_GRID_COLUMNS = 36;
+const COLUMN_SCALE = LIGHTDASH_GRID_COLUMNS / GRAFANA_GRID_COLUMNS;
+
+type TileRect = { x: number; y: number; w: number; h: number };
+
+/**
+ * The tile rectangle for a panel's gridPos on the 36-column grid: x and w scale by 36/24 and
+ * stay inside the grid; y and h keep Grafana's row units, so rows keep their order and
+ * proportions.
+ */
+const tilePosition = (panel: GrafanaDashboardPanel): TileRect => {
     const num = (value: unknown, fallback: number) =>
         typeof value === 'number' && Number.isFinite(value) ? value : fallback;
     const grid = panel.gridPos ?? {};
     const x = Math.min(
-        35,
-        Math.max(0, Math.round(num(grid.x, DEFAULT_GRID.x))),
+        LIGHTDASH_GRID_COLUMNS - 1,
+        Math.max(0, Math.round(num(grid.x, DEFAULT_GRID.x) * COLUMN_SCALE)),
     );
     const w = Math.min(
-        36 - x,
-        Math.max(1, Math.round(num(grid.w, DEFAULT_GRID.w))),
+        LIGHTDASH_GRID_COLUMNS - x,
+        Math.max(1, Math.round(num(grid.w, DEFAULT_GRID.w) * COLUMN_SCALE)),
     );
     return {
         x,
@@ -228,6 +239,45 @@ const tilePosition = (panel: GrafanaDashboardPanel) => {
         w,
         h: Math.max(1, Math.round(num(grid.h, DEFAULT_GRID.h))),
     };
+};
+
+const rectsOverlap = (a: TileRect, b: TileRect) =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+/** The rect moved down, just below whatever placed tiles it hits, until it hits none. */
+const lowestFreeRect = (placed: TileRect[], rect: TileRect): TileRect => {
+    const hits = placed.filter((p) => rectsOverlap(p, rect));
+    if (hits.length === 0) return rect;
+    const y = Math.max(...hits.map((p) => p.y + p.h));
+    return lowestFreeRect(placed, { ...rect, y });
+};
+
+/**
+ * Moves tiles down until no two overlap. Rounding odd widths, overlapping Grafana gridPos and
+ * the panels of collapsed rows can all put two tiles on the same cells. Tiles are placed top to
+ * bottom, left to right; a tile that hits a placed tile moves to just below it. Tile order in the
+ * array is kept.
+ */
+const resolveTileOverlaps = <T extends TileRect>(tiles: T[]): T[] => {
+    const order = tiles
+        .map((tile, index) => ({ tile, index }))
+        .sort(
+            (a, b) =>
+                a.tile.y - b.tile.y || a.tile.x - b.tile.x || a.index - b.index,
+        );
+    const placed: TileRect[] = [];
+    const moved = new Map<number, T>();
+    order.forEach(({ tile, index }) => {
+        const rect = lowestFreeRect(placed, {
+            x: tile.x,
+            y: tile.y,
+            w: tile.w,
+            h: tile.h,
+        });
+        placed.push(rect);
+        moved.set(index, rect.y === tile.y ? tile : { ...tile, y: rect.y });
+    });
+    return tiles.map((tile, index) => moved.get(index) ?? tile);
 };
 
 /**
@@ -464,7 +514,7 @@ export const convertGrafanaDashboard = (
             slug,
             spaceSlug: options.spaceSlug,
             tabs: [],
-            tiles,
+            tiles: resolveTileOverlaps(tiles),
         },
         charts,
         warnings,

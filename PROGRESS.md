@@ -757,3 +757,24 @@ Each one has a "Contract assumptions" section that the integration line reconcil
   dashboard-command 4/4, dashboard-charts 4/4, dashboard-panel-kinds 3/3. tsc (common) and oxlint are clean, and oxfmt
   was applied.
 - 2026-11-09T02:45:18Z supervisor: imp-dashboard-dropped-panels passed the gate in round 1
+
+### imp-dashboard-layout (2026-11-08)
+
+- `tilePosition` in packages/common/src/eng1799/grafanaDashboardImport.ts now scales gridPos x and w by 36/24
+  (`Math.round`, w at least 1, clamped so x + w <= 36). y and h stay in Grafana row units, so rows keep their order and
+  proportions, and the next row starts where the one above ends.
+- New: `resolveTileOverlaps` runs over the finished tile list. It places tiles top to bottom and left to right, and
+  moves any tile that hits an already placed tile down to just below it. The array order is kept. This covers
+  rounding collisions: Grafana x=3,w=5 becomes 5..13, and a neighbour at x=8 becomes 12, so they would overlap. It
+  also covers overlapping gridPos in the source and the panels of collapsed rows, which are still flattened in place.
+- Decision: the spec fixes x and w to round(1.5 * value), so a rounding collision is fixed by moving the tile down
+  rather than by narrowing it. Trap for imp-dashboard-rows and imp-dashboard-collapsed-rows: if rows become tabs or
+  their y changes, keep `resolveTileOverlaps` as the last step, and note that the overlap check ignores tabSlug (all
+  tiles are compared).
+- Tested as a user: ran init.sh, then the CLI from source on a synthetic dashboard with half, third, full and odd-width
+  panels, plus a 1-wide neighbour that collides with the odd panel after rounding and a full-width row below it. The
+  tiles came out as 0/18 (w 18), 0/12/24 (w 12), 0/36 and 5/8. The colliding neighbour moved from y 24 to 27, and the
+  row below moved to 30, with no overlaps. `lightdash lint` said all files are valid. Acceptance: dashboard-layout 3/3,
+  dashboard-command 4/4, dashboard-charts 4/4, dashboard-panel-kinds 3/3, dashboard-dropped-panels 4/4. tsc (common) and
+  oxlint are clean, and oxfmt was applied.
+- 2026-11-09T02:49:17Z supervisor: imp-dashboard-layout passed the gate in round 1
