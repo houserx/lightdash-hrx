@@ -892,3 +892,20 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     now plan at Bind, so they should work as sent; the audit record will hold the bound SQL.
   - Engine params bound as text: any non-text table-function argument sent as `$n` needs a cast.
 - 2026-11-09T04:11:48Z supervisor: int-mcp-telemetry-tools passed the gate in round 1
+- int-mcp-platform-tools (round 1): **no code change needed.** The check passed after `init` on arrival:
+  the previous session's engine change (table-function `$n` planned at Bind) is what makes the MCP's
+  bound `platform_query($1)` / `platform_columns($1, $2)` / `platform_explain($1)` work.
+  Tested by hand (`../tmp/manual-mcp-platform-tools/try.mts`, run from e2e/eng-1799 with tsx; synthetic
+  users and values unlike the check) through the real MCP over HTTP with a Platform Database and the
+  real engine: platform_schema listed `public.widgets` and its columns id/name/qty (an unknown table
+  gives an empty list); platform_query with a `'`-containing SQL, description and ticket ENG-4242 wrote
+  exactly one audit item (action ai_ask, the Lightdash user's uuid and email, description, ticket,
+  mode read, database platform, status success, sql = the bound `platform_query('…')` literal);
+  missing description is refused by the tool schema; a bad column gives 42703 as a tool error;
+  platform_explain (advise false and default) returns the JSON plan and is audited as ai_ask; a user
+  with only platform_explain can explain but platform_query is refused naming platform_read; a user
+  with platform_read 'false' is refused (42501) for query, schema and explain.
+  For the next session: platform_explain's default (advise unset) answers `adviceError: "Plan advice
+  is not configured on this server"` in the harness, because no advice model is configured. That is
+  expected, not a failure.
+- 2026-11-09T04:14:07Z supervisor: int-mcp-platform-tools passed the gate in round 1
