@@ -15,6 +15,10 @@ export {
     startEngine,
 } from './engine';
 export type { Engine, StartEngineOptions } from './engine';
+export { startFakeAuditStore } from './auditStore';
+export type { FakeAuditStore } from './auditStore';
+export { startPlatformDatabase } from './platform';
+export type { PlatformDatabase } from './platform';
 export type { FakeServer, RecordedRequest } from './fakeServer';
 export { startFakePrometheus } from './prometheus';
 export type {

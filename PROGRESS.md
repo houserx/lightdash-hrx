@@ -290,3 +290,29 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
     the always-on `[audit]` block, per the Harness API "Source names" row.
   - The engine sends `start`/`end`/`step` as decimal seconds (`seconds_text`) in a POST form body.
 - 2026-11-09T02:06:47Z supervisor: int-harness-fake-prometheus passed the gate in round 1
+- 2026-11-09 int-harness-platform-database: added `harness/platform.ts` (`startPlatformDatabase()`:
+  initdb + pg_ctl from `/opt/homebrew/bin` (override `E2E_PG_BIN`) into `tmp/e2e/platform-…/pgdata`,
+  127.0.0.1, free port, `unix_socket_directories = ''`, scram superuser `postgres`; roles
+  `engine_read` (SELECT) / `engine_write` (SELECT/INSERT/UPDATE/DELETE); `public.widgets(id, name,
+  qty)` 1..200; `query(sql, params?)` as superuser on a fresh connection; `stop()` = `pg_ctl -m fast`
+  (falls back to immediate), removes the dir, idempotent). Mirrors the engine line's `pg_cluster.rs`.
+  Added `harness/auditStore.ts`: a **minimal** `startFakeAuditStore()` (one fake server for both
+  `dynamodbUrl` and `s3Url`; DynamoDB JSON 1.0 `PutItem` → `{}`, any S3 `PUT` → 200 with an ETag,
+  anything else 400; table `db-query-portal-executions`, bucket `db-query-portal-audit` as in the
+  engine's Rust harness). `startEngine` now accepts `platform` (`[[sources]] platform`,
+  `platform_postgres`, `HRX_PLATFORM_READ_URL`, plus `HRX_PLATFORM_WRITE_URL` when `writeUrl` is
+  given) and `auditStore`, and **always** renders `[audit]` (integrity key env, region us-east-2, both
+  endpoint URLs); without `auditStore` it starts its own fake, returns it as `engine.auditStore` and
+  closes it in `stop()`.
+  Tested by hand with tsx scripts outside the repo: seed 200 rows (ids 1..200, qty sum 598); through
+  the engine with a backend-minted `platform_read` token `platform_query` counts 200; the CTE DELETE
+  is refused 42501 (by the engine's write-mode guard, before Postgres); without `platform_read` 42501;
+  the fake recorded `PutItem` then `PUT /db-query-portal-audit/executions/…`; connecting directly,
+  `engine_read` DELETE → 42501 permission denied, `engine_write` DELETE works; stop twice, pg port and
+  audit fake closed, `tmp/e2e` empty, no leftover processes. Check 1/1; engine and prometheus checks
+  still 2/2; package typecheck clean.
+  Next sessions must know:
+  - int-harness-audit-store extends `auditStore.ts` (items()/objects()/setFailing/Query/aws-chunked
+    S3 bodies/58000) and adds `prometheus-restricted` to `renderConfig` (now possible: `[audit]` is
+    always there).
+- 2026-11-09T02:10:59Z supervisor: int-harness-platform-database passed the gate in round 1

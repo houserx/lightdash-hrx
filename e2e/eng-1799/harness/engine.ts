@@ -9,6 +9,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+    AUDIT_BUCKET,
+    AUDIT_TABLE,
+    type FakeAuditStore,
+    startFakeAuditStore,
+} from './auditStore';
 import { freePorts, REPO_ROOT, scratchDir, sleep, tcpOpen } from './util';
 
 export const ENGINE_BINARY =
@@ -32,6 +38,18 @@ export type StartEngineOptions = {
     testMode?: boolean;
     /** A fake Prometheus: the default `prometheus` source points at its `url`. */
     prometheus?: { url: string };
+    /**
+     * A Platform Database: the `platform` source reads through `readUrl` and writes through
+     * `writeUrl` (Write Mode is off without it), passed as `HRX_PLATFORM_READ_URL` /
+     * `HRX_PLATFORM_WRITE_URL`.
+     */
+    platform?: { readUrl: string; writeUrl?: string };
+    /**
+     * The `[audit]` store's endpoints. `[audit]` is always configured: without this option the
+     * harness starts its own fake store, returns it as `engine.auditStore` and closes it on
+     * `stop()`.
+     */
+    auditStore?: { dynamodbUrl: string; s3Url: string };
 };
 
 /** Options the Harness API names that later harness features implement. */
@@ -41,8 +59,6 @@ const NOT_YET_SUPPORTED = [
     'cloudwatchLogs',
     'tempo',
     'bigquery',
-    'platform',
-    'auditStore',
     'restrictedLokiSelectors',
     'restrictedLogGroups',
 ];
@@ -57,14 +73,22 @@ export type Engine = {
     pid: number;
     binary: string;
     configToml: string;
-    /** Set once the harness configures `[audit]` (feature int-harness-audit-store). */
-    auditStore?: unknown;
+    /** The `[audit]` store: `opts.auditStore` when given, else the harness's own fake. */
+    auditStore: { dynamodbUrl: string; s3Url: string } | FakeAuditStore;
     /** SIGTERM, wait for exit (SIGKILL after a grace period), remove the scratch dir. Idempotent. */
     stop(): Promise<void>;
 };
 
-function engineEnv(dir: string): NodeJS.ProcessEnv {
+function engineEnv(dir: string, opts: StartEngineOptions): NodeJS.ProcessEnv {
+    const platform: NodeJS.ProcessEnv = {};
+    if (opts.platform) {
+        platform.HRX_PLATFORM_READ_URL = opts.platform.readUrl;
+        if (opts.platform.writeUrl) {
+            platform.HRX_PLATFORM_WRITE_URL = opts.platform.writeUrl;
+        }
+    }
     return {
+        ...platform,
         PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
         HOME: dir,
         TMPDIR: dir,
@@ -90,6 +114,7 @@ function renderConfig(
     pgPort: number,
     httpPort: number,
     opts: StartEngineOptions,
+    audit: { dynamodbUrl: string; s3Url: string },
 ): string {
     const top = [
         `listen_pg = "${ENGINE_HOST}:${pgPort}"`,
@@ -107,12 +132,33 @@ function renderConfig(
         `[[users]]\nname = "${ENGINE_USER}"\npassword_env = "HRX_PG_PASSWORD_OPERATIONS"\n`,
     ];
     if (opts.prometheus) {
-        // `prometheus-restricted` (same URL, `restricted = true`) needs `[audit]`, which the
-        // engine refuses to start without: it comes with the harness audit store.
+        // `prometheus-restricted` (same URL, `restricted = true`) is added by feature
+        // int-harness-audit-store together with the full fake audit store.
         tables.push(
             `[[sources]]\nname = "prometheus"\nkind = "prometheus"\ndefault = true\nurl = ${tomlString(opts.prometheus.url)}\n`,
         );
     }
+    if (opts.platform) {
+        const write = opts.platform.writeUrl
+            ? 'write_url_env = "HRX_PLATFORM_WRITE_URL"\n'
+            : '';
+        tables.push(
+            `[[sources]]\nname = "platform"\nkind = "platform_postgres"\nread_url_env = "HRX_PLATFORM_READ_URL"\n${write}`,
+        );
+    }
+    // Always on: the engine refuses every Audited Query without a working store.
+    tables.push(
+        [
+            '[audit]',
+            `dynamodb_table = ${tomlString(AUDIT_TABLE)}`,
+            `s3_bucket = ${tomlString(AUDIT_BUCKET)}`,
+            'integrity_key_env = "AUDIT_INTEGRITY_KEY"',
+            'region = "us-east-2"',
+            `dynamodb_endpoint_url = ${tomlString(audit.dynamodbUrl)}`,
+            `s3_endpoint_url = ${tomlString(audit.s3Url)}`,
+            '',
+        ].join('\n'),
+    );
     return `${top.join('\n')}\n\n${tables.join('\n')}`;
 }
 
@@ -164,11 +210,21 @@ export async function startEngine(
         );
     }
 
-    const dir = scratchDir('engine');
     const [pgPort, httpPort] = await freePorts(2);
     const httpUrl = `http://${ENGINE_HOST}:${httpPort}`;
+    const ownAuditStore = opts.auditStore
+        ? undefined
+        : await startFakeAuditStore();
+    const auditStore = opts.auditStore ?? ownAuditStore!;
+    let configToml: string;
+    try {
+        configToml = renderConfig(pgPort, httpPort, opts, auditStore);
+    } catch (error) {
+        await ownAuditStore?.close();
+        throw error;
+    }
+    const dir = scratchDir('engine');
     const configPath = path.join(dir, 'federation-engine.toml');
-    const configToml = renderConfig(pgPort, httpPort, opts);
     fs.writeFileSync(configPath, configToml);
 
     const stdoutPath = path.join(dir, 'stdout.log');
@@ -177,7 +233,7 @@ export async function startEngine(
     const stderr = fs.openSync(stderrPath, 'w');
     const child = spawn(ENGINE_BINARY, ['--config', configPath], {
         cwd: dir,
-        env: engineEnv(dir),
+        env: engineEnv(dir, opts),
         stdio: ['ignore', stdout, stderr],
     });
     fs.closeSync(stdout);
@@ -202,6 +258,7 @@ export async function startEngine(
                     await exit;
                 }
             }
+            await ownAuditStore?.close();
             fs.rmSync(dir, { recursive: true, force: true });
         })();
         return stopping;
@@ -246,6 +303,7 @@ export async function startEngine(
         pid: child.pid!,
         binary: ENGINE_BINARY,
         configToml,
+        auditStore,
         stop,
     };
 }
