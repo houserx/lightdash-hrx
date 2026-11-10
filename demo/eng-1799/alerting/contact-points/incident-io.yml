@@ -1,0 +1,13 @@
+# incident.io's Alertmanager source, here the stack's fake receiver. The seed (stack/seed.ts) replaces
+# __DEMO_INCIDENT_IO_URL__ with the receiver's URL from up.sh (an ephemeral port). The bearer token is only a
+# reference: the backend reads ALERTING_SECRET_DEMO_INCIDENT_IO_TOKEN (set by stack/lightdash.ts).
+version: 1
+type: contact_point
+slug: incident-io
+name: incident.io (demo receiver)
+integrations:
+  - type: incident_io
+    url: __DEMO_INCIDENT_IO_URL__/webhook
+    token:
+      secretRef: demo-incident-io-token
+    disableResolveMessage: false

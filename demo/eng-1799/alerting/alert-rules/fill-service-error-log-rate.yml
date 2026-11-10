@@ -1,0 +1,32 @@
+# Fires when the fill-service logs more than 10 error lines a minute (LogQL on the fake Loki). Baseline is 1 or 2
+# a minute; the incident adds 20..30 (timed-out calls to shipping-label-api).
+version: 1
+type: alert_rule
+slug: fill-service-error-log-rate
+name: Fill service error log rate
+description: Pages pharmacy ops through incident.io when the fill-service logs more than 10 errors a minute
+labels:
+  team: pharmacy-ops
+  severity: warning
+  service: fill-service
+annotations:
+  summary: 'fill-service logged {{ $value }} errors in the last minute (threshold 10)'
+query: |
+  SELECT timestamp, value, labels
+  FROM logql_metric(
+      'sum(count_over_time({app="fill-service"} |= "level=error" [1m]))',
+      ${ld.parameters.__from},
+      ${ld.parameters.__to},
+      '30s'
+  )
+reducer: last
+condition:
+  operator: '>'
+  threshold: 10
+for: 0s
+interval: 30s
+timeRange: 5m
+noDataState: nodata
+errorState: error
+paused: false
+shadow: false

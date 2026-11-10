@@ -1,0 +1,49 @@
+chartConfig:
+  config:
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: hrx_fill_queue_backlog_queue
+            yRef:
+              field: hrx_fill_queue_backlog_backlog_peak
+          label:
+            position: right
+            show: true
+          type: bar
+      yAxis:
+        - max: "200"
+          min: "0"
+          name: Peak backlog
+    layout:
+      flipAxes: true
+      xField: hrx_fill_queue_backlog_queue
+      yField:
+        - hrx_fill_queue_backlog_backlog_peak
+  type: cartesian
+contentType: chart
+description: The highest hrx_fill_queue_backlog per queue in the Dashboard Time Range, as a horizontal bar gauge.
+metricQuery:
+  additionalMetrics:
+    - baseDimensionName: backlog
+      label: Peak backlog
+      name: backlog_peak
+      sql: ${TABLE}.backlog
+      table: hrx_fill_queue_backlog
+      type: max
+  dimensions:
+    - hrx_fill_queue_backlog_queue
+  exploreName: hrx_fill_queue_backlog
+  filters: {}
+  limit: 50
+  metrics:
+    - hrx_fill_queue_backlog_backlog_peak
+  sorts:
+    - descending: true
+      fieldId: hrx_fill_queue_backlog_queue
+  tableCalculations: []
+name: Peak backlog by queue
+slug: peak-backlog-by-queue
+spaceSlug: pharmacy-ops
+tableName: hrx_fill_queue_backlog
+version: 1

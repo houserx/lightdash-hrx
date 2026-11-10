@@ -1,0 +1,51 @@
+chartConfig:
+  config:
+    conditionalFormattings:
+      - color: "#E02F44"
+        rules:
+          - id: backlog-at-threshold
+            operator: greaterThanOrEqual
+            values:
+              - 100
+        target:
+          fieldId: hrx_fill_queue_backlog_backlog_current
+    label: Messages waiting in the fill queue
+    selectedField: hrx_fill_queue_backlog_backlog_current
+    showBigNumberLabel: true
+    showComparison: false
+  type: big_number
+contentType: chart
+description: The latest hrx_fill_queue_backlog{queue="fill"} sample in the Dashboard Time Range. Red at 100 and above, the Alert Rule threshold.
+metricQuery:
+  additionalMetrics:
+    - baseDimensionName: backlog
+      label: Current fill queue backlog
+      name: backlog_current
+      sql: ${TABLE}.backlog
+      table: hrx_fill_queue_backlog
+      type: max
+  dimensions:
+    - hrx_fill_queue_backlog_ts_raw
+  exploreName: hrx_fill_queue_backlog
+  filters:
+    dimensions:
+      and:
+        - id: fill-queue-only-rule
+          operator: equals
+          target:
+            fieldId: hrx_fill_queue_backlog_queue
+          values:
+            - fill
+      id: fill-queue-only
+  limit: 1
+  metrics:
+    - hrx_fill_queue_backlog_backlog_current
+  sorts:
+    - descending: true
+      fieldId: hrx_fill_queue_backlog_ts_raw
+  tableCalculations: []
+name: Current fill queue backlog
+slug: current-fill-queue-backlog
+spaceSlug: pharmacy-ops
+tableName: hrx_fill_queue_backlog
+version: 1

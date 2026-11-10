@@ -1,0 +1,28 @@
+version: 1
+contentType: sql_chart
+name: Orders by status
+description: Platform DB demo tile - count of synthetic orders per status (Audited Query, read only).
+slug: orders-by-status
+spaceSlug: platform-db
+sql: >-
+  SELECT status, orders
+  FROM platform_query('SELECT status, count(*)::int AS orders FROM orders GROUP BY status ORDER BY status')
+limit: 500
+chartKind: vertical_bar
+config:
+  metadata:
+    version: 1
+  type: vertical_bar
+  fieldConfig:
+    x:
+      reference: status
+      type: category
+    y:
+      - reference: orders
+        aggregation: sum
+    groupBy: []
+  display:
+    xAxis:
+      label: Status
+    yAxis:
+      - label: Orders

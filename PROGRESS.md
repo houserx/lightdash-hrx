@@ -1360,3 +1360,1551 @@ the rest. `int-mcp-telemetry-tools` needs the CloudWatch fix (21) first.
   int-harness-fake-bigquery and int-docs-integration pass. Unit: Federation 18/18, Postgres 35/35.
   warehouses tsc clean. eslint/prettier are not installed in this tree, so they were not run.
 - 2026-11-09T06:00:45Z supervisor: int-client-catalog passed the gate in round 1
+
+---
+
+# Line `demo`: the end-to-end demonstration and promo video
+
+This section is the hand-off between the demo line's sessions. Each session starts with an empty memory: read
+this whole section first, then `CONTEXT.md` (glossary: use its terms, never its `_Avoid_` terms), `docs/adr/0001`-
+`0004`, `docs/eng-1799/CONTRACTS.md`, and the `PROGRESS-<line>.md` of the piece you are wiring.
+
+The goal: `demo/eng-1799/up.sh` brings up a complete local HouseRx-like observability stack with live synthetic
+telemetry (no Docker, no network); a Playwright walkthrough drives the real UI through an incident in eight
+recorded scenes; `pnpm -F eng-1799-demo video` turns the recordings into a short promo MP4; `run-all.sh` does it
+all. The feature list (45 entries, ids `demo-*`) is kept by the supervisor. **Take features strictly in order.**
+
+## How to run things
+
+| What | Command (repo root) |
+|---|---|
+| Prepare the tree | `bash ./init.sh` (it runs the integration line's init, then `scripts/eng-1799/init-demo.sh`; see the top of `init.sh`) |
+| One feature's check | its `check`, e.g. `bash demo/eng-1799/acceptance/run.sh --stack platform-db.spec.ts` |
+| A check with a grep | `bash demo/eng-1799/acceptance/run.sh --stack alert-lifecycle.spec.ts --grep "demo-alert-fires:"` |
+| Bring the stack up / down by hand | `bash demo/eng-1799/up.sh` / `bash demo/eng-1799/down.sh` |
+| Regression gate (the supervisor sets it later) | `pnpm -F common typecheck && pnpm -F backend typecheck && pnpm -F frontend typecheck && pnpm -F @lightdash/cli typecheck && pnpm -F eng-1799-demo typecheck` |
+
+- **`init.sh` starts no server.** The goal and `specs/goal-common.md` say init only installs and builds; that
+  overrides the generic "init starts the app" step. `scripts/eng-1799/init-demo.sh` checks the Postgres binaries,
+  makes sure ffmpeg-static's binary and Playwright's chromium exist, rebuilds the **frontend production build**
+  (`pnpm -F frontend build`, about 15 s, into `packages/frontend/build`) when its inputs changed, and checks the
+  engine binary and `packages/telemetry-mcp/dist`. Stamps and logs: `tmp/.demo-init/`. Add demo build steps there.
+- **`acceptance/run.sh [--stack] <spec> [playwright args]`** (protected) runs ONE spec with
+  `pnpm -F eng-1799-demo exec playwright test --config acceptance/playwright.config.ts`. With `--stack` it runs
+  `down.sh`, then `up.sh` (output in `tmp/demo-acceptance/up.log`), then the spec, and **always** `down.sh` on exit
+  (trap). `DEMO_*` env passes through to `up.sh`. Playwright output: `tmp/demo-acceptance/test-results/`.
+- **`ps` is blocked in the factory sandbox** (`operation not permitted`). Use `pgrep -lf <regex>` (works) or pid
+  files. The checks use `pgrep -lf <path of .state>` to prove nothing is left running.
+- `/tmp` may not be writable; use the repo's `tmp/` (gitignored) for scratch, and `demo/eng-1799/.state/` for stack state.
+- Postgres: `/opt/homebrew/bin/{initdb,pg_ctl,postgres}`; `psql` is blocked. Listen on `127.0.0.1`, a free port,
+  `unix_socket_directories=''` (socket paths are longer than macOS allows). Use the `pg` package (in the demo
+  package) to run SQL.
+- Machine etiquette: one check at a time; `CARGO_BUILD_JOBS=2`; `-threads 2` for ffmpeg; stop what you start.
+
+## State at hand-off (init session, 2026-11-08)
+
+- `demo/eng-1799/package.json`: the workspace package `eng-1799-demo` (in `pnpm-workspace.yaml`, lockfile
+  updated) with devDependencies only: `@playwright/test` 1.63.0 (chromium-1243 is installed in the user cache),
+  `ffmpeg-static` 5.3.0 (binary downloaded at **install** time; allowed in `allowBuilds`), `pg` 8.13.1, `@types/pg`,
+  `@types/node`, `tsx`, `typescript` 7.0.2. **`scripts` is empty**: `typecheck`, `walkthrough`, `video` and `ask`
+  are features. No source, no `up.sh` yet. Every check fails today.
+- `demo/eng-1799/acceptance/**` (**protected**): `run.sh`, `playwright.config.ts`, `helpers/stack.ts`,
+  `helpers/scenarioWindows.ts` and 40 spec files covering the 45 features.
+- `.gitignore`: `/demo/eng-1799/.state/`, `/out/`, `/test-results/`, `/playwright-report/`, and every audio
+  extension under `/demo/`.
+- `init.sh` loops over `viz ldq mcp alerting engine demo`; `scripts/eng-1799/init-demo.sh` is new.
+- Measured on this machine (feasibility smoke, not committed): a fresh Lightdash Postgres migrates in **16 s**
+  (`pnpm -F backend migrate`, core migrations only with `LIGHTDASH_LICENSE_KEY` empty); the backend started with
+  `tsx src/index.ts` answers `/api/v1/health` after **22 s**, serves the production frontend at `/` (200), and its
+  in-process scheduler made `GET /api/v1/alerting/health` report `ok`. It **refuses to start without S3**
+  (`S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`): the demo needs a local S3-compatible fake (see below).
+- `tmp/demo-smoke/` may hold that smoke's stopped Postgres data dir; it is scratch, delete it freely.
+
+## Pinned interfaces (the protected tests use exactly these; build to them)
+
+### Files and commands
+
+| Path / command | Contract |
+|---|---|
+| `demo/eng-1799/up.sh` | Validates `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` (integers, seconds, `0 <= incident < recovery`; default 90 and 300) **before starting anything**, naming the bad variable on failure. Starts everything in the background on free `127.0.0.1` ports, seeds (itself or via `seed.sh`), writes `.state/stack.json`, prints `Lightdash: <lightdash.url>` and exits 0 once everything answers. Idempotent: if the stack is already up it prints the same line and changes nothing (same pids). All state under `demo/eng-1799/.state/`. |
+| `demo/eng-1799/down.sh` | Stops every process it started (process groups), so that no process's command line mentions `.state`, every pid in `stack.json` is gone and every port is closed. Exit 0 also when nothing runs. |
+| `demo/eng-1799/run-all.sh [--keep]` | up, seed, `scenario/restart` with the `DEMO_*` offsets, `walkthrough/run.sh` (all scenes), the video build, then down (skipped with `--keep`). Non-zero on the first failure, and still down (trap). |
+| `demo/eng-1799/walkthrough/run.sh [scene-id ...]` | Runs the given scenes (default: all eight, in order) against the RUNNING stack; never restarts the scenario clock; writes `demo/eng-1799/out/scenes/<scene-id>/video.webm` (1920x1080) and `key-moment.png` (1920x1080). Exit non-zero if a scene's assertions fail. |
+| `demo/eng-1799/walkthrough/<scene-id>.spec.ts` | One Playwright spec per scene, ids `01-sign-in 02-incident 03-alert-fires 04-service-health 05-investigate 06-ai-question 07-write-mode 08-recovery`. Each asserts what it shows (the checks require at least 3, or 4 for scenes 04 and 07, `expect(` calls). Wait on the scenario clock and on UI state with deterministic waits; no long sleeps. Standalone runs must work: the checks restart the scenario, then run one scene. |
+| `out/scenes/06-ai-question/answer.json` | The scripted client's output for scene 6 (same shape as `ask --json`). |
+| `pnpm -F eng-1799-demo ask --json "<question>"` | Scripted MCP client, no real model: gets a token from the fake Okta for the demo user, calls telemetry-mcp (`query_promql` or `ask_data`), prints ONE JSON line `{question, tool, arguments, query, result: {columns: string[], rows: unknown[][]}, answer}`. "fill queue backlog" questions query `hrx_fill_queue_backlog`; numeric cells are numbers or numeric strings. |
+| `pnpm -F eng-1799-demo video [--scenes-dir D] [--out O] [--music F]` | `demo/eng-1799/video/build.ts` (or `.sh`). Default D = `out/scenes`, O = `out`. Writes `O/eng-1799-demo.mp4` (H.264, 1920x1080, exactly 30 fps, AAC only with `--music`), `O/thumbnail.png` (or `.jpg`, 1920x1080 or 1280x720), `O/CHAPTERS.md`. Title card: a distinct card (not drawn over scene 1), 2-7 s, "Lightdash for HouseRx operations". Every scene in full, in order, with a lower-third caption. Crossfades (a real mix, `xfade=fade`), at most 1.5 s. End card: distinct from the last scene. `--music`: faded in and out (the check wants the first 0.4 s and last 0.5 s at least 10 dB under the middle); a missing file exits non-zero naming it. Uses `ffmpeg-static` only. |
+| `CHAPTERS.md` | Exactly ten chapter lines `- mm:ss Title` (title card at `00:00`, the eight scenes, the end card), increasing times, distinct titles. |
+| `pnpm -F eng-1799-demo typecheck` | `tsc` over the demo's TypeScript, **acceptance folder included** (it typechecks with `--strict --module nodenext --moduleResolution nodenext --lib es2022,dom --types node --skipLibCheck --esModuleInterop`; mirror that in `demo/eng-1799/tsconfig.json`). |
+| `docs/eng-1799/demo.md` | See the `demo-docs` check: headings for prerequisites, one command, presenting live, timeline, scenes, music; mentions `run-all.sh`, `--keep`, `up.sh`, `down.sh`, `pnpm -F eng-1799-demo video`, `--music`, licensing, `DEMO_INCIDENT_AT`, `DEMO_RECOVERY_AT`, `T+90s`, `T+5min`, every scene id, the frontend mode (production build) and why. |
+| `demo/eng-1799/seed/grafana/*.json` | A synthetic Grafana dashboard JSON (no HouseRx hosts) whose every non-row panel title is a Tile title of one seeded dashboard. |
+| `demo/eng-1799/seed/portal-scripts.json` | A synthetic portal saved-scripts export (`[{id, title, sql, ...}]`); `seed.sh`/`up.sh` must call `lightdash import portal-scripts`. The SQL is Platform Database SQL, kept verbatim. |
+
+### `.state/stack.json`
+
+```jsonc
+{
+  "lightdash":  { "url": "http://127.0.0.1:<port>", "projectUuid": "<Operations Project uuid>" },
+  "demoUser":   { "email": "<something>@example.com", "password": "<fake>" },
+  "scenario":   { "url": "http://127.0.0.1:<port>" },
+  "prometheus": { "url": "..." }, "loki": { "url": "..." }, "tempo": { "url": "..." }, "cloudwatch": { "url": "..." },
+  "engine":     { "host": "127.0.0.1", "pgPort": 0, "httpUrl": "...", "user": "lightdash-operations",
+                  "password": "<fake>", "database": "operations", "identitySecret": "<fake, shared with Lightdash and MCP>" },
+  "platformDb": { "host": "127.0.0.1", "port": 0, "user": "<cluster superuser>", "password": "<fake>", "database": "<db>" },
+  "incidentIo": { "url": "..." },
+  "mcp":        { "url": "..." },
+  "okta":       { "issuer": "..." },
+  "processes":  [ { "name": "engine", "pid": 123 }, ... ]   // every process up.sh started
+}
+```
+
+- Every `*.url` / `*Port` is on 127.0.0.1 and never a well-known port (5432, 5433, 8080, 8088, 3000, 9090, 3100, 3200).
+- `platformDb` is the cluster superuser (checks read `data_directory` and `pg_roles`). The engine uses its own
+  read and write roles. Names of processes: the engine's contains `engine`, telemetry-mcp's `mcp`, Lightdash's
+  `lightdash` or `backend`.
+- Fake secret values look like `test-...-not-real`; the demo user email ends in `@example.com`.
+
+### Scenario clock and data
+
+- `GET {scenario.url}/scenario` → `{startedAt, incidentAt, recoveryAt, now, phase: 'baseline'|'incident'|'recovered'}` (ISO strings).
+- `POST {scenario.url}/scenario/restart` with `{incidentAfterSeconds, recoveryAfterSeconds}` (may be negative)
+  restarts the timeline at now and returns the same shape. Data at time t is a pure function of t and the current
+  timeline, so a timeline shifted into the past fills look-back windows at once (`helpers/scenarioWindows.ts`).
+- **Prometheus** `hrx_fill_queue_backlog` (label `queue`, at least `queue="fill"`; also with `{queue="fill"}`, and
+  `promql_instant`): baseline values in `[0, 60]` and not constant; from `incidentAt+30s` to `recoveryAt`, at least
+  120; from `recoveryAt+60s`, at most 60. The Alert Rule threshold is 100.
+- **Loki** `{app="fill-service"}`: lines contain `level=info` / `level=error` (logfmt). `|= "level=error"` gives at
+  most 2 lines/min in the baseline and at least 10/min from `incidentAt+30s` to `recoveryAt`, and incident error
+  lines mention `shipping-label-api`. `sum(count_over_time({app="fill-service"} |= "level=error" [1m]))` agrees.
+- **Tempo**: `{ resource.service.name = "fill-service" }` returns at least 2 traces/min (root service
+  `fill-service`, at least 3 spans, one child span of service `shipping-label-api`); adding `&& duration > 2s`
+  returns only incident traces (at least 1/min), whose `shipping-label-api` span is at least 2000 ms; baseline
+  downstream spans are under 500 ms.
+- **CloudWatch** `GetMetricData`: Grafana target `{namespace: AWS/SQS, metricName: ApproximateNumberOfMessagesVisible,
+  dimensions: {QueueName: hrx-demo-fill-queue}, statistic: Maximum, period: 60}` follows the backlog numbers.
+  The engine's `aws-sdk-cloudwatch` speaks **Smithy RPC v2 CBOR**; see `federation-engine/tests/acceptance/harness/aws.rs`
+  for the wire details your Node fake must answer (also JSON 1.1 for Logs, JSON 1.0 for DynamoDB, REST for S3).
+- **CloudWatch Logs Insights** on `/hrx/demo/fill-service`: messages containing `ERROR` follow the error-log numbers;
+  support `fields ... | filter @message like /X/ | sort ... | limit N` and plain `fields ... | limit N`.
+- **incident.io fake**: `POST {incidentIo.url}/webhook` (Alertmanager v4 JSON, any bearer) records it;
+  `GET {incidentIo.url}/api/received` → `{notifications: [{receivedAt, payload}]}` in arrival order;
+  `GET {incidentIo.url}/` is an HTML page titled with "incident.io" with one table row per received alert
+  (alertname and status `firing`/`resolved`).
+- **Okta fake**: `POST {okta.issuer}/v1/token` with `{"email": "..."}` → `{access_token}` (RS256 JWT, iss = issuer,
+  aud = the MCP's `OKTA_AUDIENCE`); JWKS at `{okta.issuer}/v1/keys`. Demo only.
+
+### Names the seed must use
+
+Project name contains `Operations` (flavor `federation`). Dashboards `Pharmacy Ops overview` (with a Dashboard
+Time Range; Tiles `Fill queue backlog` (time series, `thresholds` with a step at 100), `Current fill queue backlog`
+(stat), a bar gauge titled `... by queue`, a Tile with `valueMappings`), `Service health` (a `log_stream` Tile, a
+`trace_waterfall` Tile, a Tile titled with "heatmap" or "state timeline"), `Platform DB` (at least two `sql_chart`
+Tiles calling `platform_query`). Alert Rules `Fill queue backlog high` and `Fill service error log rate`, neither
+paused nor shadow, routed to an `incident_io` Contact Point whose URL starts with `incidentIo.url` and whose token is
+a `secretRef`. The demo user has user attributes `platform_read` and `platform_write` = `true`.
+
+## Suggested architecture (nothing is built yet; change it if you must, keep the pins)
+
+- `demo/eng-1799/stack/*.ts`: small Node servers run with `tsx` (or plain node), no new runtime deps unless needed:
+  one **scenario + telemetry fakes** process (scenario API, Prometheus, Loki, Tempo, CloudWatch + Logs on separate
+  ports, sharing one clock), one **AWS fakes** process (DynamoDB `PutItem`/`Query` over the portal GSIs, and an
+  S3-compatible store for both the engine's audit objects and **Lightdash's results**: path-style
+  Put/Get/Head/List/Delete, multipart if Lightdash uses it), the **incident.io** fake, the **Okta** fake.
+  Deterministic data: seeded hash of (series, time bucket), never `Math.random()`.
+- `up.sh`: pick free ports (node `net.listen(0)`), write configs into `.state/`, start each server in its own
+  process group with logs in `.state/logs/`, record pids, wait for each to answer, then seed. `down.sh`: TERM each
+  group, wait, KILL leftovers, `pg_ctl stop` both clusters. Make `up.sh` detect a live stack via `stack.json` pids.
+- **Engine**: `tmp/cargo-target/debug/engine --config .state/engine/federation-engine.toml` (the binary the root `init.sh` builds; the `e2e/eng-1799` harness uses the same one). Keys are in
+  `PROGRESS-engine.md` ("Config"). Give AWS clients `endpoint_url`/`dynamodb_endpoint_url`/`s3_endpoint_url`, set fake
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_REGION`, `AWS_EC2_METADATA_DISABLED=true`; leave `role_arn` out
+  unless you also fake STS. `platform_postgres` needs `read_url_env`/`write_url_env` and `[audit]` (fail-closed:
+  without a working audit store every Audited Query fails with 58000).
+- **Lightdash backend**: `pnpm -F backend migrate`, then `tsx packages/backend/src/index.ts` (production
+  `node dist/index.js` needs `pnpm -F backend build`; tsx boots in about 22 s). Env seen to work: `PGHOST/PGPORT/
+  PGUSER/PGPASSWORD/PGDATABASE`, `LIGHTDASH_SECRET`, `SITE_URL`, `PORT`, `LIGHTDASH_LICENSE_KEY=` (empty: core
+  migrations only, pgvector is absent), `S3_ENDPOINT/S3_BUCKET/S3_REGION/S3_ACCESS_KEY/S3_SECRET_KEY` (→ the S3
+  fake; check whether Lightdash needs path-style/force-path env). Also set `TZ=UTC`,
+  `RUDDERSTACK_ANALYTICS_DISABLED=true` and anything else that phones home (no network: grep parseConfig for
+  `https://`), `ALERTING_SECRET_<NAME>` for the incident.io token (`ALERTING_SECRET_INCIDENT_IO_DEMO` for
+  `secretRef: incident-io-demo`). The scheduler ran in-process in the smoke (alerting health `ok`); check
+  `SCHEDULER_ENABLED` and the scheduler's task list if you split it out. The frontend is the production build in
+  `packages/frontend/build`, served by the backend (say so in `docs/eng-1799/demo.md`).
+- **Seeding**: first user/org through the API (`/api/v1/register` or the org-registration flow the health
+  endpoint asks for: `requiresOrgRegistration: true`), a personal access token, then the CLI from source
+  (`pnpm -F @lightdash/cli exec tsx src/index.ts ...` with `LIGHTDASH_URL`, `LIGHTDASH_API_KEY`) for `upload`,
+  `upload --alerting-only` and `import portal-scripts`; user attributes and groups through the API. The project is
+  `type: postgres, flavor: federation` with `identitySigningSecret` = the engine's identity secret and `httpBaseUrl`
+  = the engine's HTTP URL. The alert evaluator's system identity needs `platform_read` only if a rule reads the
+  Platform Database.
+- **telemetry-mcp**: `node packages/telemetry-mcp/dist/main.js` with the env in `PROGRESS-mcp.md` ("Env vars"):
+  `OKTA_ISSUER`/`OKTA_AUDIENCE`/`OKTA_JWKS_URI` → the Okta fake, `LIGHTDASH_URL` + a service account/PAT for
+  `LIGHTDASH_API_TOKEN`, `LIGHTDASH_PROJECT_UUID`, `ENGINE_PG_*`, `ENGINE_HTTP_URL`, `HRX_IDENTITY_SECRET`,
+  `MCP_SOURCES` (JSON list matching the engine config).
+- **Walkthrough**: `demo/eng-1799/walkthrough/playwright.config.ts` with `use.video: {mode: 'on', size: {width:
+  1920, height: 1080}}` and `viewport` 1920x1080, one worker, scenes in file order; `run.sh` copies each scene's
+  video and screenshot to `out/scenes/<id>/`. Read the URLs from `.state/stack.json`. The dashboard grid is
+  react-grid-layout (`.react-grid-item`); the log stream and trace waterfall expose `data-testid`s
+  (`log-stream-row` with `data-level`, `trace-span-row`, a Drawer on span click: see `PROGRESS-viz.md`).
+- **Video**: build with one ffmpeg `filter_complex`: per input `fps=30,scale=1920:1080,drawbox+drawtext` (font e.g.
+  `/System/Library/Fonts/Supplemental/Arial.ttf`; ffmpeg-static has `drawtext`, `xfade`, `afade`, `libx264`, `aac`),
+  `xfade=transition=fade` chained with offsets = running length − fade, `-threads 2`. A throwaway prototype of
+  exactly this passed all four video checks in the init session (about 25 s per build of 2.5 min of video).
+
+## Risks and open questions for the feature sessions
+
+1. **The integration branch.** Decision 2026-11-09: before the demo build run, the controls engineer merges the
+   promoted `eng-1799-integration` branch into this one. After it lands, look for `e2e/eng-1799/` (fakes and boot
+   code to reuse) and re-read `PROGRESS.md`/`PROGRESS-*.md` for changes. Prefer reusing over rewriting.
+2. **Registry charts (stat, bar gauge, heatmap, state timeline)** are data-app visualizations under `ee/`; without
+   a licence they may not render. The checks do not require registry charts: the stat may be a built-in big number
+   with conditional formatting (the check looks for a red text/background/fill/stroke or a red `data-color` inside
+   the `Current fill queue backlog` grid item, including same-origin iframes), the bar gauge a built-in chart, the
+   heatmap a custom (Vega-Lite) chart. Record the choice in the docs.
+3. **Explore-backed chart types.** `log_stream`, `trace_waterfall` and cartesian `thresholds` are saved-chart
+   (explore) configs. A `none` project has no explores: use the native-git Lightdash semantic layer
+   (`semanticLayer: 'lightdash'`) or virtual views over the engine's table functions, with the reserved
+   `${ld.parameters.__from}` / `__to` / `__interval` parameters. Prove one Tile end to end before seeding all.
+4. **Platform DB Tiles are Audited Queries** and need `audit.description`. If ldq's tile path sends none, the
+   smallest fix (a description from the saved chart's description) is a small upstream edit outside `ee/`; record it.
+5. **Alert timing.** Rule `interval` minimum is 30 s; the tick runs every 15 s. Seed the rules with `interval: 30s`,
+   `for: 0s` (or short), and a route with short `groupWait`/`groupInterval` (about 5-10 s) so the alert checks fit.
+6. **Check budget.** Most `--stack` checks should stay under 3 minutes warm, which means `up.sh` (boot + seed)
+   must stay well under a minute and a half. `demo-stack-lifecycle` (two ups) and `demo-run-all` are allowed longer.
+
+## Conventions
+
+- New code in `demo/eng-1799/**` and `docs/eng-1799/demo.md`. Edits to upstream files only when unavoidable and
+  small (a registration line). **Never touch any `ee/` directory** (the `demo-hygiene` check diffs against `f85d1ce60`).
+- Never edit `demo/eng-1799/acceptance/**`. If a test is truly wrong, stop and say why in your result.
+- Synthetic data only, obviously fake (names with Demo/Example/Fake, emails `@example.com`); no PHI; fake secrets
+  `test-...-not-real`. No network at run time (no URLs other than localhost/example in demo code).
+- **Music:** the video takes optional music only from `--music <file>` supplied by the person running it. The repo
+  never contains, downloads or references any commercial or copyrighted audio (decision 2026-11-09: a request for a
+  specific commercial track was declined). No audio files are committed (`.gitignore` enforces it).
+- Glossary in UI copy, captions and docs: Telemetry Source, Federation Engine, Operations Project, Tile, Dashboard
+  Time Range, Investigate, Alert Rule, Contact Point, Notification Route, Audited Query, Write Mode, Preview,
+  Platform Database. Never: datasource, panel (for a Tile), dry run, notification policy, prod DB.
+- `pnpm install --frozen-lockfile` must pass: whoever adds a dependency runs `pnpm install` and keeps the lockfile.
+- Stop every server you start; leave no process running at the end of a session.
+
+## Contract assumptions (demo line)
+
+1. `up.sh` seeds by default; the goal allows `seed.sh` too, so `up.sh` may call it. The scenario clock starts when
+   its server starts; `run-all.sh` restarts it right before the walkthrough so scene 1 begins at T.
+2. "Ephemeral or configurable ports": ephemeral; the checks reject well-known ports.
+3. The scripted AI client may call `query_promql` directly (the "model" is a script); `ask_data` is optional.
+4. Alert Rules in the demo are ordinary (not Shadow Run), so notifications leave the process (to the local fake only).
+
+## Feature order
+
+package-workspace, config-validation, scenario-clock, platform-db, engine-boot, fake-prometheus, fake-loki,
+fake-tempo, fake-cloudwatch-metrics, fake-cloudwatch-logs, audit-store, engine-healthy, fake-incident-io,
+lightdash-backend, lightdash-frontend, stack-lifecycle, seed-project, lightdash-engine-query,
+dashboard-pharmacy-ops, dashboard-pharmacy-ops-ui, dashboard-service-health, dashboard-platform-db, grafana-fixture,
+portal-script, alerting-seed, alert-fires, alert-resolves, mcp-server, mcp-ask, scene-01 … scene-08, video-build,
+video-cards-captions, video-thumbnail-chapters, video-music, docs, run-all-fails-cleanly, hygiene, run-all
+(all prefixed `demo-`).
+
+## Status
+
+- 2026-11-08 init session: package skeleton, protected acceptance harness (40 specs, 45 features), `init-demo.sh`,
+  this section. `bash ./init.sh` exits 0 (warm about 5 s). Checks run and failing for the intended reason:
+  package (no `typecheck` script), config-validation (no `up.sh`), scenario-clock and pharmacy-ops-ui (`--stack`:
+  "up.sh does not exist yet"), lifecycle, docs (no `demo.md`), hygiene (no `up.sh`), run-all-failure, video-build
+  (no `video` script). The four video checks were also shown passable against a throwaway prototype build.
+- 2026-11-09T01:56:50Z supervisor: initialized: 45 features, run 20261108-201404
+
+## Merged with the integration line (2026-11-09, controls engineer)
+
+The demo base now includes `eng-1799-integration` (8a033e710: all 50 integration checks pass). Reuse it:
+- `e2e/eng-1799/harness/` has working fakes (Prometheus, Loki, CloudWatch and Logs Insights, Tempo, fake BigQuery,
+  the audit store and fake S3), throwaway Postgres helpers and the Lightdash boot path (`int-lightdash-boot`).
+  Read `docs/eng-1799/integration.md` and the integration section above before writing a new fake.
+- The engine binary is `tmp/cargo-target/debug/engine` (one build for both lines).
+- The engine lists DataFusion's `information_schema` views under every catalog; filter `table_schema <> 'information_schema'`
+  when you list a source's tables.
+- 2026-11-09T06:48:02Z supervisor: initialized: 45 features, run 20261109-013019
+- 2026-11-09T06:49:33Z supervisor: demo-package-workspace halted: the worker halted on demo-package-workspace
+
+### demo-config-validation (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/up.sh`: validates `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` (defaults 90 / 300; whole
+  non-negative seconds, at most 9 digits, incident < recovery) **before** creating anything, exit 2 with a message
+  naming the variable. With a valid timeline it currently prints the timeline, creates `.state/`, then exits 1
+  ("no stack services are implemented yet; nothing was started"): it never claims a stack that is not there.
+  **Next sessions:** replace that tail (the `# ---- stack` section) with the real start-up; keep validation first.
+- New `demo/eng-1799/down.sh` (idempotent, exit 0 when nothing runs): `pg_ctl -m fast stop` for every
+  `postmaster.pid` under `.state/`, TERM to each `stack.json` `"pid"` (its process group `-pid` and the pid) and to
+  any process whose command line mentions `.state` (`pgrep -f`), KILL after `DEMO_DOWN_GRACE_SECONDS` (10), then
+  removes `stack.json` (keeps logs/configs). So: start each service as a process-group leader and record its pid in
+  `stack.json`; pass a `.state/...` path on each service's command line so the leftover sweep catches it.
+- Tested as a user: `down.sh` with no state (exit 0); `up.sh` with `soon`, `-5`, `120/60`, `60/60`, `' 30'` all
+  refused naming the variable; default `up.sh` exits 1 with the "not implemented" line; `down.sh` stopped a fake
+  recorded pid and a fake process with `.state` in its command line; `pgrep -lf .state` empty afterwards.
+  Check `bash demo/eng-1799/acceptance/run.sh config-validation.spec.ts` passes (exit 0).
+- Note: demo-package-workspace halted earlier in this run (no `typecheck` script / `tsconfig.json` yet); this
+  feature does not depend on it.
+- 2026-11-09T06:51:17Z supervisor: demo-config-validation passed the gate in round 1
+
+### demo-scenario-clock (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/clock.ts`: `ScenarioClock` (timeline = startedAt/incidentAt/recoveryAt in epoch ms,
+  `phaseAt(t)`, `restart(incidentAfterSeconds, recoveryAfterSeconds)`, `view()` = the pinned JSON plus
+  `incidentAfterSeconds`/`recoveryAfterSeconds`) and `validateOffsets` (finite numbers, |x| <= 999999999,
+  recovery > incident; negative allowed). **Fakes must read `clock.current()` / `phaseAt(t)` per request** so data
+  at t is a pure function of t and the current timeline.
+- New `demo/eng-1799/stack/telemetry-fakes.ts`: the one "scenario + telemetry fakes" process. Serves
+  `GET /scenario`, `POST /scenario/restart` (400 with `{error}` on bad offsets or bad JSON), `GET /healthz` on an
+  ephemeral 127.0.0.1 port, then writes `--ready-file` (`.state/run/telemetry-fakes.json`, `{scenario:{url}}`)
+  atomically. **Add Prometheus/Loki/Tempo/CloudWatch here** as more `http.Server`s on their own ports, add them to
+  `servers` and to the ready-file JSON. Runs as `node --import tsx` (one process, cwd = demo dir, no
+  `"type": "module"`, so no top-level await). The clock starts when this process starts (T = process start).
+- `up.sh` `# ---- stack` section now: if `stack.json` exists and every recorded pid is alive and the clock answers,
+  it says "already running; nothing changed" and exits 0 (same pids); otherwise it runs `down.sh` first. Services
+  start through `start <name> <cmd...>` (perl `setpgrp` + `exec`: own process group, pid kept, log in
+  `.state/logs/<name>.log`) and `wait_ready`; on failure the EXIT trap TERMs what this run started. `stack.json`
+  is written by a `node -e` block at the end with **only** `scenario` and `processes` so far: later features add
+  their keys there. The `Lightdash: <url>` line is not printed yet (the Lightdash feature adds it in `report()`).
+- Tested as a user: `DEMO_INCIDENT_AT=100 DEMO_RECOVERY_AT=400 up.sh` → GET shows offsets 100/400, phase
+  baseline; restart 3/7 → baseline, incident from ~3 s, recovered from ~7 s (polled once a second); restart
+  -120/-30 → recovered with incidentAt 2 min ago; -60/600 → incident; 10/5, a string offset and non-JSON → 400;
+  second `up.sh` kept pid; `down.sh` stopped it, no process left. Check `scenario-clock.spec.ts` (--stack) passes;
+  `config-validation.spec.ts` still passes. `tsc --strict --module nodenext` over `stack/*.ts` is clean
+  (pass `--ignoreConfig`: a parent tsconfig is picked up otherwise; the demo still has no `tsconfig.json`).
+- 2026-11-09T06:54:45Z supervisor: demo-scenario-clock passed the gate in round 1
+
+### demo-platform-db (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/platform-db.ts` (CLI, not a module: importing it runs it). `prepare --dir .state/platform-db`
+  wipes and `initdb`s a fresh cluster (superuser `demo_admin`, scram, C locale), appends port (free ephemeral),
+  `listen_addresses = '127.0.0.1'`, `unix_socket_directories = ''`, fsync off; prints the port. `seed --port --pid
+  --ready-file` waits for the server, creates database `platform`, roles `engine_read` (SELECT) and `engine_write`
+  (SELECT/INSERT/UPDATE/DELETE), tables `queues` (4: demo-intake/fill/verification/shipping), `orders` (120,
+  `DEMO-ORD-nnnnn`, "Demo Customer n", `@example.com`), `fills` (120, one per order, 48 `queued`), `shipments` (72,
+  `FAKE-TRK-…`, "… Example Street, Demo City"), timestamps relative to seed time; writes `.state/run/platform-db.json`.
+  Every name/email/phone/address-shaped value says demo/example; no dob/mrn/ssn-shaped columns (spec checks this).
+- `up.sh`: between the scenario clock and stack.json, runs `prepare`, then `start platform-db $PG_BIN/postgres -D
+  .state/platform-db/pgdata` (own process group, pid in `processes`; down.sh's `pg_ctl stop -m fast` handles it),
+  then `seed`. `PG_BIN` = `DEMO_PG_BIN` or the dir of `postgres` on PATH (/opt/homebrew/bin). Logs:
+  `.state/logs/platform-db.log` (server), `platform-db-init.log` (initdb/seed). **The data is reset on every fresh
+  up.sh** (Write Mode commits do not survive a restart; a live stack is kept as-is).
+- `stack.json` now has `platformDb: {host, port, user, password, database, roles: {read: {user,password}, write:
+  {user,password}}}`; `user` is the superuser (the spec needs `show data_directory`). **The engine feature should use
+  `roles.read`/`roles.write`** for Audited Queries / Write Mode. `report()` prints the Platform Database URL (no password).
+- Tested as a user: `up.sh` → connected with stack.json credentials (node pg; no `psql` on this machine): data dir under
+  `.state`, listen 127.0.0.1, counts 120/120/4/72, sample rows all demo/example/fake; `engine_read` can select but
+  UPDATE is refused, `engine_write` can update. Second `up.sh` kept the stack; `down.sh` stopped Postgres, no
+  `.state` process left. Checks `platform-db.spec.ts` and `scenario-clock.spec.ts` (--stack), `config-validation.spec.ts`
+  pass; `tsc --ignoreConfig --strict --module nodenext --types node stack/*.ts` clean.
+- 2026-11-09T06:58:14Z supervisor: demo-platform-db passed the gate in round 1
+
+### demo-engine-boot (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/engine-config.ts` (CLI): `--dir .state/engine --platform-file .state/run/platform-db.json
+  --ready-file .state/run/engine-config.json`. Picks 9 distinct free ports at once (engine pg + http, and one per
+  endpoint the engine points at) and writes `federation-engine.toml` (sources `prometheus`, `loki`, `tempo`,
+  `cloudwatch`, `cloudwatch-logs` (kind `cloudwatch_logs`), `platform` (`platform_postgres`, read as `engine_read`,
+  Write Mode as `engine_write`), `[audit]` table/bucket `demo-federation-audit`, region us-east-2, integrity key),
+  `engine.env` (0600: the engine's whole env: fake secrets, fake AWS creds, `AWS_ENDPOINT_URL` at dead port 9,
+  no user AWS config, Platform URLs) and the ready file `{engine: {...stack.json engine...}, endpoints: {prometheus,
+  loki, tempo, cloudwatch, cloudwatchLogs, auditDynamodb, auditS3}}`.
+- **Endpoint ports are reservations.** The fake features (prometheus, loki, tempo, cloudwatch(-logs), audit-store)
+  must make their servers listen on exactly `endpoints.*` from `.state/run/engine-config.json` (up.sh writes it
+  before starting the engine; today it runs after the telemetry-fakes process starts: either pass the ports to that
+  process, or move the engine-config step before it). Until then `/healthz` is 503 with those sources unreachable
+  (only `platform` reachable) and Audited Queries fail closed (no audit store).
+- `up.sh`: after the Platform Database, writes the config, runs `engine --check-config`, then `start engine`. `start`
+  now honours `DEMO_START_ENV_FILE=<file>` (perl clears `%ENV` and loads `KEY=value` lines; no secret on a command
+  line). Ready = `/healthz` answers any status (60 s). `stack.json` gains `engine` (host, pgPort, httpUrl, user
+  `lightdash-operations`, password, database `operations`, identitySecret) and process `engine`; it is now written
+  0600. `report()` prints the engine URL.
+- **Binary path decision:** the spec pgreps `federation-engine/target/(debug|release)/engine`, but the one build is
+  `tmp/cargo-target/debug/engine`. up.sh runs `federation-engine/target/debug/engine`, a symlink (gitignored dir) it
+  (re)creates to the tmp/cargo-target build; a real file there (the engine line's own build) is used as is;
+  `DEMO_ENGINE_BIN` overrides. No second cargo build.
+- Tested as a user: `up.sh` → engine log "serving, sources 6"; pg-wire with stack.json engine creds: `version()` =
+  `PostgreSQL 16.0 (hrx-federation-engine 0.1.0)`, wrong password refused; `/healthz` 503 naming all six sources;
+  pgrep shows the symlink path with `--config .state/engine/federation-engine.toml`; the same config minus `[audit]`
+  → `--check-config` exit 1 "audited sources "platform" need an [audit] table"; second up.sh kept the pids;
+  down.sh left no process. Checks engine-boot, platform-db, scenario-clock (--stack) and config-validation pass;
+  `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean.
+- 2026-11-09T07:03:29Z supervisor: demo-engine-boot passed the gate in round 1
+
+### demo-fake-prometheus (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/prometheus.ts`: `prometheusHandler(() => clock.current())`, served by the telemetry-fakes
+  process. Series `hrx_fill_queue_backlog{job="fill-service", queue="fill"|"pack"|"ship"}`, 15 s scrapes; the value at
+  evaluation time t is the latest scrape <= t, jitter = sha256 of (series, scrape time) (no `Math.random()`).
+  `fill`: baseline 18..48; ramps to 140..175 over 15 s from incidentAt; falls back over 45 s from recoveryAt. **The
+  ramps are 15 s shorter than the pinned bounds because a sample can be one scrape old** (keeps >= 120 from
+  incidentAt+30s, <= 60 from recoveryAt+60s). `pack` 8..22 and `ship` 3..12 always. The CloudWatch fake ("follows
+  the backlog numbers") can reuse `fillBacklog` (export it).
+- API: `/api/v1/query_range` (matrix), `/api/v1/query` (vector), labels, label values, series, metadata, buildinfo,
+  `/-/healthy`, `/-/ready`; GET or POST form. PromQL subset: one selector with `= != =~ !~` matchers, optionally in
+  `sum|min|max|avg|count [by|without (...)] (...)`. Anything else (`rate(...)`, `[5m]`, comparisons) is 400 bad_data;
+  extend `parseQuery` if a later feature (alert rule, dashboards, MCP) needs more.
+- `telemetry-fakes.ts` now requires `--endpoints-file .state/run/engine-config.json` and listens on exactly
+  `endpoints.prometheus`; its ready file is `{scenario:{url}, prometheus:{url}}`. **up.sh order changed**: Platform
+  Database → engine config → telemetry-fakes (clock T starts here, a few seconds later than before) → engine. Later
+  fakes (Loki, Tempo, CloudWatch(-Logs)) should listen on their `endpoints.*` in the same way. `stack.json` gains
+  `prometheus.url`; `report()` prints it.
+- Tested as a user: `up.sh`, restart -240/-90, `promql('hrx_fill_queue_backlog', now-400s, now, '15s')` through the
+  engine (pg-wire, stack.json creds): 81 rows, 3 series; fill 22..48 before the incident, 137..173 during, 117/68 on
+  the way down, 28..47 after; two runs identical; `promql_instant('...{queue="fill"}', now)` = 47; `sum by (job)` works;
+  a broken query gives the engine error "HTTP 400: bad_data: ..."; `/healthz` shows prometheus reachable. Checks
+  fake-prometheus, engine-boot, platform-db, scenario-clock (--stack, 100/400) and config-validation pass; `tsc
+  --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no `.state` process left.
+- 2026-11-09T07:08:15Z supervisor: demo-fake-prometheus passed the gate in round 1
+
+### demo-fake-loki (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/loki.ts`: `lokiHandler(() => clock.current())`, served by telemetry-fakes on
+  `endpoints.loki`. Two streams `{app="fill-service", env="demo", level="info"|"error"}`, logfmt lines. One slot
+  per whole second: the line's ms offset, level and wording are a sha256 hash of the second. Baseline/recovered:
+  ~20 info lines/min plus one ordinary error line every 40 s, **so every 1 m window has 1 or 2 errors, never 0**
+  (an error-rate Alert Rule gets data in the baseline, not NoData). Incident `[incidentAt, recoveryAt)`: an extra
+  error every 3 s plus ~1/6 of the other seconds (~27/min seen), all `msg="create shipping label failed"
+  downstream=shipping-label-api duration_ms=2000..4999`; "label created" info lines carry the same slow
+  durations in the incident and 120..479 ms otherwise (matches the Tempo pin).
+  `fillServiceLogs(fromMs, toMs, timeline)` is exported for the CloudWatch Logs fake ("ERROR follows the
+  error-log numbers"): reuse it rather than writing a second generator.
+- API: `/loki/api/v1/query_range` (streams or matrix), `/loki/api/v1/query` (metric only, like Loki),
+  labels, label values, series, buildinfo, `/ready`; GET or POST form; errors are Loki-style plain-text 400s.
+  Loki defaults: limit 100 (max 5000), direction backward, start = end-1h, step = max(range/250, 1s); times in ns,
+  s or RFC 3339; ranges over 7 days refused (lines are generated on demand). LogQL subset: selector + line
+  filters `|= != |~ !~`; `count_over_time|rate|bytes_over_time(... [range])`, optionally in
+  `sum|min|max|avg|count [by|without (...)]`. Metric points with no lines are omitted, as Loki does. Not yet:
+  `| logfmt`, label filters, `unwrap`; extend `parseLogQuery`/`parseMetricQuery` if a dashboard, rule or MCP needs them.
+- `prometheus.ts` now exports `BadData`, `Labels`, `Matcher`, `Selector`, `parseSelector`, `parseGrouping`,
+  `matches`, `parseStep` (shared with the Loki fake, behaviour unchanged). `up.sh` checks `$LOKI_URL/ready`, puts
+  `loki.url` in stack.json and `report()` prints it.
+- Tested as a user: `up.sh`, restart -240/-90, through the engine (pg-wire, stack.json creds):
+  `logql('{app="fill-service"} |= "level=error"', now-400s, now, 5000, 'forward')` → 76 lines, 1.6/min baseline,
+  27.3/min incident, every incident error mentions shipping-label-api; `{app="fill-service"}` baseline 51 lines
+  (default backward, newest first); `logql_metric('sum(count_over_time(... [1m]))', ..., '30s')` 1-2 in the
+  baseline, 11..28 in the incident, back to 1 after recovery; `sum by (level) (rate(...[1m]))` works; `| json`
+  → engine error "HTTP 400: parse error: ..."; `{app="other"}` → 0 rows; repeated query identical. Checks
+  fake-loki, fake-prometheus, engine-boot, scenario-clock, platform-db (--stack) and config-validation pass;
+  `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no process left.
+- 2026-11-09T07:14:26Z supervisor: demo-fake-loki passed the gate in round 1
+
+### demo-fake-tempo (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/tempo.ts`: `tempoHandler(() => clock.current())`, served by telemetry-fakes on
+  `endpoints.tempo`. One slot per whole second: a trace starts in every second divisible by 15 plus ~1/8 of the
+  others (~11/min); offset, ids and timings are sha256 hashes of the second. Spans: root fill-service SERVER
+  `POST /fills/{fill_id}/ship` → fill-service `SELECT demo.fills` (3..32 ms), fill-service CLIENT
+  `POST shipping-label-api /v1/labels` → **shipping-label-api SERVER `POST /v1/labels`** (120..479 ms, 2000..4999 ms
+  for traces starting in `[incidentAt, recoveryAt)`), and `publish fill.label_created` when the call succeeded.
+  About half of the incident traces fail (`context deadline exceeded`, status error on root/client/server, 504,
+  no publish span). So the shipping-label-api span's parent is the fill-service client span, not the root.
+- **Trace id = slot second as 8 hex + 24 hex hash**, so `trace(id)` needs no time range; ids are a function of
+  the second, but the spans (slow/fast) follow the current timeline, so a restart can change an old id's trace.
+  Exported for later fakes/scenes: `fillServiceTraces(fromMs, toMs, timeline)`, `traceById(id, timeline)`.
+  Traces are NOT correlated with the Loki lines (different hash keys; only the same duration ranges).
+- API: `/api/search` (q, start/end unix s, default last 1 h, max 168 h; limit default 20; minDuration/maxDuration;
+  newest first; `matched` = matching span count), `/api/traces/<id>` (`batches`) and `/api/v2/traces/<id>`,
+  `/api/search/tags`, `/api/v2/search/tags`, `/api/(v2/)search/tag/<t>/values`, `/api/echo`, buildinfo, `/ready`;
+  errors are plain-text 400s, unknown id 404. TraceQL subset: spanset filters `{...}` (several joined by one of
+  && / ||), conditions with && / || / parentheses, ops `= != > >= < <= =~ !~`, intrinsics name, status, kind,
+  duration (span duration, as Tempo), rootName, rootServiceName, traceDuration, attributes `resource.x`,
+  `span.x`, `.x`. Pipelines (`| count()`) and structural operators answer 400; extend `parseQuery` if needed.
+- `up.sh` checks `$TEMPO_URL/ready`, writes `tempo.url` to stack.json, `report()` prints it. `/healthz` now shows
+  tempo reachable (only cloudwatch/cloudwatch-logs unreachable).
+- Tested as a user: `up.sh`, restart -240/-90, through the engine (pg-wire, stack.json creds), 400 s window, limit
+  500: `{ resource.service.name = "fill-service" }` → 76 traces (27 baseline, 35 incident, 14 recovered), all root
+  fill-service; `&& duration > 2s` → 35, all in the incident, min 2027 ms; default limit → 20 rows;
+  `{ status = error }` → 16, all incident; `trace(<slow id>)` → 5 spans, shipping-label-api 2757 ms under the
+  fill-service client span (2760 ms) under the root (2774 ms); a baseline trace's label span 285 ms; unknown id →
+  0 rows; a pipeline → engine error "HTTP 400: invalid TraceQL query: ..."; repeated query identical. Checks
+  fake-tempo, fake-loki, fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation pass; `tsc
+  --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no process left.
+- 2026-11-09T07:20:16Z supervisor: demo-fake-tempo passed the gate in round 1
+
+### demo-fake-cloudwatch-metrics (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/cloudwatch.ts`: `cloudwatchHandler(() => clock.current())`, served by telemetry-fakes
+  on `endpoints.cloudwatch`. Metric AWS/SQS `ApproximateNumberOfMessagesVisible` {QueueName=hrx-demo-fill-queue}
+  (unit Count): one raw sample every 10 s (epoch-aligned, sha256 jitter), baseline 20..50, from incidentAt a 20 s
+  ramp to 150..190, from recoveryAt a 30 s ramp back. Samples after "now" do not exist; empty buckets are
+  left out. Other metrics/dimensions/units → Complete result with no datapoints; add entries to `METRICS`.
+- **Wire protocol trap:** the engine's aws-sdk-cloudwatch 1.140 speaks **Smithy RPC v2 CBOR**
+  (`POST /service/GraniteServiceVersion20100801/operation/GetMetricData`, `smithy-protocol: rpc-v2-cbor`),
+  not the query protocol. The fake has its own small CBOR codec (no new dependency): timestamps are tag 1 +
+  float seconds, Values are always CBOR doubles, errors are 400 `{__type, message}`. AWS JSON 1.0
+  (`X-Amz-Target: GraniteServiceVersion20100801.GetMetricData`, epoch-second timestamps) is answered too, for curl.
+  The CloudWatch Logs fake (next) will need the same check: look at
+  `~/.cargo/registry/src/*/aws-sdk-cloudwatchlogs-*/src/operation/start_query.rs` for the protocol it sends.
+- Buckets start at StartTime + k·Period (StartTime is NOT rounded to the minute) while they start before
+  EndTime. Stats: Average, Sum, Minimum, Maximum, SampleCount, pNN(.N) (nearest rank). ScanBy both ways;
+  MaxDatapoints/NextToken paging (token = base64 offset); at most 200 000 buckets per request (else 400).
+  Expression queries (SEARCH, metric math) answer 400 InvalidParameterValue; extend `parseQuery` if a dashboard needs them.
+- `up.sh` checks `$CLOUDWATCH_URL/ready` (a non-AWS route), writes `cloudwatch.url` to stack.json, `report()`
+  prints it. `/healthz` now shows only cloudwatch-logs unreachable.
+- Tested as a user: `up.sh`, restart -240/-90, `cloudwatch(<Grafana target>, now-400s, now)` through the engine
+  (pg-wire): 7 one-minute rows at hh:mm:38.762 (the request's StartTime), Maximum 41, 47 (baseline), 119 (the
+  minute straddling incidentAt), 186, 189, 175 (incident), 48 (recovered); Minimum in full incident minutes 150,
+  152; SampleCount 6 per full minute; series and labels.label = metric name, or the Grafana `label` when set;
+  period 300 over an hour → 12 rows; QueueName=nope → 0 rows; a code-mode expression → engine error
+  "GetMetricData failed: InvalidParameterValue: ...". AWS JSON via curl: p90, MaxDatapoints 2 → 2 points +
+  NextToken; StartTime > EndTime → 400 ValidationError. Checks fake-cloudwatch, fake-tempo, fake-loki,
+  fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation pass; `tsc --ignoreConfig --strict
+  --module nodenext --types node --noEmit stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:26:58Z supervisor: demo-fake-cloudwatch-metrics passed the gate in round 1
+
+### demo-fake-cloudwatch-logs (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/cloudwatch-logs.ts`: `cloudwatchLogsHandler(() => clock.current())`, served by
+  telemetry-fakes on `endpoints.cloudwatchLogs`. Log group `/hrx/demo/fill-service` only (others → 400
+  ResourceNotFoundException). Events are the fake Loki lines (`fillServiceLogs()`), rewritten as
+  `<ISO time> INFO|ERROR <logfmt rest>`, so ERROR counts follow Loki: ~1.5/min baseline and recovered, 20..30/min
+  in the incident (each mentions shipping-label-api). Fields: @timestamp (`YYYY-MM-DD HH:MM:SS.mmm` UTC), @message,
+  @logStream, @log, @ptr. Window is [startTime, endTime] in epoch seconds, both inclusive, never after now.
+- **Protocol:** aws-sdk-cloudwatchlogs 1.163 speaks **AWS JSON 1.1** (`X-Amz-Target: Logs_20140328.<Op>`), not
+  CBOR. Ops: StartQuery (runs the query at once), GetQueryResults (always `Complete`), StopQuery (`success: false`),
+  DescribeLogGroups; the last 200 query ids are kept. Errors are 400 `{__type, message}`.
+- Logs Insights subset: `fields`/`display` (plain lists), `filter` (`like /re/flags`, `like "text"`, `not like`,
+  `=~`, `=`, `!=`, with and/or/not/parentheses), `sort <field> [asc|desc]` (none → newest first), `limit` (none →
+  1000, max 10000; a `limit` command wins over the StartQuery `limit` parameter). `stats`, `parse`, `dedup` etc.
+  → 400 MalformedQueryException: extend `parseQuery`/`runQuery` if a dashboard or alert needs them. Range at most 7 days.
+- `up.sh` checks `$CLOUDWATCH_LOGS_URL/ready`, writes `cloudwatchLogs.url` to stack.json, `report()` prints it.
+  Engine `/healthz` is now `status: ok` with every source reachable.
+- Tested as a user: `up.sh`, restart -240/-90, through the engine (pg-wire): the spec query
+  (`filter @message like /ERROR/ | sort @timestamp desc | limit 2000`, now-400s..now) → 77 rows, all ERROR, newest
+  first; 1.2/min baseline, 28.4/min incident, every incident row mentions shipping-label-api; `fields` json =
+  {@message, @timestamp} (engine drops @ptr); `fields ... | limit 2000` over the baseline → 60 lines (56 INFO); no
+  fields/limit → @log/@logStream too; `like /error/i and not ... like /shipping/ | sort asc | limit 3` → 3 ascending
+  rows, message NULL (not selected); `stats ...` → engine error "StartQuery failed: MalformedQueryException: ...";
+  log group `/nope` → "ResourceNotFoundException: Log group ..."; repeated query identical. Checks fake-cloudwatch-logs,
+  fake-cloudwatch, fake-loki, fake-tempo, fake-prometheus, engine-boot, scenario-clock (--stack) and config-validation
+  pass; `tsc --ignoreConfig --strict --module nodenext --types node --noEmit stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:32:52Z supervisor: demo-fake-cloudwatch-logs passed the gate in round 1
+
+### demo-audit-store (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/audit-store.ts`: one in-memory `AuditStore` served by telemetry-fakes on the two
+  endpoints engine-config already reserved, `endpoints.auditDynamodb` and `endpoints.auditS3`. Table and bucket
+  names (`AUDIT_TABLE`, `AUDIT_BUCKET`, both `demo-federation-audit`) now live there; engine-config.ts imports them.
+- **DynamoDB** (AWS JSON 1.0, `X-Amz-Target: DynamoDB_20120810.<Op>`): PutItem (only `attribute_not_exists(id)`
+  as condition, which the engine always sends), Query on the table or the portal GSIs byMonth / byTicket / byUser
+  (sort key createdAt; ScanIndexForward, Limit, ExclusiveStartKey/LastEvaluatedKey, an optional createdAt range;
+  FilterExpression → 400), GetItem, DescribeTable. Errors are `{__type: com.amazonaws.dynamodb.v20120810#X}`.
+- **S3 Object Lock** (path-style): PutObject (`?x-id=PutObject` is allowed; each put is a new version; lock mode
+  must be COMPLIANCE/GOVERNANCE with a future retain-until date; aws-chunked bodies decoded), GET/HEAD (with
+  `versionId`, returns the lock headers), ListObjectsV2 (`?list-type=2&prefix=`). DELETE → 403 AccessDenied while
+  locked (501 otherwise: the demo never deletes).
+- Records live as long as the telemetry-fakes process: down.sh / a fresh up.sh discards them (a live-stack up.sh
+  keeps them). `up.sh` checks `/ready` on both endpoints, writes `auditDynamodb.url` / `auditS3.url` to stack.json,
+  `report()` prints them.
+- Observation (engine, not changed): an Audited Query whose SQL fails while the engine plans `platform_query`
+  (e.g. 42P01 unknown relation) is not audited; only failures inside `run()` (pg.rs) are. Scene 7 / Write Mode
+  sessions should not rely on a record for such a statement.
+- Tested as a user: `up.sh` (baseline before the change: platform_query → 58000 "audit write failed",
+  `/v1/audit` → 502). After: pg-wire `SET hrx.identity` (platform_read, description, ticket ENG-1799) +
+  `platform_query('select count(*) as n from orders')` → 120; a token without platform_read → 42501 "... needs
+  platform_read"; `GET /v1/audit?ticket=ENG-1799` → 200 with the record (description, database platform,
+  linearTicketId, createdAtMonth, hmac-sha256 integrityHash); S3 object `executions/<createdAt>/<id>.json` has all
+  17 fields and COMPLIANCE lock 7 years out, DELETE → 403. 27 more queries: ticket, month, user and recent browse
+  each 2 pages, newest first, no duplicates; no platform_read → 403. Checks audit-store, engine-boot,
+  fake-cloudwatch-logs (--stack) and config-validation pass; `tsc ... stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:39:20Z supervisor: demo-audit-store passed the gate in round 1
+
+### demo-engine-healthy (2026-11-09, run 20261109-013019)
+
+- No code change needed: the earlier fakes (prometheus, loki, tempo, cloudwatch, cloudwatch-logs) plus the Platform
+  Database already make the engine's `/healthz` return 200 `status: ok` with every source `reachable: true`
+  (sources: prometheus, loki, tempo, cloudwatch, cloudwatch_logs, platform_postgres; `unhealthy: []`).
+  The audit store is not a health source in the engine.
+- Tested as a user: `init.sh`, `up.sh`, `curl $engine.httpUrl/healthz` → 200 with all six sources reachable. Negative
+  check: killed the telemetry-fakes process → `/healthz` 503 `status: unhealthy`, the five telemetry sources
+  "unreachable: Connection refused", platform still reachable (so health is probed live, not hardcoded). `down.sh`
+  stopped everything. `run.sh --stack engine-healthy.spec.ts` passes; no demo process left.
+- 2026-11-09T07:41:23Z supervisor: demo-engine-healthy passed the gate in round 1
+
+### demo-fake-incident-io (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/incident-io.ts`: an in-memory fake incident.io receiver, served by the telemetry-fakes
+  process on an **ephemeral** port (it is not an engine endpoint, so engine-config does not reserve one).
+  `up.sh` checks its `/ready`, writes `incidentIo.url` to stack.json and `report()` prints it.
+  - `POST /webhook`: an Alertmanager v4 payload (version "4", status firing|resolved, groupKey, non-empty
+    alerts[] each with status, string labels/annotations, startsAt, endsAt, fingerprint). It needs
+    `Authorization: Bearer <any non-empty token>` (missing → 401; the token value is not checked or stored).
+    Bad shape/JSON → 400 naming the field. Accepted → 202 `{status: "success", message, deduplication_key}`.
+  - `GET /api/received` → `{notifications: [{receivedAt, payload}]}`, oldest first, payload exactly as posted
+    (the newest 1000 are kept). Notifications are lost when the process stops (down.sh / a fresh up.sh).
+  - `GET /`: HTML page titled "incident.io (fake) - received alerts", one `<tr>` per alert (not per
+    notification), newest first: Status (FIRING red / RESOLVED green), Alert (alertname), other labels,
+    summary, Started, Ended (blank for Alertmanager's 0001-01-01 zero time), Received. All values HTML-escaped.
+    It refreshes itself every 5 s (`<meta http-equiv=refresh>`), so the walkthrough can leave it open.
+- For demo-alerting-seed: point the incident_io Contact Point at `${stack.incidentIo.url}/webhook`, with the token
+  from a secretRef (the acceptance spec forbids an inline secret). Only `/webhook` is routed; incident.io's real
+  `/v2/alert_events/alertmanager/<id>` path is not.
+- Tested as a user: `up.sh` printed the receiver URL. With curl: a firing then a resolved v4 payload → 202 each; no
+  bearer → 401; version "3" → 400; non-JSON → 400. `/api/received` listed both in order. Opened `/` in Playwright's
+  Chromium: title as above, one firing and one resolved row for the alert, firing in red, `<b>` in the summary shown
+  escaped. Checks incident-io-receiver (--stack) and engine-healthy (--stack) pass; `tsc ... stack/*.ts` clean;
+  no demo process left.
+- 2026-11-09T07:45:08Z supervisor: demo-fake-incident-io passed the gate in round 1
+
+### demo-lightdash-backend (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/lightdash.ts`: `prepare` initdb's a fresh cluster in `.state/lightdash/pgdata`
+  (127.0.0.1 only, free port, no socket), picks a free backend port and writes `.state/lightdash/lightdash.env`
+  (0600, the backend's whole env) and `.state/run/lightdash.json`; `migrate` waits for the cluster, creates the
+  `lightdash` db and runs `stack/lightdash-migrate.ts` (all non-ee knex migrations + graphile-worker's, ~10 s, so
+  no template cache: every up.sh starts from an empty, freshly migrated Lightdash).
+- New `stack/lightdash-server.ts` boots the backend's `App` (like `src/index.ts` and the e2e harness's
+  lightdashServer.ts) **without index.ts's Sentry/tracing bootstrap**, run from `packages/backend` (tsx needs the
+  backend tsconfig). up.sh starts it via `start` with the new `DEMO_START_DIR` option and the env file.
+  `SCHEDULER_ENABLED=true`: the scheduler worker, and with it the alerting tick, runs in-process (one
+  `lightdash` process, plus `lightdash-db`, in stack.json `processes`). `/api/v1/alerting/health` is `ok` ~15 s
+  after start and a cycle completes every ~15 s.
+- **Trap: Node version.** Plain `node` on PATH is v26; `@sentry/profiling-node` has no native addon for it and
+  the backend dies on import (App imports tracing/bootstrap too). up.sh runs the backend (and the migrate step) on
+  the workspace's pnpm-pinned Node (`pnpm exec node` → node@runtime+24.22.1); `DEMO_LIGHTDASH_NODE` overrides.
+- New `stack/results-s3.ts`: in-memory S3 fake (path-style; Put/Get with Range/Head/Delete, multipart upload as
+  lib-storage's `Upload` does it, ListObjectsV2, HeadBucket, `/ready`), served by telemetry-fakes on an
+  ephemeral port (`lightdashS3.url` in stack.json). S3_* and RESULTS_S3_* point at it, bucket
+  `demo-lightdash-results`.
+- Phone-home off through env: `RUDDERSTACK_ANALYTICS_DISABLED`, `LIGHTDASH_DISABLE_UPDATE_CHECK`,
+  `LIGHTDASH_CHART_REGISTRY_URL=` (empty = disabled), `HEADWAY_ENABLED=false`, `AWS_EC2_METADATA_DISABLED`;
+  Sentry/Intercom/Pylon/PostHog unset. The backend held only 127.0.0.1 connections in lsof.
+- Ports: Lightdash PORT, its Postgres and the S3 fake are ephemeral; the engine already was. telemetry-mcp is
+  not started yet: demo-mcp-server must set `MCP_PORT` and `ENGINE_PG_PORT` (defaults 8080/5433) explicitly.
+- Known limitation: the App binds every interface (no listen-address setting in Lightdash); not changed.
+- stack.json gains `lightdash: {url, port}` (demo-seed-project adds `projectUuid`; the Stack type wants it),
+  `lightdashDb`, `lightdashS3`. `NODE_ENV=development` like the e2e harness; demo-lightdash-frontend may revisit
+  how the production frontend build is served. Logs: `.state/logs/lightdash.log`, `lightdash-init.log`.
+- Tested as a user: `up.sh` (~27 s) printed `up.sh: Lightdash: http://127.0.0.1:<port> (...)`; `GET
+  /api/v1/health` → `status: ok`, healthy, `requiresMigration: false`, headway off, rudder/latest empty; polled
+  `/api/v1/alerting/health` 40 s: `ok`, lastCycleAt advancing every 15 s, lag ≤ 10. Re-run up.sh → "already
+  running" with the Lightdash line. AWS SDK + lib-storage against the S3 fake: small put, 12 MiB multipart,
+  byte-exact get, range get, list, delete → 404. `down.sh` stopped everything. Checks lightdash-backend,
+  engine-healthy, incident-io-receiver (--stack) pass; `tsc ... stack/*.ts` clean; no demo process left.
+- 2026-11-09T07:59:29Z supervisor: demo-lightdash-backend passed the gate in round 1
+
+### demo-lightdash-frontend (2026-11-09, run 20261109-013019)
+
+- Decision: **production build served by the backend** (no Vite dev server). init-demo.sh already builds
+  `packages/frontend/build` (stamped, skipped when unchanged) and the backend's `App` serves it (`/assets/*` +
+  `index.html` catch-all) regardless of `NODE_ENV`, so the UI is at the URL up.sh prints; no new process or port.
+- New `docs/eng-1799/demo.md` with only a "Frontend mode" section (mode, why, what you see, rebuild after frontend
+  edits). **demo-docs must extend this file**, not replace the section (docs.spec.ts also wants
+  `production build|dev server`).
+- `up.sh`: preflight fails fast if `packages/frontend/build/index.html` is missing (uses `$DEMO/../..`; `ROOT` is
+  only defined later in up.sh); after `/api/v1/health` it fetches `/login` and requires `<div id="root"`
+  (captured into a variable, not `curl | grep -q`, to avoid SIGPIPE under pipefail).
+- Browser notes for scene specs: before sign-in the UI makes 401 calls (`/api/v1/user/account`, `/org`,
+  `/aiAgents/settings`) that log console errors, plus a CSP report-only console error and Intercom warnings;
+  none are page errors. The only off-box requests are Google Fonts (Inter).
+- Tested as a user: up.sh; opened the printed URL in Playwright Chromium → redirected to `/register` ("Register -
+  Lightdash"), Sign up form with Email address field, no page errors, screenshot looked right; down.sh. With the
+  build moved aside up.sh stopped with the "no frontend production build" message and started nothing. Checks
+  lightdash-frontend and lightdash-backend (--stack) pass; no demo process left.
+- 2026-11-09T08:04:44Z supervisor: demo-lightdash-frontend passed the gate in round 1
+
+### demo-seed-project (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/stack/seed.ts`, run by up.sh right after the UI check and before stack.json is written
+  (log `.state/logs/seed.log`, ready file `.state/run/seed.json`). It seeds **only through Lightdash's public HTTP
+  API** on the session cookie registration returns: `POST /api/v1/user` (first user; refuses to run unless
+  `/api/v1/health` says `requiresOrgRegistration`), `PUT /api/v1/org` ("HouseRx Demo (synthetic)"), `PATCH
+  /api/v1/user/me/complete`, `POST /api/v1/org/projects` (`dbtConnection: none`, `type: postgres, flavor:
+  federation`, identitySigningSecret = engine.identitySecret, httpBaseUrl = engine.httpUrl, from
+  `.state/run/engine-config.json`), then `POST /api/v1/org/attributes` for `platform_read` and `platform_write` =
+  `"true"` on the demo user, and verifies `GET /api/v2/projects/<uuid>/federation/access` before writing.
+- Pinned values: demo user `demo.operator@example.com` (Demo Operator, an org **admin** as the registering user),
+  password `test-demo-password-1-not-real`; project name `Operations Project` (slug `operations-project`).
+- stack.json gains `demoUser: {email, password, userUuid}` and `lightdash.projectUuid`. up.sh's report (also on the
+  "already running" path) prints the demo user's email and the project home URL.
+- No personal access token, space or CLI yet: the next seed features (upload, alerting, portal scripts, MCP) add
+  what they need; reuse the `Session` class in seed.ts or log in with `POST /api/v1/login`. The session cookie is
+  enough for `org/projects` and `org/attributes` (no PAT needed).
+- The project home shows the "Welcome, Demo!" onboarding panel (no content yet). AI-agent/credits endpoints answer
+  422 (licence-gated ee), harmless. up.sh warm: ~18 s including the seed (~1 s).
+- Since a user now exists, `/` redirects to `/login` (not `/register`); lightdash-frontend's spec accepts both.
+- Tested as a user: up.sh; in Playwright Chromium opened the printed URL → `/login`, typed the stack.json email
+  and password into the sign-in form → `/projects/operations-project/home` with "Operations Project" in the
+  project switcher and the welcome panel, no page errors; `GET /api/v1/projects/<uuid>` → postgres/federation,
+  no `password`/`identitySigningSecret` keys returned; `GET /api/v2/.../federation/access` → `isFederation: true`,
+  platform_read/platform_write true. Re-ran up.sh → "already running" with the sign-in line; down.sh. Checks
+  seed-project, lightdash-frontend, lightdash-backend (--stack) pass; `tsc --ignoreConfig ... stack/*.ts` clean;
+  no demo process left.
+- 2026-11-09T08:12:06Z supervisor: demo-seed-project passed the gate in round 1
+
+### demo-lightdash-engine-query (2026-11-09, run 20261109-013019)
+
+- **No code change needed.** The tree from demo-seed-project already meets this feature: the Operations Project
+  (postgres/federation flavour) sends SQL Runner queries to the Federation Engine, and the async query results are
+  written to the fake results S3 (`demo-lightdash-results`). The check passed on the first run with nothing edited.
+  This entry is the only change in this session.
+- API path the specs use: `POST /api/v1/login` → `POST /api/v2/projects/<uuid>/query/sql` (`context: sqlRunner`,
+  `invalidateCache: true`) → poll `GET /api/v2/projects/<uuid>/query/<queryUuid>` until `status: ready`; cell
+  values come back as `{value: {raw}}`.
+- Scenario restart body uses `incidentAfterSeconds` / `recoveryAfterSeconds`. With `incidentAt`/`recoveryAt` the
+  clock answers 400, so the data stays on the default timeline.
+- Tested as a user: up.sh; signed in as the stack.json demo user through `/api/v1/login`; set the scenario to
+  incident −240 s and recovery −90 s; ran through the SQL Runner API
+  `promql('hrx_fill_queue_backlog{queue="fill"}', from, to, '15s')` → 27 rows, baseline max 47, incident window
+  141–166 (≥120); `count(*)` over `logql('{app="fill-service"} |= "level=error"', ...)` → 47 in the incident window
+  vs 4 at baseline. The fake S3 bucket gained one object per query (3 → 6 over three queries). down.sh; no demo
+  process left. `run.sh --stack lightdash-engine-query.spec.ts` passes (1 test).
+- 2026-11-09T08:16:41Z supervisor: demo-lightdash-engine-query passed the gate in round 1
+
+### demo-dashboard-pharmacy-ops (2026-11-09, run 20261109-013019)
+
+- New `demo/eng-1799/content/` (Lightdash content as code, keys sorted as `lightdash download` writes them so the
+  CLI prints no warnings): virtual view `hrx_fill_queue_backlog` (`ts`, `queue`, `backlog` from
+  `promql('hrx_fill_queue_backlog', now() - INTERVAL '6 hours', now(), '15s')`, queue parsed from `series` with
+  `regexp_replace`: the engine has no `->>`/json_get), four charts in space `pharmacy-ops`, dashboard
+  `pharmacy-ops-overview` ("Pharmacy Ops overview"). Field ids: `hrx_fill_queue_backlog_ts_raw`, `_queue`, `_backlog`;
+  metrics are chart `additionalMetrics` (max of backlog), since virtual views have no metrics.
+- Tiles, all **built-in** charts (no registry/ee): `Current fill queue backlog` big number (latest sample of
+  queue=fill: dims ts_raw sorted desc, limit 1; conditional formatting `#E02F44` at >= 100), `Fill queue backlog`
+  cartesian line with `thresholds` (dashed, steps null/#73BF69 and 100/#F2495C; y axis pinned 0..200 so the line
+  shows in the baseline too), `Peak backlog by queue` horizontal bar (flipAxes, 0..200) = the bar gauge, `Queue
+  status` table whose Status column has Grafana range `valueMappings` (OK < 60, Elevated 60..99.999, Backlogged >= 100).
+  Dashboard Time Range `now-30m..now`, refresh `30s`, every Tile mapped to `hrx_fill_queue_backlog_ts_raw`.
+- **Trap: explore charts get no reserved time parameters** (`withTimeRangeParameters` is only applied in
+  `executeAsyncSqlQuery` and `executeAsyncDashboardSqlChartQuery`; dashboard chart Tiles get only the `inBetween`
+  tile filter). Thresholds/valueMappings exist only on explore charts, so the view window is fixed (6 h) and the
+  range filters inside it. SQL chart Tiles (Service health, Platform DB) can use `${ld.parameters.__from}` instead.
+- Seed (`stack/seed.ts`) step 5: creates a PAT (`POST /api/v1/user/me/personal-access-tokens` needs
+  `autoGenerated: false`), runs `lightdash upload --project <uuid> --path demo/eng-1799/content` and checks every
+  dashboard in `CONTENT_DASHBOARDS` (name + chart Tile count) and each Tile's saved chart. **Add new dashboards
+  there** (Service health, Platform DB). The PAT is in `.state/run/seed.json` as `lightdash.apiToken` (not copied
+  to stack.json) for later seed steps (`upload --alerting-only`, `import portal-scripts`).
+- **Trap: how the CLI runs.** Not via pnpm: the CLI writes `~/.config/lightdash` (sandbox refuses the real home),
+  so it runs with `HOME=.state/cli-home`, and pnpm with a moved HOME refuses to start (its pinned version
+  check). So the seed spawns `<pinned node> packages/cli/node_modules/tsx/dist/cli.mjs src/index.ts upload ...` with
+  cwd `packages/cli`; up.sh passes `--cli-node "$LIGHTDASH_NODE"`. New `stack/no-network.mjs` (preloaded with
+  `NODE_OPTIONS=--import`) makes `dns.lookup` answer ENOTFOUND for anything but localhost: the CLI otherwise posts
+  analytics to Lightdash's analytics host and checks GitHub for upgrades on every run. Upload takes ~5 s; warm
+  up.sh ~22 s.
+- `docs/eng-1799/demo.md` gains "Dashboards as code" (the Tiles, the chart choices, the fixed window).
+- Tested as a user: fresh up.sh (seed log: 1 virtual view, 4 charts, 1 dashboard created); in Chromium signed in
+  through the /login form, Browse → dashboards → Pharmacy Ops overview: header "Last 30 minutes" with the Refresh
+  select at 30s; baseline: stat 34–37 in black, line ~20–48 under a red dashed line at 100, bars fill 48 / pack 22 /
+  ship 12, Status OK in green; during the default incident: stat 169 in red, the line jumps over the threshold,
+  Status for fill "Backlogged" in red. No page errors, no tile errors. Re-upload over the running stack updated in
+  place (4 charts, 1 dashboard updated). Checks: `run.sh --stack dashboard-pharmacy-ops.spec.ts --grep
+  "demo-dashboard-pharmacy-ops:"` passes; `seed-project.spec.ts` (--stack) passes; the `-ui:` test also passed once
+  against a running stack (not this feature's gate). `tsc --ignoreConfig --strict --module nodenext --types node
+  stack/*.ts` clean; no demo process left.
+- 2026-11-09T08:32:57Z supervisor: demo-dashboard-pharmacy-ops passed the gate in round 1
+
+## demo-dashboard-pharmacy-ops-ui (functional) — 2026-11-09
+
+- No code change: the dashboard content from demo-dashboard-pharmacy-ops (e3d40f853) already renders live and
+  meets every step. This session only verified it and wrote this entry.
+- Tested as a user: `init.sh` ok; `up.sh` by hand; in Chromium (a throwaway Playwright script under the run's tmp/,
+  not in the repo) signed in through the /login form, went to the project's dashboards list and clicked "Pharmacy Ops
+  overview". Baseline (scenario restarted with the incident 900 s out): header "Last 30 minutes" + Refresh 30s, four
+  Tiles with no error text, stat 27 in near-black rgb(24,24,27), line ~20–48 under the red dashed threshold at 100,
+  Status OK (green). Incident (restart -120/900, a few reloads): stat 143 in rgb(224,47,68), the line jumps above
+  100, Peak fill 160, Status "Backlogged" in red. 0 page errors. down.sh afterwards; no demo process left.
+- Check: `run.sh --stack dashboard-pharmacy-ops.spec.ts --grep "demo-dashboard-pharmacy-ops-ui:"` passes (11.9 s).
+- For the next session: after a scenario restart the stat can take one or two reloads to go red. Results are
+  cached per rounded Dashboard Time Range, which is why the spec reloads in a loop. Keep that in mind for scene specs.
+- 2026-11-09T08:39:26Z supervisor: demo-dashboard-pharmacy-ops-ui passed the gate in round 1
+- 2026-11-09T08:43:02Z supervisor: demo-dashboard-service-health halted: the worker halted on demo-dashboard-service-health
+
+## demo-dashboard-platform-db (content) — 2026-11-09
+
+- Content: `demo/eng-1799/content/charts/{orders-by-status,open-fills-by-queue,shipments-by-carrier}.yml` (saved SQL
+  charts, `contentType: sql_chart`, space `platform-db`) and `dashboards/platform-db.yml` ("Platform DB", three
+  `sql_chart` Tiles). Each SQL is `SELECT ... FROM platform_query('<aggregate over orders | fills+queues |
+  shipments>')`. They are aggregates only, with no row-level column. Two bar charts and one table. Every chart has a
+  `description`, **which is required**, see below.
+- **Backend fix (outside ee/)**, as anticipated by risk 4: saved SQL charts carry no audit block, and
+  `executeAsyncSqlChartQuery` / `executeAsyncDashboardSqlChartQuery` ran their column-discovery probe with no
+  identity (`RESET hrx.identity`). A `platform_query` Tile would therefore have been refused. Both methods now:
+  - take the Audited Query description from the saved chart's description (new `savedSqlChartAudit` in
+    `queryTimeRange.ts`, trimmed, `ticket: null`, and undefined for a blank description);
+  - run `prepareSqlChartAsyncQueryArgs` inside `withAccountFederationIdentity`. A dashboard Tile is audited with
+    source `tile` and `resource_uuid` = the tile uuid; a standalone saved chart as `investigate`;
+  - persist `audit` (and `tileUuid` for the dashboard path) in the request parameters, so the async run (and a
+    rebuild from history) mints the same audit block through `federationQueryAudit`.
+  A SQL chart with no description over a non-audited source works as before. Over the Platform Database, the
+  engine refuses it with "audited query requires a description".
+- Seed: `CONTENT_DASHBOARDS` entries now have `sqlChartTiles`, and `checkContent` also resolves each SQL Tile's
+  `savedSqlUuid` (`GET /api/v1/projects/<p>/sqlRunner/saved/<uuid>`). Platform DB = 0 chart + 3 SQL Tiles.
+- Docs: `docs/eng-1799/demo.md` "Dashboards as code" gains a Platform DB paragraph (the Tiles, the description rule).
+- Unit: `queryTimeRange.test.ts` +2 tests (15/15). Backend `pnpm run typecheck` clean; demo `tsc ... stack/*.ts`
+  clean.
+- Tested as a user: fresh `up.sh` (the seed accepted 3 SQL Tiles). In Chromium (a throwaway script in the run's tmp/),
+  signed in through the /login form, went to Browse → dashboards → "Platform DB". Orders by status shows 5 bars,
+  Open fills by queue shows 2 bars (demo-intake, demo-fill), and Shipments by carrier is a 4-row table. No error
+  text, no 5xx (only the pre-sign-in 401s and the unrelated aiAgents 422s). Engine audit browser: 6 records, 2 per
+  Tile (probe + run), action `query`, status `success`, database `platform`, executed by the demo user, with each
+  chart's description.
+- Checks: `run.sh --stack dashboard-platform-db.spec.ts` passes. Regression: `seed-project.spec.ts` and
+  `dashboard-pharmacy-ops.spec.ts` (both tests) pass with --stack.
+- For the next session: SQL chart Tiles on audited sources need a chart `description`. A Tile's results are not
+  cached (federation bypasses the results cache), so each dashboard load writes 2 audit records per Tile.
+- 2026-11-09T08:54:36Z supervisor: demo-dashboard-platform-db passed the gate in round 1
+- 2026-11-09T08:55:29Z supervisor: demo-grafana-fixture halted: the worker halted on demo-grafana-fixture
+- 2026-11-09T08:56:57Z supervisor: demo-portal-script halted: worker demo.feature.demo-portal-script.r1 stopped: STOP file present
+
+## Decisions by the controls engineer (2026-11-09, after three halts)
+
+- **`demo-package-workspace`:** the protected `package.spec.ts` ran `git check-ignore -q` with two paths, which git
+  always rejects. Fixed in the spec (one call per path). Redo the feature; the earlier session's notes still apply.
+- **`demo-dashboard-service-health` (trace waterfall), decided: a pinned example trace, no engine change.**
+  - The demo's fake Tempo serves one **pinned example trace** for the incident's slow call under a fixed,
+    documented trace id that never changes with the scenario clock or a restart: for example the hex id
+    `de300000000000000000000000000001`. Put it in one shared constant. The trace has the slow
+    `shipping-label-api` span and looks like the incident's other slow traces. The fake returns it from
+    `trace(<id>)` at any time, and it shows in `traceql()` search results while the incident runs.
+  - The Service health dashboard gets a `trace_id` parameter whose default is that id. The trace_waterfall
+    Tile's SQL is `SELECT ... FROM trace('${ld.parameters.trace_id}')` (or the reserved-parameter form the
+    viz/ldq lines use), so a viewer can paste any trace id, like a Grafana trace-id variable. No SQL in the
+    content rebuilds the fake's own ids.
+  - Do not change the engine. The limit (table-function arguments must be constants, so no "latest slow trace"
+    subquery) is recorded as an ENG-1799 follow-up in `docs/eng-1799/demo.md` under "Known limits".
+  - Scene 4 may open the waterfall through the parameter default or by setting the parameter.
+- **`demo-grafana-fixture`:** blocked only by Service health. Redo it once that passes.
+
+### demo-package-workspace (2026-11-09, run 20261109-013019, redo after the spec fix)
+
+- New `demo/eng-1799/tsconfig.json`: the flags the acceptance specs typecheck with (`strict`, `module`/`moduleResolution`
+  `nodenext`, `lib` es2022+dom, `types` node, `esModuleInterop`, `skipLibCheck`, `noEmit`), `include` every
+  `**/*.ts|mts|cts` in the package (acceptance included: 43 files plus 16 under `stack/` today), excluding
+  `node_modules`, `.state`, `out`, `test-results`, `playwright-report`. Having its own tsconfig also stops `tsc` from
+  picking up the repo root `tsconfig.json`, so `--ignoreConfig` is no longer needed.
+- `demo/eng-1799/package.json` scripts: `typecheck` = `tsc --noEmit -p tsconfig.json` (TypeScript 7.0.2, under a
+  second). `walkthrough`, `video` and `ask` are **stubs** that print "not implemented yet (…feature…)" and exit 1.
+  They are `node -e "…" --`: the trailing `--` matters, because pnpm appends the caller's args (`--json`, `--music`)
+  and node rejects unknown flags otherwise. **Next sessions:** replace the stub with the real command
+  (`bash walkthrough/run.sh`, `tsx video/build.ts`, `tsx ask/…`). The package stays CommonJS (no `"type": "module"`).
+- No change to `init-demo.sh`: it already re-runs ffmpeg-static's install or `playwright install chromium` only
+  when the binary / chromium executable is missing; two warm `bash ./init.sh` runs downloaded nothing.
+- Tested as a user: `pnpm install --frozen-lockfile` (lockfile up to date, exit 0); `pnpm -F eng-1799-demo typecheck`
+  exit 0, and exit 1 with a deliberately wrong probe file under `stack/` (removed again); `git check-ignore -v` for
+  `.state/probe` and `out/probe.mp4` → `.gitignore:185/186`; each stub with extra args prints its message and fails.
+  Check `bash demo/eng-1799/acceptance/run.sh package.spec.ts`: 1 passed.
+- 2026-11-09T09:01:31Z supervisor: demo-package-workspace passed the gate in round 1
+
+### demo-dashboard-service-health (2026-11-09, run 20261109-013019, redo after the controls-engineer decision)
+
+- **Pinned example trace** (as decided): `PINNED_TRACE_ID = 'de300000000000000000000000000001'` exported from
+  `stack/tempo.ts`, the only place the id is written. The fake's trace builder was split into `slot()` +
+  `shipTrace(key, …)` (slot traces keep their exact hash keys, so they are unchanged). `pinnedTrace(tl)` is a slow,
+  successful 5-span trace starting at `incidentAt + 1 s` (shipping-label-api span 2000–4999 ms). `traceById()`
+  returns it at any time; `fillServiceTraces()` inserts it by start time, so `/api/search` (and `traceql()`) lists it
+  once the incident is running. Its first 8 hex digits are a 2088 slot second, so it never collides with a slot trace.
+- **Seed**: before the upload, `PUT /api/v2/projects/<uuid>/parameters` defines the project parameter `trace_id`
+  (label "Trace ID", default = PINNED_TRACE_ID, `options: [id]`, `allow_custom_values: true`). **Trap:** a virtual
+  view may only reference *defined* project parameters (`validateVirtualViewParameterReferences`), so the definition
+  must come before `lightdash upload`. `CONTENT_DASHBOARDS` gains `Service health` (3 chart Tiles).
+- **Content**: three virtual views and three explore charts in space `service-health`. Dashboard `Service health` has
+  no Dashboard Time Range, so the windows are fixed:
+  - `hrx_fill_service_log_rate`: `logql_metric('sum by (level) (count_over_time({app="fill-service"}[1m]))', now()-30m,
+    now(), '1m')` → chart `Log level heatmap` (`type: custom`, a Vega-Lite `rect` heatmap, minute × level; **built in,
+    no chart registry**);
+  - `hrx_fill_service_logs`: `logql('{app="fill-service"}', now()-30m, now(), 500)`, with the level parsed from the
+    line's `level=` and `CAST(labels AS VARCHAR)` → `Fill service logs` (native `log_stream`, newest first);
+  - `hrx_fill_service_trace`: `trace(${ld.parameters.trace_id})` (bare reference; Lightdash writes it as a quoted
+    literal), `CAST(attributes AS VARCHAR)` → `Slow trace waterfall` (native `trace_waterfall`).
+- **Traps found:**
+  - SQL chart Tiles (`DashboardSqlChartTile`) only render table, big number, cartesian and pie charts, so log_stream
+    and trace_waterfall must be **explore charts** over virtual views.
+  - Virtual-view timestamp columns get `_raw/_day/_week/_month/_quarter/_year` only, **no `_minute`**. That is why
+    the heatmap has its own per-minute view. Use `<view>_<col>_raw` as the field id (by-name binding misses `_raw`).
+  - Charts as code need `version: 1`, or the upload fails with "'version' is required".
+  - Vega-Lite `timeUnit` must be `utchoursminutes`, or the axis shows the browser's local time.
+- Docs: `docs/eng-1799/demo.md` gains a Service health paragraph (Tiles, the trace_id parameter, how to paste an id)
+  and a new **"Known limits"** section with the ENG-1799 follow-up: table-function args must be constants, so there
+  is no "latest slow trace" subquery.
+- Tested as a user: fresh up.sh, then the scenario restarted at incident −180 s. In Chromium (throwaway scripts in
+  the run's tmp/) I signed in through the /login form and went to Browse → dashboards → Service health. The header
+  shows "Trace ID is de30…0001". The heatmap's error row turns dark red in the last 3 minutes (about 30/min against a
+  pale baseline), and the x axis is in UTC, matching the log timestamps. The log stream shows "500 of 500 lines",
+  newest first, with mostly red error rows ("create shipping label failed …"). The waterfall shows 5 spans: root
+  4.9 s, `POST /v1/labels` on shipping-label-api 4.86 s, in two service colours. No tile errors, no page errors.
+  Pasting another slow trace id from `/api/search?q={ duration > 2s }` into the Trace ID parameter ("Add …") reran
+  the waterfall with that trace (4 spans, 3.21 s, a failed one). The fake Tempo search lists the pinned id, and
+  `/api/traces/<pinned>` returns 200.
+- Checks: `run.sh --stack dashboard-service-health.spec.ts` passes (1 test). Regression, each with --stack:
+  fake-tempo, seed-project, dashboard-platform-db, dashboard-pharmacy-ops (2 tests) pass. `pnpm -F eng-1799-demo
+  typecheck` is clean. Stack down afterwards.
+- **Next:** `demo-grafana-fixture` was blocked only by this feature, so redo it now. Scene 4 can open the waterfall
+  through the parameter default (no URL parameter needed).
+- 2026-11-09T09:18:21Z supervisor: demo-dashboard-service-health passed the gate in round 1
+
+### demo-grafana-fixture (2026-11-09, run 20261109-013019, redo after Service health passed)
+
+- **No importer CLI in the base.** `packages/cli` has only `alerting shadow-report --grafana-history`; the Grafana
+  side is the mapping module `packages/common/src/eng1799/grafanaPanelMapping.ts` (and docs), with no dashboard
+  importer. So the conversion is the hand-written YAML route that the feature allows.
+- New `demo/eng-1799/seed/grafana/pharmacy-ops-overview.json`: a synthetic Grafana export (schemaVersion 39, a
+  `DS_DEMO_PROMETHEUS` datasource input, no hosts) of **Pharmacy Ops overview**. Four panels: `stat` "Current fill
+  queue backlog", `timeseries` "Fill queue backlog" (dashed threshold at 100), `bargauge` "Peak backlog by queue",
+  and `table` "Queue status" (OK/Elevated/Backlogged range value mappings, the same shape as the chart YAML). Time
+  `now-30m`, refresh `30s`. Grafana gridPos (24 cols) × 1.5 = the YAML's x/w (36 cols); h is the same.
+- `content/dashboards/pharmacy-ops-overview.yml` gains a header comment naming its Grafana source. YAML comments
+  pass through `lightdash upload`; the Tiles are unchanged. `docs/eng-1799/demo.md` gains a paragraph under
+  Pharmacy Ops overview. **Deviation recorded there:** `stat`/`bargauge` became built-in big number and horizontal
+  bar, not the mapping doc's `stat-sparkline`/`bar-gauge` registry entries, so the demo needs no chart registry.
+- **Trap:** the spec matches every panel title (lowercased) to a Tile title of Pharmacy Ops, Service health or
+  Platform DB. Rename a Tile, and you must rename the panel too.
+- Tested as a user: fresh up.sh, then in Chromium (throwaway script in the run's tmp/) I signed in through /login and
+  opened Browse → dashboards → Pharmacy Ops overview. All four fixture panels show as Tiles with data: big number
+  19, the line with a red dashed line at 100, bars fill/pack/ship, and the table with Status OK. No tile or page
+  errors. Stack down afterwards.
+- Checks: `run.sh --stack grafana-fixture.spec.ts` passes (1 test). Regression: `--stack
+  dashboard-pharmacy-ops.spec.ts` passes (2 tests). Typecheck is clean. `docs.spec.ts` fails as it did before this
+  change (no "prerequisites" heading yet, which is demo-docs' job).
+- 2026-11-09T09:26:56Z supervisor: demo-grafana-fixture passed the gate in round 1
+
+### demo-portal-script (2026-11-09, run 20261109-013019, round 1)
+
+- The importer already exists: `packages/cli/src/handlers/importPortalScripts.ts` (ldq line). Nothing changed in
+  packages/.
+- New `demo/eng-1799/seed/portal-scripts.json` is a synthetic export with one script, **"Open fills past target by
+  queue"** (id `demo-script-0001`). Its SQL is Platform SQL over `fills`/`queues` with aggregates only: no names, no
+  addresses, no single quotes. It also has the extra portal fields (tags, a synthetic example.com `createdBy`,
+  timestamps), which the importer leaves out.
+- `up.sh`: before the seed, it copies `content/` to `.state/run/content` and runs the CLI from source
+  (`import portal-scripts … --path .state/run/content --space platform-saved-sql`) on the pinned Node, with HOME
+  `.state/cli-home`, `no-network.mjs` preloaded and output in `seed.log`. Then `seed.ts` gets
+  `--content-dir .state/run/content`, so one `lightdash upload` covers dashboards and imported charts. **Trap:**
+  `content/` itself must stay free of imported charts. The spec greps up.sh/seed.sh for `import portal-scripts`, so
+  the call has to stay in up.sh, not move into seed.ts.
+- `docs/eng-1799/demo.md`: new "Portal saved script" subsection and a **Known limits** entry.
+- **Known limit (ENG-1799 follow-up; the spec settles it, so this is not a halt):** portal SQL is kept verbatim and reads
+  Platform tables directly. Opening the SQL chart itself, or loading it into the SQL box from Investigate's Saved
+  SQL, fails with "table 'datafusion.public.fills' not found". It returns rows when run as Platform SQL
+  (Investigate → Platform Database, which wraps it in `platform_query`), and that is what the spec does too.
+  A fix belongs to the ldq line: a "Platform SQL" marker on saved SQL, or the importer wrapping the SQL. The spec
+  requires `saved.sql` to equal the portal text, so a fix can't just rewrite the stored SQL.
+- Tested as a user: fresh up.sh, then Chromium via throwaway scripts in the run's tmp/portal-ui/, signed in through
+  /login. Spaces → "Platform saved sql" → the chart opens at `/sql-runner/open-fills-past-target-by-queue` and shows
+  the DataFusion error above (the known limit). SQL Runner → Investigate → Saved SQL lists the chart. Platform
+  Database → pasted the chart's saved SQL, added a Description and ticket ENG-1799, then Run: columns queue /
+  target_minutes / open_fills / past_target and 2 queue rows, no errors. The engine audit has 2 `query | success
+  | platform` records with that description.
+- Checks: `run.sh --stack portal-script.spec.ts` passes (1 test). Regression with --stack: seed-project,
+  dashboard-platform-db and grafana-fixture all pass. Typecheck is clean. Stack is down.
+- 2026-11-09T09:38:55Z supervisor: demo-portal-script passed the gate in round 1
+
+### demo-alerting-seed (2026-11-09, run 20261109-013019, round 1)
+
+- New `demo/eng-1799/alerting/` (alerting as code, the `--alerting-only` layout): the Alert Rules **Fill queue backlog
+  high** (`promql('hrx_fill_queue_backlog{queue="fill"}', __from, __to, '15s')`, last > 100) and **Fill service error
+  log rate** (`logql_metric('sum(count_over_time({app="fill-service"} |= "level=error" [1m]))', …, '30s')`, last > 10).
+  Both have interval 30s, timeRange 5m, `for` 0s, labels team=pharmacy-ops/service/severity, annotations that render
+  `{{ $value }}`, and are `paused: false` and `shadow: false`. Also the Contact Point `incident-io` (incident_io type,
+  url `__DEMO_INCIDENT_IO_URL__/webhook`, token `secretRef: demo-incident-io-token`) and a route tree (default →
+  incident-io; child team=pharmacy-ops → incident-io with groupWait 1s, groupInterval 15s).
+- `stack/seed.ts` step 6: copies `alerting/` to `.state/run/alerting` (new args `--alerting-dir`, `--alerting-out`,
+  `--incident-io-url`), fills in the receiver URL, runs `lightdash upload --alerting-only` (the CLI runner is now one
+  `runCli()` shared with the content upload), then checks both rules unpaused and not in Shadow Run, the Contact Point
+  on the receiver, and the tree routing to it. `up.sh` passes the new args. `stack/lightdash.ts` adds
+  `ALERTING_SECRET_DEMO_INCIDENT_IO_TOKEN=demo-incident-io-token-not-real` to lightdash.env (the fake accepts any
+  bearer). `docs/eng-1799/demo.md` gets an "Alerting as code" section.
+- **Trap:** everything is uploaded as code, so it is **Managed** and read-only (the API returns 403 on PATCH/DELETE).
+  Later features that need a rule changed must edit the YAML, not call the API. The spec forbids the strings
+  `test-secret-not-real` and `Bearer ` in the Contact Point JSON, so keep the token a secretRef.
+- **Follow-up (alerting line's UI, not done here):** the navbar has no Alerting entry. Users (and the scene-03
+  walkthrough) open `/projects/<uuid>/alerting/rules` directly. The page heading is "Alerting" with tabs Alert Rules /
+  Contact Points / Notification Routes.
+- For demo-alert-fires/resolves: already verified once by hand. With the scenario shifted into the incident, both rules were
+  `firing` on the first poll (≤10 s), and within ~30 s the receiver had 2 firing notifications with rendered summaries
+  ("Fill queue backlog is 173 (threshold 100)", "fill-service logged 23 errors in the last minute (threshold 10)"),
+  so the secretRef resolves. Resolve was not tried.
+- Tested as a user: fresh up.sh (seed.log: "Uploaded 1 contact points, 1 notification route trees and 2 alert rules …
+  4 created"). In Chromium (throwaway script in the run's tmp/alerting-ui/) I signed in through /login and opened
+  Alerting → Alert Rules: both rules Normal, "Managed in git", with their labels. Contact Points shows "incident.io (demo
+  receiver)". Notification Routes shows the default route and the team = pharmacy-ops route, both to it. No page
+  errors. Scenario reset to baseline, stack down.
+- Checks: `run.sh --stack alerting-seed.spec.ts` passes (1 test). Regression with --stack: portal-script and seed-project
+  pass. Typecheck clean. No demo process left.
+- 2026-11-09T09:52:18Z supervisor: demo-alerting-seed passed the gate in round 1
+
+### demo-alert-fires (2026-11-09, run 20261109-013019, round 1)
+
+- **No code change.** The demo-alerting-seed work (rules interval 30s, `for` 0s, contact point on the fake receiver with
+  the token as a secretRef, route groupWait 1s) already makes the rules fire, so this session only verified it.
+- Check: `DEMO_INCIDENT_AT=3600 DEMO_RECOVERY_AT=7200 run.sh --stack alert-lifecycle.spec.ts --grep "demo-alert-fires:"`
+  passes (1 test, 1.1m) on the first try after `bash ./init.sh`.
+- Tested as a user: fresh up.sh with the incident at +3600 s. In Chromium (throwaway script in the run's
+  tmp/alert-fires/) I signed in through /login and opened `/projects/<uuid>/alerting/rules`: the backlog rule was Normal
+  and the error-log rule had no state yet ("—"). Then POST `/scenario/restart {incidentAfterSeconds: 5, recoveryAfterSeconds: 900}`.
+  By the poll at ~32 s after the restart, both rules showed **Firing** in the UI and stayed Firing. The fake incident.io page
+  (`<incidentIo.url>/`) listed 2 FIRING notifications, received ~46 s after the restart: "Fill queue backlog is 144
+  (threshold 100)" and "fill-service logged 11 errors in the last minute (threshold 10)", with labels and startsAt. No page errors.
+- Note for demo-alert-resolves: the error-log rule's value during the incident can sit close to its threshold of 10
+  (11 here, 23 in the earlier hand run), so a scene that needs it firing reliably may want a lower threshold. Change the
+  YAML in `alerting/`, not the API (the rules are Managed). Stack is down.
+- 2026-11-09T10:03:09Z supervisor: demo-alert-fires passed the gate in round 1
+
+### demo-alert-resolves (2026-11-09, run 20261109-013019, round 1)
+
+- **No code change.** The demo-alerting-seed setup (interval 30s, `for` 0s, `disableResolveMessage: false` on the
+  incident.io Contact Point, route groupWait 1s / groupInterval 15s) already makes the backlog rule resolve and send a
+  resolve notification. This session only verified it.
+- Check: `bash ./init.sh`, then `run.sh --stack alert-lifecycle.spec.ts --grep "demo-alert-resolves:"` passed on the
+  first try (1 test, 1.3m).
+- Tested as a user: fresh up.sh. In Chromium (throwaway script in the run's tmp/alert-resolves/) I signed in through
+  /login and opened `/projects/<uuid>/alerting/rules`: the backlog rule showed Normal. Then I sent POST `/scenario/restart
+  {incidentAfterSeconds: -120, recoveryAfterSeconds: 35}` (phase "incident"). The rule showed **Firing** from ~32 s
+  after the restart until ~90 s, then **Normal**. The fake incident.io page listed 3 notifications: FIRING backlog
+  ("Fill queue backlog is 149"), FIRING error-log rate (26 errors), and **RESOLVED** backlog ("Fill queue backlog is
+  94 (threshold 100)") with startsAt 10:06:30Z and endsAt 10:07:00Z, received about 74 s after the restart. The firing
+  alerts carry Alertmanager's zero endsAt (`0001-01-01T00:00:00Z`). No page errors.
+- Timing note: the resolve notification reached the receiver (10:07:21Z) about 13 s before the rules page stopped
+  showing Firing. Scenes that wait on both should poll the receiver as well as the UI, not assume one order. With a
+  30 s interval and recovery at +35 s, at least one evaluation always lands inside the incident, so the spec's firing
+  window is reliable. Stack is down.
+- 2026-11-09T10:13:46Z supervisor: demo-alert-resolves passed the gate in round 1
+
+### demo-mcp-server (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** `up.sh` now starts telemetry-mcp (`node packages/telemetry-mcp/dist/main.js`, built by
+  init.sh's init-mcp.sh) after the seed. It waits for `/healthz` (30 s) and records `mcp: {url}`, `okta: {issuer}` and
+  process `telemetry-mcp` in stack.json. A missing dist fails up.sh early with "run bash ./init.sh".
+  - `stack/okta.ts` (new): a fake Okta mounted in the telemetry-fakes process on an ephemeral port. Its issuer is
+    `http://127.0.0.1:<port>/oauth2/default`, and it serves the JWKS at `/v1/keys` plus discovery. `POST /v1/token
+    {email}` returns an RS256 token with aud `api://telemetry-mcp-demo` that is valid for 1 h. The key is generated
+    at start, so tokens die with the process. It is in telemetry-fakes.json as `okta: {url, issuer}`.
+  - `stack/engine-config.ts`: a second engine `[[users]]` login, `telemetry-mcp` (password env
+    `HRX_PG_PASSWORD_TELEMETRY_MCP`). The ready file gets `telemetryMcp: {user, password, sources}`, where `sources`
+    is MCP_SOURCES mirroring the six `[[sources]]`, each the default of its kind. **If you add an engine source, add
+    it to `MCP_SOURCES` too.**
+  - `stack/mcp.ts` (new): picks a free port and writes `.state/mcp/mcp.env` (0600), the server's whole environment.
+    That covers the Okta issuer/audience, LIGHTDASH_URL/PROJECT_UUID, and the seed's PAT (`seed.json
+    lightdash.apiToken`) as LIGHTDASH_API_TOKEN. The demo user is the org admin, so `/api/v1/org/users` and
+    `/org/attributes` work. It also sets the engine pg/HTTP settings, the shared HRX_IDENTITY_SECRET and
+    MCP_USER_CACHE_TTL_MS=5000. It sets no ANTHROPIC_API_KEY, so `ask_data` says AI is not configured.
+  - docs/eng-1799/demo.md: new section "Telemetry MCP server".
+- **Tested as a user** (fresh up.sh, curl as an MCP client): `/healthz` returned 200 `{"status":"ok"}`. POST /mcp
+  without a token returned 401 with `WWW-Authenticate: Bearer resource_metadata=".../.well-known/oauth-protected-resource/mcp"`.
+  A garbage token returned 401 `error="invalid_token"`. The metadata names the fake Okta issuer. With a demo-user
+  token from the fake Okta, `initialize` worked and `tools/list` returned all 14 tools. `list_sources` returned the
+  6 sources with `opsMarts: []`. `platform_query` `select count(*) from queues` returned n = 4 through the
+  engine (audited). `query_promql` `hrx_fill_queue_backlog{queue="fill"}` at `now` returned 27 (baseline). A token
+  for nobody@example.com got an empty tool list. `alert_state` returned `{"instances": []}` while both rules were
+  Normal. That is Lightdash's own answer: `/alerting/state` lists only non-normal instances. After POST
+  `/scenario/restart {-60, 600}`, it listed both rules **firing** (backlog 150, with rendered annotations).
+- **Checks:** `bash ./init.sh`, then `run.sh --stack mcp-server.spec.ts` passed (1 test). Regression: `--stack`
+  engine-healthy, seed-project and engine-boot pass. Demo typecheck is clean. down.sh stops telemetry-mcp (its pid
+  is in stack.json and `.state` is on its command line), and no process is left.
+- **For demo-mcp-ask:** the metric is `hrx_fill_queue_backlog` (not `fill_queue_backlog`, which returns 0 rows). An
+  instant query needs `at` (`"now"` works). A range query needs start, end and step. The MCP response is SSE
+  (`event: message` / `data: {...}`), so a client must send `accept: application/json, text/event-stream`.
+- 2026-11-09T10:26:58Z supervisor: demo-mcp-server passed the gate in round 1
+
+### demo-stack-lifecycle (2026-11-09, run 20261109-013019, round 1)
+
+- **What was already there.** Earlier features had built up.sh's idempotency (a live stack, meaning every recorded pid
+  alive and the scenario clock answering, is kept and reported again) and down.sh (pg_ctl stop, then TERM/KILL on the
+  recorded process groups and on anything whose command line mentions `.state`; exits 0 when nothing runs). Run by
+  hand in a shell, all four steps already passed.
+- **The bug the check found.** Under Playwright, up.sh failed with "seed needs --port". Playwright sets `FORCE_COLOR`,
+  which reaches up.sh. With it set, Node's `console.log(<number>)` adds ANSI color codes even when stdout is a pipe, so
+  `PLATFORM_PORT=$(platform-db.ts prepare)` captured `\e[33m<port>\e[39m`. Fix: `stack/platform-db.ts` prepare now
+  writes the port with `process.stdout.write`, and up.sh rejects a non-numeric PLATFORM_PORT with a clear message.
+  Only that capture was affected: the other `$(node ...)` captures print strings, which `console.log` never colors.
+  **Trap for later work:** anything up.sh or a walkthrough script captures from Node must use `process.stdout.write`
+  (or print a string), not `console.log` of a number or object.
+- **Tested as a user.** down.sh with nothing running exited 0. up.sh took about 33 s; all 6 processes in stack.json
+  were alive and all 17 ports open, all ephemeral. A second up.sh printed "already running; nothing changed", with the
+  same pids and the same `Lightdash: http://127.0.0.1:<port>` line. down.sh took about 1.4 s: every pid gone, every
+  port closed, and `pgrep -lf .state` was empty. A second down.sh exited 0.
+- **Checks:** `bash ./init.sh`, then `run.sh lifecycle.spec.ts` passed (1 test, about 49 s). Regression:
+  `run.sh --stack platform-db.spec.ts` passed. Demo typecheck is clean. No process is left.
+- 2026-11-09T10:37:25Z supervisor: demo-stack-lifecycle passed the gate in round 1
+
+### demo-mcp-ask (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** New `demo/eng-1799/ask/client.ts` (library: `ask(question, stack?)` returns
+  `{question, tool, arguments, query, result: {columns, rows}, answer}`) and `ask/main.ts` (CLI: `--json`, `--list`,
+  human-readable by default). `package.json` `ask` is now `node --import tsx ask/main.ts`. No model: the question is
+  matched against a scripted intent list. "...fill queue backlog right now?" runs `query_promql`
+  `hrx_fill_queue_backlog{queue="fill"}` with `at: "now"`. "...fill queue backlog ... over the last 15 minutes?" runs
+  the same expression as a range query (now-15m..now, step 1m). An unknown question exits 1 and prints the list. The
+  client signs in at the fake Okta (`stack.json okta.issuer`, `demoUser.email`), sends `initialize`,
+  `notifications/initialized` and `tools/list` (it fails if the tool is missing), then `tools/call`. It reads the SSE
+  replies and turns the tool's object rows into arrays in column order. It uses plain `fetch` and adds no dependency,
+  so the lockfile is unchanged. docs/eng-1799/demo.md has a new subsection, "Asking a question (scripted MCP client)".
+- **Tested as a user** (fresh up.sh): after scenario restart {-120, 900}, `pnpm -F eng-1799-demo ask --json "What is
+  the fill queue backlog right now?"` gave tool query_promql, the PromQL, 1 row with value 166 and the answer "166 jobs
+  right now, above the alert threshold of 100". The human-readable form showed the same. After restart {900, 1200}
+  (baseline), the value was 21 and the answer said "below the threshold". The 15-minute range question answered
+  18..46, latest 21. "what's the weather" exited 1 with the list.
+- **Checks:** `bash ./init.sh`, then `run.sh --stack mcp-ask.spec.ts` passed (1 test). `run.sh package.spec.ts` passed.
+  Demo typecheck is clean. No `.state` process is left. `docs.spec.ts` fails on headings (prerequisites, one command,
+  ...), and it fails the same way without this change: it belongs to the later demo-docs feature.
+- **For demo-scene-06-ai-question:** import `ask` from `demo/eng-1799/ask/client` (CommonJS, no extension) and write
+  its return value as out/scenes/06-ai-question/answer.json. To script more questions, add entries to `INTENTS` in
+  client.ts. Order matters: the range intent is checked before the "right now" intent.
+- 2026-11-09T10:47:21Z supervisor: demo-mcp-ask passed the gate in round 1
+
+### demo-scene-01-sign-in (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** New `demo/eng-1799/walkthrough/`:
+  - `run.sh [scene-id ...]` runs each scene in its own Playwright process against the running stack. With no ids it
+    runs every `NN-*.spec.ts` present, in name order. It stops at the first failure (exit 1), and a bad or missing
+    id exits 2. Each scene's Playwright starts in its own process group: `set -m` is on only around the spawn, so
+    bash prints no job notices. On TERM, INT or HUP, or after `DEMO_SCENE_TIMEOUT` seconds (default 900, via a
+    watchdog subshell), the whole group gets TERM and then KILL after 5 s. After a normal exit the group is reaped
+    too. `.bin/playwright` is called directly, without pnpm.
+  - `playwright.config.ts` runs one worker at 1920x1080 with built-in video off. Its outputDir is the repo's
+    `tmp/demo-walkthrough/` (not `.state/`, which down.sh reaps).
+  - `lib/scene.ts` holds the shared fixtures. **Every later scene should import `test`/`expect` from here.** The
+    `context` fixture records a 1920x1080 video and saves it as `out/scenes/<id>/video.webm` on teardown, even when
+    the scene fails. The `scene` fixture takes the id from the spec file name, clears `out/scenes/<id>/` at the
+    start, and gives `scene.keyMoment(page)` → `key-moment.png`. The `stack` fixture reads `.state/stack.json`.
+    Steps: `signIn` (the real /login form: email → Continue → password → Sign in), `openDashboardFromList`, `tile`
+    (`.react-grid-item` by exact title), `beat` (a short hold for viewers, never a wait for state), and
+    `QUERY_ERROR_TEXT`.
+  - `01-sign-in.spec.ts` (16 `expect`s) signs in and opens Pharmacy Ops overview from the dashboards list. It sets
+    the Dashboard Time Range from Last 30 minutes to Last 1 hour (URL `from=now-1h`) and the range's **Refresh**
+    select from 30s to 10s (URL `refresh=10s`). It then turns on **"Auto-refresh while viewing"** at 5m (menu
+    "Auto-refresh options": the chosen item is disabled, and the header shows "Every 5m"). Decision: "turn
+    auto-refresh on" maps to that stock menu, which defaults to Off. The Refresh select was already 30s from the
+    seed, so the scene changes both.
+  - `package.json` `walkthrough` is now `bash walkthrough/run.sh`. docs/eng-1799/demo.md has a new section,
+    "Walkthrough scenes (recorded)", describing the runner and scene 01.
+- **Selector traps.** The Time Range presets in the popover are buttons named "Last …" too. The header trigger is
+  `button[aria-haspopup="dialog"]` filtered by text. The Refresh select is `getByRole('combobox', {name: 'Refresh'})`.
+- **Tested as a user.** I brought the stack up with up.sh and ran `run.sh 01-sign-in`: it passed in about 17 s. The
+  video is 1920x1080 and about 17 s long. I looked at the frames (login → home → dashboard). key-moment.png shows
+  the dashboard over 09:55–10:50, with "Last 1 hour", "10s" and "Every 5m" in the header and the toast "Your
+  dashboard will refresh every 5m". The stat is in black (baseline). TERM sent to run.sh at 7 s, with 4 chromium
+  processes alive: exit 143 and 0 chromium afterwards. `DEMO_SCENE_TIMEOUT=6`: "ran longer than 6s", exit 1, 0
+  chromium. A bad id exits 2.
+- **Checks:** `bash ./init.sh`, then `run.sh --stack scene-01-sign-in.spec.ts` passed (1 test, about 51 s with
+  up/down). `run.sh package.spec.ts` passed. Demo typecheck is clean. No `.state` process or chromium is left.
+- 2026-11-09T11:01:21Z supervisor: demo-scene-01-sign-in passed the gate in round 1
+
+### demo-scene-02-incident (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/walkthrough/lib/scene.ts` has new shared helpers. `getScenario(stack)` does a GET on the scenario
+    clock. `waitForPhase(stack, 'incident' | 'recovered', maxWaitMs)` polls `/scenario` every 500 ms until the phase
+    is reached. If the phase is more than maxWaitMs away, it fails at once with a message that says to restart the
+    clock. `refreshDashboard(page)` clicks the header's "Refresh dashboard" button. **Scenes 03 and 08 should use
+    `waitForPhase`.** The walkthrough never restarts the clock itself.
+  - `demo/eng-1799/walkthrough/02-incident.spec.ts` (24 `expect`s, scene timeout 240 s). It signs in and opens Pharmacy
+    Ops overview. If the phase is baseline and the incident is more than 8 s away, it asserts the baseline: the line
+    is under the threshold, and the stat is below 100 and not red. If not, it records a `baseline` annotation and
+    skips that check. It then waits on the clock for `incident`. After that it refreshes every ~5 s for up to 90 s,
+    until the line crosses the threshold and the stat is red and at or over 100. It also asserts Queue status
+    "Backlogged", no query errors, and that the phase is still incident. It moves the mouse off the refresh button
+    (so the "Last refreshed at" tooltip is gone), then takes the key moment.
+  - docs/eng-1799/demo.md: a bullet for 02-incident under "Walkthrough scenes (recorded)".
+- **How "crossed" is detected.** The time series Tile is ECharts drawn as **SVG** (not canvas). The series is the
+  solid path with a hex stroke (#5470c6) and `M x y L x y …` data. The threshold is the path with stroke `#F2495C`
+  and `stroke-dasharray="4,2"`. The line is crossed when the smallest series y is less than the threshold y (SVG y
+  points down). The stat's big number is the leaf `P` (`_bigNumberText_…`). In the incident its computed color is
+  rgb(224,47,68); in the baseline it is near-black.
+- **Tested as a user.** I ran up.sh, restarted the clock with `{20, 900}` and ran `run.sh 02-incident`: it passed in
+  about 57 s. The video is 1920x1080 and 57 s long. The frame at 14 s shows the baseline (stat 46 in black, line
+  ~20–48 under the dashed line, all OK). key-moment.png shows the line jumping over the dashed threshold, stat 105→142
+  in red and fill "Backlogged". When the clock was read after the run, the phase was incident.
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-02-incident.spec.ts` passed (1.6 min test,
+  about 2 min with up/down). `run.sh --stack scene-01-sign-in.spec.ts` still passes. The demo typecheck is clean. No
+  chromium or `.state` process is left.
+- 2026-11-09T11:16:45Z supervisor: demo-scene-02-incident passed the gate in round 1
+
+### demo-scene-03-alert-fires (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/03-alert-fires.spec.ts` (18 `expect`s, scene timeout 300 s). It signs in and goes
+    to `/projects/<uuid>/alerting/rules` by URL, because no nav link leads there. It asserts the Alert Rules tab is
+    selected and the "Fill queue backlog high" row shows "Managed in git" and team=pharmacy-ops. In the baseline it
+    asserts the row is not Firing. If the scene starts in the incident, it records a `baseline` annotation and skips
+    that check. It waits for `incident` with `waitForPhase`. Then it reloads the list every ~3 s, for up to 120 s,
+    until the state cell reads "Firing". The list doesn't poll: the rules query has no refetch interval. It then sets
+    the State filter (`getByRole('combobox', {name: 'State'})`) to Firing. It polls the receiver's `/api/received` for
+    a firing notification for the rule and opens the fake incident.io page. It asserts the rule's row has
+    `td.status` "firing" in rgb(200,30,30), the summary `Fill queue backlog is N (threshold 100)` and the labels.
+    Key moment: the incident.io page.
+  - `walkthrough/lib/scene.ts`: `WalkthroughStack` has a new `incidentIo: {url}` field. It is type-only and already
+    in stack.json.
+  - docs/eng-1799/demo.md: a bullet for 03-alert-fires under "Walkthrough scenes (recorded)".
+- **Selector notes.** A rule row is `getByRole('row')` filtered by the rule name's Anchor button. The state badge is
+  the row's first cell. The fake incident.io page has a meta refresh every 5 s, so use auto-retrying locators on it.
+- **Tested as a user.** I ran up.sh, restarted the clock with `{25, 900}` and ran `run.sh 03-alert-fires`: it
+  passed in about 92 s. The video is 1920x1080 and 91 s long. The frame at 12 s shows both rules as Normal. The
+  frame at 82 s shows both as Firing with State=Firing. key-moment.png shows two FIRING rows in red: the backlog
+  rule with "Fill queue backlog is 166 (threshold 100)", and the error-log rule.
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-03-alert-fires.spec.ts` passed (22 s: the
+  check starts the clock in the incident, so the rule is already firing). The demo typecheck is clean.
+  `docs.spec.ts` fails with or without this change ("a heading about prerequisites"). It belongs to the later
+  demo-docs feature. No chromium or `.state` process is left.
+- 2026-11-09T11:27:43Z supervisor: demo-scene-03-alert-fires passed the gate in round 1
+
+### demo-scene-04-service-health (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/04-service-health.spec.ts` (25 `expect`s, scene timeout 300 s). It waits on the
+    scenario clock for `incident` (`waitForPhase`, max 120 s away), signs in and opens Service health from the
+    dashboards list. In the `Fill service logs` Tile it reads the "N of N lines" count, types `level=error` into the
+    "Filter lines" box and asserts the count drops (still > 0), every drawn `log-stream-row` has
+    `data-level="error"`, and a line mentions shipping-label-api. In the `Slow trace waterfall` Tile it finds the
+    `trace-span-row` with service shipping-label-api and the `Show details of POST /v1/labels` button (depth > 0),
+    hovers its bar, clicks it, and asserts the drawer (`role=dialog` holding `trace-span-drawer`) names the span and
+    service, shows a Duration of >= 2 s and lists the attributes. Key moment: drawer open beside the filtered logs.
+  - docs/eng-1799/demo.md: a bullet for 04-service-health under "Walkthrough scenes (recorded)".
+- **Selector notes.** The log filter only matches the line text (not labels), so filter on `level=error`, which every
+  error line carries. The log stream is virtualised: `rows.evaluateAll` sees only the rendered rows (enough to show
+  the filter). Both Tiles sit side by side below the heatmap; at 1920x1080 they are in view together after scrolling.
+  The drawer's Duration row is a Group (label + value); `formatDurationMs` writes `4.86 s` / `32 ms`.
+- **Tested as a user.** up.sh, scenario restarted with `{-150, 900}`, `run.sh 04-service-health`: passed in about
+  17 s. The video is 1920x1080 and 15.5 s long. The frame at 9 s shows "level=error" in the filter, "104 of 500
+  lines", all red error rows ("create shipping label failed … downstream=shipping-label-api"), and the waterfall with
+  5 spans (shipping-label-api `POST /v1/labels` 4.86 s, orange). key-moment.png shows the drawer: Service
+  shipping-label-api, Duration 4.86 s, trace id de30…0001, attributes.
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-04-service-health.spec.ts` passed (17.7 s test).
+  The demo typecheck is clean. No chromium or `.state` process is left.
+- 2026-11-09T11:37:20Z supervisor: demo-scene-04-service-health passed the gate in round 1
+
+### demo-scene-05-investigate (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/05-investigate.spec.ts` (about 30 `expect`s, scene timeout 300 s). It waits on the
+    scenario clock for `incident` (max 120 s away), signs in, opens New → Query using SQL runner and switches the
+    "SQL Runner mode" control to Investigate. Save as chart is disabled before there is SQL. It picks Prometheus,
+    types `max by (queue) (hrx_fill_queue_backlog{job="fill-service"})`, checks the generated
+    `SELECT * FROM promql(...)` SQL, runs it (`investigate-timeseries`, `data-series-count` 3), then edits the SQL box
+    (see the trap below) and runs it again (`investigate-table` with a `{queue="fill"}` cell). Save as chart, with
+    a name that includes the run's UTC time. Lightdash navigates to the chart page: the toast, the name, the saved chart
+    via `GET sqlRunner/saved/slug/<slug>` (name, the exact SQL, `promql(`), and the Results tab rows without
+    an error. Finally Edit chart → SQL tab: the Monaco editor shows `promql(` and the fixed window. Key moment: that
+    editor view with the results below it.
+  - docs/eng-1799/demo.md: a 05-investigate bullet under "Walkthrough scenes (recorded)" and a new Known limits
+    item (below).
+- **Trap / follow-up (app gap, not fixed here).** Investigate writes the reserved `${ld.parameters.__from}`,
+  `__to` and `__interval` into the SQL, and Save as chart keeps them. A SQL chart opened on its own (ViewSqlChart, or
+  Edit chart in the SQL Runner) sends no `timeRange`, so the chart fails with "Missing values for SQL parameter(s):
+  __from, __to, __interval". Only dashboard Tiles fill them in. The plumbing already accepts `timeRange`
+  (useSavedSqlChartResults / executeQuery), but no caller passes one for a standalone chart. CONTRACTS §2 doesn't
+  say what range a standalone chart should get, so I left the app alone. The scene replaces the reserved arguments
+  with `now() - INTERVAL '1 hour', now(), '15s'` (the same pattern as the seeded hrx_fill_queue_backlog virtual view),
+  selects `"timestamp", "value", "series"` (the `labels` struct shows as "[object Object]" in Lightdash tables) and
+  adds `ORDER BY "timestamp" DESC`. Without `labels`, Investigate shows the result as a table, not a time series.
+- **Selector notes.** Mantine SegmentedControl options are clicked by their label text (`getByText('Investigate',
+  {exact})`) and checked with `getByRole('radio')`. The SQL box is `getByRole('textbox', {name: 'SQL', exact: true})`.
+  The Save as chart modal is `getByRole('dialog', {name: 'Save as chart'})`. The chart lands in the first space the
+  user can create in ("Platform db"). Each scene run adds a chart. The check counts only charts that are new.
+- **Tested as a user.** I ran up.sh, restarted the clock with `{-150, 900}` and ran `run.sh 05-investigate`. It passed
+  in about 28 s, and the video is 1920x1080, about 26 s long. The frame at 9 s shows Investigate with Prometheus, the
+  typed PromQL and the generated promql() SQL. key-moment.png shows the chart "Fill queue backlog by queue
+  (Investigate HH:MM:SS UTC)" in edit mode: the promql() SQL with the 1-hour window, and 500 result rows (newest first,
+  fill around 140-175, pack and ship in the teens or lower).
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-05-investigate.spec.ts` passed (31 s). The demo
+  typecheck is clean. No chromium or `.state` process is left.
+- 2026-11-09T11:56:30Z supervisor: demo-scene-05-investigate passed the gate in round 1
+
+### demo-scene-06-ai-question (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/06-ai-question.spec.ts` (about 25 `expect`s, scene timeout 300 s). It waits on the
+    scenario clock for `incident` (max 120 s away) and then until incidentAt+30 s, so every fill backlog sample since
+    then is at least 120. It binds `window.askTelemetry` (page.exposeFunction) to `ask()` from `ask/client.ts`, the
+    same code as `pnpm -F eng-1799-demo ask`, and loads the page with page.setContent. It types "How has the fill queue
+    backlog changed over the last 15 minutes?" and presses Ask. It then checks, in order: the `query_promql` tool call
+    and its `now-15m` arguments, the live PromQL query, one table row per sample with the newest at or over 100 (in red),
+    and the answer text. It writes the client's AskResult to `out/scenes/06-ai-question/answer.json`. Key moment: the
+    whole page with the answer.
+  - New `demo/eng-1799/walkthrough/lib/ask-page.ts`: the self-contained "Ask telemetry-mcp" HTML page (no network,
+    every value written with textContent). It has test ids `ask-question`, `ask-submit`, `ask-tool`, `ask-arguments`,
+    `ask-query`, `ask-result-row`, `ask-row-count`, `ask-answer` and `ask-error`.
+  - docs/eng-1799/demo.md: a 06-ai-question bullet under "Walkthrough scenes (recorded)".
+- **Decision.** Lightdash has no AI page outside `ee/`, which is protected, and telemetry-mcp's `ask_data` has no
+  model in the demo. So the "page" is the scene's own local page, driven by the real scripted client. The MCP call
+  runs in Node, not in the browser (the client needs no CORS and reads stack.json).
+- **Trap.** On the page, `.hidden` needs `!important`: `.row2 { display: grid }` comes later and otherwise kept the empty
+  tool-call cards visible before Ask. The scene now asserts that the tool call and the answer are hidden before Ask.
+- **Tested as a user.** I ran up.sh and `ask` by hand (both scripted questions answered live). I restarted the clock with
+  the incident 10 s out and ran `run.sh 06-ai-question`, which passed (it waited for the incident). I ran it again with
+  `{-120, 900}` (11 s). The video is 1920x1080, about 11 s long. The frame at 2 s shows the question being typed, and
+  the frame at 7 s shows the call, the query and 16 rows. key-moment.png shows the answer "Over the last 15 minutes the
+  fill queue backlog ranged from 20 to 172 jobs; the latest sample is 164."
+- **Checks:** `bash ./init.sh`, then `acceptance/run.sh --stack scene-06-ai-question.spec.ts` passed (13 s). The demo
+  typecheck is clean. `docs.spec.ts` still fails on headings that the later demo-docs feature adds; it fails the same
+  way without this change. down.sh stopped the stack, and no chromium or `.state` process is left.
+- 2026-11-09T12:08:27Z supervisor: demo-scene-06-ai-question passed the gate in round 1
+
+### demo-scene-07-write-mode (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/07-write-mode.spec.ts` (about 35 `expect`s, scene timeout 300 s). It signs in, then
+    goes New → Query using SQL runner → Investigate → Platform Database. It types `UPDATE queues SET target_minutes =
+    target_minutes + 15 WHERE name = 'demo-fill' RETURNING name, target_minutes` in Platform SQL and turns the Write
+    Mode switch on. It fills in a Description that includes the run's time, plus ticket ENG-1799. Preview gives "Rolled
+    back", Rows affected: 1 and the returned demo-fill row. Typing `commit` keeps Commit disabled; `COMMIT` enables it.
+    Commit gives "Committed" with the same target as the Preview, a different audit id, and a cleared confirmation box.
+    The "Audit browser" link (next to the SQL Runner mode switch) is then filtered by User = the demo user. The scene
+    asserts that both rows with the run's description are write, ENG-1799 and success, the newest is the commit and
+    the older one has the "preview" badge. Key moment: the audit browser with both records.
+  - docs/eng-1799/demo.md: a 07-write-mode bullet under "Walkthrough scenes (recorded)".
+- **No app change was needed.** The Write Mode panel, the confirmation tokens, the engine write path and the audit
+  browser all worked as they are. The demo user already has platform_write (stack/seed.ts).
+- **Traps.** Clicking the Mantine Switch's label text does not work: the hidden `<input role="switch">` intercepts the
+  click. Click `getByRole('switch', {name: 'Write Mode'})` instead. Each run adds 15 to the demo-fill
+  `target_minutes` (60 → 75 → …), so the acceptance fingerprint changes every time. A fresh up.sh reseeds the value.
+  The scene does not use the scenario clock and never restarts it.
+- **Tested as a user.** I ran up.sh and `run.sh 07-write-mode`, which passed in 23 s. The frame at 15 s shows the
+  Write Mode panel with "Committed", Rows affected: 1 and demo-fill 75. key-moment.png shows the audit browser
+  filtered to demo.operator@example.com, with two rows (write, then write + preview, both success, 1 row, ENG-1799).
+  Querying the Platform Database directly gave demo-fill target_minutes = 75 (seeded as 60), so the Preview did not
+  write.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh --stack
+  scene-07-write-mode.spec.ts` passed (26 s). down.sh ran, and no chromium or `.state` process is left.
+- 2026-11-09T12:19:30Z supervisor: demo-scene-07-write-mode passed the gate in round 1
+
+### demo-scene-08-recovery (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/walkthrough/08-recovery.spec.ts` (23 `expect`s, scene timeout 300 s). It fails at once
+    if the recovery is more than 120 s away or the clock is still in the baseline. It signs in and opens
+    `/projects/<uuid>/alerting/rules`. If the scene starts in the incident and no resolve has arrived yet, it reloads
+    the list every ~3 s until the backlog rule reads Firing (so the video shows Firing first). It then runs
+    `waitForPhase('recovered')`, which returns at once when the recovery is already over. Next it reloads until the
+    rule reads Normal (or Resolved). It opens the rule page and asserts State history shows "Firing → Normal|Resolved"
+    (the backend records "Firing → Resolved"). It polls `/api/received` for a resolve notification for the rule. On
+    the fake incident.io page, it asserts the newest row for the rule is RESOLVED in rgb(14, 124, 58), with
+    team=pharmacy-ops, an Ended time and the summary "Fill queue backlog is N (threshold 100)" with N <= 100. An
+    older FIRING row must be listed below it. Key moment: the incident.io page.
+  - docs/eng-1799/demo.md: a 08-recovery bullet under "Walkthrough scenes (recorded)".
+- **Decision: what counts as "this" resolve.** A resolve notification counts only if it was received at or after
+  max(recoveryAt, startedAt) of the current timeline. The receiver keeps every notification for the life of the
+  stack, so an earlier timeline's resolve must not pass. A restart from firing into a baseline can also produce a
+  resolve before the new recovery, and the max() excludes that one too.
+- **No app change was needed.** List state labels: the list shows "Normal" after the resolve, while the rule page's
+  Series badge shows "Resolved".
+- **Tested as a user.** (1) I ran up.sh, restarted with `{-120, 35}` and ran `run.sh 08-recovery`: it passed in
+  1.5 min. key-moment.png shows RESOLVED "Fill queue backlog is 80 (threshold 100)" above two FIRING rows. (2) **All
+  eight scenes after a single restart:** I restarted with `{40, 215}` and then ran `run.sh` with no scene id. All 8
+  passed in 4m37s (01 17 s, 02 1.5 min, 03 11 s, 04 15 s, 05 28 s, 06 11 s, 07 23 s, 08 1.3 min; 08 started about
+  18 s before the recovery). (3) **Already resolved:** with no further restart, `run.sh 08-recovery` passed in 14 s.
+  It used the resolve received at 12:29:22 and ignored the 12:23:51 one from the earlier timeline.
+- **Trap for run-all / video lines.** Within one timeline, scene 08 cannot start after the resolve when the walkthrough
+  runs back to back. 02–06 each assert "still in the incident" at their end, 07 takes only ~25 s, and the resolve
+  arrives ~60 s after the recovery. So in a full run, 08 waits about 1 min, which is normal. Also, scenes 01–06 took
+  ~3 min from the restart here, so `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=150` (run-all.spec.ts) looks too short for
+  02–06 to finish inside the incident. The demo-run-all session should check this timing first; it may need run-all.sh
+  to restart the clock before the walkthrough.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh --stack
+  scene-08-recovery.spec.ts` passed (1.4 min test). In that video, the frame at 25 s shows both rules Firing. down.sh
+  ran, and no chromium or `.state` process is left.
+- 2026-11-09T12:39:10Z supervisor: demo-scene-08-recovery passed the gate in round 1
+
+### demo-video-build (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - New `demo/eng-1799/video/build.ts`, which is the `video` script (`node --import tsx video/build.ts`) in
+    demo/eng-1799/package.json and replaces the "not implemented" stub. It parses `--scenes-dir`, `--out` and
+    `--music`. Relative paths resolve against `INIT_CWD`, the directory pnpm was run from. It checks all eight
+    `<scene-id>/video.webm` files and fails, listing them, if any are missing or empty. It measures each clip by
+    decoding it, because Playwright webm headers carry no duration. Then one ffmpeg run does per clip scale/pad to
+    1920x1080, setsar=1, setpts, fps=30 and yuv420p, then `concat`. Output is libx264 veryfast crf 20, `-an`,
+    `+faststart`, `-threads 2`. It writes a `.partial.mp4` first and renames it to `eng-1799-demo.mp4`.
+  - docs/eng-1799/demo.md: new "Video build" section.
+- **Decision: fitting into 2–4 minutes.** The real recordings add up to 296 s (02 and 08 wait on the clock for ~90 s
+  each). If the total is over `MAX_SCENES_SECONDS = 225`, the build speeds up the whole video by one uniform factor
+  (x1.316 today) to 225 s. Every scene stays complete and in order. 225 leaves ~15 s for the title and end cards that
+  demo-video-cards-captions adds. That session must make sure the cards plus scenes minus crossfades stay <= 240 s.
+  On the synthetic 8x18 s clips the factor is 1 (144 s). Under 120 s the build only warns, since run-all checks >= 60.
+- **`--music` is parsed but refused** with "not supported by this build yet (demo-video-music)". The hygiene spec
+  needs the string `--music` and `ffmpeg-static` in build.ts. demo-video-music should replace that refusal.
+- **Trap:** the package compiles as CommonJS for tsc, so `import.meta` fails typecheck. Use `__dirname`, as stack/*.ts does.
+- **Tested as a user.** I ran `pnpm -F eng-1799-demo video --scenes-dir demo/eng-1799/out/scenes --out
+  tmp/video-manual` on the real recordings (18 s wall). Output: h264 High, yuv420p, 1920x1080, 30 fps, 3:45, one
+  video stream and no audio. A contact sheet of frames at 6/40/85/100/115/130/140/160/200 s showed sign-in → the
+  incident dashboard → Alerting → Service health → Investigate → Ask telemetry-mcp → Write Mode → the recovery
+  Alerting list, in order. A missing scenes dir and `--music` each exit 1 with a clear message. With no arguments it
+  wrote demo/eng-1799/out/eng-1799-demo.mp4.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `acceptance/run.sh video.spec.ts --grep
+  "demo-video-build:"` passed (11.7 s). No ffmpeg process is left.
+- 2026-11-09T12:48:25Z supervisor: demo-video-build passed the gate in round 1
+
+### demo-video-cards-captions (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/video/build.ts`. The ffmpeg graph is now: title card (4 s, lavfi `color` + drawtext "Lightdash for
+    HouseRx operations" and a subtitle) → eight scenes, each with a lower-third caption (drawbox dark band at
+    y=ih-220, h=120, plus a white 48 px drawtext) → end card (4 s). Neighbouring segments are joined with `xfade`
+    (fade, 0.75 s). Every segment is normalised (fps 30, yuv420p, `tpad` clone + `trim` to an exact length, settb), so
+    the xfade offsets are exact. `SCENES` is now `{ id, chapter, caption }`, and the captions and chapter titles live
+    there. The build also writes `<out>/CHAPTERS.md`: 10 lines of `mm:ss title`. A chapter starts where the crossfade
+    into it starts, floored and kept strictly increasing. The build fails if the video would run over 240 s, and
+    still warns under 120 s.
+  - docs/eng-1799/demo.md "Video build" now describes the cards, captions, crossfades, CHAPTERS.md and the font
+    lookup.
+- **Decision / trap: the cards are light (0xf5f6fa, dark text), not dark.** A navy card failed the demo-video-build
+  order check. Fading navy into scene 1's synthetic blue passes, on average, through scene 8's colour (0,0,128), so the
+  colour sequence started with 7. Any dark card fading into blue does this. Keep the cards light.
+- **Fonts.** drawtext uses the first existing file of Helvetica.ttc / Arial / DejaVuSans / LiberationSans, else
+  `font=Sans` (fontconfig). Text goes through `filterValue()`, which does ffmpeg's two escaping levels, with
+  `expansion=none`, so captions may contain `:`, `,` and `'`.
+- **For demo-video-thumbnail-chapters:** CHAPTERS.md already meets that spec's chapter part: 10 unique titles, the
+  first containing "Lightdash for HouseRx operations" at 00:00. Only the thumbnail is left. **For demo-video-music:**
+  the video length is `starts[last] + END_SECONDS` (logged as "video N s"), so the audio fade-out can use it.
+- **Tested as a user.** I ran `pnpm -F eng-1799-demo video --scenes-dir demo/eng-1799/out/scenes` on the real
+  recordings (31 s wall). Scenes 301 s, sped up x1.339, video 226.3 s, h264 1920x1080 30 fps, no audio. In a contact
+  sheet, 1.5 s shows the title card. 9/50/89/102/117/140/162/200 s show each scene with its caption band in the lower
+  third. 15.2 and 15.5 s show scene 1 dissolving into scene 2, and 225.5 s shows the end card. CHAPTERS.md runs
+  00:00 title … 02:30 Recovery, 03:42 End card. I rebuilt the default demo/eng-1799/out/ outputs (gitignored).
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `run.sh video.spec.ts --grep
+  "demo-video-cards-captions:"` passed (19 s), and `--grep "demo-video-build:"` still passes. hygiene.spec.ts and
+  docs.spec.ts fail for reasons outside this feature, which belong to later features (no run-all.sh yet, no prerequisites section).
+- 2026-11-09T12:59:49Z supervisor: demo-video-cards-captions passed the gate in round 1
+
+### demo-video-thumbnail-chapters (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/video/build.ts`. After the MP4 is written, a second ffmpeg call takes one frame of the finished video
+    and writes `<out>/thumbnail.png` (1920x1080), through a partial file and a rename. The frame comes from
+    `THUMBNAIL_SCENE` ('02-incident'), at `starts[seg] + max(len - XFADE - 1.5, len / 2)`: the end of the scene, just before
+    it crossfades out. A light band (CARD_COLOUR at 0.92) runs across the top with the title in 96 px dark text. The
+    scene's own lower-third caption stays.
+  - CHAPTERS.md was already correct from demo-video-cards-captions (10 lines, 00:00 title card … end card), so it is
+    unchanged.
+  - docs/eng-1799/demo.md "Video build" now describes the thumbnail.
+- **Decision: use the end of scene 2, not its middle.** Mid-scene the stat is still a calm 29, because the scene waits
+  on the scenario clock. Near the end it shows the red 158 and "Backlogged", which makes the better thumbnail. With
+  short clips (the 18 s synthetic ones) the max() keeps the frame inside the scene.
+- **Tested as a user.** After `bash ./init.sh`, I ran `pnpm -F eng-1799-demo video --scenes-dir demo/eng-1799/out/scenes
+  --out tmp/video-thumb` on the real recordings (31 s). I opened thumbnail.png: the Pharmacy Ops overview with the red
+  158 stat, the line over the threshold, the title band on top and the caption below. CHAPTERS.md has ten lines,
+  00:00 … 03:42, strictly increasing. I rebuilt the default demo/eng-1799/out/ outputs (gitignored).
+- **Checks:** demo `pnpm typecheck` is clean. `run.sh video.spec.ts --grep "demo-video-thumbnail-chapters:"` passed
+  (34 s). `demo-video-build:` and `demo-video-cards-captions:` still pass. No ffmpeg process is left.
+- **For demo-video-music:** the thumbnail step reads the finished MP4 with `-ss`, so adding an audio track does not
+  affect it.
+- 2026-11-09T13:09:41Z supervisor: demo-video-thumbnail-chapters passed the gate in round 1
+
+### demo-video-music (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.**
+  - `demo/eng-1799/video/build.ts`. `--music <file>` is now accepted. `musicFile()` runs first in `main()`, before
+    `--scenes-dir` is looked at. It resolves the path against INIT_CWD and refuses an empty argument or a path that is
+    missing, not a regular file, unreadable (`accessSync R_OK`) or empty, with "--music file not found: <path>" and similar.
+    The music is the input after the end card (`-stream_loop -1`), and its chain is `aformat 48k stereo, asetpts=N/SR/TB,
+    atrim=duration=<videoSeconds>, afade in 3 s, afade out over the last 4 s`. It is encoded as AAC at 192k. Without
+    --music it is still `-an` (silent), as before.
+  - docs/eng-1799/demo.md "Video build" describes --music.
+- **Trap: do not add `-shortest`.** With the filtergraph, `-shortest` cut the audio at 218.6 s of a 226.3 s video, so
+  the fade-out was lost. atrim already sets the exact length. `asetpts=N/SR/TB` keeps the looped input's timestamps
+  continuous across loop points.
+- **Decision: a music file shorter than the video loops.** Nothing in the spec covers this. Looping keeps music under
+  the whole video.
+- **No audio in the repo:** `git ls-files` lists no mp3/wav/aac/m4a/ogg/flac/opus files, and nothing downloads audio.
+  A file with no audio stream fails at ffmpeg ("matches no streams"). That is raw ffmpeg text, and it is acceptable.
+- **Tested as a user.** I made my own 60 s 330 Hz tone (mp3) and ran `pnpm -F eng-1799-demo video --scenes-dir
+  demo/eng-1799/out/scenes --out tmp/music-test/out --music tmp/music-test/my-tone.mp3` on the real recordings (31 s).
+  ffprobe shows h264 1920x1080 30 fps plus `Audio: aac (LC) 48000 Hz stereo`. The audio runs to 03:46.24 of 03:46.27.
+  volumedetect gives -46.8 dB at 0-0.4 s, -27 dB at 2 s, a steady -24.5 dB at 60/113/220 s (the loop is seamless) and
+  -47.8 dB in the last 0.5 s. A missing file, a directory, an unreadable file and `--music ""` are each refused with a
+  clear message, even with a bad --scenes-dir. I deleted the scratch outputs.
+- **Checks:** demo `pnpm typecheck` is clean. After `bash ./init.sh`, `run.sh video.spec.ts --grep "demo-video-music:"`
+  passed (19 s). `demo-video-build:`, `demo-video-cards-captions:` and `demo-video-thumbnail-chapters:` still pass. No
+  ffmpeg process is left.
+- 2026-11-09T13:19:14Z supervisor: demo-video-music passed the gate in round 1
+
+### demo-docs (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** Only `docs/eng-1799/demo.md`. New sections at the top: Prerequisites (Homebrew Postgres, Node 24+,
+  pnpm 12, cargo, `bash ./init.sh`), The one command (`demo/eng-1799/run-all.sh`, its outputs, and the same steps by
+  hand), Presenting live (`--keep`, sign-in, restarting the clock on cue, `down.sh`), Scenario timeline (a table for
+  baseline, T+90s incident, T+5min recovery, `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT`, the restart API, and the timing
+  room the scenes need). Under "Walkthrough scenes" there is a new "What each scene proves" table, and the old scene
+  list is now "How the scenes run". Under "Video build" there is a new "Adding your own licensed music" subsection
+  (supply a file you hold a licence for, an example `--music` command, no streaming rips). "Frontend mode"
+  (production build, and why not the dev server) was already there.
+- **Glossary fix:** the Grafana fixture sentence said "datasource" (an _Avoid_ term, and docs.spec.ts rejects it).
+  It now says "one Prometheus input in `__inputs`".
+- **For demo-run-all-fails-cleanly / demo-run-all: the doc describes `run-all.sh` before it exists.** It follows the
+  pinned interface: up, a scenario restart with the `DEMO_*` offsets, `walkthrough/run.sh` (all scenes), `pnpm -F
+  eng-1799-demo video`, then down (skipped with `--keep`). It stops at the first failure and exits non-zero, and it
+  still brings the stack down (trap). It checks `DEMO_*` before starting anything. If run-all.sh ends up different
+  (for example its own default offsets or a different restart), update "The one command", "Presenting live" and
+  "Scenario timeline" to match. The doc's example `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240` is my choice, from the
+  scene-08 trap note above. It is not tested with run-all.
+- **Tested as a user.** After `bash ./init.sh` I followed the doc. `DEMO_INCIDENT_AT=soon up.sh` and `300/90` were
+  each refused, exit 2, naming the variable. `up.sh` printed the T+90s/T+300s timeline, the Lightdash URL and the
+  sign-in line, in 44 s. `stack.json` has the documented keys. `GET /scenario` read `baseline`. The doc's curl
+  restart command, copied as written, set incident at 45 s. A second `up.sh` changed nothing. `/login` answered
+  200. `walkthrough/run.sh 01-sign-in` passed (21 s). The documented `ask` question answered (baseline 18-47). Two
+  `down.sh` runs left no `.state` process. I did not run the full walkthrough or the video build in this session:
+  run-all.sh doesn't exist yet, and the video build was verified by the four video features.
+- **Check:** `run.sh docs.spec.ts` passed.
+- 2026-11-09T13:27:59Z supervisor: demo-docs passed the gate in round 1
+
+### demo-run-all-fails-cleanly (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** A new `demo/eng-1799/run-all.sh` (executable, shellcheck clean). It does what docs/eng-1799/demo.md
+  "The one command" already describes: up.sh, `POST <scenario.url>/scenario/restart` with the `DEMO_*` offsets,
+  `walkthrough/run.sh` (all scenes), `pnpm --silent -F eng-1799-demo video`, then down.sh (skipped with `--keep`, but
+  only when every step passed). It checks `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` with the same rules and defaults
+  (90/300) as up.sh, plus unknown arguments, before it starts anything. Each of these fails with exit 2 and a message
+  that names the problem. Each step runs as a background job that the script waits on, so TERM/INT/HUP reach the script
+  at once. It then TERMs the running step, waits for it and runs down.sh from its EXIT trap. A failing step exits 1
+  and names the step. If down.sh fails, the exit is also non-zero. The docs did not need changes.
+- **Tested as a user.** `DEMO_INCIDENT_AT=soon demo/eng-1799/run-all.sh` exited 2 in 0.3 s, naming DEMO_INCIDENT_AT,
+  and no `.state` process was running. `90/60` and `--bogus` were also refused with exit 2. A failure after the stack
+  was up (`DEMO_SCENE_TIMEOUT=bad`, so walkthrough/run.sh refuses): up ran, then the restart, then the walkthrough
+  failed with exit 1 at 25 s and down.sh stopped both Postgres clusters and every process. `pgrep -f .state` was empty.
+  TERM sent to run-all 12 s into up.sh gave exit 143, with up.sh stopped and down.sh run, and nothing left running.
+- **Check:** `run.sh run-all-failure.spec.ts` passed.
+- **For demo-run-all:** I did NOT run the full happy path (walkthrough plus video). That is the next feature's check
+  (`DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=150`). The scenario restart happens right after up.sh, so T=0 is just before
+  scene 01.
+- **For demo-hygiene:** `run.sh hygiene.spec.ts` fails today on
+  `demo/eng-1799/content/charts/log-level-heatmap.yml`. It holds a `$schema` URL `https://vega.github.io/...`, and
+  the hygiene check counts that as a remote reference. That file came from demo-dashboard-service-health, not from
+  this feature. run-all.sh itself has no URL other than 127.0.0.1-style ones it reads at run time.
+- 2026-11-09T13:32:15Z supervisor: demo-run-all-fails-cleanly passed the gate in round 1
+
+### demo-hygiene (2026-11-09, run 20261109-013019, round 1)
+
+- **What changed.** `hygiene.spec.ts` flagged three kinds of non-local URL in demo code. The fixes change no behaviour:
+  - `content/charts/log-level-heatmap.yml`: dropped the vega-lite `$schema: https://vega.github.io/...` line. It is
+    only a declaration and vega-lite never fetches it.
+  - `stack/audit-store.ts`, `stack/results-s3.ts`: dropped `xmlns="http://s3.amazonaws.com/doc/2006-03-01/"` from the
+    fake S3 XML replies (ListBucketResult, Initiate/CompleteMultipartUploadResult). The AWS SDKs match element names
+    and do not check the namespace.
+  - `stack/engine-config.ts`, `stack/lightdash.ts`, `stack/mcp.ts`: URLs written as `` `http://${HOST}:${port}` ``
+    became `` `http://127.0.0.1:${port}` ``. The spec reads source text, so it can't tell that `HOST` is the loopback
+    constant. `HOST` stays for listen addresses and other non-URL uses.
+- **Trap for later sessions.** Any `http(s)://` literal in a non-.md, non-package.json file under demo/ must be
+  127.0.0.1, localhost, [::1], *.example.*, json-schema.org or www.w3.org. That includes template literals with a
+  variable host, XML namespaces and JSON-schema `$schema` values. Write the loopback address directly.
+- **Tested as a user.** I scanned every demo/ and docs/eng-1799 file with the spec's own regexes. There are no audio
+  files, no streaming-site references and no remote URLs left. video/build.ts takes music only from `--music` and
+  ffmpeg from ffmpeg-static. `video --music /nonexistent/x.mp3` was refused, naming the file. The ee/ diff from
+  f85d1ce60 is empty. `.state` and `out` are not tracked. With up.sh running, the AWS SDK (client-s3 + lib-storage)
+  did a 12 MiB multipart Upload, ListObjectsV2 and GetObject against the results S3 fake, and all three worked. Then
+  down.sh left no process.
+- **Checks.** `run.sh hygiene.spec.ts` passed. The regression specs `--stack audit-store`, `lightdash-engine-query`,
+  `mcp-ask` and `dashboard-service-health` (heatmap still renders) passed. `pnpm -F eng-1799-demo typecheck` was clean.
+- 2026-11-09T13:37:56Z supervisor: demo-hygiene passed the gate in round 1
+- 2026-11-09T13:50:32Z supervisor: demo-run-all halted: the worker halted on demo-run-all
+
+## Decision by the controls engineer (2026-11-09, after the demo-run-all halt)
+
+- demo-run-all: the protected check's compressed timeline is now `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240` (was
+  45/150), the timeline `docs/eng-1799/demo.md` already gives as its example. The measured need was about 140–150 s
+  of incident for scenes 02–06; 195 s leaves margin on a loaded machine. No other feature changes: no faster refresh,
+  no scene reordering. Redo the feature: run the check; fix only what still fails.
+
+### demo-run-all (2026-11-09, run 20261109-013019, round 1 after the controls engineer's 45/240 decision)
+
+- **What changed.** No code. On the 45/240 timeline, run-all.sh (written in demo-run-all-fails-cleanly) passes as it is,
+  so I changed nothing, following "fix only what still fails".
+- **Check.** `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 bash demo/eng-1799/acceptance/run.sh run-all.spec.ts` (after
+  `bash ./init.sh`) passed in 6.1 min. The whole run took 365 s, which fits the 600 s foreground tool limit.
+- **Tested as a user.** I ran `DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 demo/eng-1799/run-all.sh` directly. It exited
+  0 in 346 s. The steps ran in order: up.sh, scenario restart, walkthrough (scenes 01 to 08 each "ok" with video.webm and
+  key-moment.png, plus answer.json for 06), video build (287.7 s of scenes sped up x1.279 to a 226 s video), then
+  down.sh. out/ holds eng-1799-demo.mp4, CHAPTERS.md (title card, eight scenes, end card) and thumbnail.png. The 08
+  key-moment shows the backlog alert RESOLVED on the fake incident.io page. Afterwards `pgrep -f .state` was empty.
+- **For later sessions.** `out/scenes/99-probe/` is a stale, untracked clip left by an earlier session (06:03). Nothing
+  reads it: the video build takes the eight named scenes. The Postgres that `pgrep postgres` shows runs from
+  `~/.omnigent/pg` and belongs to the user, not to the demo.
+- 2026-11-09T14:13:50Z supervisor: demo-run-all passed the gate in round 1

@@ -1,0 +1,73 @@
+# Converted by hand from the synthetic Grafana dashboard demo/eng-1799/seed/grafana/pharmacy-ops-overview.json
+# (the base has no Grafana importer CLI). One Tile per panel, same titles; Grafana's 24-column grid is scaled
+# to Lightdash's 36 (x and w times 1.5), the time picker (now-30m, refresh 30s) became the Dashboard Time Range.
+# Keep the two in step: the demo-grafana-fixture check matches every panel title to a Tile title.
+contentType: dashboard
+description: Fill queue health for the ENG-1799 demo (synthetic data from the fake Prometheus, through the Federation Engine).
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Pharmacy Ops overview
+slug: pharmacy-ops-overview
+spaceSlug: pharmacy-ops
+tabs: []
+tiles:
+  - h: 8
+    properties:
+      chartSlug: current-fill-queue-backlog
+      hideTitle: false
+      title: Current fill queue backlog
+    tileSlug: current-fill-queue-backlog
+    type: saved_chart
+    w: 9
+    x: 0
+    y: 0
+  - h: 8
+    properties:
+      chartSlug: fill-queue-backlog
+      hideTitle: false
+      title: Fill queue backlog
+    tileSlug: fill-queue-backlog
+    type: saved_chart
+    w: 27
+    x: 9
+    y: 0
+  - h: 7
+    properties:
+      chartSlug: peak-backlog-by-queue
+      hideTitle: false
+      title: Peak backlog by queue
+    tileSlug: peak-backlog-by-queue
+    type: saved_chart
+    w: 18
+    x: 0
+    y: 8
+  - h: 7
+    properties:
+      chartSlug: queue-status
+      hideTitle: false
+      title: Queue status
+    tileSlug: queue-status
+    type: saved_chart
+    w: 18
+    x: 18
+    y: 8
+timeRange:
+  from: now-30m
+  refreshInterval: 30s
+  tileTimeDimensions:
+    current-fill-queue-backlog:
+      fieldId: hrx_fill_queue_backlog_ts_raw
+      tableName: hrx_fill_queue_backlog
+    fill-queue-backlog:
+      fieldId: hrx_fill_queue_backlog_ts_raw
+      tableName: hrx_fill_queue_backlog
+    peak-backlog-by-queue:
+      fieldId: hrx_fill_queue_backlog_ts_raw
+      tableName: hrx_fill_queue_backlog
+    queue-status:
+      fieldId: hrx_fill_queue_backlog_ts_raw
+      tableName: hrx_fill_queue_backlog
+  to: now
+version: 1

@@ -9,6 +9,8 @@
 #      (scripts/eng-1799/init-ldq.sh and init-mcp.sh); each skips work whose inputs are unchanged.
 #   3. Rust: `cargo build` of the Federation Engine `engine` binary (incremental) into
 #      tmp/cargo-target, with debug info off to keep it small.
+#   4. Demo: scripts/eng-1799/init-demo.sh (frontend production build, ffmpeg-static and chromium
+#      present, engine and telemetry-mcp built).
 #
 # Idempotent; a warm run takes a few seconds. Every check starts what it needs on ephemeral
 # ports (see e2e/eng-1799/acceptance/run.sh) and stops it itself.
@@ -54,5 +56,9 @@ for bin in initdb pg_ctl postgres; do
         exit 1
     fi
 done
+
+# 4. The demo line.
+echo "init.sh: demo"
+bash scripts/eng-1799/init-demo.sh
 
 echo "init.sh: ok"

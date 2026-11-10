@@ -1,0 +1,38 @@
+chartConfig:
+  config:
+    labelsFieldId: hrx_fill_service_logs_labels
+    levelFieldId: hrx_fill_service_logs_level
+    lineFieldId: hrx_fill_service_logs_line
+    newestFirst: true
+    showLabels: false
+    timestampFieldId: hrx_fill_service_logs_ts_raw
+    wrapLines: false
+  type: log_stream
+contentType: chart
+description: The newest fill-service log lines from the fake Loki (last 30 minutes), as Grafana's logs panel shows them; error lines spike during the incident.
+metricQuery:
+  additionalMetrics: []
+  dimensions:
+    - hrx_fill_service_logs_ts_raw
+    - hrx_fill_service_logs_level
+    - hrx_fill_service_logs_line
+    - hrx_fill_service_logs_labels
+  exploreName: hrx_fill_service_logs
+  filters: {}
+  limit: 500
+  metrics: []
+  sorts:
+    - descending: true
+      fieldId: hrx_fill_service_logs_ts_raw
+  tableCalculations: []
+name: Fill service logs
+slug: fill-service-logs
+spaceSlug: service-health
+tableConfig:
+  columnOrder:
+    - hrx_fill_service_logs_ts_raw
+    - hrx_fill_service_logs_level
+    - hrx_fill_service_logs_line
+    - hrx_fill_service_logs_labels
+tableName: hrx_fill_service_logs
+version: 1

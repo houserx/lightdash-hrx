@@ -1,0 +1,21 @@
+# The Prometheus series hrx_fill_queue_backlog (one row per queue and 15 s step) over the last 6 hours, read
+# through the Federation Engine's promql() table function. Explore charts get no reserved time parameters, so the
+# window is fixed here and each Tile narrows it to the Dashboard Time Range with a filter on `ts`.
+columns:
+  - reference: ts
+    type: timestamp
+  - reference: queue
+    type: string
+  - reference: backlog
+    type: number
+contentType: virtual_view
+name: Fill queue backlog (Prometheus)
+parameters: null
+slug: hrx_fill_queue_backlog
+sql: |-
+  SELECT
+    "timestamp" AS ts,
+    regexp_replace(series, '.*queue="([^"]*)".*', '\1') AS queue,
+    value AS backlog
+  FROM promql('hrx_fill_queue_backlog', now() - INTERVAL '6 hours', now(), '15s')
+version: 1

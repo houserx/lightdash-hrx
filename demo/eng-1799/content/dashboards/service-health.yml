@@ -1,0 +1,42 @@
+contentType: dashboard
+description: Fill-service health for the ENG-1799 demo (synthetic logs and traces from the fake Loki and Tempo, through the Federation Engine). The Trace ID parameter picks the trace in the waterfall; it defaults to the pinned example trace of the incident's slow shipping-label-api call.
+filters:
+  dimensions: []
+  metrics: []
+  tableCalculations: []
+name: Service health
+slug: service-health
+spaceSlug: service-health
+tabs: []
+tiles:
+  - h: 7
+    properties:
+      chartSlug: log-level-heatmap
+      hideTitle: false
+      title: Log level heatmap
+    tileSlug: log-level-heatmap
+    type: saved_chart
+    w: 36
+    x: 0
+    y: 0
+  - h: 10
+    properties:
+      chartSlug: fill-service-logs
+      hideTitle: false
+      title: Fill service logs
+    tileSlug: fill-service-logs
+    type: saved_chart
+    w: 18
+    x: 0
+    y: 7
+  - h: 10
+    properties:
+      chartSlug: fill-service-trace
+      hideTitle: false
+      title: Slow trace waterfall
+    tileSlug: fill-service-trace
+    type: saved_chart
+    w: 18
+    x: 18
+    y: 7
+version: 1

@@ -1,0 +1,75 @@
+chartConfig:
+  config:
+    spec:
+      config:
+        view:
+          stroke: null
+      encoding:
+        color:
+          field: hrx_fill_service_log_rate_lines_total
+          legend:
+            title: Lines/min
+          scale:
+            scheme: orangered
+          type: quantitative
+        tooltip:
+          - field: hrx_fill_service_log_rate_minute_raw
+            timeUnit: utchoursminutes
+            title: Minute
+            type: temporal
+          - field: hrx_fill_service_log_rate_level
+            title: Level
+            type: nominal
+          - field: hrx_fill_service_log_rate_lines_total
+            title: Lines
+            type: quantitative
+        x:
+          field: hrx_fill_service_log_rate_minute_raw
+          timeUnit: utchoursminutes
+          title: Minute (UTC)
+          type: ordinal
+        y:
+          field: hrx_fill_service_log_rate_level
+          sort:
+            - error
+            - info
+          title: Level
+          type: nominal
+      height: container
+      mark:
+        tooltip: true
+        type: rect
+      width: container
+  type: custom
+contentType: chart
+description: Fill-service log lines per minute and level (last 30 minutes) as a heatmap (a Vega-Lite rect chart over a LogQL count_over_time); the error row turns hot during the incident.
+metricQuery:
+  additionalMetrics:
+    - baseDimensionName: lines
+      label: Lines
+      name: lines_total
+      sql: ${TABLE}.lines
+      table: hrx_fill_service_log_rate
+      type: sum
+  dimensions:
+    - hrx_fill_service_log_rate_minute_raw
+    - hrx_fill_service_log_rate_level
+  exploreName: hrx_fill_service_log_rate
+  filters: {}
+  limit: 500
+  metrics:
+    - hrx_fill_service_log_rate_lines_total
+  sorts:
+    - descending: false
+      fieldId: hrx_fill_service_log_rate_minute_raw
+  tableCalculations: []
+name: Log level heatmap
+slug: log-level-heatmap
+spaceSlug: service-health
+tableConfig:
+  columnOrder:
+    - hrx_fill_service_log_rate_minute_raw
+    - hrx_fill_service_log_rate_level
+    - hrx_fill_service_log_rate_lines_total
+tableName: hrx_fill_service_log_rate
+version: 1

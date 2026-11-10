@@ -1,0 +1,81 @@
+chartConfig:
+  config:
+    columns:
+      hrx_fill_queue_backlog_backlog_peak:
+        name: Peak backlog
+        visible: true
+      hrx_fill_queue_backlog_backlog_status:
+        name: Status
+        valueMappings:
+          - options:
+              from: null
+              result:
+                color: green
+                index: 0
+                text: OK
+              to: 59.999
+            type: range
+          - options:
+              from: 60
+              result:
+                color: orange
+                index: 1
+                text: Elevated
+              to: 99.999
+            type: range
+          - options:
+              from: 100
+              result:
+                color: red
+                index: 2
+                text: Backlogged
+              to: null
+            type: range
+        visible: true
+      hrx_fill_queue_backlog_queue:
+        name: Queue
+        visible: true
+    conditionalFormattings: []
+    hideRowNumbers: true
+    showColumnCalculation: false
+    showRowCalculation: false
+    showTableNames: false
+  type: table
+contentType: chart
+description: Each queue's peak hrx_fill_queue_backlog in the Dashboard Time Range, with value mappings (Grafana's shape) turning it into OK, Elevated or Backlogged.
+metricQuery:
+  additionalMetrics:
+    - baseDimensionName: backlog
+      label: Peak backlog
+      name: backlog_peak
+      sql: ${TABLE}.backlog
+      table: hrx_fill_queue_backlog
+      type: max
+    - baseDimensionName: backlog
+      label: Status
+      name: backlog_status
+      sql: ${TABLE}.backlog
+      table: hrx_fill_queue_backlog
+      type: max
+  dimensions:
+    - hrx_fill_queue_backlog_queue
+  exploreName: hrx_fill_queue_backlog
+  filters: {}
+  limit: 50
+  metrics:
+    - hrx_fill_queue_backlog_backlog_peak
+    - hrx_fill_queue_backlog_backlog_status
+  sorts:
+    - descending: false
+      fieldId: hrx_fill_queue_backlog_queue
+  tableCalculations: []
+name: Queue status
+slug: queue-status
+spaceSlug: pharmacy-ops
+tableConfig:
+  columnOrder:
+    - hrx_fill_queue_backlog_queue
+    - hrx_fill_queue_backlog_backlog_peak
+    - hrx_fill_queue_backlog_backlog_status
+tableName: hrx_fill_queue_backlog
+version: 1

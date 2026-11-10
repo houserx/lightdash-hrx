@@ -1,0 +1,428 @@
+# ENG-1799 end-to-end demo
+
+The demo stack lives in `demo/eng-1799/`. `demo/eng-1799/up.sh` starts a complete local HouseRx-like observability
+stack on ephemeral local ports and prints every URL. A Playwright walkthrough drives the real Lightdash UI through
+a fill-queue incident in eight recorded scenes, and `pnpm -F eng-1799-demo video` turns the recordings into a short
+promo MP4. `demo/eng-1799/down.sh` stops it all. Everything is local: no Docker, no network, no credentials, and only
+synthetic data.
+
+## Prerequisites
+
+- **macOS with Homebrew Postgres** (`/opt/homebrew/bin/initdb`, `pg_ctl`, `postgres`). The stack starts throwaway
+  Postgres clusters under `demo/eng-1799/.state/` for Lightdash and the Platform Database. `psql` is not needed.
+- **Node 24 or later** and **pnpm 12** (the version in the root `package.json`'s `packageManager`).
+- **A Rust toolchain** (`cargo`), to build the Federation Engine binary into `tmp/cargo-target`.
+- **A prepared tree:** run `bash ./init.sh` from the repo root once, and again after you pull or change code. It
+  installs dependencies, builds the packages, the engine, telemetry-mcp and the frontend production build. It makes
+  sure Playwright's Chromium and `ffmpeg-static`'s binary are there (a one-time download at install time). It starts
+  no server. A cold run takes several minutes; a warm run takes seconds.
+
+Nothing else: Prometheus, Loki, Tempo, CloudWatch, the audit store, incident.io and Okta are local fakes that the
+stack starts itself.
+
+## The one command
+
+```bash
+bash ./init.sh
+demo/eng-1799/run-all.sh
+```
+
+`demo/eng-1799/run-all.sh` does the whole demo end to end: `demo/eng-1799/up.sh` (start and seed the stack), a
+restart of the scenario clock with the `DEMO_INCIDENT_AT` / `DEMO_RECOVERY_AT` offsets (see the timeline below),
+the whole walkthrough (`demo/eng-1799/walkthrough/run.sh`, all eight scenes), the video build (`pnpm -F
+eng-1799-demo video`) and then `demo/eng-1799/down.sh`. It stops at the first step that fails and exits non-zero,
+and it brings the stack down even then. On a warm tree, start-up takes under a minute and the eight scenes
+record for about 5 minutes.
+
+When it exits 0 you have, under `demo/eng-1799/out/` (gitignored):
+
+- `eng-1799-demo.mp4`, the promo video (H.264, 1920x1080, 30 fps, silent unless you add music),
+- `CHAPTERS.md` and `thumbnail.png`,
+- `scenes/<scene-id>/video.webm` and `key-moment.png` for each of the eight scenes, and
+  `scenes/06-ai-question/answer.json`.
+
+The same steps by hand:
+
+```bash
+demo/eng-1799/up.sh                                   # start and seed; prints "up.sh: Lightdash: http://127.0.0.1:<port>"
+curl -s -X POST "$(node -p 'require("./demo/eng-1799/.state/stack.json").scenario.url')/scenario/restart" \
+  -H 'content-type: application/json' -d '{"incidentAfterSeconds": 45, "recoveryAfterSeconds": 240}'
+demo/eng-1799/walkthrough/run.sh                      # record all eight scenes
+pnpm -F eng-1799-demo video                           # build out/eng-1799-demo.mp4
+demo/eng-1799/down.sh                                 # stop everything
+```
+
+## Presenting live
+
+`demo/eng-1799/run-all.sh --keep` does everything above but leaves the stack running at the end instead of running
+`down.sh`, so you can present in your own browser:
+
+1. Run `demo/eng-1799/run-all.sh --keep` (or just `demo/eng-1799/up.sh` if you don't need the recordings).
+2. Open the Lightdash URL that `up.sh` printed (`up.sh: Lightdash: http://127.0.0.1:<port>`; it is also
+   `lightdash.url` in `demo/eng-1799/.state/stack.json`). Sign in as the demo user `up.sh` names (`up.sh: sign in as
+   ...@example.com`), with `demoUser.password` from the same file. Both are fake demo values.
+3. When you are ready to show the incident, restart the scenario clock (`POST <scenario.url>/scenario/restart`, as
+   in the block above, with the offsets you want, for example `{"incidentAfterSeconds": 90,
+   "recoveryAfterSeconds": 300}`). The incident then starts on cue while you
+   present, and recovers on its own. `GET <scenario.url>/scenario` shows the current phase (`baseline`,
+   `incident`, `recovered`).
+4. Walk the same path as the scenes below: Pharmacy Ops overview, the Alert Rules page
+   (`/projects/<lightdash.projectUuid>/alerting/rules`), the fake incident.io page (`incidentIo.url`), Service
+   health, Investigate, Write Mode and the audit browser. For the AI question run `pnpm -F eng-1799-demo ask
+   "How has the fill queue backlog changed over the last 15 minutes?"` in a terminal.
+5. Afterwards run `demo/eng-1799/down.sh`. It is safe to run twice and leaves no process behind.
+
+`up.sh` is idempotent: run on a stack that is already up, it prints the same URL and changes nothing, so the
+scenario clock keeps its timeline.
+
+## Scenario timeline
+
+The fakes generate live synthetic telemetry on one scenario clock. **T** is when the clock starts: when `up.sh`
+starts the fakes, or when you restart it.
+
+| Time | Phase | What happens |
+|---|---|---|
+| T to T+90s | `baseline` | The fill queue backlog moves between about 20 and 50, under the threshold of 100. Logs are mostly info, traces are fast. Both Alert Rules are Normal. |
+| **T+90s** (`DEMO_INCIDENT_AT`) | `incident` | The fill queue backlog climbs to about 150-170, error lines flood the fill-service logs ("create shipping label failed … downstream=shipping-label-api") and `shipping-label-api` spans take over 2 s. Within about a minute both Alert Rules fire and incident.io gets the firing notification. |
+| **T+5min** (`DEMO_RECOVERY_AT`) | `recovered` | The backlog drains back under 100 within a minute, the backlog Alert Rule resolves and incident.io gets the resolve notification. |
+
+Change it with two environment variables, in whole seconds after T:
+
+```bash
+DEMO_INCIDENT_AT=45 DEMO_RECOVERY_AT=240 demo/eng-1799/run-all.sh
+DEMO_INCIDENT_AT=120 DEMO_RECOVERY_AT=600 demo/eng-1799/up.sh
+```
+
+The defaults are `DEMO_INCIDENT_AT=90` (T+90s) and `DEMO_RECOVERY_AT=300` (T+5min). Both must be whole numbers with
+`0 <= DEMO_INCIDENT_AT < DEMO_RECOVERY_AT`. `up.sh` and `run-all.sh` check them before starting anything and exit
+non-zero naming the bad variable. On a running stack, `POST <scenario.url>/scenario/restart` with
+`{"incidentAfterSeconds": <s>, "recoveryAfterSeconds": <s>}` sets a new timeline from now (values may be negative,
+to start already inside the incident).
+
+Leave enough room for the scenes: scenes 02 to 06 each check that the incident is still running when they end, and
+together they take about 3 minutes after the incident starts. Scene 08 then waits for the recovery and the resolve,
+which arrives about a minute after `DEMO_RECOVERY_AT`.
+
+## Frontend mode
+
+The demo serves the Lightdash UI as the **production build served by the backend**, not the Vite dev server.
+
+- `bash ./init.sh` (through `scripts/eng-1799/init-demo.sh`) runs `pnpm -F frontend build` into
+  `packages/frontend/build`, and only again when the frontend or a package it bundles (common, visualization,
+  formula) changed. A cold build takes several minutes; a warm `init.sh` skips it.
+- The backend's `App` serves that directory itself (`/assets/*` and the `index.html` catch-all), so the UI is at
+  the same URL `up.sh` prints as `up.sh: Lightdash: http://127.0.0.1:<port>`. There is no second process and no
+  second port.
+- `up.sh` refuses to start when `packages/frontend/build/index.html` is missing, and after the backend is healthy
+  it checks that `/login` returns the UI.
+
+Why not the dev server:
+
+- One process and one port: the stack, the acceptance checks and the recorded scenes all use the URL in
+  `.state/stack.json`, and the backend's session cookie and API calls share that origin with no proxy.
+- No file watchers or on-demand compilation while presenting or recording: pages load at production speed
+  and the bundle is the one that ships.
+- The dev server is for working on the frontend. To use it against the demo backend, run
+  `PORT=<printed Lightdash port> pnpm -F frontend dev` yourself (its proxy sends `/api` to `PORT`, default
+  8080); the demo does not.
+
+What you see: on a fresh stack without a demo user the UI opens the first-run sign-up page (`/register`); once the
+seed has created the demo user it opens the sign-in page (`/login`). Expect 401 responses from `/api/v1/user/account`
+and `/api/v1/org` in the browser console before signing in; that is Lightdash checking for a session. The UI loads
+the Inter font from Google Fonts; offline it falls back to a system font and works the same.
+
+If you change frontend code, re-run `bash ./init.sh` to rebuild, then `demo/eng-1799/down.sh` and
+`demo/eng-1799/up.sh`.
+
+## Dashboards as code
+
+The demo's dashboards live in `demo/eng-1799/content/` as Lightdash content as code (`virtual-views/`, `charts/`,
+`dashboards/`). On every fresh stack, `up.sh`'s seed (`demo/eng-1799/stack/seed.ts`) creates a personal access
+token for the demo user and runs `lightdash upload` from the CLI's source, then checks that the dashboards and
+their Tiles are there. The CLI runs with `HOME` under `.state/cli-home` (it writes `~/.config/lightdash`) and with
+`demo/eng-1799/stack/no-network.mjs` preloaded, because it would otherwise send usage analytics and check for
+upgrades over the internet. To change a dashboard, edit the YAML and restart the stack. Alternatively, upload by
+hand with the token in `.state/run/seed.json` (`lightdash.apiToken`).
+
+**Pharmacy Ops overview** has a Dashboard Time Range (default the last 30 minutes, refresh 30 s) mapped to every
+Tile. Its Tiles are all built-in Lightdash charts, so no chart registry or licence is needed:
+
+| Tile | Chart | What it shows |
+|---|---|---|
+| Current fill queue backlog | big number | the latest `hrx_fill_queue_backlog{queue="fill"}` sample, red at 100 and above (conditional formatting) |
+| Fill queue backlog | cartesian line | the fill queue's backlog over time, with a dashed threshold line at 100, the Alert Rule threshold |
+| Peak backlog by queue | horizontal bar, 0 to 200 | the bar gauge: each queue's highest backlog in the range |
+| Queue status | table | each queue's peak backlog, plus a Status column whose value mappings (Grafana's shape) read OK, Elevated or Backlogged |
+
+The charts query the virtual view `hrx_fill_queue_backlog`: `promql('hrx_fill_queue_backlog', now() - 6 hours,
+now(), '15s')` on the Federation Engine. Explore charts don't receive the reserved `__from`/`__to` parameters,
+which only reach SQL charts, so the view's window is fixed at 6 hours. The Dashboard Time Range filters each Tile
+on `ts` inside that window, so ranges longer than 6 hours show only the last 6 hours.
+
+Pharmacy Ops overview is the demo's **converted Grafana dashboard**. Its source is the synthetic Grafana export
+`demo/eng-1799/seed/grafana/pharmacy-ops-overview.json` (one Prometheus input in `__inputs`, no real hosts). The base has
+no Grafana importer CLI, so the YAML was converted by hand: one Tile per panel with the same title (`timeseries` →
+cartesian line with the dashed threshold, `table` with range value mappings → table with the same mappings, as in
+`docs/eng-1799/grafana-panel-mapping.md`; `stat` → big number and `bargauge` → horizontal bar, built-in charts
+instead of the mapping's `stat-sparkline` and `bar-gauge` registry entries, so the demo needs no chart registry), x
+and w scaled from Grafana's 24 columns to Lightdash's 36, and the time picker (`now-30m`, refresh `30s`) as the
+Dashboard Time Range. If you change a panel title in one, change it in the other.
+
+**Platform DB** has three SQL chart Tiles over the synthetic Platform Database. Each one wraps an aggregate in
+`platform_query('...')`, so it is an Audited Query that runs as the signed-in user, who needs `platform_read`. No
+Tile selects a row-level column:
+
+| Tile | Chart | Inner SQL (Platform Database) |
+|---|---|---|
+| Orders by status | vertical bar | `count(*)` of `orders` per `status` |
+| Open fills by queue | vertical bar | `fills` with no `completed_at`, joined to `queues`, counted per queue name |
+| Shipments by carrier | table | `count(*)` of `shipments` per `carrier` and `status` |
+
+The engine refuses an Audited Query that has no description, and saved SQL charts don't carry an audit block of
+their own. Lightdash therefore sends the **saved chart's description** as the Audited Query description, for a
+saved SQL chart and for a dashboard SQL chart Tile (the Tile's uuid goes in as the resource). That is why every
+chart here has a description. Each Tile run leaves two audit records, one for the column-discovery probe and one
+for the run.
+
+**Service health** shows the fill-service's logs and traces from the fake Loki and Tempo. Every Tile is a built-in
+or native Lightdash chart over a virtual view, with no chart registry:
+
+| Tile | Chart | Virtual view (Federation Engine) |
+|---|---|---|
+| Log level heatmap | custom (Vega-Lite `rect`), minute × level, coloured by lines per minute | `hrx_fill_service_log_rate`: `logql_metric('sum by (level) (count_over_time({app="fill-service"}[1m]))', now() - 30 minutes, now(), '1m')` |
+| Fill service logs | native `log_stream`, newest first | `hrx_fill_service_logs`: `logql('{app="fill-service"}', now() - 30 minutes, now(), 500)`, the level taken from the line's `level=` key |
+| Slow trace waterfall | native `trace_waterfall` | `hrx_fill_service_trace`: `trace(${ld.parameters.trace_id})` |
+
+During the incident the heatmap's error row turns hot, error lines lead the log stream, and the waterfall shows the
+slow `shipping-label-api` span (over 2 s). The log windows are fixed at 30 minutes because explore charts get no
+reserved time parameters.
+
+The waterfall shows the trace in the project parameter **`trace_id`** ("Trace ID" on the dashboard). The seed
+defines that parameter (`PUT /api/v2/projects/<uuid>/parameters`) before the upload, because a virtual view may only
+reference defined parameters. Its default is the fake Tempo's **pinned example trace**
+`de300000000000000000000000000001` (`PINNED_TRACE_ID` in `demo/eng-1799/stack/tempo.ts`, the one place the id is
+written; the seed reads it from there). That trace is a slow, successful "ship fill" request that starts 1 s after
+the incident begins and looks like the incident's other slow traces. `trace(<id>)` returns it at any time, and
+`traceql()` search lists it once the incident is running. The id never changes with the scenario clock or a
+restart. To look at another trace, open the Trace ID parameter, paste the id (for example one from
+`traceql('{ duration > 2s }', ...)`) and pick "Add ...". The waterfall then reruns with that trace, like a Grafana
+trace-id variable.
+
+### Portal saved script
+
+`demo/eng-1799/seed/portal-scripts.json` is a synthetic db-query-portal saved-scripts export with one script, **Open
+fills past target by queue**. Its SQL is Platform Database SQL. On every fresh start, `up.sh` copies `content/` to
+`.state/run/content` and runs the CLI from source:
+`lightdash import portal-scripts seed/portal-scripts.json --path .state/run/content --space platform-saved-sql`.
+This adds one SQL chart, with the SQL kept verbatim, in the space "Platform saved sql". The seed then uploads that
+folder with `lightdash upload`. The importer leaves out the export's author and execution fields.
+
+To run it: in the SQL Runner, switch to **Investigate**. **Saved SQL** lists the chart. Choose **Platform
+Database**, paste the script's SQL into **Platform SQL**, add a Description, and press **Run**. Investigate wraps the
+SQL in `platform_query(...)`, so it runs on the Platform Database as an Audited Query, and the audit browser lists it.
+
+## Alerting as code
+
+`demo/eng-1799/alerting/` holds the demo's alerting, in the layout `lightdash download --alerting-only` writes:
+
+| File | What it is |
+| --- | --- |
+| `alert-rules/fill-queue-backlog-high.yml` | **Fill queue backlog high**: PromQL `hrx_fill_queue_backlog{queue="fill"}`, last value `> 100` (the dashboard's threshold line), every 30s over 5m |
+| `alert-rules/fill-service-error-log-rate.yml` | **Fill service error log rate**: LogQL `sum(count_over_time({app="fill-service"} \|= "level=error" [1m]))`, last value `> 10`, every 30s over 5m |
+| `contact-points/incident-io.yml` | **incident.io (demo receiver)**: an `incident_io` integration on the fake receiver's `/webhook` |
+| `notification-routes/notification-routes.yml` | The route tree: `team=pharmacy-ops` (both rules) and the default route both go to the incident.io Contact Point |
+
+Both rules are unpaused and not in Shadow Run, so they notify for real. Their annotations render the value, for
+example "Fill queue backlog is 173 (threshold 100)". On every fresh start, the seed copies the folder to
+`.state/run/alerting`. It replaces `__DEMO_INCIDENT_IO_URL__` with the receiver's URL, because the port is ephemeral,
+and uploads the copy with `lightdash upload --alerting-only`. The Contact Point's token is only a reference,
+`secretRef: demo-incident-io-token`. The backend reads it from `ALERTING_SECRET_DEMO_INCIDENT_IO_TOKEN`, a fixed
+non-secret value in `.state/lightdash/lightdash.env`. Everything uploaded is **Managed in git**, so it's read-only
+in the UI. To change it, edit the files and run `up.sh` again on a stopped stack.
+
+Open it at `/projects/<Operations Project uuid>/alerting/rules`. The navbar has no Alerting entry yet. The page
+has the tabs Alert Rules, Contact Points and Notification Routes.
+
+## Telemetry MCP server
+
+`up.sh` also starts telemetry-mcp (`packages/telemetry-mcp/dist/main.js`, built by `init.sh`) on an ephemeral port.
+It runs against the demo's Federation Engine with its own pg-wire login, `telemetry-mcp`, and against Lightdash
+with the seed's personal access token as its service account. It trusts a **fake Okta** that runs inside the
+telemetry-fakes process. `stack.json` has `mcp.url` and `okta.issuer`. The server's whole environment is in
+`.state/mcp/mcp.env` (written by `stack/mcp.ts`). It has no `ANTHROPIC_API_KEY`, so `ask_data` reports that AI is
+not configured.
+
+- `GET <mcp.url>/healthz` answers `{"status":"ok"}`.
+- `POST <mcp.url>/mcp` without a bearer token gets `401` with a `WWW-Authenticate` challenge whose
+  `resource_metadata` points to `/.well-known/oauth-protected-resource/mcp`. That metadata names the fake Okta
+  issuer.
+- The fake Okta has no sign-in page. `POST <okta.issuer>/v1/token` with `{"email": "<email>"}` returns an RS256
+  access token for that email (audience `api://telemetry-mcp-demo`, valid for an hour). The server checks the token
+  against the fake Okta's JWKS (`<okta.issuer>/v1/keys`), the same way it checks a real Okta token.
+- A token for the demo user lists every tool: `platform_read` and `platform_write` are set by the seed. A token
+  for an email with no Lightdash user lists no tools.
+
+The fake Okta's key is generated when telemetry-fakes starts, so tokens stop working after `down.sh`.
+
+### Asking a question (scripted MCP client)
+
+`pnpm -F eng-1799-demo ask "<question>"` (`demo/eng-1799/ask/`) is an MCP client with no model behind it. It
+matches the question against a short scripted list (`ask --list` prints it), signs in at the fake Okta as the demo
+user, calls the matching telemetry-mcp tool and prints the tool, its arguments, the live query, the result table and
+a one-sentence answer. With `--json` it prints one JSON object instead:
+`{question, tool, arguments, query, result: {columns, rows}, answer}`. A question it doesn't know exits 1 with the
+list. Today both scripted questions are about the fill queue backlog and run `query_promql` on
+`hrx_fill_queue_backlog{queue="fill"}`: "What is the fill queue backlog right now?" (an instant query at `now`) and
+"How has the fill queue backlog changed over the last 15 minutes?" (a 1-minute range query).
+
+## Walkthrough scenes (recorded)
+
+### What each scene proves
+
+| Scene | What it proves |
+|---|---|
+| `01-sign-in` | A HouseRx user signs in to Lightdash and opens a converted Grafana dashboard (Pharmacy Ops overview) whose Tiles query live Prometheus metrics through the Federation Engine, with a Dashboard Time Range and auto-refresh like Grafana's. |
+| `02-incident` | The dashboard shows the incident as it happens: the fill queue backlog crosses the threshold line at 100 and the stat turns red, from live data. |
+| `03-alert-fires` | A Lightdash Alert Rule (managed in git) on a PromQL query fires on its own, and the incident.io Contact Point receives the firing notification with the rendered summary. |
+| `04-service-health` | Logs (Loki) and traces (Tempo) sit next to metrics in one dashboard: the error lines filter down to the failing downstream, and the trace waterfall shows the slow `shipping-label-api` span. |
+| `05-investigate` | Investigate runs an ad hoc PromQL query against a Telemetry Source and saves it as a chart, the way someone explores in Grafana's Explore. |
+| `06-ai-question` | An AI client asks a plain-language question through telemetry-mcp, signed in through Okta as the user, and gets the live query, its result and an answer. The demo's client is scripted; there is no model. |
+| `07-write-mode` | Write Mode on the Platform Database: a Preview that rolls back, then a commit confirmed by typing COMMIT, both recorded as Audited Queries in the audit browser with their description and ticket. |
+| `08-recovery` | When the backlog drains, the Alert Rule resolves on its own and incident.io receives the resolve notification, closing the loop. |
+
+### How the scenes run
+
+`bash demo/eng-1799/walkthrough/run.sh [scene-id ...]` (or `pnpm -F eng-1799-demo walkthrough [scene-id ...]`)
+drives the real UI in headless Chromium against the running stack (`up.sh` first). With no scene id it runs every
+scene in order. It never restarts the scenario clock. Each scene is one Playwright spec,
+`demo/eng-1799/walkthrough/<scene-id>.spec.ts`, which asserts what it shows. It writes
+`demo/eng-1799/out/scenes/<scene-id>/video.webm` (the whole scene) and `key-moment.png`, both 1920x1080. The runner
+stops at the first scene that fails and exits non-zero.
+
+Each scene runs Playwright in its own process group. On TERM, INT or HUP, or when a scene runs longer than
+`DEMO_SCENE_TIMEOUT` seconds (default 900), the runner stops the whole group: TERM first, then KILL after 5 s. No
+Chromium outlives the run.
+
+- **01-sign-in**: signs in through the login form as the demo user and opens Pharmacy Ops overview from the
+  dashboards list. It changes the Dashboard Time Range from "Last 30 minutes" to "Last 1 hour" and the range's
+  Refresh from 30s to 10s, which moves the relative bounds forward. It then turns on "Auto-refresh while viewing"
+  at every 5m, which re-runs every Tile. Key moment: the dashboard over the last hour, with "Last 1 hour", "10s"
+  and "Every 5m" in the header.
+- **02-incident**: opens Pharmacy Ops overview in the baseline (the line under the dashed threshold at 100, the stat
+  not red), then waits on the scenario clock until its phase is `incident`. It does not use a fixed sleep. After
+  that it presses "Refresh dashboard" until the line is drawn above the threshold line and the stat is red and at or
+  over 100. The scene does not restart the clock. Restart it first with the incident a few seconds out (`POST
+  <scenario>/scenario/restart` `{"incidentAfterSeconds": 20, "recoveryAfterSeconds": 900}`). If the incident is
+  more than 120 s away, the scene fails at once and says so. Key moment: the line over the threshold, the stat in
+  red and the fill queue "Backlogged".
+- **03-alert-fires**: opens the Operations Project's Alerting page (`/projects/<uuid>/alerting/rules`, there is no
+  nav link to it) with "Fill queue backlog high" listed as "Managed in git". In the baseline the rule shows Normal.
+  The scene waits on the scenario clock for the `incident`, then reloads the list until the rule reads Firing (the
+  rule is evaluated every 30 s, so this takes up to about a minute), and filters State to "Firing". It then opens
+  the fake incident.io page once the receiver has the firing notification. The page shows the rule FIRING in red,
+  with its labels and its rendered summary "Fill queue backlog is N (threshold 100)". Restart the clock first, as
+  for 02-incident. The incident may also have started already, and then the scene skips the baseline check. Key
+  moment: the fake incident.io page with the firing notification.
+- **04-service-health**: waits on the scenario clock for the `incident` and opens Service health from the dashboards
+  list. In the "Fill service logs" Tile it types `level=error` into the "Filter lines" box: the count drops from all the
+  loaded lines (the Tile loads up to 500) to the error lines only, and they say "create shipping label failed … downstream=
+  shipping-label-api". It then opens the `POST /v1/labels` span of `shipping-label-api` in the "Slow trace
+  waterfall" Tile (the pinned trace, the `trace_id` parameter's default). The span's drawer shows the service, a
+  duration of 2 s or more and the span's attributes. Restart the clock first, as for 02-incident (the incident may
+  already have started). Key moment: the waterfall with the slow span's drawer open, next to the filtered log stream.
+- **05-investigate**: waits on the scenario clock for the `incident`, then opens New → Query using SQL runner and
+  switches it to Investigate (offered because the Operations Project's warehouse is the federation flavour). It picks
+  Prometheus, types `max by (queue) (hrx_fill_queue_backlog{job="fill-service"})` and runs it over Investigate's
+  time range: three lines, one per queue. It then edits the SQL box so the query has its own window
+  (`now() - INTERVAL '1 hour', now(), '15s'` instead of the reserved time parameters; see Known limits), runs it again
+  and saves it with Save as chart. Lightdash opens the new SQL chart, which lists the promql() rows with the fill
+  queue around 150. Edit chart then shows its SQL. Each run saves one more chart, named with the run's time. Restart
+  the clock first, as for 02-incident. Key moment: the saved chart open for editing, its promql() SQL above the rows.
+- **06-ai-question**: asks "How has the fill queue backlog changed over the last 15 minutes?" through telemetry-mcp
+  with the scripted MCP client (the same code as `ask`, see above; there is no model). The scene records a small local
+  page, "Ask telemetry-mcp" (`walkthrough/lib/ask-page.ts`, no network of its own). It types the question and presses
+  Ask, which calls the client in Node. The client signs in at the fake Okta as the demo user and calls `query_promql`.
+  The page then shows the tool call and its arguments, the live PromQL query, the result rows (newest first, samples at
+  or over 100 in red) and the one-sentence answer. The client's JSON result is saved as
+  `out/scenes/06-ai-question/answer.json` (`{question, tool, arguments, query, result: {columns, rows}, answer}`). The
+  scene waits until the incident has run for 30 s, so the backlog is over the threshold. Restart the clock first, as
+  for 02-incident. Key moment: the whole page with the answer.
+- **07-write-mode**: in Investigate, picks Platform Database and types `UPDATE queues SET target_minutes =
+  target_minutes + 15 WHERE name = 'demo-fill' RETURNING name, target_minutes`, then turns Write Mode on (the demo
+  user has platform_write). With a Description and ticket ENG-1799 it runs Preview first ("Rolled back", one row
+  returned), then types COMMIT and commits ("Committed", the same new target). The "Audit browser" link opens the
+  audit records, filtered to the demo user: the commit and the Preview (marked "preview") are the two newest write
+  records, both with the run's description. Each run adds 15 minutes to the demo-fill target; a fresh up.sh reseeds
+  the Platform Database. The scene does not use the scenario clock. Key moment: the audit browser with both records.
+- **08-recovery**: opens the Alerting page with "Fill queue backlog high". If it starts in the incident, it first
+  reloads the list until the rule reads Firing. It then waits on the scenario clock for `recovered` and reloads the
+  list until the rule is back to Normal (the backlog is under 100 within a minute of the recovery, and the rule is
+  evaluated every 30 s). It opens the rule, whose State history shows "Firing → Resolved". Once the receiver has the
+  resolve notification, it opens the fake incident.io page. There the rule's newest row is RESOLVED in green, with its
+  labels, an Ended time and the summary "Fill queue backlog is N (threshold 100)" with N at or under 100. The earlier
+  FIRING row is below it. Only a resolve received after this timeline's recovery counts. The scene also runs when the
+  recovery is already over, as it is at the end of the whole walkthrough: then it shows the rule already Normal and
+  the resolve already received. Restart the clock first with the recovery at most 120 s out (`{"incidentAfterSeconds":
+  -120, "recoveryAfterSeconds": 35}`). If the recovery is further away, or the clock is still in the baseline, the
+  scene fails at once. Key moment: the fake incident.io page with the resolve notification.
+
+## Video build
+
+`pnpm -F eng-1799-demo video [--scenes-dir <dir>] [--out <dir>] [--music <file>]` (`demo/eng-1799/video/build.ts`) joins the eight
+scene recordings, `<scenes-dir>/<scene-id>/video.webm`, in walkthrough order into `<out>/eng-1799-demo.mp4`: H.264
+(yuv420p), 1920x1080, 30 fps, with ffmpeg from `ffmpeg-static`. `--scenes-dir` defaults to `demo/eng-1799/out/scenes`
+and `--out` to `demo/eng-1799/out`. Relative paths resolve against the directory you ran pnpm from.
+
+The video opens on a 4 s title card, "Lightdash for HouseRx operations". Each scene carries a plain-language caption
+in a dark band across the lower third. The video ends on a 4 s end card. Neighbouring parts (title card, scenes, end
+card) crossfade for 0.75 s. The cards are light with dark text, like the Lightdash UI. The captions and chapter titles
+are in the `SCENES` list at the top of `build.ts`. Text uses the first system font found (Helvetica on macOS, DejaVu or
+Liberation Sans on Linux), else fontconfig's default sans.
+
+Next to the MP4 the build writes `<out>/CHAPTERS.md`, one `<mm:ss> <title>` line per chapter: the title card at 00:00,
+the eight scenes, then the end card. A chapter starts where the crossfade into it starts, rounded down to whole
+seconds. It also writes `<out>/thumbnail.png` (1920x1080): a frame of the finished video taken just before the
+incident scene (02-incident) crossfades out, when the backlog stat is red, with the title "Lightdash for HouseRx
+operations" on a light band across the top. `THUMBNAIL_SCENE` in `build.ts` picks the scene.
+
+Every frame of every scene is kept. When the scenes together run longer than 225 s, the whole video is sped up by
+one uniform factor to 225 s. With the cards that comes to about 226 s, inside 4 minutes. A full walkthrough records
+about 300 s, so the scenes play at about 1.3x. Under 2 minutes the build still writes the video but prints a warning.
+A missing recording fails the build and names the file.
+
+### Adding your own licensed music
+
+Without `--music` the MP4 has no audio track. The demo never ships, downloads or names any audio, and no audio file
+may be committed (`.gitignore` refuses every audio extension under `demo/`). To add music, supply a file yourself
+that you hold a licence to use for this purpose: music you own, a track licensed for corporate video, or a
+royalty-free track whose licence allows it. Do not use a track ripped from a streaming site. Then pass it with
+`--music`:
+
+```bash
+pnpm -F eng-1799-demo video --music ~/Music/my-licensed-track.mp3
+```
+
+The file can be any format ffmpeg reads (mp3, wav, m4a, flac...). The build
+checks it before anything else: a missing, unreadable, empty or non-file path is refused with a message naming it.
+The music becomes one AAC stereo track (48 kHz, 192 kb/s). It loops if it is shorter than the video, is cut to the
+video's length, fades in over the first 3 s and fades out over the last 4 s.
+
+## Known limits
+
+- **ENG-1799 follow-up: imported portal scripts don't run from the chart itself.** The importer keeps the portal's
+  SQL verbatim, and portal SQL reads Platform Database tables directly. The Operations Project only reaches those
+  tables through `platform_query()`. So opening the SQL chart, or opening it from Investigate's Saved SQL into the
+  SQL box, fails with "table 'datafusion.public.fills' not found". Run it as Platform SQL instead (see above). To
+  fix this, the importer could wrap the SQL, or the SQL Runner could mark a chart as Platform SQL. Either change has
+  to keep the portal text unchanged.
+
+- **ENG-1799 follow-up: a saved Investigate chart has no time range on its own.** Investigate writes
+  `${ld.parameters.__from}`, `__to` and `__interval` into the SQL, and "Save as chart" keeps them. On a dashboard the
+  Dashboard Time Range fills them in. Opened on its own (the chart page, or Edit chart in the SQL Runner), the chart
+  sends no time range, so it fails with "Missing values for SQL parameter(s): __from, __to, __interval". Until the SQL
+  chart pages get a time range (or a default), give the query its own window before saving, as scene 05 does.
+
+- **ENG-1799 follow-up: no "latest slow trace" waterfall.** Table-function arguments must be constants in the
+  Federation Engine, so `trace((SELECT trace_id FROM traceql(...) LIMIT 1))` is refused. A Tile can't follow the
+  newest slow trace by itself. Service health uses a pinned example trace with a `trace_id` parameter instead (see
+  above). Lifting this needs an engine change: evaluate a scalar subquery argument, or add a lateral `trace()` join.

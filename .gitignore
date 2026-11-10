@@ -181,3 +181,16 @@ examples/metricflow-demo/.fusion/
 /tmp/
 # ENG-1799 viz line: chart registry build output
 /chart-registry/dist/
+# ENG-1799 demo line: stack state, recordings and build output (never committed)
+/demo/eng-1799/.state/
+/demo/eng-1799/out/
+/demo/eng-1799/test-results/
+/demo/eng-1799/playwright-report/
+# The demo never ships audio: music is supplied at run time with --music <file>
+/demo/**/*.mp3
+/demo/**/*.wav
+/demo/**/*.m4a
+/demo/**/*.aac
+/demo/**/*.flac
+/demo/**/*.ogg
+/demo/**/*.opus

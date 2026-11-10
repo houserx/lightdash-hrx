@@ -1,0 +1,40 @@
+# The spans of one Tempo trace, read through the Federation Engine's trace() table function. The trace id is the
+# project parameter trace_id (stack/seed.ts), which defaults to the fake Tempo's pinned example trace of the
+# incident (PINNED_TRACE_ID in stack/tempo.ts); paste any other trace id into the dashboard's Trace ID parameter.
+# Table-function arguments must be constants, so the view cannot pick "the latest slow trace" itself.
+columns:
+  - reference: trace_id
+    type: string
+  - reference: span_id
+    type: string
+  - reference: parent_span_id
+    type: string
+  - reference: service
+    type: string
+  - reference: name
+    type: string
+  - reference: start
+    type: timestamp
+  - reference: duration_ms
+    type: number
+  - reference: status
+    type: string
+  - reference: attributes
+    type: string
+contentType: virtual_view
+name: Fill service trace (Tempo)
+parameters: null
+slug: hrx_fill_service_trace
+sql: |-
+  SELECT
+    trace_id,
+    span_id,
+    parent_span_id,
+    service,
+    name,
+    start,
+    duration_ms,
+    status,
+    CAST(attributes AS VARCHAR) AS attributes
+  FROM trace(${ld.parameters.trace_id})
+version: 1

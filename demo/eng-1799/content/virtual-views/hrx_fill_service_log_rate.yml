@@ -1,0 +1,21 @@
+# Fill-service log lines per minute and level (fake Loki) over the last 30 minutes: a LogQL metric query through
+# the Federation Engine's logql_metric() table function, one row per level and minute. Fixed window, as for the
+# other explore views (explore charts get no reserved time parameters).
+columns:
+  - reference: minute
+    type: timestamp
+  - reference: level
+    type: string
+  - reference: lines
+    type: number
+contentType: virtual_view
+name: Fill service log lines per minute (Loki)
+parameters: null
+slug: hrx_fill_service_log_rate
+sql: |-
+  SELECT
+    "timestamp" AS minute,
+    regexp_replace(series, '.*level="([^"]*)".*', '\1') AS level,
+    value AS lines
+  FROM logql_metric('sum by (level) (count_over_time({app="fill-service"}[1m]))', now() - INTERVAL '30 minutes', now(), '1m')
+version: 1
