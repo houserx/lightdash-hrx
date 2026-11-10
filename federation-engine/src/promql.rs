@@ -111,9 +111,9 @@ impl TableFunctionImpl for Promql {
         let session = args.session();
         let arg = |i: usize| constant(&exprs[i], session, sig);
         let query = text_argument(arg(0)?, "query", sig)?;
-        let form = if self.instant {
+        let request = if self.instant {
             let at = time_argument(arg(1)?, "at", sig)?;
-            vec![("query", query), ("time", seconds_text(at))]
+            Request::Instant { query, at }
         } else {
             let start = time_argument(arg(1)?, "start", sig)?;
             let end = time_argument(arg(2)?, "end", sig)?;
@@ -126,12 +126,12 @@ impl TableFunctionImpl for Promql {
                     ),
                 )
             })?;
-            vec![
-                ("query", query),
-                ("start", seconds_text(start)),
-                ("end", seconds_text(end)),
-                ("step", seconds_text(step)),
-            ]
+            Request::Range {
+                query,
+                start,
+                end,
+                step,
+            }
         };
         let source = match exprs.get(required) {
             Some(_) => Some(text_argument(arg(required)?, "source", sig)?),
@@ -147,8 +147,7 @@ impl TableFunctionImpl for Promql {
             source,
             url,
             max_rows,
-            instant: self.instant,
-            form,
+            request,
         }))
     }
 }
@@ -269,6 +268,25 @@ pub(crate) fn seconds_text(us: i64) -> String {
         .to_string()
 }
 
+/// Prometheus refuses a range query with more than 11,000 points per series ("exceeded maximum
+/// resolution"); `promql()` asks for at most this many per request.
+const MAX_POINTS_PER_REQUEST: i64 = 11_000;
+
+/// What a `promql()` or `promql_instant()` call asks for. Times and the step are µs.
+#[derive(Debug)]
+enum Request {
+    Instant {
+        query: String,
+        at: i64,
+    },
+    Range {
+        query: String,
+        start: i64,
+        end: i64,
+        step: i64,
+    },
+}
+
 /// One `promql()` or `promql_instant()` call: the request to send and where.
 #[derive(Debug)]
 struct PromqlQuery {
@@ -277,19 +295,128 @@ struct PromqlQuery {
     url: String,
     /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
     max_rows: usize,
-    /// `/api/v1/query` rather than `/api/v1/query_range`.
-    instant: bool,
-    form: Vec<(&'static str, String)>,
+    request: Request,
+}
+
+/// The sub-ranges `[start, end]` of a range query, each with at most
+/// [`MAX_POINTS_PER_REQUEST`] steps and aligned to the original `start`, so together they
+/// evaluate exactly the steps the whole range would. A range that fits (or is invalid, such as
+/// `end < start`, which Prometheus then reports) is one window.
+fn range_windows(start: i64, end: i64, step: i64) -> Vec<(i64, i64)> {
+    let span = (MAX_POINTS_PER_REQUEST - 1).checked_mul(step);
+    let mut windows = Vec::new();
+    let mut from = start;
+    loop {
+        match span.and_then(|span| from.checked_add(span)) {
+            Some(to) if to < end => {
+                windows.push((from, to));
+                match to.checked_add(step) {
+                    Some(next) if next <= end => from = next,
+                    _ => return windows,
+                }
+            }
+            _ => {
+                windows.push((from, end));
+                return windows;
+            }
+        }
+    }
+}
+
+/// Appends the series of one window's matrix to the merged series: a series seen before (same
+/// labels) gets its samples appended, a new one is added. Returns the number of samples added,
+/// or what is wrong with the answer.
+fn merge_matrix(
+    merged: &mut Vec<Value>,
+    index: &mut HashMap<String, usize>,
+    mut data: Value,
+) -> Result<usize, &'static str> {
+    if data["resultType"] != "matrix" {
+        return Err("query_range did not answer a matrix");
+    }
+    let Some(result) = data["result"].as_array_mut() else {
+        return Err("the matrix has no result list");
+    };
+    let mut added = 0;
+    for mut series in result.drain(..) {
+        let Value::Array(values) = series["values"].take() else {
+            return Err("a series has no values");
+        };
+        added += values.len();
+        let key = series["metric"].to_string();
+        match index.get(&key) {
+            Some(&i) => {
+                if let Some(seen) = merged[i]["values"].as_array_mut() {
+                    seen.extend(values);
+                }
+            }
+            None => {
+                series["values"] = Value::Array(values);
+                index.insert(key, merged.len());
+                merged.push(series);
+            }
+        }
+    }
+    Ok(added)
 }
 
 impl PromqlQuery {
+    /// The `data` of the answer: for a range longer than Prometheus allows in one request, the
+    /// windows are fetched one after another and their series merged in time order.
     async fn fetch(&self) -> Result<Value, DataFusionError> {
+        let (query, start, end, step) = match &self.request {
+            Request::Instant { query, at } => {
+                let form = [("query", query.clone()), ("time", seconds_text(*at))];
+                return self.post("query", &form).await;
+            }
+            Request::Range {
+                query,
+                start,
+                end,
+                step,
+            } => (query, *start, *end, *step),
+        };
+        let range = |from: i64, to: i64| {
+            [
+                ("query", query.clone()),
+                ("start", seconds_text(from)),
+                ("end", seconds_text(to)),
+                ("step", seconds_text(step)),
+            ]
+        };
+        let windows = range_windows(start, end, step);
+        if let [(from, to)] = windows[..] {
+            return self.post("query_range", &range(from, to)).await;
+        }
+        let mut merged = Vec::new();
+        let mut index = HashMap::new();
+        let mut samples = 0;
+        for (from, to) in windows {
+            let data = self.post("query_range", &range(from, to)).await?;
+            samples += merge_matrix(&mut merged, &mut index, data).map_err(|what| {
+                DataFusionError::Execution(format!(
+                    "prometheus source \"{}\": {what}",
+                    self.source
+                ))
+            })?;
+            // Already over max_rows: result_batch fails with 54000 without the rest.
+            if samples > self.max_rows {
+                break;
+            }
+        }
+        Ok(serde_json::json!({"resultType": "matrix", "result": merged}))
+    }
+
+    async fn post(
+        &self,
+        path: &str,
+        form: &[(&str, String)],
+    ) -> Result<Value, DataFusionError> {
         let source = &self.source;
-        let path = if self.instant { "query" } else { "query_range" };
         let response = self
             .http
             .post(format!("{}/api/v1/{path}", self.url))
-            .form(&self.form)
+            .form(form)
             .send()
             .await
             .map_err(|e| {
@@ -542,7 +669,8 @@ impl TableProvider for PromqlQuery {
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
         crate::metrics::observe(&self.source, async {
             let data = self.fetch().await?;
-            let batch = result_batch("prometheus", &self.source, &data, self.instant, self.max_rows)?;
+            let instant = matches!(self.request, Request::Instant { .. });
+            let batch = result_batch("prometheus", &self.source, &data, instant, self.max_rows)?;
             Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
                 &[vec![batch]],
                 sample_schema(),
@@ -669,6 +797,59 @@ mod tests {
         assert!(e.contains("result exceeds max_rows (2)") && e.contains("\"p\""), "{e}");
         let scalar = json!({"resultType": "scalar", "result": [1762560000, "1"]});
         assert_eq!(result_batch("prometheus", "p", &scalar, true, 1).unwrap().num_rows(), 1);
+    }
+
+    #[test]
+    fn long_ranges_split_into_aligned_windows_of_at_most_11000_points() {
+        let s = 1_000_000;
+        // Fits: one window, unchanged.
+        assert_eq!(range_windows(0, 10_999 * s, s), vec![(0, 10_999 * s)]);
+        assert_eq!(range_windows(5 * s, 0, s), vec![(5 * s, 0)]);
+        // 30000 points at 1 s: 11000 + 11000 + 8000, each start a step after the last end.
+        assert_eq!(
+            range_windows(0, 29_999 * s, s),
+            vec![
+                (0, 10_999 * s),
+                (11_000 * s, 21_999 * s),
+                (22_000 * s, 29_999 * s)
+            ]
+        );
+        // An end between steps stays the end of the last window.
+        assert_eq!(
+            range_windows(0, 11_000 * s + 500_000, s),
+            vec![(0, 10_999 * s), (11_000 * s, 11_000 * s + 500_000)]
+        );
+        // A step too large to multiply is one window.
+        assert_eq!(range_windows(0, 10, i64::MAX / 2), vec![(0, 10)]);
+    }
+
+    #[test]
+    fn windows_merge_into_one_series_per_label_set_in_time_order() {
+        let mut merged = Vec::new();
+        let mut index = HashMap::new();
+        let first = json!({"resultType": "matrix", "result": [
+            {"metric": {"s": "a"}, "values": [[1, "1"], [2, "1"]]},
+            {"metric": {"s": "b"}, "values": [[1, "2"]]},
+        ]});
+        let second = json!({"resultType": "matrix", "result": [
+            {"metric": {"s": "c"}, "values": [[3, "3"]]},
+            {"metric": {"s": "a"}, "values": [[3, "1"]]},
+        ]});
+        assert_eq!(merge_matrix(&mut merged, &mut index, first), Ok(3));
+        assert_eq!(merge_matrix(&mut merged, &mut index, second), Ok(2));
+        assert_eq!(
+            Value::Array(merged),
+            json!([
+                {"metric": {"s": "a"}, "values": [[1, "1"], [2, "1"], [3, "1"]]},
+                {"metric": {"s": "b"}, "values": [[1, "2"]]},
+                {"metric": {"s": "c"}, "values": [[3, "3"]]},
+            ])
+        );
+        let (mut m, mut i) = (Vec::new(), HashMap::new());
+        let vector = json!({"resultType": "vector", "result": []});
+        assert!(merge_matrix(&mut m, &mut i, vector).is_err());
+        let no_values = json!({"resultType": "matrix", "result": [{"metric": {}}]});
+        assert!(merge_matrix(&mut m, &mut i, no_values).is_err());
     }
 
     #[test]

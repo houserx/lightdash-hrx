@@ -95,8 +95,8 @@ issues no Okta tokens: an MCP client gets an Okta access token and sends it as a
    its service account (`LIGHTDASH_API_TOKEN`). Only an active Lightdash user whose email matches exactly counts. A
    caller with no Lightdash user gets an MCP session with no tools; each tool call says why.
 6. **User attributes.** The server reads that user's Lightdash user attributes, resolved as Lightdash does: the
-   user's own value, else a group's, else the attribute's default. Four of them matter, and each is true only when
-   its value is exactly `"true"`:
+   user's own value, else a group's, else the attribute's default. Four of them matter, and each is true when one
+   of its values is exactly `"true"` (the same reading as Lightdash's own identity tokens):
 
    | User attribute         | Opens                                                                         |
    | ---------------------- | ----------------------------------------------------------------------------- |

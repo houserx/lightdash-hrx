@@ -4,7 +4,12 @@
  */
 import type { IdentityTokenProvider } from '@lightdash/warehouses';
 import type { UserAttributesModel } from '../../models/UserAttributesModel';
+import type { UserModel } from '../../models/UserModel';
 import { agentExecutionContext } from '../AiAccessService/agentExecutionContext';
+import {
+    getFederationQueryIdentity,
+    isFederationSystemQueryIdentity,
+} from './federationQueryIdentity';
 import {
     identityAttrsFromUserAttributes,
     mintIdentityToken,
@@ -42,6 +47,8 @@ type FederationIdentityServiceArguments = {
         UserAttributesModel,
         'getAttributeValuesForOrgMember'
     >;
+    /** Resolves a scoped query's user email (createScopedTokenProvider). */
+    userModel?: Pick<UserModel, 'getUserDetailsByUuid'>;
     /** Clock; defaults to the current time. */
     clock?: () => Date;
 };
@@ -49,13 +56,17 @@ type FederationIdentityServiceArguments = {
 export class FederationIdentityService {
     private readonly userAttributesModel: FederationIdentityServiceArguments['userAttributesModel'];
 
+    private readonly userModel: FederationIdentityServiceArguments['userModel'];
+
     private readonly clock: () => Date;
 
     constructor({
         userAttributesModel,
+        userModel,
         clock = () => new Date(),
     }: FederationIdentityServiceArguments) {
         this.userAttributesModel = userAttributesModel;
+        this.userModel = userModel;
         this.clock = clock;
     }
 
@@ -95,5 +106,59 @@ export class FederationIdentityService {
     createTokenProvider(args: CreateTokenProviderArgs): IdentityTokenProvider {
         return ({ agent }) =>
             this.mintForUser({ ...args, agentSession: agent });
+    }
+
+    /**
+     * The `getIdentityToken` option for a shared (cached) federation-flavour client of
+     * `projectUuid`: each call mints a token for the query identity in scope
+     * (`withFederationQueryIdentity`), with that user's current attributes and the query's
+     * audit block. A system identity in scope (the alert evaluator) gets a `sys = true`,
+     * `agent = false` token with its own subject, email and attrs. With no identity in scope, or
+     * one for another project, it returns null and the query runs with no identity.
+     */
+    createScopedTokenProvider({
+        secret,
+        projectUuid,
+    }: {
+        secret: string;
+        projectUuid: string;
+    }): IdentityTokenProvider {
+        return async ({ agent }) => {
+            const identity = getFederationQueryIdentity();
+            if (!identity || identity.projectUuid !== projectUuid) {
+                return null;
+            }
+            if (isFederationSystemQueryIdentity(identity)) {
+                return mintIdentityToken(
+                    {
+                        iss: 'lightdash',
+                        sub: identity.system.sub,
+                        email: identity.system.email,
+                        org: identity.organizationUuid,
+                        project: projectUuid,
+                        agent: false,
+                        sys: true,
+                        attrs: identity.system.attrs,
+                        audit: identity.audit,
+                    },
+                    { secret, now: this.clock() },
+                );
+            }
+            if (!this.userModel) return null;
+            const { email } = await this.userModel.getUserDetailsByUuid(
+                identity.userUuid,
+            );
+            return this.mintForUser({
+                secret,
+                user: {
+                    userUuid: identity.userUuid,
+                    email: email ?? '',
+                    organizationUuid: identity.organizationUuid,
+                },
+                projectUuid,
+                audit: identity.audit,
+                agentSession: agent,
+            });
+        };
     }
 }

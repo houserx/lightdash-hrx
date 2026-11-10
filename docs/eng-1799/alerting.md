@@ -43,6 +43,8 @@ series the query returns has its own state.
 | `paused`                | `false`  | A paused rule isn't evaluated, and its series keep their state.                                                                             |
 | `shadow`                | `false`  | A shadow rule is evaluated and routed but sends nothing (see [Shadow Run](#shadow-run)).                                                    |
 
+Write the reserved parameters bare, as in Investigate and the SQL Runner: `promql('up', ${ld.parameters.__from}, ${ld.parameters.__to}, ${ld.parameters.__interval})`. They are replaced with quoted SQL string literals exactly as Lightdash replaces them, so SQL saved from Investigate works as an Alert Rule query unchanged. Older queries that already put a reference in single quotes still work: the reference and its quotes become the same single literal.
+
 Durations are Prometheus duration strings (`30s`, `5m`, `1h`, `1d`). Rules can
 be put in a folder (a space of the project). Every change to a rule's definition
 creates a new version of the rule.
@@ -154,8 +156,9 @@ uptime checks can call it. It always answers HTTP 200 with
 | `stale`          | No tick has finished in more than 60 seconds.                       |
 | `never_run`      | No tick has ever finished. `lastCycleAt` and `lagSeconds` are null. |
 
-Agents read alert state from `GET .../alerting/state` (the firing and pending
-series) and `GET .../alerting/history?rule=&since=`.
+Agents read alert state from `GET .../alerting/state?rule=` (the firing and
+pending series, of one rule when `rule` is given) and
+`GET .../alerting/history?rule=&since=&until=&limit=`.
 
 ## Routing semantics
 

@@ -13,24 +13,30 @@ function fakeAlerting(get: AlertingClient['get']) {
 describe('buildAlertHistoryQuery', () => {
     it('sends nothing for no arguments', () => {
         expect(buildAlertHistoryQuery({}, NOW)).toEqual({
+            rule: undefined,
+            since: undefined,
+            until: undefined,
+            limit: undefined,
             ruleUuid: undefined,
             from: undefined,
             to: undefined,
-            limit: undefined,
         });
     });
 
-    it('maps rule_uuid, from, to and limit to ruleUuid, from, to and limit', () => {
+    it('maps rule_uuid, from, to and limit to Lightdash rule, since, until and limit (and ruleUuid, from, to)', () => {
         expect(
             buildAlertHistoryQuery(
                 { rule_uuid: RULE, from: '2026-11-08T00:00:00+01:00', to: 'now-1h', limit: 25 },
                 NOW,
             ),
         ).toEqual({
+            rule: RULE,
+            since: '2026-11-07T23:00:00.000Z',
+            until: '2026-11-08T11:00:00.000Z',
+            limit: '25',
             ruleUuid: RULE,
             from: '2026-11-07T23:00:00.000Z',
             to: '2026-11-08T11:00:00.000Z',
-            limit: '25',
         });
     });
 
@@ -54,10 +60,13 @@ describe('alert_history', () => {
         expect(r.isError).toBeUndefined();
         expect(r.structuredContent).toEqual({ results: HISTORY });
         expect(alerting.get).toHaveBeenCalledWith('history', {
+            rule: undefined,
+            since: undefined,
+            until: undefined,
+            limit: '5',
             ruleUuid: undefined,
             from: undefined,
             to: undefined,
-            limit: '5',
         });
     });
 

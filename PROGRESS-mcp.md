@@ -281,6 +281,16 @@ docs/eng-1799/telemetry-mcp.md
    row-count hints degrade gracefully.
 8. **Time arguments** accept ISO-8601 or `now`/`now-<n><s|m|h|d|w>`, resolved to absolute ISO before the SQL is
    built.
+9. **Example-query paging** (recorded first under mcp-example-queries-port; promoted here 2026-11-09 by the
+   integration line's int-assumptions-register). §1.3 has no `from`/`to`/`pageSize`/`excludeScheduler`, so the
+   example-queries service sends no filters to `GET /v1/audit` and follows `nextCursor` from the engine's default
+   listing, at most 5 pages as in the portal. Records older than the 90-day lookback are skipped; records without a
+   readable `createdAt` are kept.
+10. **Engine-side Ask audit and catalog** (recorded first under mcp-data-assistant-port; promoted here 2026-11-09 by
+    int-assumptions-register). (a) The engine writes ask_data's audit records; statements rejected locally never reach
+    it. (b) SQLSTATE 58000 from any engine read fails the whole ask (`AskError` 500, no rows). (c) A catalog read
+    failure is 502 with the engine's error text. (d) Through §1.1 there are no comments, row estimates, enums,
+    constraints, indexes or FKs, so the catalog and join-path hints degrade.
 
 ## Status
 

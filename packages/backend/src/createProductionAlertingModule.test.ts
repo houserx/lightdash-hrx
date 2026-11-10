@@ -10,6 +10,7 @@ import {
     createAlertSlackApp,
     createEnvAlertingSecrets,
     createGraphileAlertJobQueue,
+    getAlertEvaluatorAttrs,
     getAlertingHeartbeatConfig,
     getAlertingSecretEnvName,
 } from './createProductionAlertingModule';
@@ -46,6 +47,41 @@ describe('getAlertingHeartbeatConfig', () => {
                 ALERTING_HEARTBEAT_METHOD: 'PUT',
             }),
         ).toThrow('ALERTING_HEARTBEAT_METHOD');
+    });
+});
+
+describe('getAlertEvaluatorAttrs', () => {
+    const none = {
+        telemetry_restricted: false,
+        platform_read: false,
+        platform_write: false,
+        platform_explain: false,
+    };
+
+    it('holds no attrs when unset or empty', () => {
+        expect(getAlertEvaluatorAttrs({})).toEqual(none);
+        expect(
+            getAlertEvaluatorAttrs({ ALERTING_EVALUATOR_ATTRS: ' ' }),
+        ).toEqual(none);
+    });
+
+    it('holds the comma-separated claims listed', () => {
+        expect(
+            getAlertEvaluatorAttrs({
+                ALERTING_EVALUATOR_ATTRS:
+                    ' telemetry_restricted, platform_read ',
+            }),
+        ).toEqual({
+            ...none,
+            telemetry_restricted: true,
+            platform_read: true,
+        });
+    });
+
+    it('rejects an unknown claim name', () => {
+        expect(() =>
+            getAlertEvaluatorAttrs({ ALERTING_EVALUATOR_ATTRS: 'telemetry' }),
+        ).toThrow(/unknown claim names: telemetry/);
     });
 });
 

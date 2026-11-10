@@ -3,6 +3,7 @@ packages:
   - 'packages/frontend/sdk'
   - 'packages/backend/src/ee/services/McpService/mcp-chart-app'
   - 'chart-registry'
+  - 'e2e/eng-1799'
 
 # Exact versions on pnpm add. The npm CLI equivalent (save-exact) stays in .npmrc.
 savePrefix: ''

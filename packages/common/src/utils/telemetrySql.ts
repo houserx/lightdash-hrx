@@ -43,8 +43,9 @@ export type LogqlMetricTelemetryQuery = {
 export type CloudWatchDimension = { Name: string; Value: string };
 
 /**
- * The CloudWatch `MetricDataQuery` shape Grafana's CloudWatch datasource stores: either a
- * metric stat or a metric math / SEARCH expression (CONTRACTS §1.1).
+ * The AWS CloudWatch `MetricDataQuery` shape: either a metric stat or a metric math / SEARCH
+ * expression. The engine's `cloudwatch()` reads it as well as Grafana's stored CloudWatch target
+ * (CONTRACTS §1.1), and sends both to CloudWatch as the same `MetricStat`.
  */
 export type CloudWatchMetricDataQuery = {
     Id: string;

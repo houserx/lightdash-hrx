@@ -33,6 +33,7 @@ import qs from 'qs';
 import reDoc from 'redoc-express';
 import { URL } from 'url';
 import { createAlertingRouter, type AlertingModule } from './alerting';
+import { ALERTING_PROJECT_API_PATH } from './alerting/router';
 import {
     createAiUsageLedgerSink,
     registerAiUsageLedger,
@@ -59,6 +60,7 @@ import { createStaticAssetsFallbackHandler } from './clients/StaticAssets/static
 import { StaticAssetsS3Client } from './clients/StaticAssets/StaticAssetsS3Client';
 import { LightdashConfig } from './config/parseConfig';
 import {
+    allowApiKeyAuthenticationIfPresent,
     apiKeyPassportStrategy,
     createAzureAdPassportStrategy,
     createGenericOidcPassportStrategy,
@@ -877,7 +879,13 @@ export default class App {
         });
 
         // Alerting API (after auth so routes see req.user; its health route
-        // needs no session)
+        // needs no session). Its project routes also take personal access
+        // tokens, service accounts and OAuth bearers, like the tsoa routes;
+        // without an Authorization header the session user is used.
+        expressApp.use(
+            ALERTING_PROJECT_API_PATH,
+            allowApiKeyAuthenticationIfPresent,
+        );
         expressApp.use(createAlertingRouter(this.getAlertingModule()));
         // api router
         expressApp.use('/api/v1', apiV1Router);

@@ -47,7 +47,7 @@ describe('resolveAlertQueryParameters', () => {
             __from: '2026-11-01T09:00:00.000Z',
             __to: '2026-11-08T09:00:00.000Z',
             __interval: '15m',
-            __range: '1w',
+            __range: '7d',
         });
     });
 
@@ -69,18 +69,36 @@ describe('substituteAlertQueryParameters', () => {
         __from: '2026-11-01T09:00:00.000Z',
         __to: '2026-11-08T09:00:00.000Z',
         __interval: '15m',
-        __range: '1w',
+        __range: '7d',
     };
 
-    it('replaces every reserved parameter, as often as it appears', () => {
+    it('quotes every reserved parameter, as often as it appears', () => {
         expect(
             substituteAlertQueryParameters(
-                "ts >= '${ld.parameters.__from}' AND ts < '${ld.parameters.__to}' AND step = '${ ld.parameters.__interval }' AND '${ld.parameters.__from}' < '${ld.parameters.__range}'",
+                'ts >= ${ld.parameters.__from} AND ts < ${ld.parameters.__to} AND step = ${lightdash.parameters.__interval} AND ${ld.parameters.__from} < ${ld.parameters.__range}',
                 parameters,
             ),
         ).toBe(
-            "ts >= '2026-11-01T09:00:00.000Z' AND ts < '2026-11-08T09:00:00.000Z' AND step = '15m' AND '2026-11-01T09:00:00.000Z' < '1w'",
+            "ts >= '2026-11-01T09:00:00.000Z' AND ts < '2026-11-08T09:00:00.000Z' AND step = '15m' AND '2026-11-01T09:00:00.000Z' < '7d'",
         );
+    });
+
+    it('does not double the quotes of an already quoted reference', () => {
+        expect(
+            substituteAlertQueryParameters(
+                "ts >= '${ld.parameters.__from}' AND step = ${ld.parameters.__interval}",
+                parameters,
+            ),
+        ).toBe("ts >= '2026-11-01T09:00:00.000Z' AND step = '15m'");
+    });
+
+    it('matches references exactly as Lightdash does', () => {
+        expect(
+            substituteAlertQueryParameters(
+                'step = ${ ld.parameters.__interval }',
+                parameters,
+            ),
+        ).toBe('step = ${ ld.parameters.__interval }');
     });
 
     it('leaves other parameters alone', () => {

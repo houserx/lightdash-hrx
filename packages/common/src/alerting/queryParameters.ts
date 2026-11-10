@@ -92,14 +92,27 @@ export const resolveAlertQueryParameters = ({
     };
 };
 
+/**
+ * A reserved reference, either bare (`${ld.parameters.__from}`, the convention
+ * Investigate and the SQL Runner use) or already wrapped in single quotes
+ * (`'${ld.parameters.__from}'`, the convention of earlier Alert Rule queries).
+ * The reference syntax is exactly Lightdash's `parameterRegex`.
+ */
 const RESERVED_PARAMETER_PATTERN =
-    /\$\{\s*ld\.parameters\.(__from|__to|__interval|__range)\s*\}/g;
+    /'\$\{(?:lightdash|ld)\.parameters\.(__from|__to|__interval|__range)\}'|\$\{(?:lightdash|ld)\.parameters\.(__from|__to|__interval|__range)\}/g;
+
+/** A SQL string literal, as Lightdash's parameter substitution writes one. */
+const quoteSqlString = (value: string): string =>
+    `'${value.replaceAll("'", "''")}'`;
 
 /**
- * Replaces `${ld.parameters.__from}`, `__to`, `__interval` and `__range` in
- * `sql` with their values. Other `${ld.parameters.*}` references are left as
- * they are. Values are inserted verbatim (they are generated timestamps and
- * durations, never user input); the SQL supplies any quotes.
+ * Replaces `${ld.parameters.__from}`, `__to`, `__interval` and `__range` (or
+ * `${lightdash.parameters.*}`) in `sql` with their values as SQL string
+ * literals, exactly as Lightdash's parameter substitution
+ * (`safeReplaceParameters`) does for dashboards, Investigate and the SQL
+ * Runner, so the same SQL is a valid Alert Rule query. A reference already
+ * wrapped in single quotes becomes the same single literal, not a doubled
+ * one. Other `${ld.parameters.*}` references are left as they are.
  */
 export const substituteAlertQueryParameters = (
     sql: string,
@@ -107,5 +120,9 @@ export const substituteAlertQueryParameters = (
 ): string =>
     sql.replace(
         RESERVED_PARAMETER_PATTERN,
-        (_match, name: keyof AlertQueryParameters) => parameters[name],
+        (
+            _match,
+            quotedName: keyof AlertQueryParameters | undefined,
+            bareName: keyof AlertQueryParameters,
+        ) => quoteSqlString(parameters[quotedName ?? bareName]),
     );

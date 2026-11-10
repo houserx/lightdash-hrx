@@ -16,13 +16,13 @@ describe('alert_state', () => {
         expect(r.isError).toBeUndefined();
         expect(r.structuredContent).toEqual({ results: STATE });
         expect(r.content).toEqual([{ type: 'text', text: JSON.stringify({ results: STATE }) }]);
-        expect(alerting.get).toHaveBeenCalledWith('state', { ruleUuid: undefined });
+        expect(alerting.get).toHaveBeenCalledWith('state', { rule: undefined, ruleUuid: undefined });
     });
 
-    it('sends rule_uuid as ruleUuid', async () => {
+    it('sends rule_uuid as Lightdash rule (and ruleUuid)', async () => {
         const alerting = fakeAlerting(async () => STATE);
         await alertState(alerting, 200_000, { rule_uuid: RULE });
-        expect(alerting.get).toHaveBeenCalledWith('state', { ruleUuid: RULE });
+        expect(alerting.get).toHaveBeenCalledWith('state', { rule: RULE, ruleUuid: RULE });
     });
 
     it.each(['../../admin', '', 'a1a1a1a1-0000-4000-8000-00000000000g', `${RULE}?x=1`])(

@@ -65,6 +65,7 @@ import type {
     AiAccessEvaluation,
     AiAccessService,
 } from '../AiAccessService/AiAccessService';
+import type { FederationIdentityService } from '../FederationIdentity/FederationIdentityService';
 import { createAnalyticsClient } from '../ProjectService/analyticsProject/analyticsProjectClient';
 import { withTrustedAgentQueryTags } from './agentQueryTags';
 import {
@@ -198,6 +199,8 @@ type WarehouseClientFactoryDependencies = {
     credentialSource: WarehouseCredentialSource;
     credentialResolvers: CredentialResolverRegistry;
     logger: typeof Logger;
+    /** Mints identity tokens for federation-flavour connections (CONTRACTS §3). */
+    federationIdentityService?: FederationIdentityService;
 };
 
 export class WarehouseClientConstructionError extends Error {
@@ -231,6 +234,10 @@ export class WarehouseClientFactory {
 
     private readonly logger: typeof Logger;
 
+    private readonly federationIdentityService:
+        | FederationIdentityService
+        | undefined;
+
     private readonly releaseSshTunnelOnScopeExit: boolean;
 
     private readonly resolveDbtCloudPreviewCredentials: boolean;
@@ -247,6 +254,7 @@ export class WarehouseClientFactory {
         this.aiAccessService = deps.aiAccessService;
         this.credentialSource = deps.credentialSource;
         this.logger = deps.logger;
+        this.federationIdentityService = deps.federationIdentityService;
         this.releaseSshTunnelOnScopeExit =
             deps.lightdashConfig?.warehouseClient
                 ?.releaseSshTunnelOnScopeExit ?? true;
@@ -945,6 +953,33 @@ export class WarehouseClientFactory {
         };
     }
 
+    /**
+     * A federation-flavour connection of a project sends the identity of the query being run
+     * (CONTRACTS §3). The client is cached and shared, so the provider reads the identity of
+     * each query from its scope (`withFederationQueryIdentity`) rather than binding one user.
+     */
+    private federationIdentityOptions(
+        projectUuid: string | null,
+        credentials: CreateWarehouseCredentials,
+    ): Pick<WarehouseClientOptions, 'getIdentityToken'> {
+        if (
+            projectUuid === null ||
+            !this.federationIdentityService ||
+            credentials.type !== WarehouseTypes.POSTGRES ||
+            !isFederationCredentials(credentials) ||
+            !credentials.identitySigningSecret
+        ) {
+            return {};
+        }
+        return {
+            getIdentityToken:
+                this.federationIdentityService.createScopedTokenProvider({
+                    secret: credentials.identitySigningSecret,
+                    projectUuid,
+                }),
+        };
+    }
+
     private buildClient(
         credentials: CreateWarehouseCredentials,
         options: WarehouseClientOptions,
@@ -1206,6 +1241,10 @@ export class WarehouseClientFactory {
                 credentialsWithOverrides.type === WarehouseTypes.BIGQUERY
                     ? { agentJobControls: !!aiPlan }
                     : {}),
+                ...this.federationIdentityOptions(
+                    projectUuid,
+                    credentialsWithOverrides,
+                ),
             };
             const client = this.buildClient(
                 credentialsWithOverrides,

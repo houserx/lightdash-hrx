@@ -1,13 +1,18 @@
 import {
+    DimensionType,
     getErrorMessage,
     WAREHOUSE_LISTED_DATABASES_LIMIT,
     WarehouseQueryError,
     type CreatePostgresCredentials,
+    type TimestampDomain,
     type WarehouseDatabaseListing,
 } from '@lightdash/common';
 import type { PoolClient } from 'pg';
 import type { IdentityTokenProvider } from '../warehouseClientFromCredentials';
-import { PostgresWarehouseClient } from './PostgresWarehouseClient';
+import {
+    mapPostgresFieldType,
+    PostgresWarehouseClient,
+} from './PostgresWarehouseClient';
 
 export type FederationWarehouseClientOptions = {
     agentSession?: boolean;
@@ -18,6 +23,36 @@ export type FederationWarehouseClientOptions = {
 /** `SET hrx.identity = '<token>'`, with the token quoted as a SQL string literal. */
 const getIdentityStatement = (token: string): string =>
     `SET hrx.identity = '${token.replaceAll("'", "''")}'`;
+
+/**
+ * The engine keeps `hrx.identity` for the life of the connection, and pooled connections are
+ * shared by every user's queries; a query with no identity must not inherit the last one.
+ */
+const CLEAR_IDENTITY_STATEMENT = 'RESET hrx.identity';
+
+/**
+ * The engine's `information_schema.columns.data_type` is DataFusion's Arrow
+ * type name (`Timestamp(µs, "UTC")`, `Utf8`, `Int64`, `Float64`,
+ * `Decimal128(38, 9)`, `Date32`, `Boolean`), not a Postgres type name.
+ * Anything that is not an Arrow name falls back to the Postgres mapping.
+ */
+const ARROW_FIELD_TYPES: ReadonlyArray<[RegExp, DimensionType]> = [
+    [
+        /^(U?Int(8|16|32|64)|Float(16|32|64)|Decimal(32|64|128|256)\b)/,
+        DimensionType.NUMBER,
+    ],
+    [/^Date(32|64)$/, DimensionType.DATE],
+    [/^(Timestamp|Time(32|64))\(/, DimensionType.TIMESTAMP],
+    [/^Boolean$/, DimensionType.BOOLEAN],
+    [
+        /^(Utf8|LargeUtf8|Utf8View|Binary|LargeBinary|BinaryView|FixedSizeBinary|List|LargeList|FixedSizeList|Struct|Map|Dictionary|Interval|Duration|Null)\b/,
+        DimensionType.STRING,
+    ],
+];
+
+export const mapFederationFieldType = (dataType: string): DimensionType =>
+    ARROW_FIELD_TYPES.find(([pattern]) => pattern.test(dataType))?.[1] ??
+    mapPostgresFieldType(dataType);
 
 /** Replace every occurrence of the token (raw or SQL-quoted) with a marker. */
 const redactToken = (text: string, token: string): string =>
@@ -50,7 +85,8 @@ export class FederationWarehouseClient extends PostgresWarehouseClient {
      * runs it, send a freshly minted identity token. The provider is called
      * once per query (and per retry attempt), so no token is ever reused.
      * Without a provider nothing is sent and the engine applies its own
-     * no-identity rules.
+     * no-identity rules. A provider that has no identity for this query
+     * (`null`) clears the connection's identity instead.
      */
     protected async beforeQuery(client: PoolClient): Promise<void> {
         if (!this.getIdentityToken) {
@@ -59,6 +95,10 @@ export class FederationWarehouseClient extends PostgresWarehouseClient {
         const token = await this.getIdentityToken({
             agent: this.agentSession,
         });
+        if (token === null) {
+            await client.query(CLEAR_IDENTITY_STATEMENT);
+            return;
+        }
         try {
             await client.query(getIdentityStatement(token));
         } catch (error) {
@@ -86,6 +126,21 @@ export class FederationWarehouseClient extends PostgresWarehouseClient {
      */
     protected async supportsMatviews(): Promise<boolean> {
         return false;
+    }
+
+    protected mapCatalogFieldType(dataType: string): DimensionType {
+        return mapFederationFieldType(dataType);
+    }
+
+    /**
+     * Arrow type names carry no Postgres timestamp domain. Leaving the domain
+     * unset keeps the catalog in the shape Lightdash had before domains
+     * (no `__lightdashTimestampDomains` sidecar for engine tables).
+     */
+    protected getCatalogTimestampDomain(
+        _dataType: string,
+    ): TimestampDomain | undefined {
+        return undefined;
     }
 
     /**

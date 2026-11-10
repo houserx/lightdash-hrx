@@ -37,11 +37,13 @@ export type IdentityTokenContext = {
 
 /**
  * Returns a freshly minted CONTRACTS §3 identity token. A federation-flavour client calls it
- * once per query, so every query carries its own token and nonce.
+ * once per query, so every query carries its own token and nonce. `null` means the query runs
+ * with no identity: the client then clears any identity an earlier query left on the pooled
+ * connection.
  */
 export type IdentityTokenProvider = (
     context: IdentityTokenContext,
-) => Promise<string>;
+) => Promise<string | null>;
 
 export type WarehouseClientOptions = DuckdbWarehouseClientOptions &
     ClickhouseWarehouseClientOptions &
