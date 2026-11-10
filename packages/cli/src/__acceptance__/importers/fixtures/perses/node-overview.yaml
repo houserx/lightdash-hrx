@@ -1,0 +1,240 @@
+# Synthetic Perses dashboard written from the published Perses dashboard spec (v0.4x shape:
+# kind/metadata/spec, panels keyed by id, Grid layouts that $ref the panels). Not fetched.
+kind: Dashboard
+metadata:
+  name: node-overview
+  project: operations
+spec:
+  display:
+    name: Node overview
+    description: Synthetic fixture for the ENG-1799 Perses importer.
+  duration: 6h
+  refreshInterval: 1m
+  variables:
+    - kind: ListVariable
+      spec:
+        name: job
+        display:
+          name: Job
+        defaultValue: node
+        allowAllValue: false
+        allowMultiple: false
+        plugin:
+          kind: PrometheusLabelValuesVariable
+          spec:
+            labelName: job
+            datasource:
+              kind: PrometheusDatasource
+              name: prometheus-production
+    - kind: ListVariable
+      spec:
+        name: env
+        display:
+          name: Environment
+        defaultValue: prod
+        allowAllValue: false
+        allowMultiple: false
+        plugin:
+          kind: StaticListVariable
+          spec:
+            values:
+              - prod
+              - staging
+    - kind: TextVariable
+      spec:
+        name: instance
+        display:
+          name: Instance
+        value: node-1
+  panels:
+    cpu:
+      kind: Panel
+      spec:
+        display:
+          name: CPU usage
+          description: Share of CPU time spent outside idle.
+        plugin:
+          kind: TimeSeriesChart
+          spec:
+            legend:
+              position: right
+              mode: list
+            yAxis:
+              format:
+                unit: percent
+            visual:
+              stack: all
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: 'sum by (mode) (rate(node_cpu_seconds_total{job="$job", env="$env", mode!="idle"}[$__rate_interval]))'
+                  seriesNameFormat: '{{mode}}'
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-production
+    up:
+      kind: Panel
+      spec:
+        display:
+          name: Targets up
+        plugin:
+          kind: StatChart
+          spec:
+            calculation: last-number
+            format:
+              unit: decimal
+            thresholds:
+              steps:
+                - value: 1
+                  color: red
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: 'count(up{job="$job"} == 1)'
+    memory:
+      kind: Panel
+      spec:
+        display:
+          name: Memory used
+        plugin:
+          kind: GaugeChart
+          spec:
+            calculation: last-number
+            format:
+              unit: percent
+            max: 100
+            thresholds:
+              steps:
+                - value: 80
+                  color: orange
+                - value: 90
+                  color: red
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: '100 * (1 - node_memory_MemAvailable_bytes{instance="$instance"} / node_memory_MemTotal_bytes{instance="$instance"})'
+    notes:
+      kind: Panel
+      spec:
+        display:
+          name: About
+        plugin:
+          kind: Markdown
+          spec:
+            text: |
+              ## Node overview
+              Synthetic notes panel. See the runbook before restarting a node.
+    scrape:
+      kind: Panel
+      spec:
+        display:
+          name: Scrape durations
+        plugin:
+          kind: Table
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: 'max by (instance) (scrape_duration_seconds{job="$job"})'
+    errors:
+      kind: Panel
+      spec:
+        display:
+          name: Errors by instance
+        plugin:
+          kind: BarChart
+          spec:
+            calculation: sum
+            format:
+              unit: decimal
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: 'sum by (instance) (increase(node_network_receive_errs_total{job="$job"}[$__range]))'
+    heatmap:
+      kind: Panel
+      spec:
+        display:
+          name: Latency heatmap
+        plugin:
+          kind: HeatmapChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  query: 'sum by (le) (rate(http_request_duration_seconds_bucket[$__rate_interval]))'
+  layouts:
+    - kind: Grid
+      spec:
+        display:
+          title: Overview
+          collapse:
+            open: true
+        items:
+          - x: 0
+            y: 0
+            width: 12
+            height: 8
+            content:
+              $ref: '#/spec/panels/cpu'
+          - x: 12
+            y: 0
+            width: 6
+            height: 4
+            content:
+              $ref: '#/spec/panels/up'
+          - x: 18
+            y: 0
+            width: 6
+            height: 4
+            content:
+              $ref: '#/spec/panels/memory'
+          - x: 12
+            y: 4
+            width: 12
+            height: 4
+            content:
+              $ref: '#/spec/panels/notes'
+    - kind: Grid
+      spec:
+        display:
+          title: Details
+          collapse:
+            open: false
+        items:
+          - x: 0
+            y: 0
+            width: 8
+            height: 6
+            content:
+              $ref: '#/spec/panels/scrape'
+          - x: 8
+            y: 0
+            width: 8
+            height: 6
+            content:
+              $ref: '#/spec/panels/errors'
+          - x: 16
+            y: 0
+            width: 8
+            height: 6
+            content:
+              $ref: '#/spec/panels/heatmap'

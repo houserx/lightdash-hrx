@@ -1,0 +1,255 @@
+import {
+    convertGrafanaDashboard,
+    DEFAULT_SPOTLIGHT_CONFIG,
+    findGrafanaDashboardResource,
+    generateSlug,
+    mergeProjectParameters,
+    ParseError,
+    readGrafanaDashboardJson,
+    renderGrafanaImportReport,
+    type GrafanaDashboardImport,
+    type GrafanaDashboardInput,
+    type LightdashProjectConfig,
+} from '@lightdash/common';
+import { promises as fs } from 'fs';
+import * as yaml from 'js-yaml';
+import * as path from 'path';
+import GlobalState from '../globalState';
+import * as styles from '../styles';
+import {
+    readGrafanaDashboardsTfFile,
+    readGrafanaDatasourcesFile,
+    readGrafanaOpsMartsFile,
+} from './grafanaImportMaps';
+
+/** The space imported dashboards and charts go to when `--space` is not given. */
+export const DEFAULT_GRAFANA_DASHBOARD_SPACE = 'operations';
+
+type ImportGrafanaDashboardOptions = {
+    out: string;
+    space: string;
+    /** false with --no-tabs. */
+    tabs: boolean;
+    /** grafana_data_sources.tf: datasource uids resolve to Telemetry Sources. */
+    datasources?: string;
+    /** YAML mapping GitHub and Sentry query types to Ops Mart tables. */
+    opsMarts?: string;
+    /** grafana_dashboards.tf: each dashboard goes to the space named after its Grafana folder. */
+    dashboardsTf?: string;
+    verbose: boolean;
+};
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** Reads and checks one input file; every failure names the file. */
+const readDashboardFile = async (
+    file: string,
+): Promise<GrafanaDashboardInput> => {
+    let contents: string;
+    try {
+        contents = await fs.readFile(file, 'utf8');
+    } catch (e) {
+        throw new ParseError(
+            `Could not read the Grafana dashboard ${file}: ${
+                e instanceof Error ? e.message : String(e)
+            }`,
+        );
+    }
+    let json: unknown;
+    try {
+        json = JSON.parse(contents);
+    } catch (e) {
+        throw new ParseError(
+            `${file} is not valid JSON: ${e instanceof Error ? e.message : String(e)}`,
+        );
+    }
+    const input = readGrafanaDashboardJson(json);
+    if ('error' in input) {
+        throw new ParseError(
+            `${file} is not a Grafana dashboard: ${input.error}. Export the dashboard JSON from Grafana (Share → Export, or the dashboard API).`,
+        );
+    }
+    return input;
+};
+
+// The JSON round trip drops the `undefined` fields the as-code types require (js-yaml can't dump them).
+const dumpYaml = (doc: unknown) =>
+    yaml.dump(JSON.parse(JSON.stringify(doc)), {
+        quotingType: '"',
+        noRefs: true,
+        lineWidth: -1,
+    });
+
+/**
+ * Writes converted dashboards under `out`: dashboards/, charts/, reports/, lightdash.config.yml
+ * (when they define parameters) and import-summary.json, then prints what was written.
+ * Shared by `import grafana-dashboard` and `import perses-dashboard`.
+ */
+export const writeDashboardImports = async (
+    results: GrafanaDashboardImport[],
+    options: { out: string; command: string },
+) => {
+    // One lightdash.config.yml holds every dashboard's parameters; a difference between two
+    // dashboards' definitions is a warning on the later dashboard, so it shows in its report.
+    const merged = mergeProjectParameters(
+        results.map((r) => ({
+            dashboard: r.dashboard.name,
+            parameters: r.parameters,
+        })),
+    );
+    merged.warnings.forEach(({ index, warning }) =>
+        results[index].warnings.push(warning),
+    );
+
+    const written: string[] = [];
+    const write = async (rel: string, contents: string) => {
+        const abs = path.join(options.out, rel);
+        await fs.mkdir(path.dirname(abs), { recursive: true });
+        await fs.writeFile(abs, contents);
+        written.push(rel);
+        GlobalState.debug(`Wrote ${abs}`);
+    };
+    for (const result of results) {
+        // eslint-disable-next-line no-await-in-loop
+        await write(
+            `dashboards/${result.dashboard.slug}.yml`,
+            dumpYaml(result.dashboard),
+        );
+        for (const chart of result.charts) {
+            // eslint-disable-next-line no-await-in-loop
+            await write(`charts/${chart.slug}.yml`, dumpYaml(chart));
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await write(
+            `reports/${result.dashboard.slug}/IMPORT-REPORT.md`,
+            renderGrafanaImportReport(result),
+        );
+    }
+
+    if (Object.keys(merged.parameters).length > 0) {
+        const config: LightdashProjectConfig = {
+            spotlight: DEFAULT_SPOTLIGHT_CONFIG,
+            parameters: merged.parameters,
+        };
+        await write('lightdash.config.yml', dumpYaml(config));
+    }
+
+    const warnings = results.flatMap((r) => r.warnings);
+    const byCode: Record<string, number> = {};
+    [...warnings]
+        .map((w) => w.code)
+        .sort()
+        .forEach((code) => {
+            byCode[code] = (byCode[code] ?? 0) + 1;
+        });
+    const todos = results.reduce((n, r) => n + r.todos.length, 0);
+    const charts = results.reduce((n, r) => n + r.charts.length, 0);
+    const summary = {
+        command: options.command,
+        warnings: { total: warnings.length, byCode },
+        todos,
+        files: [...written],
+    };
+    await write('import-summary.json', `${JSON.stringify(summary, null, 2)}\n`);
+
+    console.info(
+        styles.success(
+            `Imported ${plural(results.length, 'dashboard')} and ${plural(
+                charts,
+                'chart',
+            )} into ${options.out} (${plural(warnings.length, 'warning')}, ${plural(
+                todos,
+                'TODO',
+            )})`,
+        ),
+    );
+    if (warnings.length > 0 || todos > 0) {
+        console.info(
+            `See ${path.join(options.out, 'reports')} for each dashboard's IMPORT-REPORT.md.`,
+        );
+    }
+    console.info(
+        `Copy the folders into your project's lightdash/ folder and run ${styles.bold(
+            'lightdash upload',
+        )}.`,
+    );
+    if (written.includes('lightdash.config.yml')) {
+        console.info(
+            `Add the parameters in ${path.join(
+                options.out,
+                'lightdash.config.yml',
+            )} to your project's lightdash.config.yml.`,
+        );
+    }
+};
+
+export const importGrafanaDashboardHandler = async (
+    files: string[],
+    options: ImportGrafanaDashboardOptions,
+) => {
+    GlobalState.setVerbose(options.verbose);
+    const spaceSlug = options.space.trim();
+    if (spaceSlug === '') {
+        throw new ParseError('--space needs a space slug.');
+    }
+
+    // Read and check every file before writing anything.
+    const inputs: GrafanaDashboardInput[] = [];
+    for (const file of files) {
+        // eslint-disable-next-line no-await-in-loop
+        inputs.push(await readDashboardFile(file));
+    }
+
+    const query = {
+        datasources:
+            options.datasources === undefined
+                ? undefined
+                : await readGrafanaDatasourcesFile(options.datasources),
+        opsMarts:
+            options.opsMarts === undefined
+                ? undefined
+                : await readGrafanaOpsMartsFile(options.opsMarts),
+    };
+
+    // With --dashboards-tf a dashboard in a Grafana folder goes to the space named after it;
+    // one at the Grafana root, or in no resource's folder, goes to --space.
+    const dashboardsTf =
+        options.dashboardsTf === undefined
+            ? undefined
+            : await readGrafanaDashboardsTfFile(options.dashboardsTf);
+    const spaceSlugs = files.map((file) => {
+        if (dashboardsTf === undefined) return spaceSlug;
+        const resource = findGrafanaDashboardResource(
+            dashboardsTf,
+            path.resolve(file),
+        );
+        if (resource === undefined) {
+            console.warn(
+                styles.warning(
+                    `${file} is in no grafana_dashboard resource's folder in ${options.dashboardsTf}; it goes to the ${spaceSlug} space.`,
+                ),
+            );
+            return spaceSlug;
+        }
+        return resource.folder === undefined
+            ? spaceSlug
+            : generateSlug(resource.folder);
+    });
+
+    const takenDashboardSlugs = new Set<string>();
+    const takenChartSlugs = new Set<string>();
+    const results: GrafanaDashboardImport[] = inputs.map((input, index) =>
+        convertGrafanaDashboard(input, {
+            spaceSlug: spaceSlugs[index],
+            query,
+            takenDashboardSlugs,
+            takenChartSlugs,
+            noTabs: options.tabs === false,
+        }),
+    );
+
+    await writeDashboardImports(results, {
+        out: options.out,
+        command: 'grafana-dashboard',
+    });
+};

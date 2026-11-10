@@ -5,7 +5,12 @@
     "compilerOptions": {
         "tsBuildInfoFile": "dist/.tsbuildinfo.build"
     },
-    "exclude": ["dist", "node_modules", "src/**/*.test.ts"],
+    "exclude": [
+        "dist",
+        "node_modules",
+        "src/**/*.test.ts",
+        "src/__acceptance__/importers"
+    ],
     "references": [
         {
             "path": "../common/tsconfig.types.json"

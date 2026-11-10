@@ -1,0 +1,131 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 123,
+    "links": [],
+    "panels": [
+      {
+        "description": "",
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 19,
+          "w": 5,
+          "x": 0,
+          "y": 0
+        },
+        "id": 2,
+        "options": {
+          "includeVars": false,
+          "keepTime": false,
+          "maxItems": 7,
+          "query": "",
+          "showFolderNames": true,
+          "showHeadings": true,
+          "showRecentlyViewed": true,
+          "showSearch": false,
+          "showStarred": true,
+          "tags": []
+        },
+        "pluginVersion": "11.3.1",
+        "title": "Dashboards",
+        "type": "dashlist"
+      },
+      {
+        "description": "Welcome!",
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 19,
+          "w": 11,
+          "x": 5,
+          "y": 0
+        },
+        "id": 1,
+        "options": {
+          "code": {
+            "language": "plaintext",
+            "showLineNumbers": false,
+            "showMiniMap": false
+          },
+          "content": "Use dashboards to view pre-defined slices of data, or use the Explore features\nto investigate and dynamically filter/drill data. \nThis tooling Grafana instance aggregates data from Loki and Prometheus across all environments. \nUse the environment-specific datasources to filter by account.\n\n##### 📝 Configuration\nAll dashboards, alerts, and configurations are defined via Terraform in the [infra repository](https://github.com/houserx/infra).\n\n##### 🔰 Where to start\nNew to Grafana or the LGTM stack? Check out available [tutorials](https://grafana.com/tutorials/).\nOtherwise, check out the existing dashboards or go exploring! ⬇️\n\n---\n\n### 🕵️ Explore Metrics\n\n*[Explore Metrics](https://grafana.com/docs/grafana/latest/explore/simplified-exploration/metrics/) is a query-less experience for browsing Prometheus-compatible metrics. \nQuickly find related metrics with just a few simple clicks, without needing to write PromQL queries to retrieve metrics.*\n\n<details><summary>Getting started</summary>\n\n1. Start a [New metric exploration](https://grafana.tooling.houserx.io/explore/metrics), or load a previous one.\n \n2. Select Your Data Source.\n\n   - Start by choosing the relevant data source/environment from the dropdown in the top-left corner.\n\n3. Add label(s) to filter by\n   \n   - Use key-value filters to refine your query. Common labels include `namespace`, `pod`, `service`, or `region`.  \n   - Example: `service = platform-api`, `region = us-east-2`, `namespace = platform`\n\n4. Browse available metrics\n   \n   - Click into the metrics browser or use the auto-complete feature in the query editor to find metrics related to your service.  \n   - Look for meaningful prefixes (e.g., `http_`, `db_`, `k8s_`) to guide your search.  \n\n5. Visualize and Debug\n\n   - Adjust the time range to zoom in on specific events.  \n   - Hover over graphs for detailed data points, and click to inspect related logs, if applicable.  \n   - Add or remove filters to isolate the metrics and resources you want to investigate.\n\n</details>\n<br/>\n\n### 🪵 Explore Logs\n\n*[Explore Logs](https://grafana.com/docs/grafana/latest/explore/simplified-exploration/metrics/) \nlets you automatically visualize and explore your logs without having to write queries.*\n\n<details><summary>Getting started</summary>\n\n1. To [start exploring logs](https://grafana.tooling.houserx.io/a/grafana-lokiexplore-app/), select Your Data source\n\n   - From the dropdown, pick the logging data source (e.g., Loki).  \n\n2. Choose a service or label\n   \n   - Beneath the Data source, choose a service from the dropdown menu, add a custom label filter, or scroll down to view logs\n\n3. Use filters and labels\n   \n   - Add more filters like `{service=\"example-service\"}` or `{pod=\"example-pod\"}` to narrow results.  \n   - Use regex or full-text search to find specific log messages or patterns.  \n\n4. Correlate with metrics & patterns\n\n   - Use data from Metrics Explore to dive deeper into errors or slowness that correlate to logged calls\n   - Check the Patterns tab for unusual repetitions of logging lines\n\n\n</details>\n<br/>\n\n### 🔥 Explore Profiles\n\n*[Explore Profiles](https://grafana.com/docs/grafana/latest/explore/simplified-exploration/profiles/) is a Grafana app designed to integrate seamlessly with [Pyroscope](https://pyroscope.io/), the open-source continuous profiling platform, providing a smooth, query-less experience for browsing and analyzing profiling data.\nProfiling is used to measure and analyze the runtime behavior of a program and its memory/CPU usage.*\n\n‼️ Explore Profiles is in **public preview**.\n\n<details><summary>Getting started</summary>\n\n1. In [Explore Profiles](https://grafana.tooling.houserx.io/a/grafana-pyroscope-app/profiles-explorer) select each of the\nExploration ovals, starting with \"All services\", to begin selecting and filtering data. \n\n</details>\n",
+          "mode": "markdown"
+        },
+        "pluginVersion": "11.3.1",
+        "title": "🏠 House Rx Grafana",
+        "type": "text"
+      },
+      {
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 19,
+          "w": 8,
+          "x": 16,
+          "y": 0
+        },
+        "id": 3,
+        "options": {
+          "alertInstanceLabelFilter": "",
+          "alertName": "",
+          "dashboardAlerts": false,
+          "groupBy": [],
+          "groupMode": "default",
+          "maxItems": 20,
+          "sortOrder": 1,
+          "stateFilter": {
+            "error": true,
+            "firing": true,
+            "noData": false,
+            "normal": false,
+            "pending": true
+          },
+          "viewMode": "list"
+        },
+        "pluginVersion": "11.3.1",
+        "title": "Alerts",
+        "type": "alertlist"
+      }
+    ],
+    "preload": true,
+    "schemaVersion": 40,
+    "tags": [],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "timepicker": {
+      "hidden": true
+    },
+    "timezone": "browser",
+    "title": "House Rx Landing Page",
+    "uid": "fe6f6hm0nmiv4e",
+    "version": 30,
+    "weekStart": ""
+  }

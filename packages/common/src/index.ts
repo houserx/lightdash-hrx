@@ -97,11 +97,21 @@ export * from './dbt/projectMergedManifest';
 // './dbt/validation' is not re-exported: it eagerly imports ~3.6 MB of dbt JSON
 // schemas. Import it from '@lightdash/common/dbt/validation' instead.
 export * from './ee';
+export * from './eng1799/grafanaAlertImport';
+export * from './eng1799/grafanaRoutingFixes';
+export * from './eng1799/grafanaDashboardImport';
+export * from './eng1799/grafanaImportMaps';
 export * from './eng1799/grafanaPanelMapping';
+export * from './eng1799/grafanaQuery';
 export * from './eng1799/grafanaThresholds';
 export * from './eng1799/grafanaUnits';
 export * from './eng1799/grafanaValueMappings';
+export * from './eng1799/grafanaVariables';
+export * from './eng1799/persesDashboardImport';
+export * from './eng1799/importTimeRange';
+export * from './eng1799/importWarnings';
 export * from './eng1799/logStream';
+export * from './eng1799/terraformHcl';
 export * from './eng1799/traceWaterfall';
 export * from './preAggregates';
 export * from './pivot/derivePivotConfigFromChart';

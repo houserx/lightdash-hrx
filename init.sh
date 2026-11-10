@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
-# ENG-1799 integration base: run every build line's init script, in order.
+# ENG-1799 importers line: install and build what the importer checks need. No servers.
 #
-# Each line built in parallel with its own init.sh; they are kept as scripts/eng-1799/init-<line>.sh
-# and run here from the repo root. Each one installs and builds only (no servers) and skips work
-# whose inputs haven't changed, so a warm run is fast.
+# The work is in scripts/eng-1799/init-importers.sh. The integration base's runner for every
+# line's init (viz, ldq, mcp, alerting, engine) is kept as scripts/eng-1799/init-all.sh.
 set -euo pipefail
 cd "$(dirname "$0")"
-for line in viz ldq mcp alerting engine; do
-    script="scripts/eng-1799/init-$line.sh"
-    [ -f "$script" ] || continue
-    echo "init.sh: $line"
-    bash "$script"
-done
+bash scripts/eng-1799/init-importers.sh
 echo "init.sh: ok"

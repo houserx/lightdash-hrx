@@ -39,6 +39,12 @@ import { exportChartImageHandler } from './handlers/exportChartImage';
 import { generateHandler } from './handlers/generate';
 import { generateExposuresHandler } from './handlers/generateExposures';
 import { getProjectHandler } from './handlers/getProject';
+import { importGrafanaAlertsHandler } from './handlers/importGrafanaAlerts';
+import {
+    DEFAULT_GRAFANA_DASHBOARD_SPACE,
+    importGrafanaDashboardHandler,
+} from './handlers/importGrafanaDashboard';
+import { importPersesDashboardHandler } from './handlers/importPersesDashboard';
 import {
     DEFAULT_PORTAL_SCRIPTS_SPACE,
     importPortalScriptsHandler,
@@ -1449,6 +1455,104 @@ importProgram
     )
     .option('--verbose', undefined, false)
     .action(importPortalScriptsHandler);
+
+importProgram
+    .command('grafana-dashboard <files...>')
+    .description(
+        'Converts Grafana dashboard JSON (or the API export {dashboard, meta}) into dashboard and SQL chart YAML for `lightdash upload`',
+    )
+    .requiredOption(
+        '-o, --out <dir>',
+        'folder to write dashboards/, charts/, reports/ and import-summary.json into',
+    )
+    .option(
+        '-s, --space <slug>',
+        'slug of the space the dashboards and charts go to',
+        DEFAULT_GRAFANA_DASHBOARD_SPACE,
+    )
+    .option(
+        '--no-tabs',
+        'turn collapsed rows into headings with their panels below, instead of dashboard tabs',
+    )
+    .option(
+        '--datasources <tf>',
+        'grafana_data_sources.tf, to resolve datasource uids to Telemetry Source names (else the engine default source is used, with a warning)',
+    )
+    .option(
+        '--ops-marts <yml>',
+        'YAML mapping GitHub and Sentry query types to Ops Mart tables (github: {Pull_Requests: ops_marts.github.pull_requests}); unmapped ones become TODOs',
+    )
+    .option(
+        '--dashboards-tf <tf>',
+        'grafana_dashboards.tf: each dashboard goes to the space named after its Grafana folder (dashboards at the Grafana root go to --space)',
+    )
+    .option('--verbose', undefined, false)
+    .action(importGrafanaDashboardHandler);
+
+importProgram
+    .command('perses-dashboard <files...>')
+    .description(
+        'Converts Perses dashboards (JSON or YAML, kind: Dashboard) into dashboard and SQL chart YAML for `lightdash upload`',
+    )
+    .requiredOption(
+        '-o, --out <dir>',
+        'folder to write dashboards/, charts/, reports/ and import-summary.json into',
+    )
+    .option(
+        '-s, --space <slug>',
+        'slug of the space the dashboards and charts go to',
+        DEFAULT_GRAFANA_DASHBOARD_SPACE,
+    )
+    .option(
+        '--no-tabs',
+        'turn collapsed grids into headings with their panels below, instead of dashboard tabs',
+    )
+    .option('--verbose', undefined, false)
+    .action(importPersesDashboardHandler);
+
+importProgram
+    .command('grafana-alerts')
+    .description(
+        'Converts Grafana alerting Terraform (rule groups, contact points, notification policy) into alert-rules/, contact-points/ and notification-routes/ YAML for `lightdash upload --alerting-only`',
+    )
+    .requiredOption(
+        '--rules <tf...>',
+        'Terraform files with the resource "grafana_rule_group" blocks',
+    )
+    .requiredOption(
+        '--contact-points <tf>',
+        'Terraform file with the resource "grafana_contact_point" blocks',
+    )
+    .requiredOption(
+        '--policy <tf>',
+        'Terraform file with the resource "grafana_notification_policy" block',
+    )
+    .requiredOption(
+        '-o, --out <dir>',
+        'folder to write alert-rules/, contact-points/, notification-routes/, ROUTING-FIXES.md, IMPORT-REPORT.md and import-summary.json into',
+    )
+    .option(
+        '--locals <tf...>',
+        'Terraform files with the locals blocks the other files reference',
+    )
+    .option(
+        '--datasources <tf>',
+        'grafana_data_sources.tf, to resolve datasource references to Telemetry Source names',
+    )
+    .option(
+        '--folders <tf>',
+        'grafana_folders.tf, the Grafana folders the rule groups reference',
+    )
+    .option(
+        '--routing-decisions <yml>',
+        'YAML with routing decisions: severities: {<value>: <contact point slug>} and teams: {<team>: <contact point slug>}',
+    )
+    .option(
+        '--no-routing-fixes',
+        'import the notification routes as Grafana has them, without fixing routing defects',
+    )
+    .option('--verbose', undefined, false)
+    .action(importGrafanaAlertsHandler);
 
 const alertingProgram = program
     .command('alerting')

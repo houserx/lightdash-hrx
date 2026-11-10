@@ -1,0 +1,752 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 117,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 0,
+          "y": 0
+        },
+        "id": 5,
+        "interval": "2s",
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "last"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "QueueName": "ehr-create-patients-queue-production"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "ApproximateNumberOfMessagesVisible",
+            "metricQueryType": 0,
+            "namespace": "AWS/SQS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "CREATE PATIENTS QUEUE",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 7,
+          "x": 5,
+          "y": 0
+        },
+        "id": 8,
+        "interval": "2s",
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "sum"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "FunctionName": "ehr-api-integration-production-create-patients"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "Invocations",
+            "metricQueryType": 0,
+            "namespace": "AWS/Lambda",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "CREATE PATIENTS NUM PROCESSED",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "dark-red",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 7,
+          "x": 12,
+          "y": 0
+        },
+        "id": 3,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "last"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "QueueName": "ehr-create-patients-dlq-production"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "ApproximateNumberOfMessagesVisible",
+            "metricQueryType": 0,
+            "namespace": "AWS/SQS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "CREATE PATIENTS (DLQ)",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 0,
+          "y": 6
+        },
+        "id": 1,
+        "interval": "2s",
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "last"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "QueueName": "ehr-patient-queue-production"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "ApproximateNumberOfMessagesVisible",
+            "metricQueryType": 0,
+            "namespace": "AWS/SQS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "GET PATIENT DATA QUEUE",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 7,
+          "x": 5,
+          "y": 6
+        },
+        "id": 7,
+        "interval": "2s",
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "sum"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "FunctionName": "ehr-api-integration-production-async-get-patient-fhir"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "Invocations",
+            "metricQueryType": 0,
+            "namespace": "AWS/Lambda",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "GET PATIENT DATA NUM PROCESSED",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "dark-red",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 7,
+          "x": 12,
+          "y": 6
+        },
+        "id": 6,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "last"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "QueueName": "ehr-patient-dlq-production"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "ApproximateNumberOfMessagesVisible",
+            "metricQueryType": 0,
+            "namespace": "AWS/SQS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "GET PATIENT DATA (DLQ)",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 5,
+          "x": 0,
+          "y": 12
+        },
+        "id": 2,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "last"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "QueueName": "post-ehr-data-to-platform-queue-production"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "ApproximateNumberOfMessagesVisible",
+            "metricQueryType": 0,
+            "namespace": "AWS/SQS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Maximum"
+          }
+        ],
+        "title": "POST TO PLATFORM QUEUE",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 7,
+          "x": 5,
+          "y": 12
+        },
+        "id": 9,
+        "interval": "2s",
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "sum"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "FunctionName": "ehr-api-integration-production-post-data-to-platform"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "Invocations",
+            "metricQueryType": 0,
+            "namespace": "AWS/Lambda",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "POST DATA TO PLATFORM NUM PROCESSED",
+        "type": "stat"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "dark-red",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 6,
+          "w": 7,
+          "x": 12,
+          "y": 12
+        },
+        "id": 4,
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": [
+              "last"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "showPercentChange": false,
+          "textMode": "auto",
+          "wideLayout": true
+        },
+        "pluginVersion": "10.3.3",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "QueueName": "post-ehr-data-to-platform-dlq-production"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "ApproximateNumberOfMessagesVisible",
+            "metricQueryType": 0,
+            "namespace": "AWS/SQS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "POST TO PLATFORM (DLQ)",
+        "type": "stat"
+      }
+    ],
+    "refresh": "5s",
+    "schemaVersion": 39,
+    "tags": [],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "EHR Queue Monitor",
+    "uid": "d2278163-761b-479e-9679-830c4fd26d85",
+    "version": 3,
+    "weekStart": ""
+  }

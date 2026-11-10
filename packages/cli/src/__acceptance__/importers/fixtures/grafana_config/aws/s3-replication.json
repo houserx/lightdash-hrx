@@ -1,0 +1,616 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "target": {
+            "limit": 100,
+            "matchAny": false,
+            "tags": [],
+            "type": "dashboard"
+          },
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/replication-metrics.html",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 105,
+    "links": [],
+    "liveNow": false,
+    "panels": [
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${source}"
+        },
+        "description": "Max latency sending data to DestinationBucket",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "ms",
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "interval": "15m",
+        "maxDataPoints": 8,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${source}"
+            },
+            "dimensions": {
+              "BucketName": "fdb-clinical-data-staging"
+            },
+            "expression": "",
+            "id": "",
+            "key": "Q-ec6d5786-0473-4ae6-8e39-cdd7fff0b425-0",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "OperationsPendingReplication",
+            "metricQueryType": 1,
+            "namespace": "AWS/S3",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/S3",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "DestinationBucket",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "ReplicationLatency",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$bucket"
+                    },
+                    "property": {
+                      "name": "DestinationBucket",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(ReplicationLatency) FROM \"AWS/S3\" WHERE DestinationBucket = '$bucket' GROUP BY DestinationBucket",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Max Latency",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${source}"
+        },
+        "description": "Operations Pending Replication",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "ops",
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 8,
+          "y": 0
+        },
+        "id": 2,
+        "interval": "15m",
+        "maxDataPoints": 8,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${source}"
+            },
+            "dimensions": {
+              "BucketName": "fdb-clinical-data-staging"
+            },
+            "expression": "",
+            "id": "",
+            "key": "Q-ec6d5786-0473-4ae6-8e39-cdd7fff0b425-0",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "OperationsPendingReplication",
+            "metricQueryType": 1,
+            "namespace": "AWS/S3",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/S3",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "SourceBucket",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "OperationsPendingReplication",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$bucket"
+                    },
+                    "property": {
+                      "name": "DestinationBucket",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(OperationsPendingReplication) FROM \"AWS/S3\" WHERE DestinationBucket = '$bucket' GROUP BY SourceBucket",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Op Pending Repl.",
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${source}"
+        },
+        "description": "Data pending replication to DestinationBucket",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "auto",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            },
+            "unit": "bytes",
+            "unitScale": true
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 8,
+          "w": 8,
+          "x": 16,
+          "y": 0
+        },
+        "id": 3,
+        "interval": "15m",
+        "maxDataPoints": 8,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${source}"
+            },
+            "dimensions": {
+              "BucketName": "fdb-clinical-data-staging"
+            },
+            "expression": "",
+            "id": "",
+            "key": "Q-ec6d5786-0473-4ae6-8e39-cdd7fff0b425-0",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "OperationsPendingReplication",
+            "metricQueryType": 1,
+            "namespace": "AWS/S3",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "$region",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/S3",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "SourceBucket",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "BytesPendingReplication",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$bucket"
+                    },
+                    "property": {
+                      "name": "DestinationBucket",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(BytesPendingReplication) FROM \"AWS/S3\" WHERE DestinationBucket = '$bucket' GROUP BY SourceBucket",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Data Pending Repl.",
+        "type": "timeseries"
+      }
+    ],
+    "refresh": "",
+    "schemaVersion": 39,
+    "tags": [
+      "s3"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "selected": true,
+            "text": "Cloudwatch Staging",
+            "value": "uHbTebEVk"
+          },
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "source",
+          "options": [],
+          "query": "cloudwatch",
+          "queryValue": "",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "selected": true,
+            "text": "us-east-1",
+            "value": "us-east-1"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${source}"
+          },
+          "definition": "",
+          "hide": 0,
+          "includeAll": false,
+          "label": "",
+          "multi": false,
+          "name": "region",
+          "options": [],
+          "query": {
+            "queryType": "regions",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "default"
+          },
+          "refresh": 1,
+          "regex": "/.*us-.*/",
+          "skipUrlSync": false,
+          "sort": 0,
+          "type": "query"
+        },
+        {
+          "allValue": "*",
+          "current": {
+            "selected": true,
+            "text": "houserx-customer-data-staging-replica",
+            "value": "houserx-customer-data-staging-replica"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${source}"
+          },
+          "definition": "",
+          "hide": 0,
+          "includeAll": false,
+          "multi": false,
+          "name": "bucket",
+          "options": [],
+          "query": {
+            "attributeName": "",
+            "dimensionFilters": {},
+            "dimensionKey": "BucketName",
+            "ec2Filters": {},
+            "instanceID": "",
+            "metricName": "NumberOfObjects",
+            "namespace": "AWS/S3",
+            "queryType": "dimensionValues",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "$region",
+            "resourceType": "",
+            "tags": {}
+          },
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-3h",
+      "to": "now"
+    },
+    "timepicker": {
+      "hidden": false,
+      "refresh_intervals": [
+        "15m",
+        "30m",
+        "1h",
+        "3h"
+      ]
+    },
+    "timezone": "",
+    "title": "S3 Replication",
+    "uid": "s3-replication-dashboard",
+    "version": 3,
+    "weekStart": ""
+  }

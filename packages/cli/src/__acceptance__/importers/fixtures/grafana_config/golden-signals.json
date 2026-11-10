@@ -1,0 +1,848 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "target": {
+            "limit": 100,
+            "matchAny": false,
+            "tags": [],
+            "type": "dashboard"
+          },
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "The four golden signals",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": 100,
+    "links": [],
+    "liveNow": true,
+    "panels": [
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "panels": [],
+        "title": "Info",
+        "type": "row"
+      },
+      {
+        "description": "",
+        "fieldConfig": {
+          "defaults": {},
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 3,
+          "w": 24,
+          "x": 0,
+          "y": 1
+        },
+        "id": 2,
+        "options": {
+          "code": {
+            "language": "plaintext",
+            "showLineNumbers": false,
+            "showMiniMap": false
+          },
+          "content": "#### ✨ Golden Signals\nThe four golden signals of monitoring are [latency, traffic, errors, and saturation](https://sre.google/sre-book/monitoring-distributed-systems/).\n\nTo view data more granulary, for ex. per http route, use the Explore Metrics feature in Grafana.",
+          "mode": "markdown"
+        },
+        "pluginVersion": "11.3.1",
+        "title": "",
+        "type": "text"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 4
+        },
+        "id": 3,
+        "panels": [],
+        "title": "Platform (all endpoints)",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${prom_source}"
+        },
+        "description": "* OK = 2xx\n* No-op = 304\n* Error = 4xx, 5xx",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [
+              {
+                "options": {
+                  "match": "null+nan",
+                  "result": {
+                    "index": 0,
+                    "text": "0"
+                  }
+                },
+                "type": "special"
+              }
+            ],
+            "noValue": "0",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "s"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "No-Op"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "blue",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Error"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "red",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 0,
+          "y": 5
+        },
+        "id": 4,
+        "interval": "1m",
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${prom_source}"
+            },
+            "editorMode": "code",
+            "expr": "avg(rate(http_server_request_duration_seconds_count{k8s_pod_name=~\"$pod\",http_response_status_code=~\"2.*\",k8s_namespace_name=~\"$namespace\", http_route=~\"$endpoint\"}[$__rate_interval])) ",
+            "legendFormat": "OK",
+            "range": true,
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${prom_source}"
+            },
+            "editorMode": "code",
+            "expr": "avg(rate(http_server_request_duration_seconds_count{k8s_pod_name=~\"$pod\",http_response_status_code=~\"304\",k8s_namespace_name=~\"$namespace\", http_route=~\"$endpoint\"}[$__rate_interval]))",
+            "hide": false,
+            "legendFormat": "No-Op",
+            "range": true,
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${prom_source}"
+            },
+            "editorMode": "code",
+            "exemplar": false,
+            "expr": "sum(rate(http_server_request_duration_seconds_count{k8s_pod_name=~\"$pod\",http_response_status_code=~\"4.*|5.*\", k8s_namespace_name=~\"$namespace\", http_route=~\"$endpoint\"}[5m]) OR on() vector(0)) ",
+            "hide": false,
+            "instant": false,
+            "legendFormat": "Error",
+            "range": true,
+            "refId": "C"
+          }
+        ],
+        "title": "Latency",
+        "transformations": [
+          {
+            "id": "configFromData",
+            "options": {}
+          }
+        ],
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${prom_source}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 250,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [
+              {
+                "options": {
+                  "match": "null+nan",
+                  "result": {
+                    "index": 0,
+                    "text": "0"
+                  }
+                },
+                "type": "special"
+              }
+            ],
+            "noValue": "0",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "ops"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "No-Op"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "blue",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "Error"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "red",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 12,
+          "y": 5
+        },
+        "id": 5,
+        "interval": "1m",
+        "options": {
+          "legend": {
+            "calcs": [
+              "mean"
+            ],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${prom_source}"
+            },
+            "editorMode": "code",
+            "expr": "count(rate(http_server_request_duration_seconds_count{k8s_pod_name=~\"$pod\",k8s_namespace_name=~\"$namespace\"}[$__rate_interval]))",
+            "legendFormat": "Requests",
+            "range": true,
+            "refId": "A"
+          }
+        ],
+        "title": "Traffic",
+        "transformations": [
+          {
+            "id": "configFromData",
+            "options": {}
+          }
+        ],
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${prom_source}"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 10,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": true,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "line"
+              }
+            },
+            "mappings": [],
+            "noValue": "0",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "none"
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": " "
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "transparent",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "id": 6,
+        "interval": "1m",
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${prom_source}"
+            },
+            "editorMode": "code",
+            "expr": "count(rate(http_server_request_duration_seconds_count{k8s_pod_name=~\"$pod\",http_response_status_code=~\"4.*|5.*\",k8s_namespace_name=~\"$namespace\"}[5m])> 0)",
+            "legendFormat": "Errors",
+            "range": true,
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${prom_source}"
+            },
+            "editorMode": "code",
+            "expr": "0",
+            "hide": false,
+            "legendFormat": " ",
+            "range": true,
+            "refId": "B"
+          }
+        ],
+        "title": "Errors",
+        "transformations": [
+          {
+            "id": "configFromData",
+            "options": {}
+          }
+        ],
+        "type": "timeseries"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "${cloudwatch_source}"
+        },
+        "description": "* Only works for RDS",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": 100,
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 15,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                }
+              ]
+            },
+            "unit": "percent"
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "id": 7,
+        "options": {
+          "legend": {
+            "calcs": [
+              "mean"
+            ],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true,
+            "sortBy": "Mean",
+            "sortDesc": true
+          },
+          "tooltip": {
+            "mode": "multi",
+            "sort": "desc"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "${cloudwatch_source}"
+            },
+            "dimensions": {
+              "DBInstanceIdentifier": "$db_instance"
+            },
+            "expression": "",
+            "id": "",
+            "label": "",
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "CPUUtilization",
+            "metricQueryType": 0,
+            "namespace": "AWS/RDS",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "us-east-2",
+            "sql": {
+              "from": {
+                "property": {
+                  "name": "AWS/RDS",
+                  "type": "string"
+                },
+                "type": "property"
+              },
+              "groupBy": {
+                "expressions": [
+                  {
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "groupBy"
+                  }
+                ],
+                "type": "and"
+              },
+              "orderByDirection": "DESC",
+              "select": {
+                "name": "MAX",
+                "parameters": [
+                  {
+                    "name": "CPUUtilization",
+                    "type": "functionParameter"
+                  }
+                ],
+                "type": "function"
+              },
+              "where": {
+                "expressions": [
+                  {
+                    "operator": {
+                      "name": "=",
+                      "value": "$db_instance"
+                    },
+                    "property": {
+                      "name": "DBInstanceIdentifier",
+                      "type": "string"
+                    },
+                    "type": "operator"
+                  }
+                ],
+                "type": "and"
+              }
+            },
+            "sqlExpression": "SELECT MAX(CPUUtilization) FROM \"AWS/RDS\" WHERE DBInstanceIdentifier = '$db_instance' GROUP BY DBInstanceIdentifier",
+            "statistic": "Average"
+          }
+        ],
+        "title": "Saturation",
+        "type": "timeseries"
+      }
+    ],
+    "preload": false,
+    "refresh": "",
+    "schemaVersion": 40,
+    "tags": [
+      "kubernetes"
+    ],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "text": "Staging",
+            "value": "Staging"
+          },
+          "includeAll": false,
+          "name": "environment",
+          "options": [
+            {
+              "selected": true,
+              "text": "Staging",
+              "value": "Staging"
+            },
+            {
+              "selected": false,
+              "text": "Production",
+              "value": "Production"
+            }
+          ],
+          "query": "Staging, Production",
+          "type": "custom"
+        },
+        {
+          "current": {
+            "text": "platform",
+            "value": "platform"
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_source}"
+          },
+          "definition": "label_values(namespace)",
+          "includeAll": false,
+          "name": "namespace",
+          "options": [],
+          "query": {
+            "query": "label_values(namespace)",
+            "refId": "StandardVariableQuery"
+          },
+          "refresh": 1,
+          "regex": "/branch-deployments|platform/",
+          "type": "query"
+        },
+        {
+          "allValue": ".*",
+          "current": {
+            "text": "Prometheus-Staging",
+            "value": "dW0QDuzIz"
+          },
+          "hide": 2,
+          "includeAll": false,
+          "name": "prom_source",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "regex": "Prometheus-$environment",
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "text": "Cloudwatch Staging",
+            "value": "uHbTebEVk"
+          },
+          "hide": 2,
+          "includeAll": false,
+          "name": "cloudwatch_source",
+          "options": [],
+          "query": "cloudwatch",
+          "refresh": 1,
+          "regex": "Cloudwatch $environment",
+          "type": "datasource"
+        },
+        {
+          "allValue": ".*",
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom_source}"
+          },
+          "definition": "label_values(pod)",
+          "description": "Filter by pod to isolate branch deployments",
+          "includeAll": true,
+          "name": "pod",
+          "options": [],
+          "query": {
+            "query": "label_values(pod)",
+            "refId": "StandardVariableQuery"
+          },
+          "refresh": 1,
+          "regex": "/platform.*api/",
+          "type": "query"
+        },
+        {
+          "current": {
+            "text": "houserx-platform-rds-staging",
+            "value": "houserx-platform-rds-staging"
+          },
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "${cloudwatch_source}"
+          },
+          "definition": "",
+          "description": "Filter by RDS database instance",
+          "includeAll": false,
+          "label": "db instance",
+          "name": "db_instance",
+          "options": [],
+          "query": {
+            "attributeName": "",
+            "dimensionFilters": {},
+            "dimensionKey": "DBInstanceIdentifier",
+            "ec2Filters": {},
+            "instanceID": "",
+            "metricName": "CPUUtilization",
+            "namespace": "AWS/RDS",
+            "queryType": "dimensionValues",
+            "refId": "CloudWatchVariableQueryEditor-VariableQuery",
+            "region": "default",
+            "resourceType": "",
+            "tags": {}
+          },
+          "refresh": 1,
+          "regex": "",
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-3h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "1d"
+      ]
+    },
+    "timezone": "",
+    "title": "✨ Golden Signals",
+    "uid": "2tc_OaHIz",
+    "version": 74,
+    "weekStart": ""
+  }

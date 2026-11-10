@@ -1,0 +1,958 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "description": "Monitoring for interactions with BPG Insurance lookups ",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 150,
+    "links": [],
+    "panels": [
+      {
+        "collapsed": true,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "id": 7,
+        "panels": [
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${source}"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 0,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "s"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 9,
+              "x": 0,
+              "y": 1
+            },
+            "id": 8,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "11.3.1",
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "${source}"
+                },
+                "editorMode": "code",
+                "expr": "sum by (http_route)(rate(http_server_request_duration_seconds_sum{k8s_namespace_name=\"platform\", http_route!=\"/healthcheck\", http_route=~\"$route\" }[$__rate_interval])) \n/ \nsum by (http_route)(rate(http_server_request_duration_seconds_count{k8s_namespace_name=\"platform\", http_route!=\"/healthcheck\",http_route=~\"$route\"}[$__rate_interval]))",
+                "hide": false,
+                "instant": false,
+                "legendFormat": "__auto",
+                "range": true,
+                "refId": "A"
+              }
+            ],
+            "title": "API Latency",
+            "type": "timeseries"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${source}"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 0,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "ops"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 9,
+              "x": 9,
+              "y": 1
+            },
+            "id": 9,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "11.3.1",
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "${source}"
+                },
+                "editorMode": "code",
+                "expr": "sum by (http_route)(rate(http_server_request_duration_seconds_count{k8s_namespace_name=\"platform\", http_route=~\"$route\"}[$__rate_interval]))",
+                "instant": false,
+                "legendFormat": "__auto",
+                "range": true,
+                "refId": "A"
+              }
+            ],
+            "title": "API Traffic",
+            "type": "timeseries"
+          },
+          {
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${source}"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 0,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "ops"
+              },
+              "overrides": []
+            },
+            "gridPos": {
+              "h": 7,
+              "w": 9,
+              "x": 0,
+              "y": 9
+            },
+            "id": 12,
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "single",
+                "sort": "none"
+              }
+            },
+            "pluginVersion": "11.3.1",
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "${source}"
+                },
+                "editorMode": "code",
+                "expr": "count(rate(http_server_request_duration_seconds_count{k8s_namespace_name=\"platform\", http_response_status_code=~\"4.*|5.*\", http_route=~\"$route\"}[$__rate_interval]))",
+                "instant": false,
+                "legendFormat": "__auto",
+                "range": true,
+                "refId": "A"
+              }
+            ],
+            "title": "API Errors",
+            "type": "timeseries"
+          },
+          {
+            "gridPos": {
+              "h": 7,
+              "w": 9,
+              "x": 9,
+              "y": 9
+            },
+            "id": 10,
+            "libraryPanel": {
+              "name": "Golden Signal - Platform API Saturation (heap)",
+              "uid": "fee9g7q9y4mbkc"
+            },
+            "title": "API Saturation (heap)"
+          }
+        ],
+        "title": "🔔 Golden Signals",
+        "type": "row"
+      },
+      {
+        "collapsed": true,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 1
+        },
+        "id": 5,
+        "panels": [],
+        "title": "🏠 Platform",
+        "type": "row"
+      },
+      {
+        "collapsed": false,
+        "gridPos": {
+          "h": 1,
+          "w": 24,
+          "x": 0,
+          "y": 2
+        },
+        "id": 6,
+        "panels": [],
+        "title": "BPG",
+        "type": "row"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "description": "Total searches initiated by the micro-service to either the cache or the BPG API.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "axisSoftMax": -1,
+              "fillOpacity": 80,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "lineWidth": 1,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "text",
+                  "value": null
+                },
+                {
+                  "color": "#EAB839",
+                  "value": 800
+                },
+                {
+                  "color": "red",
+                  "value": 1000
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 11,
+          "x": 0,
+          "y": 3
+        },
+        "id": 3,
+        "maxDataPoints": 5000,
+        "options": {
+          "barRadius": 0,
+          "barWidth": 0.97,
+          "fullHighlight": false,
+          "groupWidth": 0.7,
+          "legend": {
+            "calcs": [
+              "sum",
+              "mean",
+              "stdDev"
+            ],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "orientation": "auto",
+          "showValue": "auto",
+          "stacking": "none",
+          "text": {},
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          },
+          "xTickLabelRotation": 0,
+          "xTickLabelSpacing": 0
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "id": "",
+            "label": "search requests",
+            "logGroups": [],
+            "matchExact": false,
+            "metricEditorMode": 0,
+            "metricName": "searchRequestCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "1M",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "Search Requests",
+        "type": "barchart"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "description": "Searches either hit the BPG API or are satisfied by our dynamoDB cache.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              }
+            },
+            "mappings": []
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "api"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "purple",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "cache"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "blue",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "fail"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "red",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 14,
+          "w": 6,
+          "x": 11,
+          "y": 3
+        },
+        "id": 13,
+        "maxDataPoints": 5000,
+        "options": {
+          "displayLabels": [
+            "percent"
+          ],
+          "legend": {
+            "displayMode": "list",
+            "placement": "right",
+            "showLegend": true,
+            "values": [
+              "value"
+            ]
+          },
+          "pieType": "pie",
+          "reduceOptions": {
+            "calcs": [
+              "sum"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "cache",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "searchResultsFromCacheCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "id": "",
+            "label": "api",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "searchResultsFromApiCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "fail",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "searchFailCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "C",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "Search Result",
+        "type": "piechart"
+      },
+      {
+        "datasource": {
+          "type": "cloudwatch",
+          "uid": "JOxT6xE4z"
+        },
+        "description": "Searches either hit the BPG API or are satisfied by our dynamoDB cache.",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisBorderShow": false,
+              "axisCenteredZero": false,
+              "axisColorMode": "text",
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "barWidthFactor": 0.6,
+              "drawStyle": "line",
+              "fillOpacity": 0,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "viz": false
+              },
+              "insertNulls": false,
+              "lineInterpolation": "linear",
+              "lineStyle": {
+                "fill": "solid"
+              },
+              "lineWidth": 1,
+              "pointSize": 3,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "normal"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "text",
+                  "value": null
+                }
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "searchResultsFromApiCount"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "purple",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "searchResultsFromCacheCount"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "blue",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "cache"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "blue",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "api"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "purple",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "fail"
+              },
+              "properties": [
+                {
+                  "id": "color",
+                  "value": {
+                    "fixedColor": "red",
+                    "mode": "fixed"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {
+          "h": 7,
+          "w": 11,
+          "x": 0,
+          "y": 10
+        },
+        "id": 15,
+        "maxDataPoints": 5000,
+        "options": {
+          "legend": {
+            "calcs": [],
+            "displayMode": "list",
+            "placement": "bottom",
+            "showLegend": true
+          },
+          "tooltip": {
+            "mode": "single",
+            "sort": "none"
+          }
+        },
+        "pluginVersion": "11.3.1",
+        "targets": [
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "fail",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "searchFailCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "C",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "hide": false,
+            "id": "",
+            "label": "cache",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "searchResultsFromCacheCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "B",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          },
+          {
+            "datasource": {
+              "type": "cloudwatch",
+              "uid": "JOxT6xE4z"
+            },
+            "dimensions": {
+              "service": "BPG-Service"
+            },
+            "expression": "",
+            "id": "",
+            "label": "api",
+            "logGroups": [],
+            "matchExact": true,
+            "metricEditorMode": 0,
+            "metricName": "searchResultsFromApiCount",
+            "metricQueryType": 0,
+            "namespace": "HouseRX/Custom",
+            "period": "",
+            "queryMode": "Metrics",
+            "refId": "A",
+            "region": "default",
+            "sqlExpression": "",
+            "statistic": "Sum"
+          }
+        ],
+        "title": "Search Result",
+        "type": "timeseries"
+      }
+    ],
+    "preload": false,
+    "schemaVersion": 40,
+    "tags": [],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "text": "Prometheus-Production",
+            "value": "tmTXpZC4k"
+          },
+          "name": "source",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "regex": "",
+          "type": "datasource"
+        },
+        {
+          "current": {
+            "text": ".*patient-insurance/lookup$",
+            "value": ".*patient-insurance/lookup$"
+          },
+          "description": "",
+          "hide": 2,
+          "label": "route",
+          "name": "route",
+          "options": [
+            {
+              "selected": true,
+              "text": ".*patient-insurance/lookup$",
+              "value": ".*patient-insurance/lookup$"
+            }
+          ],
+          "query": ".*patient-insurance/lookup$",
+          "type": "custom"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-2d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "Insurance / BPG",
+    "uid": "fee9eu23ewydcf",
+    "version": 41,
+    "weekStart": ""
+  }

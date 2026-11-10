@@ -18,5 +18,5 @@
         "types": ["node", "vitest/globals"]
     },
     "include": ["src/**/*.ts", "src/**/*.json"],
-    "exclude": ["src/__acceptance__/viz"]
+    "exclude": ["src/__acceptance__/viz", "src/__acceptance__/importers"]
 }

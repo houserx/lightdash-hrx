@@ -1,0 +1,64 @@
+{
+    "grafana-dashboard": {
+        "total": 4035,
+        "todos": 18,
+        "byCode": {
+            "annotations-unsupported": 2,
+            "chart-kind-fallback": 133,
+            "dashboard-link-unsupported": 1,
+            "datasource-unresolved": 10,
+            "expression-unsupported": 7,
+            "legend-unsupported": 9,
+            "no-ops-mart": 17,
+            "option-dropped": 3093,
+            "panel-dropped": 3,
+            "panel-targets-not-combined": 10,
+            "panel-type-unsupported": 1,
+            "parameter-default-adjusted": 9,
+            "parameter-merged": 5,
+            "query-dimension-wildcard": 35,
+            "query-empty": 1,
+            "query-macro-unsupported": 2,
+            "query-match-exact-dropped": 102,
+            "query-period-auto": 151,
+            "query-period-invalid": 47,
+            "query-region-unsupported": 141,
+            "query-statistics-dropped": 4,
+            "refresh-adjusted": 1,
+            "thresholds-unsupported": 12,
+            "transformation-unsupported": 8,
+            "unit-unsupported": 170,
+            "variable-multi-value": 55,
+            "variable-undefined": 6
+        }
+    },
+    "grafana-alerts": {
+        "total": 79,
+        "todos": 11,
+        "byCode": {
+            "datasource-unresolved": 2,
+            "expression-unsupported": 1,
+            "option-dropped": 6,
+            "query-dimension-values-dropped": 4,
+            "query-macro-unsupported": 2,
+            "query-match-exact-dropped": 8,
+            "query-region-unsupported": 19,
+            "routing-needs-decision": 7,
+            "rule-description-generated": 6,
+            "rule-needs-review": 11,
+            "rule-null-handling-changed": 10,
+            "terraform-unresolved": 3
+        }
+    },
+    "perses-dashboard": {
+        "total": 12,
+        "todos": 1,
+        "byCode": {
+            "chart-kind-fallback": 2,
+            "datasource-unresolved": 6,
+            "option-dropped": 1,
+            "perses-plugin-unsupported": 1,
+            "unit-unsupported": 2
+        }
+    }
+}
