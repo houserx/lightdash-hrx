@@ -166,5 +166,43 @@ describe('executeQuery', () => {
         expect(firstCall.version).toBe('v2');
         // When invalidateCache is undefined, JSON.stringify omits it from the body
         expect(firstCall.body).not.toContain('invalidateCache');
+        expect(firstCall.body).not.toContain('timeRange');
+        expect(firstCall.body).not.toContain('audit');
+    });
+
+    it('sends the time range and audit fields when given', async () => {
+        mockedLightdashApi
+            .mockResolvedValueOnce({
+                queryUuid: 'test-query-uuid',
+            } as never)
+            .mockResolvedValueOnce({
+                status: QueryHistoryStatus.READY,
+                queryUuid: 'test-query-uuid',
+                columns: { col1: { type: 'string' } },
+                metadata: { performance: { initialQueryExecutionMs: 120 } },
+            } as never);
+
+        vi.mocked(getResultsFromStream).mockResolvedValueOnce({
+            rows: [{ col1: 'value1' }],
+            columns: { col1: { type: 'string' } },
+        } as never);
+
+        await executeSqlQuery(
+            sharedLightdashApi,
+            'project-uuid',
+            'select 1',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            {
+                timeRange: { from: 'now-1h', to: 'now' },
+                audit: { description: 'why', ticket: 'ENG-1' },
+            },
+        );
+
+        const body = JSON.parse(mockedLightdashApi.mock.calls[0][0].body);
+        expect(body.timeRange).toEqual({ from: 'now-1h', to: 'now' });
+        expect(body.audit).toEqual({ description: 'why', ticket: 'ENG-1' });
     });
 });

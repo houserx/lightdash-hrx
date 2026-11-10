@@ -1,6 +1,7 @@
 import { type ParametersValuesMap, type PivotConfiguration } from '../..';
 import type { QueryExecutionContext } from '../analytics';
 import type { ConditionalFormattingConfig } from '../conditionalFormatting';
+import type { DashboardRefreshInterval } from '../dashboardTimeRange';
 import type { DocumentQueryReference } from '../document';
 import type { DownloadFileType } from '../downloadFile';
 import type { AndFilterGroup, DashboardFilters, Filters } from '../filter';
@@ -20,6 +21,29 @@ type CommonExecuteQueryRequestParams = {
     invalidateCache?: boolean;
     usePreAggregateCache?: boolean;
     parameters?: ParametersValuesMap;
+};
+
+/**
+ * The time range a query runs over: the Dashboard Time Range of a tile's
+ * dashboard (saved range overridden by the URL) or Investigate's range. The
+ * reserved time parameters (`__from`, `__to`, `__interval`, `__range`) and the
+ * tile time-dimension filters resolve from it before the query is compiled.
+ */
+export type QueryTimeRange = {
+    /** `now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset. */
+    from: string;
+    /** `now`, `now-<n><s|m|h|d|w>`, or an ISO-8601 timestamp with an offset. */
+    to: string;
+    /** Relative bounds round down to this interval (10s when absent or null). */
+    refreshInterval?: DashboardRefreshInterval | null;
+};
+
+/** The fields an Audited Query carries into the identity token's audit block. */
+export type QueryAudit = {
+    /** Why the query is run; required by the engine for Audited Queries. */
+    description: string;
+    /** Optional Linear ticket, e.g. `ENG-123`. */
+    ticket?: string | null;
 };
 
 export type DateZoom = {
@@ -74,6 +98,8 @@ export type ExecuteAsyncDashboardChartRequestParams =
         // Run the caller's own unpublished chart draft instead of the
         // published chart, so a tile matches what the author sees
         includeUnpublishedDraft?: boolean;
+        /** The dashboard's effective time range; filters a mapped tile. */
+        timeRange?: QueryTimeRange;
     };
 
 /** A merge run: the spec that produced it, recorded verbatim. */
@@ -102,6 +128,10 @@ export type ExecuteAsyncSqlQueryRequestParams =
         limit?: number;
         pivotConfiguration?: PivotConfiguration;
         warehouseConnectionUuid?: string | null;
+        /** Resolves the reserved time parameters in the SQL. */
+        timeRange?: QueryTimeRange;
+        /** Description and ticket of an Audited Query. */
+        audit?: QueryAudit;
     };
 
 export type EstimateAsyncMetricQueryRequestParams = {
@@ -210,6 +240,8 @@ type ExecuteAsyncDashboardSqlChartCommonParams =
         dashboardFilters: DashboardFilters;
         dashboardSorts: SortField[];
         limit?: number;
+        /** The dashboard's effective time range; resolves the reserved time parameters. */
+        timeRange?: QueryTimeRange;
     };
 
 export type ExecuteAsyncDashboardSqlChartByUuidRequestParams =

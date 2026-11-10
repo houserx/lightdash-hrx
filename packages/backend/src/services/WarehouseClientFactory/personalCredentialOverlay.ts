@@ -163,6 +163,11 @@ export const personalCredentialFieldClassification = {
         sslcertFileName: 'connection',
         sslkey: 'connection',
         sslkeyFileName: 'connection',
+        // Federation Engine flavour (CONTRACTS §4.1): connection-owned, kept
+        // whoever's credentials run the query.
+        flavor: 'connection',
+        identitySigningSecret: 'connection',
+        httpBaseUrl: 'connection',
         requireUserCredentials: 'connection',
     },
     [WarehouseTypes.TRINO]: {

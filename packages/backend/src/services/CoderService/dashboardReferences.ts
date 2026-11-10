@@ -7,7 +7,10 @@ import {
     type DashboardTile,
     type DashboardTileAsCode,
     type DashboardTileTarget,
+    type DashboardTileTimeDimension,
     type DashboardTileWithSlug,
+    type DashboardTimeRange,
+    type DashboardTimeRangeAsCode,
     type DateZoomTileTarget,
     type PromotionChanges,
 } from '@lightdash/common';
@@ -156,4 +159,49 @@ export const getConfigWithDateZoomTileUuids = (
         ...config,
         dateZoomConfig: { ...config.dateZoomConfig, tileTargets },
     };
+};
+
+/** The saved Dashboard Time Range with tile time dimensions keyed by tile slug, for download. */
+export const getTimeRangeWithTileSlugs = (
+    dashboard: DashboardDAO,
+): DashboardTimeRangeAsCode | undefined => {
+    const { timeRange } = dashboard;
+    if (!timeRange) return undefined;
+    const tileTimeDimensions = Object.entries(
+        timeRange.tileTimeDimensions,
+    ).reduce<Record<string, DashboardTileTimeDimension>>(
+        (result, [tileUuid, dimension]) => {
+            const tileSlug = getTileSlugForTileUuid(dashboard, tileUuid);
+            return tileSlug ? { ...result, [tileSlug]: dimension } : result;
+        },
+        {},
+    );
+    return { ...timeRange, tileTimeDimensions };
+};
+
+/**
+ * The uploaded time range with tile time dimensions keyed by tile uuid. Slugs that match
+ * no tile are dropped and reported as warnings.
+ */
+export const getTimeRangeWithTileUuids = (
+    timeRange: DashboardTimeRangeAsCode,
+    tiles: DashboardTileWithSlug[],
+): { timeRange: DashboardTimeRange; warnings: string[] } => {
+    const warnings: string[] = [];
+    const tileTimeDimensions = Object.entries(
+        timeRange.tileTimeDimensions,
+    ).reduce<Record<string, DashboardTileTimeDimension>>(
+        (result, [tileSlug, dimension]) => {
+            const tileUuid = findTileUuid(tiles, tileSlug);
+            if (!tileUuid) {
+                warnings.push(
+                    `Time range tile "${tileSlug}" is not a tile on this dashboard; its time dimension was ignored`,
+                );
+                return result;
+            }
+            return { ...result, [tileUuid]: dimension };
+        },
+        {},
+    );
+    return { timeRange: { ...timeRange, tileTimeDimensions }, warnings };
 };

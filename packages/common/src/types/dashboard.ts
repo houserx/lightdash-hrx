@@ -2,6 +2,7 @@ import { type AgentIdentityClaim } from './agentIdentity';
 import { type ContentAsCodeRepositorySource } from './contentAsCode/base';
 import { type ContentDraftStaleness } from './contentAsCode/draftRebase';
 import { type ContentVerificationInfo } from './contentVerification';
+import { type DashboardTimeRange } from './dashboardTimeRange';
 import { type FilterableDimension, type Metric } from './field';
 import { type DashboardFieldTarget, type DashboardFilters } from './filter';
 import { type KnexPaginatedData } from './knex-paginate';
@@ -162,6 +163,8 @@ export type CreateDashboard = {
     spaceUuid?: string;
     tabs: DashboardTab[];
     config?: DashboardConfig;
+    /** Saved Dashboard Time Range; null or omitted for none */
+    timeRange?: DashboardTimeRange | null;
     colorPaletteUuid?: string | null;
     /** Set to a user uuid to assign an owner, null or omitted for no owner */
     ownerUserUuid?: string | null;
@@ -329,6 +332,8 @@ export type Dashboard = {
     access: SpaceAccess[] | null;
     slug: string;
     config?: DashboardConfig;
+    /** Saved Dashboard Time Range of this version; null when it has none */
+    timeRange?: DashboardTimeRange | null;
     colorPaletteUuid: string | null;
     owner: DashboardOwner | null;
     deletedAt?: Date;
@@ -374,7 +379,13 @@ export type DashboardUnversionedFields = Pick<
 
 export type DashboardVersionedFields = Pick<
     CreateDashboard,
-    'tiles' | 'filters' | 'parameters' | 'updatedByUser' | 'tabs' | 'config'
+    | 'tiles'
+    | 'filters'
+    | 'parameters'
+    | 'updatedByUser'
+    | 'tabs'
+    | 'config'
+    | 'timeRange'
 >;
 
 export type UpdateDashboardDetails = Pick<Dashboard, 'name' | 'description'>;

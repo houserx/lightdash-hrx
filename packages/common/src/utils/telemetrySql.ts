@@ -1,0 +1,323 @@
+/**
+ * Investigate: turns a telemetry query (PromQL, LogQL, ...) into the engine's table-function SQL
+ * (CONTRACTS §1.1). Time arguments are always the reserved Lightdash parameters (CONTRACTS
+ * §2), so the generated SQL follows the chosen time range and stays editable as plain SQL.
+ */
+
+/** A PromQL range query: `promql(query, start, end, step[, source])`. */
+export type PromqlTelemetryQuery = {
+    kind: 'promql';
+    query: string;
+    /** Engine source name; omitted means the engine's default source for the kind. */
+    source?: string;
+};
+
+export type LogqlDirection = 'forward' | 'backward';
+
+/** Engine default line limit for a LogQL log query (CONTRACTS §1.1). */
+export const LOGQL_DEFAULT_LIMIT = 1000;
+/** Engine default direction for a LogQL log query: newest lines first. */
+export const LOGQL_DEFAULT_DIRECTION: LogqlDirection = 'backward';
+
+/**
+ * A LogQL log query: `logql(query, start, end, limit, direction[, source])`. Limit and
+ * direction are always written out, so the defaults are visible and editable in the SQL.
+ */
+export type LogqlTelemetryQuery = {
+    kind: 'logql';
+    query: string;
+    /** Maximum lines returned; defaults to 1000. */
+    limit?: number;
+    /** Defaults to 'backward' (newest first). */
+    direction?: LogqlDirection;
+    source?: string;
+};
+
+/** A LogQL metric query: `logql_metric(query, start, end, step[, source])`. */
+export type LogqlMetricTelemetryQuery = {
+    kind: 'logql_metric';
+    query: string;
+    source?: string;
+};
+
+export type CloudWatchDimension = { Name: string; Value: string };
+
+/**
+ * The CloudWatch `MetricDataQuery` shape Grafana's CloudWatch datasource stores: either a
+ * metric stat or a metric math / SEARCH expression (CONTRACTS §1.1).
+ */
+export type CloudWatchMetricDataQuery = {
+    Id: string;
+    MetricStat?: {
+        Metric: {
+            Namespace: string;
+            MetricName: string;
+            Dimensions?: CloudWatchDimension[];
+        };
+        Period: number;
+        Stat: string;
+        Unit?: string;
+    };
+    Expression?: string;
+    Label?: string;
+    Period?: number;
+    ReturnData?: boolean;
+};
+
+/** A CloudWatch metric query: `cloudwatch(metric_data_query json, start, end[, source])`. */
+export type CloudWatchTelemetryQuery = {
+    kind: 'cloudwatch';
+    metricDataQuery: CloudWatchMetricDataQuery;
+    source?: string;
+};
+
+/** The Investigate CloudWatch metric form. */
+export type CloudWatchMetricForm = {
+    namespace: string;
+    metricName: string;
+    /** Dimension name -> value, kept in insertion order. */
+    dimensions?: Record<string, string>;
+    /** CloudWatch statistic, e.g. Average, Sum, Maximum, p99. */
+    stat: string;
+    /** Period in seconds. */
+    period: number;
+};
+
+/** Id of the single query the form builds. */
+export const CLOUDWATCH_FORM_QUERY_ID = 'm1';
+
+/** Builds the `MetricDataQuery` for a metric stat filled in on the form. */
+export const buildCloudWatchMetricDataQuery = (
+    form: CloudWatchMetricForm,
+): CloudWatchMetricDataQuery => {
+    const namespace = form.namespace.trim();
+    const metricName = form.metricName.trim();
+    const stat = form.stat.trim();
+    if (namespace === '' || metricName === '' || stat === '') {
+        throw new Error(
+            'CloudWatch namespace, metric name and statistic are required',
+        );
+    }
+    if (!Number.isInteger(form.period) || form.period <= 0) {
+        throw new Error(
+            `CloudWatch period must be a positive whole number of seconds, got ${form.period}`,
+        );
+    }
+    return {
+        Id: CLOUDWATCH_FORM_QUERY_ID,
+        MetricStat: {
+            Metric: {
+                Namespace: namespace,
+                MetricName: metricName,
+                Dimensions: Object.entries(form.dimensions ?? {}).map(
+                    ([Name, Value]) => ({ Name, Value }),
+                ),
+            },
+            Period: form.period,
+            Stat: stat,
+        },
+        ReturnData: true,
+    };
+};
+
+/**
+ * A CloudWatch Logs Insights query over one or more log groups:
+ * `cloudwatch_logs(log_groups text, query text, start, end[, source])`, where `log_groups` is
+ * comma-separated (CONTRACTS §1.1).
+ */
+export type CloudWatchLogsTelemetryQuery = {
+    kind: 'cloudwatch_logs';
+    /** Log group names, e.g. `/aws/lambda/fills`. */
+    logGroups: string[];
+    /** The Logs Insights query. */
+    query: string;
+    source?: string;
+};
+
+/** Engine default trace limit for a TraceQL search (CONTRACTS §1.1). */
+export const TRACEQL_DEFAULT_LIMIT = 20;
+
+/**
+ * A TraceQL search: `traceql(query, start, end, limit[, source])`. The limit is always written
+ * out, so the default is visible and editable in the SQL.
+ */
+export type TraceqlTelemetryQuery = {
+    kind: 'traceql';
+    query: string;
+    /** Maximum traces returned; defaults to 20. */
+    limit?: number;
+    source?: string;
+};
+
+/** One trace by id, all its spans: `trace(trace_id[, source])`. No time range applies. */
+export type TraceTelemetryQuery = {
+    kind: 'trace';
+    traceId: string;
+    source?: string;
+};
+
+export type TelemetryQuery =
+    | PromqlTelemetryQuery
+    | LogqlTelemetryQuery
+    | LogqlMetricTelemetryQuery
+    | CloudWatchTelemetryQuery
+    | CloudWatchLogsTelemetryQuery
+    | TraceqlTelemetryQuery
+    | TraceTelemetryQuery;
+
+/** Reserved time parameter references, substituted before the query runs. */
+export const TELEMETRY_SQL_FROM = '${ld.parameters.__from}';
+export const TELEMETRY_SQL_TO = '${ld.parameters.__to}';
+export const TELEMETRY_SQL_INTERVAL = '${ld.parameters.__interval}';
+
+/** A SQL string literal, with single quotes doubled. */
+const toSqlStringLiteral = (value: string): string =>
+    `'${value.replace(/'/g, "''")}'`;
+
+/**
+ * The engine's comma-separated `log_groups` argument. Names are trimmed and blanks dropped; a
+ * name containing a comma cannot be represented and is refused.
+ */
+const joinLogGroups = (logGroups: string[]): string => {
+    const names = logGroups.map((name) => name.trim()).filter((n) => n !== '');
+    if (names.length === 0) {
+        throw new Error(
+            'CloudWatch Logs Insights needs at least one log group',
+        );
+    }
+    const withComma = names.find((name) => name.includes(','));
+    if (withComma !== undefined) {
+        throw new Error(
+            `CloudWatch log group names cannot contain a comma, got ${withComma}`,
+        );
+    }
+    return names.join(',');
+};
+
+/** A row limit interpolated into the SQL; refused unless a positive integer. */
+const positiveLimit = (language: string, limit: number): string => {
+    if (!Number.isInteger(limit) || limit <= 0) {
+        throw new Error(
+            `${language} limit must be a positive integer, got ${limit}`,
+        );
+    }
+    return String(limit);
+};
+
+const tableFunctionSql = (
+    name: string,
+    args: string[],
+    source: string | undefined,
+): string => {
+    const allArgs =
+        source === undefined || source === ''
+            ? args
+            : [...args, toSqlStringLiteral(source)];
+    return `SELECT * FROM ${name}(${allArgs.join(', ')})`;
+};
+
+export const buildTelemetrySql = (telemetryQuery: TelemetryQuery): string => {
+    switch (telemetryQuery.kind) {
+        case 'promql':
+            return tableFunctionSql(
+                'promql',
+                [
+                    toSqlStringLiteral(telemetryQuery.query),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                    TELEMETRY_SQL_INTERVAL,
+                ],
+                telemetryQuery.source,
+            );
+        case 'logql': {
+            const limit = positiveLimit(
+                'LogQL',
+                telemetryQuery.limit ?? LOGQL_DEFAULT_LIMIT,
+            );
+            const direction =
+                telemetryQuery.direction ?? LOGQL_DEFAULT_DIRECTION;
+            if (direction !== 'forward' && direction !== 'backward') {
+                throw new Error(
+                    `LogQL direction must be 'forward' or 'backward', got ${direction}`,
+                );
+            }
+            return tableFunctionSql(
+                'logql',
+                [
+                    toSqlStringLiteral(telemetryQuery.query),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                    limit,
+                    toSqlStringLiteral(direction),
+                ],
+                telemetryQuery.source,
+            );
+        }
+        case 'logql_metric':
+            return tableFunctionSql(
+                'logql_metric',
+                [
+                    toSqlStringLiteral(telemetryQuery.query),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                    TELEMETRY_SQL_INTERVAL,
+                ],
+                telemetryQuery.source,
+            );
+        case 'cloudwatch':
+            // Compact JSON, so the query stays one readable line in the SQL.
+            return tableFunctionSql(
+                'cloudwatch',
+                [
+                    toSqlStringLiteral(
+                        JSON.stringify(telemetryQuery.metricDataQuery),
+                    ),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                ],
+                telemetryQuery.source,
+            );
+        case 'cloudwatch_logs':
+            return tableFunctionSql(
+                'cloudwatch_logs',
+                [
+                    toSqlStringLiteral(joinLogGroups(telemetryQuery.logGroups)),
+                    toSqlStringLiteral(telemetryQuery.query),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                ],
+                telemetryQuery.source,
+            );
+        case 'traceql':
+            return tableFunctionSql(
+                'traceql',
+                [
+                    toSqlStringLiteral(telemetryQuery.query),
+                    TELEMETRY_SQL_FROM,
+                    TELEMETRY_SQL_TO,
+                    positiveLimit(
+                        'TraceQL',
+                        telemetryQuery.limit ?? TRACEQL_DEFAULT_LIMIT,
+                    ),
+                ],
+                telemetryQuery.source,
+            );
+        case 'trace': {
+            const traceId = telemetryQuery.traceId.trim();
+            if (traceId === '') {
+                throw new Error('A trace id is required');
+            }
+            return tableFunctionSql(
+                'trace',
+                [toSqlStringLiteral(traceId)],
+                telemetryQuery.source,
+            );
+        }
+        default: {
+            const unknownKind: never = telemetryQuery;
+            throw new Error(
+                `Unsupported telemetry query kind: ${(unknownKind as TelemetryQuery).kind}`,
+            );
+        }
+    }
+};

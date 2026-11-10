@@ -174,3 +174,6 @@ examples/metricflow-demo/.fusion/
 
 # humanlayer task scratch
 .humanlayer/
+
+# ldq build line scratch: throwaway Postgres clusters and init stamps
+/tmp/

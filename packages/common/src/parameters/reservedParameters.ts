@@ -6,10 +6,23 @@ import {
     type ParameterValue,
 } from '../types/parameters';
 import { getGranularityReferenceValue } from '../types/timeFrames';
+import {
+    getReservedTimeParameterValues,
+    type ReservedTimeParameterValues,
+    type TimeRangeInput,
+} from '../utils/timeRange';
 
 /** Context from which reserved parameters resolve their values. */
 export type ReservedParameterContext = {
     dateZoom: DateZoom | undefined;
+    /** Dashboard Time Range (or Investigate range); absent when none applies. */
+    timeRange?: TimeRangeInput;
+    /** Refresh interval relative ranges round down to (e.g. '1m'); none means 10s. */
+    refreshInterval?: string | null;
+    /** Clock `now` resolves against. Defaults to the current time. */
+    now?: Date;
+    /** Data points `__interval` divides the range into. Defaults to 1000. */
+    maxDataPoints?: number;
 };
 
 /**
@@ -19,6 +32,26 @@ export type ReservedParameterContext = {
 export type ReservedParameterDefinition = LightdashProjectParameter & {
     resolve: (context: ReservedParameterContext) => ParameterValue;
 };
+
+/**
+ * Resolves one reserved time parameter (CONTRACTS §2). Without a time range it resolves
+ * to '', the same as `date_zoom` without a zoom.
+ */
+const resolveTimeParameter =
+    (name: keyof ReservedTimeParameterValues) =>
+    ({
+        timeRange,
+        refreshInterval,
+        now,
+        maxDataPoints,
+    }: ReservedParameterContext): ParameterValue =>
+        timeRange
+            ? getReservedTimeParameterValues(timeRange, {
+                  refreshInterval,
+                  now,
+                  maxDataPoints,
+              })[name]
+            : '';
 
 /** Registry of reserved parameters. Add an entry here to expose a new system value. */
 export const RESERVED_PARAMETERS: Record<string, ReservedParameterDefinition> =
@@ -32,6 +65,34 @@ export const RESERVED_PARAMETERS: Record<string, ReservedParameterDefinition> =
                 dateZoom?.granularity
                     ? getGranularityReferenceValue(dateZoom.granularity)
                     : '',
+        },
+        __from: {
+            label: 'Time range from',
+            description:
+                'Start of the dashboard time range as an ISO-8601 UTC timestamp. Relative ranges are rounded down to the refresh interval, or 10s. Empty when no time range applies.',
+            type: 'string',
+            resolve: resolveTimeParameter('__from'),
+        },
+        __to: {
+            label: 'Time range to',
+            description:
+                'End of the dashboard time range as an ISO-8601 UTC timestamp. Relative ranges are rounded down to the refresh interval, or 10s. Empty when no time range applies.',
+            type: 'string',
+            resolve: resolveTimeParameter('__to'),
+        },
+        __interval: {
+            label: 'Time range interval',
+            description:
+                'Step for the time range as a Prometheus duration (e.g. "30s"): the range over 1000 data points, rounded up to a nice step, at least 15s. Empty when no time range applies.',
+            type: 'string',
+            resolve: resolveTimeParameter('__interval'),
+        },
+        __range: {
+            label: 'Time range duration',
+            description:
+                'Length of the time range as a Prometheus duration (e.g. "6h"). Empty when no time range applies.',
+            type: 'string',
+            resolve: resolveTimeParameter('__range'),
         },
     };
 
@@ -55,18 +116,24 @@ export const getReservedParameterDefinitions = (): ParameterDefinitions =>
     );
 
 /**
- * Resolve every reserved parameter to its value for the given query context.
+ * Resolve every reserved parameter to its value for the given query context. The clock is
+ * read once, so every time parameter in one call sees the same `now`.
  */
 export const resolveReservedParameterValues = (
     context: ReservedParameterContext,
-): ParametersValuesMap =>
-    Object.entries(RESERVED_PARAMETERS).reduce<ParametersValuesMap>(
+): ParametersValuesMap => {
+    const pinnedContext: ReservedParameterContext = {
+        ...context,
+        now: context.now ?? new Date(),
+    };
+    return Object.entries(RESERVED_PARAMETERS).reduce<ParametersValuesMap>(
         (acc, [name, { resolve }]) => ({
             ...acc,
-            [name]: resolve(context),
+            [name]: resolve(pinnedContext),
         }),
         {},
     );
+};
 
 /** Reserved names shadowed by a same-named user parameter (used to surface the override). */
 export const getShadowedReservedNames = (

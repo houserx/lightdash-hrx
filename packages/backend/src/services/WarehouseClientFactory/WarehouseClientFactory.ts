@@ -12,6 +12,7 @@ import {
     getPersonSignIn,
     getProjectAgentIdentitySettingsPath,
     isAiAccessQueryContext,
+    isFederationCredentials,
     UnexpectedServerError,
     UserWarehouseCredentialPurpose,
     usesAwsWebIdentity,
@@ -949,7 +950,12 @@ export class WarehouseClientFactory {
         options: WarehouseClientOptions,
         compileGroup?: WarehouseCompileGroup,
     ): WarehouseClient {
-        return compileGroup && credentials.type === WarehouseTypes.POSTGRES
+        // A federation-flavour connection always gets FederationWarehouseClient
+        // (CONTRACTS §4.1): the engine exposes one database, so the
+        // listed-databases Postgres client must not stand in for it.
+        return compileGroup &&
+            credentials.type === WarehouseTypes.POSTGRES &&
+            !isFederationCredentials(credentials)
             ? new ListedDatabasesPostgresWarehouseClient(
                   credentials,
                   compileGroup.listedDatabases,

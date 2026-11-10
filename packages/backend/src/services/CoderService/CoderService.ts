@@ -70,6 +70,7 @@ import {
     isSchedulerGsheetsOptions,
     isSchedulerImageOptions,
     isSlackTarget,
+    isValidDashboardTimeRange,
     MAX_CONTENT_SLUG_LENGTH,
     normalizeContentAsCodePath,
     normalizeContentAsCodeSourcePath,
@@ -186,6 +187,8 @@ import {
     getFiltersWithTileSlugs,
     getFiltersWithTileUuids,
     getTileSlugForTileUuid,
+    getTimeRangeWithTileSlugs,
+    getTimeRangeWithTileUuids,
     isAnyChartTile,
     withTileWarnings,
 } from './dashboardReferences';
@@ -2102,6 +2105,9 @@ export class CoderService extends BaseService {
                 : {}),
             ...(dashboard.parameters
                 ? { parameters: dashboard.parameters }
+                : {}),
+            ...(dashboard.timeRange
+                ? { timeRange: getTimeRangeWithTileSlugs(dashboard) }
                 : {}),
 
             spaceSlug,
@@ -5553,6 +5559,15 @@ export class CoderService extends BaseService {
                     dashboardAsCode.filters?.tableCalculations ?? [],
             },
         };
+        if (
+            dashboardAsCode.timeRange !== undefined &&
+            dashboardAsCode.timeRange !== null &&
+            !isValidDashboardTimeRange(dashboardAsCode.timeRange)
+        ) {
+            throw new ParameterError(
+                `Dashboard "${slug}" has an invalid timeRange: from and to must be now, now-<n><s|m|h|d|w> or ISO-8601 timestamps with from not after to, refreshInterval one of 10s, 30s, 1m, 5m, 15m, 30m, 1h or null, and each tileTimeDimensions entry needs fieldId and tableName`,
+            );
+        }
 
         // Access block preflight runs before any write.
         const directAccessAssignments = await this.prepareDirectAccessReplace({
@@ -5609,6 +5624,14 @@ export class CoderService extends BaseService {
                   tilesWithUuids,
               )
             : dashboardWithResolvedTabs.config;
+        // Omitted or null means the dashboard has no time range.
+        const { timeRange: dashboardTimeRange, warnings: timeRangeWarnings } =
+            dashboardWithResolvedTabs.timeRange
+                ? getTimeRangeWithTileUuids(
+                      dashboardWithResolvedTabs.timeRange,
+                      tilesWithUuids,
+                  )
+                : { timeRange: null, warnings: [] };
         // If chart does not exist, we can't use promoteService,
         // since it relies on information that's not available in ChartAsCode, and other uuids
         if (dashboardSummary === undefined) {
@@ -5652,6 +5675,7 @@ export class CoderService extends BaseService {
                     forceSlug: shouldUseExactSlug,
                     filters: dashboardFilters,
                     config: dashboardConfig,
+                    timeRange: dashboardTimeRange,
                 },
                 user,
                 projectUuid,
@@ -5770,7 +5794,7 @@ export class CoderService extends BaseService {
                         ? [{ action: PromotionAction.CREATE, data: space }]
                         : [],
                 },
-                [...tileWarnings, ...createOwnerWarnings],
+                [...tileWarnings, ...timeRangeWarnings, ...createOwnerWarnings],
             );
         }
         // Use promote service to update existing dashboard
@@ -5819,6 +5843,7 @@ export class CoderService extends BaseService {
             slug: dashboard.slug,
             tiles: tilesWithUuids,
             config: dashboardConfig,
+            timeRange: dashboardTimeRange,
         };
         const { promotedDashboard, upstreamDashboard } =
             await this.promoteService.getPromotedDashboard(
@@ -5940,6 +5965,7 @@ export class CoderService extends BaseService {
         );
         return withTileWarnings(promotionChanges, [
             ...tileWarnings,
+            ...timeRangeWarnings,
             ...ownerWarnings,
         ]);
     }

@@ -1,0 +1,19 @@
+.chart {
+    height: 360px;
+    width: 100%;
+}
+
+.logLine {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--mantine-color-gray-2);
+}
+
+.logTimestamp {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.logMessage {
+    white-space: pre-wrap;
+    word-break: break-word;
+}

@@ -16,6 +16,7 @@ import {
     type CompiledMetric,
     type DashboardChartTile as DashboardChartTileType,
     type DashboardFilterRule,
+    type DashboardTimeRange,
     type ItemsMap,
     type MetricQuery,
     type SavedChart,
@@ -47,6 +48,9 @@ const exportMocks = vi.hoisted(() => ({
     appliedParameters: {} as Record<string, string | string[]>,
 }));
 const gsheetMocks = vi.hoisted(() => ({ uploadGsheet: vi.fn() }));
+const dashboardMocks = vi.hoisted(() => ({
+    timeRange: undefined as DashboardTimeRange | undefined,
+}));
 vi.mock('../../hooks/gdrive/useGdrive', async (importOriginal) => ({
     ...(await importOriginal<object>()),
     uploadGsheet: gsheetMocks.uploadGsheet,
@@ -91,7 +95,11 @@ vi.mock('../../hooks/useProjectRoute', async (importOriginal) => ({
 vi.mock('../../providers/Dashboard/useDashboardContext', () => ({
     default: vi.fn((selector: (value: Record<string, unknown>) => unknown) =>
         selector({
-            dashboard: { uuid: 'dashboard-uuid', slug: 'dashboard' },
+            dashboard: {
+                uuid: 'dashboard-uuid',
+                slug: 'dashboard',
+                timeRange: dashboardMocks.timeRange,
+            },
             projectUuid: 'project-uuid',
             hasTileComments: () => false,
             dashboardCommentsCheck: undefined,
@@ -731,5 +739,60 @@ describe('DashboardChartTile parameters popover', () => {
         expect(
             (await screen.findByText('(from dashboard)')).parentElement,
         ).toHaveTextContent('status: Shipped (from dashboard)');
+    });
+});
+
+describe('DashboardChartTile under a dashboard time range', () => {
+    afterEach(() => {
+        dashboardMocks.timeRange = undefined;
+        cleanup();
+    });
+
+    const timeRangeMappedTo = (tileUuid: string): DashboardTimeRange => ({
+        from: 'now-6h',
+        to: 'now',
+        refreshInterval: null,
+        tileTimeDimensions: {
+            [tileUuid]: {
+                fieldId: 'orders_order_date_month',
+                tableName: 'orders',
+            },
+        },
+    });
+
+    it('marks a tile with no time dimension as not affected', async () => {
+        dashboardMocks.timeRange = timeRangeMappedTo('other-tile-uuid');
+        renderTile();
+
+        expect(
+            await screen.findByText('Not affected by the time range'),
+        ).toBeInTheDocument();
+    });
+
+    it('shows no mark on a tile mapped to a time dimension', async () => {
+        dashboardMocks.timeRange = timeRangeMappedTo(tile.uuid);
+        const { container } = renderTile();
+
+        await waitFor(() => {
+            expect(
+                container.querySelectorAll('thead th').length,
+            ).toBeGreaterThan(0);
+        });
+        expect(
+            screen.queryByText('Not affected by the time range'),
+        ).not.toBeInTheDocument();
+    });
+
+    it('shows no mark when the dashboard has no time range', async () => {
+        const { container } = renderTile();
+
+        await waitFor(() => {
+            expect(
+                container.querySelectorAll('thead th').length,
+            ).toBeGreaterThan(0);
+        });
+        expect(
+            screen.queryByText('Not affected by the time range'),
+        ).not.toBeInTheDocument();
     });
 });

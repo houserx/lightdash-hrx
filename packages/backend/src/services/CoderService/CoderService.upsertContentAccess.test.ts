@@ -17,6 +17,7 @@ import {
     MergeJoinType,
     MetricType,
     OrganizationMemberRole,
+    ParameterError,
     PossibleAbilities,
     PromotionAction,
     SavedMergeDefinition,
@@ -1510,6 +1511,101 @@ const registerContentAccessTests = (
             dashboards: [{ action: PromotionAction.CREATE }],
         });
         expect(service.dashboardModel.create).toHaveBeenCalled();
+    });
+
+    it('saves the uploaded time range keyed by tile uuid and warns on unknown tile slugs', async () => {
+        const service = buildService();
+        vi.spyOn(service, 'getOrCreateSpace').mockResolvedValue({
+            space: { uuid: SPACE_UUID } as AnyType,
+            created: false,
+        });
+        vi.mocked(service.savedChartModel.find).mockResolvedValue([
+            {
+                uuid: 'orders-chart-uuid',
+                slug: 'orders-per-hour',
+                spaceUuid: SPACE_UUID,
+            } as AnyType,
+        ]);
+        vi.mocked(service.dashboardModel.create).mockResolvedValue({
+            uuid: 'dashboard-uuid',
+            tiles: [],
+        } as AnyType);
+        const user = makeUser([
+            { subject: 'ContentAsCode', action: 'create' },
+            {
+                subject: 'Dashboard',
+                action: 'create',
+                conditions: { projectUuid: PROJECT_UUID },
+            },
+            {
+                subject: 'SavedChart',
+                action: 'view',
+                conditions: { projectUuid: PROJECT_UUID },
+            },
+        ]);
+        const dimension = { fieldId: 'orders_created_at', tableName: 'orders' };
+
+        const result = await service.upsertDashboard(
+            user,
+            PROJECT_UUID,
+            dashboardAsCode.slug,
+            {
+                ...dashboardAsCode,
+                tiles: [
+                    {
+                        type: DashboardTileTypes.SAVED_CHART,
+                        x: 0,
+                        y: 0,
+                        h: 3,
+                        w: 3,
+                        uuid: undefined,
+                        tileSlug: 'orders-per-hour',
+                        properties: { chartSlug: 'orders-per-hour' },
+                    },
+                ],
+                timeRange: {
+                    from: 'now-6h',
+                    to: 'now',
+                    refreshInterval: '30s',
+                    tileTimeDimensions: {
+                        'orders-per-hour': dimension,
+                        'missing-tile': dimension,
+                    },
+                },
+            } as DashboardAsCode,
+        );
+
+        const created = vi.mocked(service.dashboardModel.create).mock
+            .calls[0][1];
+        const tileUuid = created.tiles[0].uuid;
+        expect(tileUuid).toEqual(expect.any(String));
+        expect(created.timeRange).toEqual({
+            from: 'now-6h',
+            to: 'now',
+            refreshInterval: '30s',
+            tileTimeDimensions: { [tileUuid!]: dimension },
+        });
+        expect(result.warnings).toEqual([
+            expect.stringContaining('"missing-tile"'),
+        ]);
+    });
+
+    it('refuses an uploaded time range with a refresh interval outside the options', async () => {
+        const service = buildService();
+        const user = makeUser([{ subject: 'ContentAsCode', action: 'create' }]);
+
+        await expect(
+            service.upsertDashboard(user, PROJECT_UUID, dashboardAsCode.slug, {
+                ...dashboardAsCode,
+                timeRange: {
+                    from: 'now-6h',
+                    to: 'now',
+                    refreshInterval: '2m',
+                    tileTimeDimensions: {},
+                },
+            } as AnyType),
+        ).rejects.toThrow(ParameterError);
+        expect(service.dashboardModel.create).not.toHaveBeenCalled();
     });
 
     it('allows chart create to create a placeholder dashboard in the same allowed space', async () => {

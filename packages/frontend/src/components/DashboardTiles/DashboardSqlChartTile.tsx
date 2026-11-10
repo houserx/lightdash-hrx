@@ -26,6 +26,9 @@ import {
     selectParameterValues,
     useDashboardSelector,
 } from '../../features/dashboard/store';
+import { TileTimeRangeIndicator } from '../../features/dashboardTimeRange/components/TileTimeRangeIndicator';
+import { useDashboardQueryTimeRange } from '../../features/dashboardTimeRange/hooks/useDashboardQueryTimeRange';
+import { isTileMarkedNotAffectedByTimeRange } from '../../features/dashboardTimeRange/utils/tileTimeRangeIndicator';
 import { useSavedSqlChartResults } from '../../features/sqlRunner/hooks/useSavedSqlChartResults';
 import useDashboardFiltersForTile from '../../hooks/dashboard/useDashboardFiltersForTile';
 import { useConnectionBadges } from '../../hooks/useConnectionBadges';
@@ -99,6 +102,10 @@ const SqlChartTile: FC<Props> = ({
     const { user } = useApp();
     const projectUuid = useProjectUuid();
     const dashboardUuid = useDashboardContext((c) => c.dashboard?.uuid);
+    const dashboardTimeRange = useDashboardContext(
+        (c) => c.dashboard?.timeRange,
+    );
+    const queryTimeRange = useDashboardQueryTimeRange();
     const effectiveProjectUuid = projectUuidOverride ?? projectUuid;
     const effectiveDashboardUuid = dashboardUuidOverride ?? dashboardUuid;
     const context = useSearchParams('context') || undefined;
@@ -170,6 +177,7 @@ const SqlChartTile: FC<Props> = ({
                   dashboardSorts: [],
                   parameters,
                   invalidateCache,
+                  ...(queryTimeRange && { timeRange: queryTimeRange }),
               },
     );
     const connections = useConnectionBadges(effectiveProjectUuid);
@@ -309,6 +317,20 @@ const SqlChartTile: FC<Props> = ({
         }),
     );
 
+    // The time range reaches a SQL tile only through the reserved time
+    // parameters in its SQL, so the mark waits for the SQL to load.
+    const timeRangeIndicator = isTileMarkedNotAffectedByTimeRange({
+        timeRange: dashboardTimeRange,
+        tile,
+        sql: chartData?.sql,
+    }) ? (
+        <TileTimeRangeIndicator
+            timeRange={dashboardTimeRange}
+            tile={tile}
+            sql={chartData?.sql}
+        />
+    ) : undefined;
+
     // No chart available or savedSqlUuid is undefined - which means that the chart was deleted
     if (chartData === undefined || !savedSqlUuid) {
         const errorMessage = !savedSqlUuid
@@ -358,6 +380,7 @@ const SqlChartTile: FC<Props> = ({
                     chartData.warehouseConnectionUuid,
                 )}
                 {...rest}
+                visibleHeaderElement={timeRangeIndicator}
                 titleHref={`/projects/${effectiveProjectUuid}/sql-runner/${chartData.slug}`}
                 extraMenuItems={
                     effectiveProjectUuid &&
@@ -404,6 +427,7 @@ const SqlChartTile: FC<Props> = ({
             )}
             fullWidth={chartData.config.type === ChartKind.TABLE}
             {...rest}
+            visibleHeaderElement={timeRangeIndicator}
             extraMenuItems={
                 effectiveProjectUuid &&
                 (canManageSqlRunner || userCanExportData) && (

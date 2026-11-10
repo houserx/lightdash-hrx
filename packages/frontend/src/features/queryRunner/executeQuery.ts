@@ -6,6 +6,8 @@ import {
     type ExecuteAsyncSqlChartRequestParams,
     type ExecuteAsyncSqlQueryRequestParams,
     type ParametersValuesMap,
+    type QueryAudit,
+    type QueryTimeRange,
     type RawResultRow,
 } from '@lightdash/common';
 import { type LightdashApi } from '../../api';
@@ -70,6 +72,10 @@ export type ExecuteSqlQueryOptions = {
     signal?: AbortSignal;
     // Fires once the warehouse has accepted the query, so it can be cancelled
     onQueryStarted?: (queryUuid: string) => void;
+    /** Resolves the reserved time parameters (`${ld.parameters.__from}` etc.) in the SQL. */
+    timeRange?: QueryTimeRange;
+    /** Description and ticket of an Audited Query. */
+    audit?: QueryAudit;
 };
 
 export const executeSqlQuery = async (
@@ -95,6 +101,8 @@ export const executeSqlQuery = async (
             ...(warehouseConnectionUuid === undefined
                 ? {}
                 : { warehouseConnectionUuid }),
+            ...(options.timeRange && { timeRange: options.timeRange }),
+            ...(options.audit && { audit: options.audit }),
         }),
     });
 

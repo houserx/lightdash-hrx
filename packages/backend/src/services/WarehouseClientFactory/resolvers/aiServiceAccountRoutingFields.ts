@@ -156,6 +156,11 @@ export const aiServiceAccountFieldClassification = {
         sslcertFileName: 'identity',
         sslkey: 'identity',
         sslkeyFileName: 'identity',
+        // Federation Engine flavour (CONTRACTS §4.1): connection-owned, kept
+        // whoever's credentials run the query.
+        flavor: 'routing',
+        identitySigningSecret: 'routing',
+        httpBaseUrl: 'routing',
         requireUserCredentials: 'identity',
     },
     [WarehouseTypes.TRINO]: {

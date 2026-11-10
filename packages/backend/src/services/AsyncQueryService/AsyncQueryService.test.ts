@@ -14,6 +14,7 @@ import {
     BigqueryTokenError,
     BinType,
     buildAgentIdentityClaim,
+    buildTelemetrySql,
     ChartType,
     CreateWarehouseCredentials,
     CustomDimensionType,
@@ -13599,6 +13600,100 @@ describe('AsyncQueryService', () => {
                 // to the warehouse — that's the buggy behaviour we're fixing.
                 expect(streamQuery).not.toHaveBeenCalled();
             });
+
+            const telemetrySql = buildTelemetrySql({
+                kind: 'promql',
+                query: 'up',
+            });
+
+            it('resolves the reserved time parameters from the request time range', async () => {
+                const { service, streamQuery } = buildService();
+                streamQuery.mockImplementation(async (_sql, callback) => {
+                    await callback({
+                        fields: { value: { type: DimensionType.NUMBER } },
+                        rows: [],
+                    });
+                });
+                const timeRange = {
+                    from: '2026-11-01T00:00:00.000Z',
+                    to: '2026-11-02T00:00:00.000Z',
+                    refreshInterval: null,
+                };
+
+                await service.executeAsyncSqlQuery({
+                    account: sessionAccount,
+                    projectUuid,
+                    sql: telemetrySql,
+                    context: QueryExecutionContext.SQL_RUNNER,
+                    invalidateCache: false,
+                    timeRange,
+                    audit: { description: 'Checking a stuck refill' },
+                });
+
+                expect(streamQuery.mock.calls[0][0]).toContain(
+                    "promql('up', '2026-11-01T00:00:00.000Z', '2026-11-02T00:00:00.000Z', '5m')",
+                );
+                const createCall = (
+                    service.queryHistoryModel.create as import('vitest').Mock
+                ).mock.calls[0][1];
+                expect(createCall.requestParameters).toEqual(
+                    expect.objectContaining({
+                        timeRange,
+                        parameters: expect.objectContaining({
+                            __from: '2026-11-01T00:00:00.000Z',
+                            __to: '2026-11-02T00:00:00.000Z',
+                        }),
+                    }),
+                );
+            });
+
+            it('refuses reserved time parameters without a time range', async () => {
+                const { service, streamQuery } = buildService();
+
+                await expect(
+                    service.executeAsyncSqlQuery({
+                        account: sessionAccount,
+                        projectUuid,
+                        sql: telemetrySql,
+                        context: QueryExecutionContext.SQL_RUNNER,
+                        invalidateCache: false,
+                    }),
+                ).rejects.toThrow(
+                    expect.objectContaining({ name: 'ParameterError' }),
+                );
+                expect(streamQuery).not.toHaveBeenCalled();
+            });
+
+            it('refuses an invalid time range or a blank audit description before the warehouse', async () => {
+                const { service, streamQuery } = buildService();
+
+                await expect(
+                    service.executeAsyncSqlQuery({
+                        account: sessionAccount,
+                        projectUuid,
+                        sql: telemetrySql,
+                        context: QueryExecutionContext.SQL_RUNNER,
+                        invalidateCache: false,
+                        timeRange: { from: 'now', to: 'now-1h' },
+                    }),
+                ).rejects.toThrow(
+                    expect.objectContaining({
+                        name: 'ParameterError',
+                        message: expect.stringContaining('Invalid time range'),
+                    }),
+                );
+                await expect(
+                    service.executeAsyncSqlQuery({
+                        account: sessionAccount,
+                        projectUuid,
+                        sql: "SELECT * FROM platform_query('select 1')",
+                        context: QueryExecutionContext.SQL_RUNNER,
+                        invalidateCache: false,
+                        audit: { description: '  ' },
+                    }),
+                ).rejects.toThrow('An Audited Query needs a description');
+                expect(streamQuery).not.toHaveBeenCalled();
+            });
         });
 
         describe('legacy total and subtotal flows', () => {
@@ -14477,6 +14572,125 @@ describe('AsyncQueryService', () => {
                 );
             },
         );
+
+        describe('dashboard tile time range', () => {
+            const emptyFilters = {
+                dimensions: [],
+                metrics: [],
+                tableCalculations: [],
+            };
+            const timeRange = {
+                from: '2026-11-01T00:00:00.000Z',
+                to: '2026-11-02T00:00:00.000Z',
+                refreshInterval: null,
+            };
+            const withSavedTimeRange = (service: AsyncQueryService) => {
+                const getDashboardTimeRangeByIdOrSlug = vi.fn(async () => ({
+                    ...timeRange,
+                    tileTimeDimensions: {
+                        'tile-1': { fieldId: 'a_dim1', tableName: 'a' },
+                    },
+                }));
+                const internals = service as AnyType;
+                internals.dashboardModel = {
+                    getDashboardParametersByIdOrSlug: vi.fn(
+                        async () => undefined,
+                    ),
+                    getDashboardTimeRangeByIdOrSlug,
+                };
+                return getDashboardTimeRangeByIdOrSlug;
+            };
+            const runChartTile = (
+                service: AsyncQueryService,
+                tileUuid: string,
+                range?: typeof timeRange,
+            ) =>
+                service.executeAsyncDashboardChartQuery({
+                    account: viewer,
+                    projectUuid,
+                    tileUuid,
+                    chartUuid: savedChart.uuid,
+                    dashboardUuid: 'dashboard-uuid',
+                    dashboardFilters: emptyFilters,
+                    dashboardSorts: [],
+                    context: QueryExecutionContext.DASHBOARD,
+                    invalidateCache: false,
+                    limit: undefined,
+                    parameters: undefined,
+                    pivotResults: false,
+                    timeRange: range,
+                });
+            const ranMetricQuery = (service: AsyncQueryService) =>
+                (service as AnyType).prepareMetricQueryAsyncQueryArgs.mock
+                    .calls[0][0].metricQuery;
+
+            it('filters a mapped chart tile on its time dimension over the requested range', async () => {
+                const { service, execute } = buildService();
+                const getSaved = withSavedTimeRange(service);
+
+                await runChartTile(service, 'tile-1', timeRange);
+
+                expect(getSaved).toHaveBeenCalledWith(
+                    'dashboard-uuid',
+                    projectUuid,
+                );
+                expect(
+                    JSON.stringify(ranMetricQuery(service).filters),
+                ).toContain(
+                    JSON.stringify([
+                        '2026-11-01T00:00:00.000Z',
+                        '2026-11-02T00:00:00.000Z',
+                    ]),
+                );
+                expect(execute.mock.calls[0][1]).toEqual(
+                    expect.objectContaining({ timeRange }),
+                );
+            });
+
+            it('leaves an unmapped chart tile and a request without a range unfiltered', async () => {
+                const unmapped = buildService();
+                withSavedTimeRange(unmapped.service);
+                await runChartTile(unmapped.service, 'tile-2', timeRange);
+                expect(
+                    JSON.stringify(ranMetricQuery(unmapped.service).filters),
+                ).not.toContain('2026-11-01T00:00:00.000Z');
+
+                const noRange = buildService();
+                const getSaved = withSavedTimeRange(noRange.service);
+                await runChartTile(noRange.service, 'tile-1');
+                expect(getSaved).not.toHaveBeenCalled();
+                expect(noRange.execute.mock.calls[0][1]).not.toHaveProperty(
+                    'timeRange',
+                );
+            });
+
+            it('resolves the reserved time parameters for a dashboard SQL chart tile', async () => {
+                const { service } = buildService();
+
+                await service.executeAsyncDashboardSqlChartQuery({
+                    account: viewer,
+                    projectUuid,
+                    savedSqlUuid: sqlChart.savedSqlUuid,
+                    dashboardUuid: 'dashboard-uuid',
+                    tileUuid: 'tile-1',
+                    dashboardFilters: emptyFilters,
+                    dashboardSorts: [],
+                    context: QueryExecutionContext.DASHBOARD,
+                    invalidateCache: false,
+                    timeRange,
+                });
+
+                expect(
+                    (service as AnyType).prepareSqlChartAsyncQueryArgs.mock
+                        .calls[0][0].parameters,
+                ).toEqual({
+                    __from: '2026-11-01T00:00:00.000Z',
+                    __to: '2026-11-02T00:00:00.000Z',
+                    __interval: '5m',
+                    __range: '1d',
+                });
+            });
+        });
 
         describe('dashboard tile parameters', () => {
             const runTile = async ({

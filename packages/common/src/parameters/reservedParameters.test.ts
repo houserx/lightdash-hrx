@@ -65,6 +65,33 @@ describe('reservedParameters', () => {
             });
             expect(values.date_zoom).toBe('');
         });
+
+        it('resolves the time parameters from a time range', () => {
+            const values = resolveReservedParameterValues({
+                dateZoom: undefined,
+                timeRange: { from: 'now-6h', to: 'now' },
+                refreshInterval: '1m',
+                now: new Date('2026-11-08T10:37:43.512Z'),
+            });
+            expect(values).toMatchObject({
+                __from: '2026-11-08T04:37:00.000Z',
+                __to: '2026-11-08T10:37:00.000Z',
+                __interval: '30s',
+                __range: '6h',
+            });
+        });
+
+        it('resolves the time parameters to empty string without a time range', () => {
+            const values = resolveReservedParameterValues({
+                dateZoom: undefined,
+            });
+            expect(values).toMatchObject({
+                __from: '',
+                __to: '',
+                __interval: '',
+                __range: '',
+            });
+        });
     });
 
     describe('collision precedence (user wins)', () => {
@@ -87,12 +114,16 @@ describe('reservedParameters', () => {
                 expect(mergeReservedNames(['region'])).toEqual([
                     'region',
                     'date_zoom',
+                    '__from',
+                    '__to',
+                    '__interval',
+                    '__range',
                 ]);
             });
 
             it('keeps the user name once on collision (no duplicate)', () => {
                 const merged = mergeReservedNames(['date_zoom', 'region']);
-                expect(merged).toEqual(['date_zoom', 'region']);
+                expect(merged.slice(0, 2)).toEqual(['date_zoom', 'region']);
                 expect(merged.filter((n) => n === 'date_zoom')).toHaveLength(1);
             });
         });
