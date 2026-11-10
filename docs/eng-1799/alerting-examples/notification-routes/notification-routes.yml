@@ -1,0 +1,38 @@
+# The HouseRx tree as it is today (infra grafana_notification_policy.tf),
+# ported route for route. Child routes are checked in order; `continue: true`
+# keeps matching the siblings that follow. An alert no child route matches
+# goes to the default route, #infra-alerts.
+version: 1
+type: notification_routes
+contactPoint: slack-infra-alerts
+groupBy: ['...']
+groupWait: 5s
+groupInterval: 2m
+repeatInterval: 1h
+routes:
+  - matchers:
+      - { label: team, operator: '=', value: test }
+    contactPoint: test-alerts
+    continue: true
+    repeatInterval: 1d
+  - matchers:
+      - { label: team, operator: '=', value: engineering }
+      - { label: channel, operator: '=', value: '#alerts' }
+    contactPoint: slack-alerts
+    continue: true
+    groupInterval: 1m
+    repeatInterval: 1m
+  - matchers:
+      - { label: team, operator: '=', value: infra }
+    contactPoint: incident-io
+    continue: true
+    repeatInterval: 1d
+  - matchers:
+      - { label: team, operator: '=', value: swat }
+    contactPoint: slack-alerts-swat
+    continue: true
+    repeatInterval: 1d
+  - matchers:
+      - { label: system, operator: '=', value: platform-environment-sweep }
+    contactPoint: slack-infra-alerts
+    repeatInterval: 1d

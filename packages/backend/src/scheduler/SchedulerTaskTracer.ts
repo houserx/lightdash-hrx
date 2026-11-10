@@ -432,6 +432,14 @@ const getTagsForTask: {
     [SCHEDULER_TASKS.LEARN_SANDBOX_COMMAND]: (payload) => ({
         projectUuid: payload.projectUuid,
     }),
+    [SCHEDULER_TASKS.ALERTING_TICK]: () => ({}),
+    [SCHEDULER_TASKS.ALERT_RULE_EVALUATE]: (payload) => ({
+        ...(payload.organizationUuid
+            ? { 'organization.uuid': payload.organizationUuid }
+            : {}),
+        ...(payload.projectUuid ? { 'project.uuid': payload.projectUuid } : {}),
+        'alert_rule.uuid': payload.ruleUuid,
+    }),
 } as const;
 
 const getTagsFromPayload = <T extends SchedulerTaskName>(

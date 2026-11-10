@@ -1,0 +1,28 @@
+# Posts to #infra-alerts (system=platform-environment-sweep) when the
+# environment sweep logs errors.
+version: 1
+type: alert_rule
+slug: platform-environment-sweep-errors
+name: Platform environment sweep errors
+description: Tells infra in #infra-alerts when the platform environment sweep logs errors
+labels:
+  system: platform-environment-sweep
+annotations:
+  summary: The platform environment sweep logged errors
+query: |
+  SELECT timestamp, value, labels
+  FROM logql_metric(
+      'sum(count_over_time({app="platform-environment-sweep"} |= "level=error" [5m]))',
+      '${ld.parameters.__from}',
+      '${ld.parameters.__to}',
+      '1m'
+  )
+reducer: max
+condition:
+  operator: '>'
+  threshold: 0
+interval: 5m
+timeRange: 30m
+noDataState: normal
+errorState: error
+shadow: true

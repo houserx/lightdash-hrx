@@ -20,6 +20,7 @@ import { getDiagnosticsHint } from './error';
 import GlobalState from './globalState';
 import { agentConnectHandler } from './handlers/agentConnect';
 import { agentStatusHandler } from './handlers/agentStatus';
+import { alertingShadowReportHandler } from './handlers/alertingShadowReport';
 import { appsBuildHandler } from './handlers/apps/build';
 import { createAppHandler } from './handlers/apps/createApp';
 import { appsPreviewHandler } from './handlers/apps/preview';
@@ -1127,6 +1128,11 @@ const downloadCommand = program
         'download only space definitions and access',
         false,
     )
+    .option(
+        '--alerting-only',
+        'download only Alert Rules, Contact Points and the Notification Route tree, as YAML in alert-rules/, contact-points/ and notification-routes/',
+        false,
+    )
     .option('--skip-charts', 'skip downloading charts', false)
     .option('--skip-dashboards', 'skip downloading dashboards', false)
     .option('--include-alerts', 'include all alerts in the download', false)
@@ -1399,6 +1405,11 @@ const uploadCommand = program
         false,
     )
     .option(
+        '--alerting-only',
+        'upload only Contact Points, the Notification Route tree and Alert Rules (in that order) from alert-rules/, contact-points/ and notification-routes/',
+        false,
+    )
+    .option(
         '--organization',
         'upload all organization-scoped resources, including Data App themes, without selecting a project',
         false,
@@ -1410,6 +1421,39 @@ const uploadCommand = program
     );
 
 uploadCommand.action(withOrganizationMode(uploadHandler));
+
+const alertingProgram = program
+    .command('alerting')
+    .description('Work with Lightdash alerting');
+alertingProgram
+    .command('shadow-report')
+    .description(
+        "Compares the project's Shadow Run notifications with an exported Grafana state history",
+    )
+    .option(
+        '--project <project uuid or slug>',
+        'Lightdash project UUID or slug (defaults to the currently selected project)',
+    )
+    .requiredOption(
+        '--since <iso timestamp>',
+        'Start of the Shadow Run window, e.g. 2026-11-01T00:00:00Z',
+    )
+    .requiredOption(
+        '--grafana-history <file>',
+        "JSON file with Grafana's state history (GET /api/v1/rules/history)",
+    )
+    .option(
+        '--expected-differences <file>',
+        'YAML list of expected differences: {ruleName, kind: missing_in_lightdash | extra_in_lightdash, reason}',
+    )
+    .option('--json', 'Print the report as JSON', false)
+    .option(
+        '--fail-on-unexpected',
+        'Exit with code 1 when the report has unexpected differences',
+        false,
+    )
+    .option('--verbose', 'Show detailed output', false)
+    .action(alertingShadowReportHandler);
 
 const appsProgram = program
     .command('apps')

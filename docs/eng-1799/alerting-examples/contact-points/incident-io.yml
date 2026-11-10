@@ -1,0 +1,12 @@
+version: 1
+type: contact_point
+slug: incident-io
+name: Grafana Alerts (incident.io)
+integrations:
+  # incident.io's Alertmanager source. The URL names the alert source and
+  # is not a secret; the bearer token is.
+  - type: incident_io
+    url: https://api.incident.io/v2/alert_events/alertmanager/REPLACE-WITH-ALERT-SOURCE-ID
+    token:
+      secretRef: incident-io-alert-source-token
+    disableResolveMessage: false

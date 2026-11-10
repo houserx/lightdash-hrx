@@ -1,0 +1,29 @@
+# Pages infra through incident.io (team=infra) when a load balancer target
+# group has unhealthy hosts for five minutes.
+version: 1
+type: alert_rule
+slug: alb-unhealthy-hosts
+name: ALB Unhealthy Hosts
+description: Pages infra when an ALB target group reports unhealthy hosts for 5 minutes
+labels:
+  team: infra
+  severity: critical
+annotations:
+  summary: An ALB target group has unhealthy hosts
+query: |
+  SELECT timestamp, value, labels
+  FROM cloudwatch(
+      '{"Id": "unhealthy", "MetricStat": {"Metric": {"Namespace": "AWS/ApplicationELB", "MetricName": "UnHealthyHostCount"}, "Period": 60, "Stat": "Maximum"}}',
+      '${ld.parameters.__from}',
+      '${ld.parameters.__to}'
+  )
+reducer: max
+condition:
+  operator: '>'
+  threshold: 0
+for: 5m
+interval: 1m
+timeRange: 10m
+noDataState: normal
+errorState: error
+shadow: true
