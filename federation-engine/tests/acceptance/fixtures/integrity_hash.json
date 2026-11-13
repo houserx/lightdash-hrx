@@ -1,0 +1,53 @@
+[
+  {
+    "input": {
+      "sql": "SELECT 1",
+      "mode": "read",
+      "description": "test",
+      "database": "db",
+      "linearTicketId": null,
+      "status": "success",
+      "rowCount": 1,
+      "preview": false,
+      "executedBySub": "auth0|1",
+      "action": "query"
+    },
+    "createdAt": "2026-08-24T00:00:00.000Z",
+    "hmac": "hmac-sha256:7ad41f8f893a4ed6dba763b95b0c4a54017fb0d5199508b9d81d43406d634811",
+    "sha256": "sha256:321426b465880619a3275a2ac39a0c81694c05eab9e9cce9bb79f6462db325a8"
+  },
+  {
+    "input": {
+      "sql": "SELECT * FROM platform_query('SELECT name FROM widgets WHERE note = ''é \"q\" \\\\ ✓''')\n-- tail",
+      "mode": "write",
+      "description": "Line1\nLine2\ttab <tag> & ünïcødé 🚀",
+      "database": "platform",
+      "linearTicketId": "ENG-123",
+      "status": "error",
+      "rowCount": null,
+      "preview": true,
+      "action": "ai_ask",
+      "executedBySub": "00000000-0000-4000-8000-000000000001"
+    },
+    "createdAt": "2026-11-08T09:32:44.123Z",
+    "hmac": "hmac-sha256:6591e9eb9144beb82aad6cbf1a6d2f8ccfe4610d490d2e4f3cbb2ed8670484cf",
+    "sha256": "sha256:84284fab030d9f25d0619688c9ace0b384ead9b614f7af06b8e7ee2c42b7d063"
+  },
+  {
+    "input": {
+      "sql": "SELECT 2",
+      "mode": "read",
+      "description": "ctl \u0001 char",
+      "database": "loki-production",
+      "linearTicketId": null,
+      "status": "success",
+      "rowCount": 0,
+      "preview": false,
+      "action": "assertion",
+      "executedBySub": "system:alert-evaluator"
+    },
+    "createdAt": "2026-12-31T23:59:59.999Z",
+    "hmac": "hmac-sha256:000cf1bb6c10db24c3be7e4bce36b662b867bae37993281fa9b3662a3dd900e2",
+    "sha256": "sha256:234343afec1ae98c630649090d7f5d276e48c3bf49a00967ea0cb8fd30c955e3"
+  }
+]

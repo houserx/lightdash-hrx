@@ -1,0 +1,8 @@
+[package]
+name = "engine-guard"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The query guard (CONTRACTS §5): a port of db-query-portal api/src/services/query-guard.ts @ aea73de"
+
+[dependencies]

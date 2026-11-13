@@ -1,0 +1,1004 @@
+//! `platform_query(sql)` (CONTRACTS §1.1): a read on the Platform Database (the
+//! `platform_postgres` source), as a table of whatever columns Postgres returns for `sql`.
+//! `platform_tables()` and `platform_columns(table_schema, table_name)` list its tables and
+//! columns ([`PlatformCatalog`]). `platform_explain(sql)` returns the estimate-only plan of `sql`
+//! ([`PlatformExplain`]).
+//!
+//! The columns are found at plan time by a describe-only round trip (Parse and Describe, never
+//! Execute), so extended-protocol clients see the real column types before running the query.
+//! The statement runs once, when the plan executes, over the source's read URL (the read-only
+//! role), and its rows come back in Postgres binary format.
+//!
+//! Reading the Platform Database needs `attrs.platform_read` and is an Audited Query (§1.2, §6).
+//! Then `sql` must pass the read guard (§5, [`engine_guard`]): a rejection is SQLSTATE 42501 with
+//! the portal's message, before any connection, and is not audited. The guarded (trimmed) SQL is
+//! what runs, as in the portal.
+//!
+//! Column types: `bool`, `int2`, `int4`, `int8`, `float4`, `float8`, `date`, `timestamp` and
+//! `timestamptz` keep their type; `text`, `varchar`, `bpchar`, `name`, `citext`, `uuid` and
+//! `numeric` (exact, as Postgres prints it) are text; `json` and `jsonb` are json; `void` (what
+//! e.g. `pg_sleep` returns) is text and reads as `''`, as Postgres prints it. Any other type is
+//! refused with SQLSTATE 0A000 and a hint to cast the column to text in `sql`.
+//!
+//! Cancellation (CONTRACTS §1 "Cancellation"): when a statement stops before its Platform Database
+//! read has finished (`statement_timeout`, a cancel request, the client going away), the read's
+//! future is dropped, and dropping it sends Postgres a cancel request for the backend running it,
+//! so that backend stops too ([`CancelOnDrop`]).
+//!
+//! Connections come from a bounded pool per engine ([`Pool`]): at most
+//! [`READ_POOL_SIZE`] connections as the read-only role, shared by every session. A read that
+//! finished cleanly gives its connection back after `DISCARD ALL` (so nothing one statement set,
+//! e.g. with `set_config`, reaches the next); a read that failed or was cancelled closes it.
+
+use std::collections::{HashMap, HashSet};
+use std::error::Error;
+use std::fmt::Write as _;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use async_trait::async_trait;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use datafusion::arrow::array::{
+    ArrayRef, BooleanArray, Date32Array, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, StringArray, TimestampMicrosecondArray,
+};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::catalog::memory::MemorySourceConfig;
+use datafusion::catalog::{Session, TableFunctionArgs, TableFunctionImpl, TableProvider};
+use datafusion::error::DataFusionError;
+use datafusion::logical_expr::{Expr, TableType};
+use datafusion::physical_plan::ExecutionPlan;
+use engine_config::{Config, SourceKind, SourceSettings};
+use engine_guard::Mode;
+use futures::{TryStreamExt, pin_mut};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_postgres::types::{FromSql, Type};
+use tokio_postgres::{CancelToken, Client, NoTls, Row};
+
+use crate::identity::{Access, Claim};
+use crate::promql::{EXTENSION_NAME_KEY, JSON_EXTENSION, UTC, constant, text_argument};
+use crate::session::{sqlstate, sqlstate_owned};
+
+const SIGNATURE: &str = "platform_query(sql)";
+
+/// At most this many Platform Database connections as the read-only role are open at once,
+/// across all sessions.
+const READ_POOL_SIZE: usize = 10;
+/// A pooled connection idle for longer than this is closed rather than reused.
+const POOL_IDLE: Duration = Duration::from_secs(60);
+
+/// One role's connections to the Platform Database, shared by all sessions and all the platform
+/// functions (the read pool), or by all Write Mode requests (the write pool). Taking one waits
+/// for a free slot (at most the connect timeout, then 53300), reuses an idle connection when
+/// there is one, and otherwise opens a new one.
+pub(crate) struct Pool {
+    /// The source's name, for messages.
+    name: String,
+    /// The role's connection URL. Secret: never logged or shown.
+    url: String,
+    /// The env var `url` came from (safe to show).
+    url_env: String,
+    size: usize,
+    slots: Arc<Semaphore>,
+    /// Open connections nobody is using, with when they were given back.
+    idle: Mutex<Vec<(Client, Instant)>>,
+    connect_timeout: Duration,
+}
+
+impl std::fmt::Debug for Pool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pool")
+            .field("name", &self.name)
+            .field("url_env", &self.url_env)
+            .field("free_slots", &self.slots.available_permits())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Pool {
+    /// A pool of at most `size` connections for source `name` at `url` (from env var `url_env`).
+    pub(crate) fn new(
+        name: &str,
+        url: &engine_config::Secret,
+        size: usize,
+        connect_timeout: Duration,
+    ) -> Pool {
+        Pool {
+            name: name.to_string(),
+            url: url.expose().to_string(),
+            url_env: url.env_name().to_string(),
+            size,
+            slots: Arc::new(Semaphore::new(size)),
+            idle: Mutex::new(vec![]),
+            connect_timeout,
+        }
+    }
+
+    /// The most recently returned idle connection that is still open and fresh; closes the
+    /// others that are not.
+    fn take_idle(&self) -> Option<Client> {
+        let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
+        idle.retain(|(client, since)| !client.is_closed() && since.elapsed() < POOL_IDLE);
+        idle.pop().map(|(client, _)| client)
+    }
+
+    /// A connection from the pool: waits for a free slot, then reuses an idle connection or
+    /// opens a new one.
+    pub(crate) async fn acquire(self: &Arc<Pool>) -> Result<PooledClient, DataFusionError> {
+        let slot = tokio::time::timeout(self.connect_timeout, self.slots.clone().acquire_owned())
+            .await
+            .map_err(|_| {
+                sqlstate(
+                    "53300",
+                    format!(
+                        "platform source \"{}\": all {} connections stayed busy for {} s; try \
+                         again",
+                        self.name,
+                        self.size,
+                        self.connect_timeout.as_secs()
+                    ),
+                )
+            })?
+            .expect("a pool's semaphore is never closed");
+        let client = match self.take_idle() {
+            Some(client) => client,
+            None => self.connect().await?,
+        };
+        Ok(PooledClient {
+            client: Some(client),
+            pool: self.clone(),
+            _slot: slot,
+        })
+    }
+
+    /// A new connection as the pool's role. It closes when the client is dropped.
+    async fn connect(&self) -> Result<Client, DataFusionError> {
+        let name = &self.name;
+        let mut config: tokio_postgres::Config = self.url.parse().map_err(|_| {
+            sqlstate(
+                "08001",
+                format!(
+                    "platform source \"{name}\": {} is not a valid Postgres connection URL",
+                    self.url_env
+                ),
+            )
+        })?;
+        config
+            .connect_timeout(self.connect_timeout)
+            .application_name("hrx-federation-engine");
+        let (client, connection) = config.connect(NoTls).await.map_err(|e| {
+            sqlstate(
+                "08001",
+                format!("platform source \"{name}\" is unreachable: {}", cause(&e)),
+            )
+        })?;
+        tokio::spawn(async move {
+            let _ = connection.await;
+        });
+        Ok(client)
+    }
+}
+
+/// A connection taken from a [`Pool`], holding its slot. Dropping it closes the connection and
+/// frees the slot; [`release`](PooledClient::release) gives a clean connection back instead.
+pub(crate) struct PooledClient {
+    client: Option<Client>,
+    pool: Arc<Pool>,
+    _slot: OwnedSemaphorePermit,
+}
+
+impl Deref for PooledClient {
+    type Target = Client;
+
+    fn deref(&self) -> &Client {
+        self.client
+            .as_ref()
+            .expect("a pooled client holds its connection until it is released")
+    }
+}
+
+impl PooledClient {
+    /// Gives the connection back for reuse, once `DISCARD ALL` has reset its session state; if
+    /// the reset fails the connection is closed instead. Call it only after a statement that
+    /// finished, outside any transaction.
+    pub(crate) async fn release(mut self) {
+        let Some(client) = self.client.take() else {
+            return;
+        };
+        if client.batch_execute("DISCARD ALL").await.is_ok() {
+            let mut idle = self.pool.idle.lock().unwrap_or_else(|e| e.into_inner());
+            idle.push((client, Instant::now()));
+        }
+        // The slot is freed when `self` drops, after the connection is back in `idle`.
+    }
+}
+
+/// The configured Platform Database: the source `platform_query` reads.
+#[derive(Debug, Clone)]
+struct PlatformSource {
+    name: String,
+    /// More rows than this is an error (SQLSTATE 54000), never a silent truncation.
+    max_rows: usize,
+    /// The read-only role's connections.
+    pool: Arc<Pool>,
+}
+
+impl PlatformSource {
+    /// A connection as the read-only role from the read pool.
+    async fn acquire(&self) -> Result<PooledClient, DataFusionError> {
+        self.pool.acquire().await
+    }
+
+    /// A failure the Platform Database reported, with its own SQLSTATE; any other failure is a
+    /// lost connection (08006).
+    fn error(&self, e: tokio_postgres::Error) -> DataFusionError {
+        pg_error(&self.name, e)
+    }
+}
+
+/// A failure the Platform Database (source `name`) reported, with its own SQLSTATE; any other
+/// failure is a lost connection (08006).
+pub(crate) fn pg_error(name: &str, e: tokio_postgres::Error) -> DataFusionError {
+    match e.as_db_error() {
+        Some(db) => sqlstate_owned(
+            db.code().code().to_string(),
+            format!("platform source \"{name}\": {}", db.message()),
+        ),
+        None => sqlstate(
+            "08006",
+            format!(
+                "platform source \"{name}\": the connection failed: {}",
+                cause(&e)
+            ),
+        ),
+    }
+}
+
+/// An error's text with its causes (tokio-postgres puts the useful part in the source).
+fn cause(e: &tokio_postgres::Error) -> String {
+    match e.source() {
+        Some(inner) => format!("{e}: {inner}"),
+        None => e.to_string(),
+    }
+}
+
+/// The Platform Database the platform functions read, with its read pool. Build it once and give
+/// it to every platform function, so that they share one pool.
+#[derive(Debug, Clone)]
+pub struct PlatformDatabase {
+    /// `Err` holds why there is no source to read (none configured, or no default among many).
+    source: Result<PlatformSource, String>,
+}
+
+impl PlatformDatabase {
+    pub fn new(config: &Config, connect_timeout: Duration) -> PlatformDatabase {
+        PlatformDatabase {
+            source: PlatformSource::from_config(config, connect_timeout),
+        }
+    }
+}
+
+impl PlatformSource {
+    /// The config's default `platform_postgres` source, or why there is none to read.
+    fn from_config(config: &Config, connect_timeout: Duration) -> Result<PlatformSource, String> {
+        let kind = SourceKind::PlatformPostgres;
+        match config.default_source(kind) {
+            Some(s) => match &s.settings {
+                SourceSettings::PlatformPostgres { read_url, .. } => Ok(PlatformSource {
+                    name: s.name.clone(),
+                    max_rows: usize::try_from(s.max_rows.unwrap_or(config.max_rows))
+                        .unwrap_or(usize::MAX),
+                    pool: Arc::new(Pool::new(&s.name, read_url, READ_POOL_SIZE, connect_timeout)),
+                }),
+                _ => Err("the default platform_postgres source has no read URL".to_string()),
+            },
+            None if config.sources.iter().any(|s| s.kind() == kind) => Err(
+                "there are several platform_postgres sources and none is the default".to_string(),
+            ),
+            None => Err("there is no platform_postgres source in the config".to_string()),
+        }
+    }
+
+    /// The source for a call of `signature`, once the session's identity has `claim` (42501
+    /// otherwise, before anything reaches the Platform Database). The statement becomes an
+    /// Audited Query.
+    fn for_call(
+        source: &Result<PlatformSource, String>,
+        session: &dyn Session,
+        signature: &str,
+        claim: Claim,
+    ) -> Result<PlatformSource, DataFusionError> {
+        let source = source
+            .clone()
+            .map_err(|why| sqlstate("42704", format!("{signature}: {why}")))?;
+        Access::require(session, &source.name, claim)?;
+        Ok(source)
+    }
+}
+
+/// The `platform_query` table function.
+#[derive(Debug, Clone)]
+pub struct PlatformQuery {
+    /// `Err` holds why there is no source to read (none configured, or no default among many).
+    source: Result<PlatformSource, String>,
+}
+
+impl PlatformQuery {
+    pub fn new(database: &PlatformDatabase) -> PlatformQuery {
+        PlatformQuery {
+            source: database.source.clone(),
+        }
+    }
+}
+
+impl TableFunctionImpl for PlatformQuery {
+    fn call_with_args(
+        &self,
+        args: TableFunctionArgs,
+    ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        let exprs = args.exprs();
+        if exprs.len() != 1 {
+            return Err(sqlstate(
+                "42883",
+                format!("{SIGNATURE} takes 1 argument, not {}", exprs.len()),
+            ));
+        }
+        let session = args.session();
+        let sql = text_argument(constant(&exprs[0], session, SIGNATURE)?, "sql", SIGNATURE)?;
+        let source =
+            PlatformSource::for_call(&self.source, session, SIGNATURE, Claim::PlatformRead)?;
+        let sql =
+            engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
+        let types = block_on(async {
+            let client = source.acquire().await?;
+            let statement = client.prepare(&sql).await.map_err(|e| source.error(e))?;
+            let types = statement
+                .columns()
+                .iter()
+                .map(|c| (c.name().to_string(), c.type_().clone()))
+                .collect::<Vec<_>>();
+            drop(statement);
+            client.release().await;
+            Ok::<_, DataFusionError>(types)
+        })??;
+        let schema = schema_of(&types)?;
+        Ok(Arc::new(PlatformTable {
+            source,
+            signature: SIGNATURE,
+            sql,
+            params: vec![],
+            types: types.into_iter().map(|(_, ty)| ty).collect(),
+            schema,
+        }))
+    }
+}
+
+/// `platform_tables()` and `platform_columns(table_schema, table_name)` (CONTRACTS §1.1): the
+/// Platform Database's user tables, and a table's columns, from its `information_schema` as the
+/// read-only role sees it. Each call needs `attrs.platform_read` and is an Audited Query, like
+/// `platform_query`. Their SQL is the engine's own (the names are bound parameters), so it does
+/// not go through the read guard, and their columns are fixed, so planning needs no round trip.
+#[derive(Debug, Clone)]
+pub struct PlatformCatalog {
+    listing: Listing,
+    source: Result<PlatformSource, String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Listing {
+    Tables,
+    Columns,
+}
+
+/// Every table and view outside the system schemas (`pg_*` names are reserved for them).
+const TABLES_SQL: &str = "SELECT table_schema::text AS table_schema, table_name::text AS table_name \
+     FROM information_schema.tables \
+     WHERE table_schema::text <> 'information_schema' AND table_schema::text !~ '^pg_' \
+     ORDER BY 1, 2";
+
+/// A table's columns in ordinal order; `data_type` as `information_schema` names it.
+const COLUMNS_SQL: &str = "SELECT column_name::text AS column_name, data_type::text AS data_type, \
+     is_nullable::text = 'YES' AS is_nullable \
+     FROM information_schema.columns \
+     WHERE table_schema::text = $1::text AND table_name::text = $2::text \
+     ORDER BY ordinal_position";
+
+impl PlatformCatalog {
+    pub fn tables(database: &PlatformDatabase) -> PlatformCatalog {
+        PlatformCatalog {
+            listing: Listing::Tables,
+            source: database.source.clone(),
+        }
+    }
+
+    pub fn columns(database: &PlatformDatabase) -> PlatformCatalog {
+        PlatformCatalog {
+            listing: Listing::Columns,
+            source: database.source.clone(),
+        }
+    }
+}
+
+impl TableFunctionImpl for PlatformCatalog {
+    fn call_with_args(
+        &self,
+        args: TableFunctionArgs,
+    ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        let (signature, names, sql, columns): (_, &[&str], _, &[(&str, Type)]) = match self.listing
+        {
+            Listing::Tables => (
+                "platform_tables()",
+                &[],
+                TABLES_SQL,
+                &[("table_schema", Type::TEXT), ("table_name", Type::TEXT)],
+            ),
+            Listing::Columns => (
+                "platform_columns(table_schema, table_name)",
+                &["table_schema", "table_name"],
+                COLUMNS_SQL,
+                &[
+                    ("column_name", Type::TEXT),
+                    ("data_type", Type::TEXT),
+                    ("is_nullable", Type::BOOL),
+                ],
+            ),
+        };
+        let exprs = args.exprs();
+        if exprs.len() != names.len() {
+            return Err(sqlstate(
+                "42883",
+                format!(
+                    "{signature} takes {} argument{}, not {}",
+                    names.len(),
+                    if names.len() == 1 { "" } else { "s" },
+                    exprs.len()
+                ),
+            ));
+        }
+        let session = args.session();
+        let params = exprs
+            .iter()
+            .zip(names)
+            .map(|(e, name)| text_argument(constant(e, session, signature)?, name, signature))
+            .collect::<Result<Vec<_>, _>>()?;
+        let source =
+            PlatformSource::for_call(&self.source, session, signature, Claim::PlatformRead)?;
+        let columns: Vec<(String, Type)> = columns
+            .iter()
+            .map(|(name, ty)| (name.to_string(), ty.clone()))
+            .collect();
+        let schema = schema_of(&columns)?;
+        Ok(Arc::new(PlatformTable {
+            source,
+            signature,
+            sql: sql.to_string(),
+            params,
+            types: columns.into_iter().map(|(_, ty)| ty).collect(),
+            schema,
+        }))
+    }
+}
+
+/// `platform_explain(sql)` (CONTRACTS §1.1): one row, `plan json`, the Platform Database's
+/// estimate-only `EXPLAIN (FORMAT JSON)` of `sql`. It never uses `ANALYZE`, so `sql` is planned
+/// by Postgres but never run. It needs `attrs.platform_explain` or `attrs.platform_read` and is
+/// an Audited Query (§1.2, §6). `sql` must pass the read guard (§5) like `platform_query`'s, and
+/// the explain runs over the read URL (the read-only role). Its column is fixed, so planning
+/// needs no round trip.
+#[derive(Debug, Clone)]
+pub struct PlatformExplain {
+    source: Result<PlatformSource, String>,
+}
+
+const EXPLAIN_SIGNATURE: &str = "platform_explain(sql)";
+
+impl PlatformExplain {
+    pub fn new(database: &PlatformDatabase) -> PlatformExplain {
+        PlatformExplain {
+            source: database.source.clone(),
+        }
+    }
+}
+
+impl TableFunctionImpl for PlatformExplain {
+    fn call_with_args(
+        &self,
+        args: TableFunctionArgs,
+    ) -> datafusion::error::Result<Arc<dyn TableProvider>> {
+        let exprs = args.exprs();
+        if exprs.len() != 1 {
+            return Err(sqlstate(
+                "42883",
+                format!("{EXPLAIN_SIGNATURE} takes 1 argument, not {}", exprs.len()),
+            ));
+        }
+        let session = args.session();
+        let sql = text_argument(
+            constant(&exprs[0], session, EXPLAIN_SIGNATURE)?,
+            "sql",
+            EXPLAIN_SIGNATURE,
+        )?;
+        let source = PlatformSource::for_call(
+            &self.source,
+            session,
+            EXPLAIN_SIGNATURE,
+            Claim::PlatformExplain,
+        )?;
+        let sql =
+            engine_guard::guard(&sql, Mode::Read).map_err(|r| sqlstate("42501", r.message))?;
+        let columns = [("plan".to_string(), Type::JSON)];
+        let schema = schema_of(&columns)?;
+        Ok(Arc::new(PlatformTable {
+            source,
+            signature: EXPLAIN_SIGNATURE,
+            sql: explain_sql(&sql),
+            params: vec![],
+            types: vec![Type::JSON],
+            schema,
+        }))
+    }
+}
+
+/// The estimate-only explain of a guarded statement. The options come first and are fixed, so
+/// nothing in `sql` can add `ANALYZE` to them.
+fn explain_sql(sql: &str) -> String {
+    format!("EXPLAIN (FORMAT JSON) {sql}")
+}
+
+/// Runs `future` to completion from synchronous planning code. Table functions are called
+/// synchronously while a statement is planned, on the engine's multi-threaded runtime, so this
+/// moves the worker's other tasks elsewhere while it waits.
+fn block_on<F: Future>(future: F) -> Result<F::Output, DataFusionError> {
+    let handle = tokio::runtime::Handle::try_current()
+        .ok()
+        .filter(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+        .ok_or_else(|| {
+            DataFusionError::Internal(format!(
+                "{SIGNATURE} must be planned on a multi-threaded tokio runtime"
+            ))
+        })?;
+    Ok(tokio::task::block_in_place(|| handle.block_on(future)))
+}
+
+/// The engine's column type for a Platform Database column type, and whether it is json.
+fn arrow_type(ty: &Type) -> Option<(DataType, bool)> {
+    let dt = match *ty {
+        Type::BOOL => DataType::Boolean,
+        Type::INT2 => DataType::Int16,
+        Type::INT4 => DataType::Int32,
+        Type::INT8 => DataType::Int64,
+        Type::FLOAT4 => DataType::Float32,
+        Type::FLOAT8 => DataType::Float64,
+        Type::DATE => DataType::Date32,
+        Type::TIMESTAMP => DataType::Timestamp(TimeUnit::Microsecond, None),
+        Type::TIMESTAMPTZ => DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())),
+        Type::JSON | Type::JSONB => return Some((DataType::Utf8, true)),
+        Type::UUID | Type::NUMERIC | Type::VOID => DataType::Utf8,
+        ref other if <String as FromSql>::accepts(other) => DataType::Utf8,
+        _ => return None,
+    };
+    Some((dt, false))
+}
+
+/// The table schema for described columns: every column nullable, json columns marked json.
+fn schema_of(columns: &[(String, Type)]) -> Result<SchemaRef, DataFusionError> {
+    let mut seen = HashSet::new();
+    let mut fields = Vec::with_capacity(columns.len());
+    for (name, ty) in columns {
+        if !seen.insert(name.as_str()) {
+            return Err(sqlstate(
+                "42701",
+                format!(
+                    "{SIGNATURE}: the column name \"{name}\" appears more than once; give the \
+                     columns distinct names in sql"
+                ),
+            ));
+        }
+        let Some((dt, json)) = arrow_type(ty) else {
+            return Err(sqlstate(
+                "0A000",
+                format!(
+                    "{SIGNATURE}: column \"{name}\" has type {}, which platform_query does not \
+                     read; cast it to text in sql",
+                    ty.name()
+                ),
+            ));
+        };
+        let mut field = Field::new(name, dt, true);
+        if json {
+            field = field.with_metadata(HashMap::from([(
+                EXTENSION_NAME_KEY.to_string(),
+                JSON_EXTENSION.to_string(),
+            )]));
+        }
+        fields.push(field);
+    }
+    Ok(Arc::new(Schema::new(fields)))
+}
+
+/// One Platform Database call: the statement, its text parameters, and the columns it was
+/// planned with.
+#[derive(Debug)]
+struct PlatformTable {
+    source: PlatformSource,
+    /// The calling function, for error messages.
+    signature: &'static str,
+    sql: String,
+    params: Vec<String>,
+    /// The Postgres type of each column, as described at plan time.
+    types: Vec<Type>,
+    schema: SchemaRef,
+}
+
+impl PlatformTable {
+    /// Runs the statement once and returns all its rows. Fails with 54000 past `max_rows`, and
+    /// with 0A000 when the result's columns are no longer the ones it was planned with. Only a
+    /// read that finished gives its connection back to the pool; any other ends it.
+    async fn fetch(&self) -> Result<Vec<Row>, DataFusionError> {
+        let source = &self.source;
+        let client = source.acquire().await?;
+        let mut running = CancelOnDrop(Some(client.cancel_token()));
+        let statement = client
+            .prepare(&self.sql)
+            .await
+            .map_err(|e| source.error(e))?;
+        let now: Vec<&Type> = statement.columns().iter().map(|c| c.type_()).collect();
+        let planned: Vec<&Type> = self.types.iter().collect();
+        if now != planned {
+            return Err(sqlstate(
+                "0A000",
+                format!(
+                    "{}: the result's columns changed since the statement was planned; run it \
+                     again",
+                    self.signature
+                ),
+            ));
+        }
+        let stream = client
+            .query_raw(&statement, &self.params)
+            .await
+            .map_err(|e| source.error(e))?;
+        pin_mut!(stream);
+        let mut rows = vec![];
+        while let Some(row) = stream.try_next().await.map_err(|e| source.error(e))? {
+            if rows.len() == source.max_rows {
+                return Err(sqlstate(
+                    "54000",
+                    format!(
+                        "result exceeds max_rows ({}) for source \"{}\"",
+                        source.max_rows, source.name
+                    ),
+                ));
+            }
+            rows.push(row);
+        }
+        running.finished();
+        drop(statement);
+        client.release().await;
+        Ok(rows)
+    }
+}
+
+/// Cancels whatever its Platform Database connection is running when dropped, unless the read
+/// [`finished`](CancelOnDrop::finished). Dropping a `tokio_postgres::Client` alone leaves the
+/// backend running the statement to its end; the cancel request stops it (Postgres answers it
+/// with 57014 on that connection, which nobody reads any more).
+pub(crate) struct CancelOnDrop(pub(crate) Option<CancelToken>);
+
+impl CancelOnDrop {
+    /// The statement is done: nothing to cancel.
+    pub(crate) fn finished(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        let Some(token) = self.0.take() else { return };
+        // Drop cannot wait, so the cancel request goes out on its own task; it opens a new
+        // connection to the same server, sends the backend's key and closes.
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = token.cancel_query(NoTls).await;
+            });
+        }
+    }
+}
+
+#[async_trait]
+impl TableProvider for PlatformTable {
+    fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    fn table_type(&self) -> TableType {
+        TableType::Temporary
+    }
+
+    async fn scan(
+        &self,
+        _state: &dyn Session,
+        projection: Option<&Vec<usize>>,
+        _filters: &[Expr],
+        _limit: Option<usize>,
+    ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
+        crate::metrics::observe(&self.source.name, async {
+            let rows = self.fetch().await?;
+            let batch = to_batch(&self.schema, &rows)?;
+            Ok::<Arc<dyn ExecutionPlan>, _>(MemorySourceConfig::try_new_exec(
+                &[vec![batch]],
+                self.schema(),
+                projection.cloned(),
+            )?)
+        })
+        .await
+    }
+}
+
+/// The rows as one batch of `schema`.
+fn to_batch(schema: &SchemaRef, rows: &[Row]) -> Result<RecordBatch, DataFusionError> {
+    let columns = schema
+        .fields()
+        .iter()
+        .enumerate()
+        .map(|(i, field)| column(field.name(), field.data_type(), rows, i))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RecordBatch::try_new(schema.clone(), columns)?)
+}
+
+/// Column `i` of every row as an Arrow array of `dt`.
+fn column(name: &str, dt: &DataType, rows: &[Row], i: usize) -> Result<ArrayRef, DataFusionError> {
+    fn values<'a, T: FromSql<'a>>(
+        name: &str,
+        rows: &'a [Row],
+        i: usize,
+    ) -> Result<Vec<Option<T>>, DataFusionError> {
+        rows.iter()
+            .map(|r| r.try_get::<_, Option<T>>(i))
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                DataFusionError::Execution(format!(
+                    "{SIGNATURE}: column \"{name}\" could not be read: {}",
+                    cause(&e)
+                ))
+            })
+    }
+    Ok(match dt {
+        DataType::Boolean => Arc::new(BooleanArray::from(values::<bool>(name, rows, i)?)),
+        DataType::Int16 => Arc::new(Int16Array::from(values::<i16>(name, rows, i)?)),
+        DataType::Int32 => Arc::new(Int32Array::from(values::<i32>(name, rows, i)?)),
+        DataType::Int64 => Arc::new(Int64Array::from(values::<i64>(name, rows, i)?)),
+        DataType::Float32 => Arc::new(Float32Array::from(values::<f32>(name, rows, i)?)),
+        DataType::Float64 => Arc::new(Float64Array::from(values::<f64>(name, rows, i)?)),
+        DataType::Date32 => {
+            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).expect("valid date");
+            let days = values::<NaiveDate>(name, rows, i)?
+                .into_iter()
+                .map(|d| d.map(|d| (d - epoch).num_days() as i32))
+                .collect::<Vec<_>>();
+            Arc::new(Date32Array::from(days))
+        }
+        DataType::Timestamp(_, Some(tz)) => {
+            let micros = values::<DateTime<Utc>>(name, rows, i)?
+                .into_iter()
+                .map(|t| t.map(|t| t.timestamp_micros()))
+                .collect::<Vec<_>>();
+            Arc::new(TimestampMicrosecondArray::from(micros).with_timezone(tz.clone()))
+        }
+        DataType::Timestamp(_, None) => {
+            let micros = values::<NaiveDateTime>(name, rows, i)?
+                .into_iter()
+                .map(|t| t.map(|t| t.and_utc().timestamp_micros()))
+                .collect::<Vec<_>>();
+            Arc::new(TimestampMicrosecondArray::from(micros))
+        }
+        _ => {
+            let texts = values::<AsText>(name, rows, i)?
+                .into_iter()
+                .map(|t| t.map(|t| t.0))
+                .collect::<Vec<_>>();
+            Arc::new(StringArray::from(texts))
+        }
+    })
+}
+
+/// A text-shaped Postgres value as text: text types as they are, `json`/`jsonb` as their JSON
+/// text, `uuid` hyphenated and `numeric` exactly as Postgres prints it.
+struct AsText(String);
+
+impl<'a> FromSql<'a> for AsText {
+    fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<AsText, Box<dyn Error + Sync + Send>> {
+        let utf8 = |b: &[u8]| String::from_utf8(b.to_vec());
+        Ok(AsText(match *ty {
+            Type::JSON => utf8(raw)?,
+            Type::JSONB => match raw.split_first() {
+                Some((1, text)) => utf8(text)?,
+                _ => return Err("unsupported jsonb encoding version".into()),
+            },
+            Type::UUID => uuid_text(raw)?,
+            Type::NUMERIC => numeric_text(raw)?,
+            // Postgres sends a void as zero bytes and prints it as the empty string.
+            Type::VOID => String::new(),
+            _ => String::from_sql(ty, raw)?,
+        }))
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(
+            *ty,
+            Type::JSON | Type::JSONB | Type::UUID | Type::NUMERIC | Type::VOID
+        ) || <String as FromSql>::accepts(ty)
+    }
+}
+
+fn uuid_text(raw: &[u8]) -> Result<String, Box<dyn Error + Sync + Send>> {
+    if raw.len() != 16 {
+        return Err("a uuid is 16 bytes".into());
+    }
+    let h = hex::encode(raw);
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    ))
+}
+
+/// A binary `numeric` as Postgres's text output: base-10000 digit groups, `weight` the power of
+/// the first group, `dscale` the digits after the point.
+fn numeric_text(raw: &[u8]) -> Result<String, Box<dyn Error + Sync + Send>> {
+    let word = |i: usize| -> Result<u16, Box<dyn Error + Sync + Send>> {
+        raw.get(i..i + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]))
+            .ok_or_else(|| "truncated numeric".into())
+    };
+    let ndigits = usize::from(word(0)?);
+    let weight = i64::from(word(2)? as i16);
+    let sign = word(4)?;
+    let dscale = usize::from(word(6)?);
+    let digits = (0..ndigits)
+        .map(|k| word(8 + 2 * k))
+        .collect::<Result<Vec<u16>, _>>()?;
+    match sign {
+        0x0000 | 0x4000 => {}
+        0xC000 => return Ok("NaN".to_string()),
+        0xD000 => return Ok("Infinity".to_string()),
+        0xF000 => return Ok("-Infinity".to_string()),
+        _ => return Err("invalid numeric sign".into()),
+    }
+    let group = |k: i64| -> u16 {
+        usize::try_from(k)
+            .ok()
+            .and_then(|k| digits.get(k).copied())
+            .unwrap_or(0)
+    };
+    let mut text = String::new();
+    if sign == 0x4000 {
+        text.push('-');
+    }
+    if weight < 0 {
+        text.push('0');
+    } else {
+        for k in 0..=weight {
+            if k == 0 {
+                write!(text, "{}", group(k))?;
+            } else {
+                write!(text, "{:04}", group(k))?;
+            }
+        }
+    }
+    if dscale > 0 {
+        let mut fraction = String::with_capacity(dscale + 4);
+        let mut k = weight + 1;
+        while fraction.len() < dscale {
+            write!(fraction, "{:04}", group(k))?;
+            k += 1;
+        }
+        fraction.truncate(dscale);
+        text.push('.');
+        text.push_str(&fraction);
+    }
+    Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The binary form of a numeric from its parts.
+    fn numeric(weight: i16, sign: u16, dscale: u16, digits: &[u16]) -> Vec<u8> {
+        let mut b = vec![];
+        b.extend((digits.len() as u16).to_be_bytes());
+        b.extend(weight.to_be_bytes());
+        b.extend(sign.to_be_bytes());
+        b.extend(dscale.to_be_bytes());
+        for d in digits {
+            b.extend(d.to_be_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn numerics_print_as_postgres_prints_them() {
+        let cases: &[(Vec<u8>, &str)] = &[
+            (numeric(0, 0, 0, &[]), "0"),
+            (numeric(0, 0, 2, &[]), "0.00"),
+            (numeric(0, 0, 0, &[42]), "42"),
+            (numeric(1, 0, 0, &[1, 2345]), "12345"),
+            (numeric(2, 0, 0, &[1]), "100000000"),
+            (numeric(0, 0x4000, 3, &[3, 1415]), "-3.141"),
+            (numeric(0, 0, 4, &[3, 1415]), "3.1415"),
+            (numeric(0, 0, 6, &[3, 1415]), "3.141500"),
+            (numeric(-1, 0, 4, &[50]), "0.0050"),
+            (numeric(-2, 0, 8, &[12]), "0.00000012"),
+            (numeric(0, 0xC000, 0, &[]), "NaN"),
+            (numeric(0, 0xD000, 0, &[]), "Infinity"),
+            (numeric(0, 0xF000, 0, &[]), "-Infinity"),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(numeric_text(raw).unwrap(), *want);
+        }
+        assert!(numeric_text(&[0, 1]).is_err());
+    }
+
+    #[test]
+    fn uuids_are_hyphenated() {
+        let raw: Vec<u8> = (0u8..16).collect();
+        assert_eq!(
+            uuid_text(&raw).unwrap(),
+            "00010203-0405-0607-0809-0a0b0c0d0e0f"
+        );
+        assert!(uuid_text(&raw[..15]).is_err());
+    }
+
+    #[test]
+    fn columns_keep_their_types() {
+        let schema = schema_of(&[
+            ("id".into(), Type::INT8),
+            ("name".into(), Type::TEXT),
+            ("active".into(), Type::BOOL),
+            ("created_at".into(), Type::TIMESTAMPTZ),
+            ("score".into(), Type::FLOAT8),
+            ("doc".into(), Type::JSONB),
+            ("amount".into(), Type::NUMERIC),
+            ("slept".into(), Type::VOID),
+        ])
+        .unwrap();
+        let types: Vec<DataType> = schema.fields().iter().map(|f| f.data_type().clone()).collect();
+        assert_eq!(
+            types,
+            [
+                DataType::Int64,
+                DataType::Utf8,
+                DataType::Boolean,
+                DataType::Timestamp(TimeUnit::Microsecond, Some(UTC.into())),
+                DataType::Float64,
+                DataType::Utf8,
+                DataType::Utf8,
+                DataType::Utf8,
+            ]
+        );
+        assert_eq!(
+            schema.field(5).metadata().get(EXTENSION_NAME_KEY).map(String::as_str),
+            Some(JSON_EXTENSION)
+        );
+        assert!(schema.field(6).metadata().is_empty());
+        assert_eq!(AsText::from_sql(&Type::VOID, &[]).unwrap().0, "");
+    }
+
+    #[test]
+    fn unreadable_types_and_repeated_names_are_refused() {
+        let code = |r: Result<SchemaRef, DataFusionError>| match r {
+            Err(DataFusionError::External(e)) => e.to_string(),
+            other => panic!("{other:?}"),
+        };
+        let refusal = code(schema_of(&[("tags".into(), Type::TEXT_ARRAY)]));
+        assert!(refusal.contains("cast it to text"), "{refusal}");
+        let refusal = code(schema_of(&[("id".into(), Type::INT8), ("id".into(), Type::INT4)]));
+        assert!(refusal.contains("\"id\" appears more than once"), "{refusal}");
+    }
+}

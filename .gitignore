@@ -174,3 +174,7 @@ examples/metricflow-demo/.fusion/
 
 # humanlayer task scratch
 .humanlayer/
+
+# ENG-1799 Federation Engine: cargo build output and throwaway test state
+/federation-engine/target/
+/tmp/
