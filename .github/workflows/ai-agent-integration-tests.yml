@@ -2,7 +2,7 @@ name: AI Agent Integration Tests
 
 on:
     schedule:
-        # Runs on Monday to Friday at 8:00 UTC
+        # Runs every Monday at 8:00 UTC
         # Use https://crontab.guru/#0_8_*_*_1 for reference
         - cron: '0 8 * * 1'
     workflow_dispatch: # Allow manual trigger from GitHub Actions UI
@@ -20,6 +20,7 @@ permissions:
 jobs:
     setup:
         runs-on: ubuntu-latest
+        timeout-minutes: 20
         services:
             postgres:
                 image: pgvector/pgvector:pg16
@@ -48,6 +49,9 @@ jobs:
                   install: false
             - name: Install packages
               run: pnpm install --frozen-lockfile --prefer-offline --network-concurrency=16
+
+            - name: Build formula
+              run: pnpm formula:build
 
             - name: Build common
               run: pnpm common-build
@@ -79,6 +83,9 @@ jobs:
               env:
                   PGCONNECTIONURI: postgresql://postgres:password@localhost:5432/lightdash_test
                   LIGHTDASH_SECRET: test-secret-key-for-ci
+                  S3_ENDPOINT: http://localhost
+                  S3_BUCKET: migrate-build
+                  S3_REGION: local
                   LIGHTDASH_LICENSE_KEY: ${{ secrets.LIGHTDASH_LICENSE_KEY }}
 
             - name: Setup dbt and create tables
@@ -116,6 +123,7 @@ jobs:
     ai-agent-tests:
         runs-on: ubuntu-latest
         needs: setup
+        timeout-minutes: 30
         strategy:
             matrix:
                 include:
@@ -195,9 +203,30 @@ jobs:
               continue-on-error: true
               run: |
                   set +e
+
+                  REQUIRED_KEY_VAR="OPENAI_API_KEY"
+                  if [ "$AI_DEFAULT_PROVIDER" = "anthropic" ]; then
+                    REQUIRED_KEY_VAR="ANTHROPIC_API_KEY"
+                  fi
+
+                  # IR-3002: these tests need a real provider API key plus
+                  # LIGHTDASH_LICENSE_KEY, neither of which is provisioned for
+                  # this workflow yet. Skip rather than let vitest fail to even
+                  # load the suite (ZodError on missing provider config) stand
+                  # in for "tests ran" -- a missing-secret skip has to look
+                  # different downstream from a real test failure, see the
+                  # "Check test results" step below.
+                  if [ -z "${!REQUIRED_KEY_VAR}" ] || [ -z "$LIGHTDASH_LICENSE_KEY" ]; then
+                    echo "::warning::Skipping AI agent integration tests: $REQUIRED_KEY_VAR and/or LIGHTDASH_LICENSE_KEY is not provisioned for this run (IR-3002). No tests were executed."
+                    echo "summary=Skipped: $REQUIRED_KEY_VAR and/or LIGHTDASH_LICENSE_KEY missing (IR-3002)" >> $GITHUB_OUTPUT
+                    echo "exit_code=skipped" >> $GITHUB_OUTPUT
+                    echo "duration=0" >> $GITHUB_OUTPUT
+                    exit 0
+                  fi
+
                   START_TIME=$(date +%s)
-                  pnpm -F backend test:integration -- src/ee/services/ai/agents/tests/agent.integration.test.ts 2>&1 | tee test_output.log
-                  TEST_EXIT_CODE=$?
+                  pnpm --filter backend exec vitest run --config vitest.config.integration.ts src/ee/services/ai/agents/tests/agent.integration.test.ts 2>&1 | tee test_output.log
+                  TEST_EXIT_CODE=${PIPESTATUS[0]}
                   END_TIME=$(date +%s)
                   DURATION=$((END_TIME - START_TIME))
 
@@ -226,6 +255,9 @@ jobs:
                   OPENAI_MODEL_NAME: ${{ matrix.ai_provider == 'openai' && matrix.model_name || '' }}
                   ANTHROPIC_MODEL_NAME: ${{ matrix.ai_provider == 'anthropic' && matrix.model_name || '' }}
                   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+                  # Unused while the anthropic matrix rows above are commented
+                  # out; kept so re-enabling them doesn't also require adding
+                  # this back.
                   ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
                   LIGHTDASH_LICENSE_KEY: ${{ secrets.LIGHTDASH_LICENSE_KEY }}
                   NODE_ENV: test
@@ -233,12 +265,13 @@ jobs:
                   DBT_DEMO_DIR: ${{ github.workspace }}/examples/full-jaffle-shop-demo
                   LD_SETUP_DBT_VERSION: v1.7
                   SKIP_TEST_MIGRATIONS: 'true'
-                  # S3 storage (required for async query results)
-                  S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY }}
-                  S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY }}
-                  S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
-                  S3_REGION: ${{ secrets.S3_REGION }}
-                  S3_BUCKET: ${{ secrets.S3_BUCKET }}
+                  # S3 config validation runs eagerly at setup (setupIntegrationTest ->
+                  # parseConfig), even though agent.integration.test.ts itself never
+                  # exercises S3/FileStorage -- dummy values satisfy the parse, same
+                  # pattern as the setup job's migrate step.
+                  S3_ENDPOINT: http://localhost
+                  S3_BUCKET: ai-agent-tests-build
+                  S3_REGION: local
                   # TODO :: Support embeddings (Verifying Answers)
                   AI_EMBEDDING_ENABLED: false
                   AI_DEFAULT_EMBEDDING_PROVIDER: 'openai'
@@ -253,11 +286,19 @@ jobs:
 
             - name: Notify Slack
               if: always()
+              env:
+                  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+                  TEST_SUMMARY: ${{ steps.test_results.outputs.summary }}
+                  PROVIDER: ${{ matrix.ai_provider }}
+                  MODEL: ${{ matrix.model_name }}
+                  DURATION: ${{ steps.test_results.outputs.duration }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
               run: |
-                  TEST_SUMMARY="${{ steps.test_results.outputs.summary }}"
-                  PROVIDER="${{ matrix.ai_provider }}"
-                  MODEL="${{ matrix.model_name }}"
-                  DURATION="${{ steps.test_results.outputs.duration }}"
+                  if [ -z "$SLACK_WEBHOOK_URL" ]; then
+                      echo "SLACK_WEBHOOK_URL not configured for this job -- skipping notification."
+                      exit 0
+                  fi
+
                   MINUTES=$((DURATION / 60))
                   SECONDS=$((DURATION % 60))
 
@@ -265,6 +306,21 @@ jobs:
                     --data "{
                       \"channel\": \"#ai-agent-tests-feed\",
                       \"username\": \"AI Agent Tests\",
-                      \"text\": \"AI Agent Integration Tests completed for *${PROVIDER}* (${MODEL})\\n\\n📊 $TEST_SUMMARY\\n⏱️ Duration: ${MINUTES}m ${SECONDS}s\\n\\n📁 Full reports: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Results & Artifacts>\"
+                      \"text\": \"AI Agent Integration Tests completed for *${PROVIDER}* (${MODEL})\\n\\n📊 $TEST_SUMMARY\\n⏱️ Duration: ${MINUTES}m ${SECONDS}s\\n\\n📁 Full reports: <${RUN_URL}|View Results & Artifacts>\"
                     }" \
-                    ${{ secrets.SLACK_WEBHOOK_URL}}
+                    "$SLACK_WEBHOOK_URL"
+
+            - name: Check test results
+              if: always()
+              env:
+                  EXIT_CODE: ${{ steps.test_results.outputs.exit_code }}
+              run: |
+                  if [ "$EXIT_CODE" = "skipped" ]; then
+                    echo "::warning::AI agent integration tests were skipped this run (missing secrets, IR-3002) -- this run proves nothing about agent quality."
+                    exit 0
+                  fi
+                  if [ -z "$EXIT_CODE" ] || [ "$EXIT_CODE" != "0" ]; then
+                    echo "::error::AI agent integration tests failed or did not report a result (exit_code=${EXIT_CODE:-<empty>})."
+                    exit 1
+                  fi
+                  echo "AI agent integration tests passed."
