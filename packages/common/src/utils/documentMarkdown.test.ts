@@ -24,7 +24,7 @@ const chart = (name: string) => ({
             limit: 1,
             tableCalculations: [],
         },
-        chartConfig: { type: ChartType.BIG_NUMBER },
+        chartConfig: { type: ChartType.BIG_NUMBER as const },
     },
 });
 

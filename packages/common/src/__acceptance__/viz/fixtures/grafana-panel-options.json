@@ -1,0 +1,1123 @@
+{
+  "source": "houserx/infra@bf3093da terraform-tooling/grafana_config/**/*.json (32 dashboards); option paths only, no values",
+  "panelTypes": [
+    "alertlist",
+    "barchart",
+    "bargauge",
+    "dashlist",
+    "gauge",
+    "graph",
+    "logs",
+    "news",
+    "piechart",
+    "row",
+    "stat",
+    "table",
+    "table-old",
+    "text",
+    "timeseries"
+  ],
+  "options": [
+    {
+      "panelType": "alertlist",
+      "path": "options.alertInstanceLabelFilter"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.alertName"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.dashboardAlerts"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.groupBy"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.groupMode"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.maxItems"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.sortOrder"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.stateFilter.error"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.stateFilter.firing"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.stateFilter.noData"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.stateFilter.normal"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.stateFilter.pending"
+    },
+    {
+      "panelType": "alertlist",
+      "path": "options.viewMode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.axisBorderShow"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.axisCenteredZero"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.axisColorMode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.axisLabel"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.axisPlacement"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.axisSoftMax"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.fillOpacity"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.gradientMode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.hideFrom.legend"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.hideFrom.tooltip"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.hideFrom.viz"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.lineWidth"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.scaleDistribution.type"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.custom.thresholdsStyle.mode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.thresholds.mode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "fieldConfig.defaults.thresholds.steps"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.barRadius"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.barWidth"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.fullHighlight"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.groupWidth"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.legend.calcs"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.legend.displayMode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.legend.placement"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.legend.showLegend"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.orientation"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.showValue"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.stacking"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.text"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.tooltip.mode"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.tooltip.sort"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.xTickLabelRotation"
+    },
+    {
+      "panelType": "barchart",
+      "path": "options.xTickLabelSpacing"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "fieldConfig.defaults.max"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "fieldConfig.defaults.thresholds.mode"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "fieldConfig.defaults.thresholds.steps"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "fieldConfig.defaults.unit"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.displayMode"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.maxVizHeight"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.minVizHeight"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.minVizWidth"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.namePlacement"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.orientation"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.reduceOptions"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.showUnfilled"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.sizing"
+    },
+    {
+      "panelType": "bargauge",
+      "path": "options.valueMode"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.includeVars"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.keepTime"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.maxItems"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.query"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.showFolderNames"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.showHeadings"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.showRecentlyViewed"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.showSearch"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.showStarred"
+    },
+    {
+      "panelType": "dashlist",
+      "path": "options.tags"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.decimals"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.max"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.min"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.thresholds.mode"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.thresholds.steps"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.unit"
+    },
+    {
+      "panelType": "gauge",
+      "path": "fieldConfig.defaults.unitScale"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.minVizHeight"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.minVizWidth"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.orientation"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.reduceOptions"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.showThresholdLabels"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.showThresholdMarkers"
+    },
+    {
+      "panelType": "gauge",
+      "path": "options.sizing"
+    },
+    {
+      "panelType": "graph",
+      "path": "aliasColors"
+    },
+    {
+      "panelType": "graph",
+      "path": "bars"
+    },
+    {
+      "panelType": "graph",
+      "path": "dashLength"
+    },
+    {
+      "panelType": "graph",
+      "path": "dashes"
+    },
+    {
+      "panelType": "graph",
+      "path": "fieldConfig.defaults.links"
+    },
+    {
+      "panelType": "graph",
+      "path": "fill"
+    },
+    {
+      "panelType": "graph",
+      "path": "fillGradient"
+    },
+    {
+      "panelType": "graph",
+      "path": "hiddenSeries"
+    },
+    {
+      "panelType": "graph",
+      "path": "legend"
+    },
+    {
+      "panelType": "graph",
+      "path": "lines"
+    },
+    {
+      "panelType": "graph",
+      "path": "linewidth"
+    },
+    {
+      "panelType": "graph",
+      "path": "nullPointMode"
+    },
+    {
+      "panelType": "graph",
+      "path": "options.alertThreshold"
+    },
+    {
+      "panelType": "graph",
+      "path": "percentage"
+    },
+    {
+      "panelType": "graph",
+      "path": "pointradius"
+    },
+    {
+      "panelType": "graph",
+      "path": "points"
+    },
+    {
+      "panelType": "graph",
+      "path": "renderer"
+    },
+    {
+      "panelType": "graph",
+      "path": "seriesOverrides"
+    },
+    {
+      "panelType": "graph",
+      "path": "spaceLength"
+    },
+    {
+      "panelType": "graph",
+      "path": "stack"
+    },
+    {
+      "panelType": "graph",
+      "path": "steppedLine"
+    },
+    {
+      "panelType": "graph",
+      "path": "thresholds"
+    },
+    {
+      "panelType": "graph",
+      "path": "timeRegions"
+    },
+    {
+      "panelType": "graph",
+      "path": "tooltip"
+    },
+    {
+      "panelType": "graph",
+      "path": "xaxis"
+    },
+    {
+      "panelType": "graph",
+      "path": "yaxes"
+    },
+    {
+      "panelType": "graph",
+      "path": "yaxis"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.dedupStrategy"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.enableLogDetails"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.prettifyLogMessage"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.showCommonLabels"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.showLabels"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.showTime"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.sortOrder"
+    },
+    {
+      "panelType": "logs",
+      "path": "options.wrapLogMessage"
+    },
+    {
+      "panelType": "news",
+      "path": "options.feedUrl"
+    },
+    {
+      "panelType": "news",
+      "path": "options.showImage"
+    },
+    {
+      "panelType": "piechart",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "piechart",
+      "path": "fieldConfig.defaults.custom.hideFrom.legend"
+    },
+    {
+      "panelType": "piechart",
+      "path": "fieldConfig.defaults.custom.hideFrom.tooltip"
+    },
+    {
+      "panelType": "piechart",
+      "path": "fieldConfig.defaults.custom.hideFrom.viz"
+    },
+    {
+      "panelType": "piechart",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "piechart",
+      "path": "fieldConfig.overrides.color"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.displayLabels"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.legend.displayMode"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.legend.placement"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.legend.showLegend"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.legend.values"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.pieType"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.reduceOptions"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.tooltip.mode"
+    },
+    {
+      "panelType": "piechart",
+      "path": "options.tooltip.sort"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.color.fixedColor"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.color.seriesBy"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.decimals"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.fieldMinMax"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.links"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.max"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.min"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.noValue"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.thresholds.mode"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.thresholds.steps"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.unit"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.defaults.unitScale"
+    },
+    {
+      "panelType": "stat",
+      "path": "fieldConfig.overrides.color"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.colorMode"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.graphMode"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.justifyMode"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.orientation"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.percentChangeColorMode"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.reduceOptions"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.showPercentChange"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.text"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.textMode"
+    },
+    {
+      "panelType": "stat",
+      "path": "options.wideLayout"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.align"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.cellOptions.type"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.cellOptions.wrapText"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.displayMode"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.filterable"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.inspect"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.custom.minWidth"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.decimals"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.links"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.noValue"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.thresholds.mode"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.thresholds.steps"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.defaults.unit"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.overrides.custom.hidden"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.overrides.custom.width"
+    },
+    {
+      "panelType": "table",
+      "path": "fieldConfig.overrides.decimals"
+    },
+    {
+      "panelType": "table",
+      "path": "options.cellHeight"
+    },
+    {
+      "panelType": "table",
+      "path": "options.footer.countRows"
+    },
+    {
+      "panelType": "table",
+      "path": "options.footer.enablePagination"
+    },
+    {
+      "panelType": "table",
+      "path": "options.footer.fields"
+    },
+    {
+      "panelType": "table",
+      "path": "options.footer.reducer"
+    },
+    {
+      "panelType": "table",
+      "path": "options.footer.show"
+    },
+    {
+      "panelType": "table",
+      "path": "options.frameIndex"
+    },
+    {
+      "panelType": "table",
+      "path": "options.showHeader"
+    },
+    {
+      "panelType": "table",
+      "path": "options.sortBy"
+    },
+    {
+      "panelType": "table-old",
+      "path": "columns"
+    },
+    {
+      "panelType": "table-old",
+      "path": "fontSize"
+    },
+    {
+      "panelType": "table-old",
+      "path": "scroll"
+    },
+    {
+      "panelType": "table-old",
+      "path": "showHeader"
+    },
+    {
+      "panelType": "table-old",
+      "path": "sort"
+    },
+    {
+      "panelType": "table-old",
+      "path": "styles"
+    },
+    {
+      "panelType": "table-old",
+      "path": "transform"
+    },
+    {
+      "panelType": "text",
+      "path": "editable"
+    },
+    {
+      "panelType": "text",
+      "path": "error"
+    },
+    {
+      "panelType": "text",
+      "path": "options.code.language"
+    },
+    {
+      "panelType": "text",
+      "path": "options.code.showLineNumbers"
+    },
+    {
+      "panelType": "text",
+      "path": "options.code.showMiniMap"
+    },
+    {
+      "panelType": "text",
+      "path": "options.content"
+    },
+    {
+      "panelType": "text",
+      "path": "options.mode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.color.fixedColor"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.color.mode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.color.seriesBy"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisBorderShow"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisCenteredZero"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisColorMode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisGridShow"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisLabel"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisPlacement"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisSoftMax"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.axisSoftMin"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.barAlignment"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.barWidthFactor"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.drawStyle"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.fillOpacity"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.gradientMode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.hideFrom.legend"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.hideFrom.tooltip"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.hideFrom.viz"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.insertNulls"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.lineInterpolation"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.lineStyle.fill"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.lineWidth"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.pointSize"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.scaleDistribution.type"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.showPoints"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.showValues"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.spanNulls"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.stacking.group"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.stacking.mode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.custom.thresholdsStyle.mode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.decimals"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.displayName"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.fieldMinMax"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.mappings"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.max"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.min"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.noValue"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.thresholds.mode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.thresholds.steps"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.unit"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.defaults.unitScale"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.color"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.custom.axisPlacement"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.custom.fillOpacity"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.custom.hideFrom"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.custom.lineStyle"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.displayName"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "fieldConfig.overrides.unit"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.calcs"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.displayMode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.placement"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.showLegend"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.sortBy"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.sortDesc"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.legend.width"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.tooltip.hideZeros"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.tooltip.mode"
+    },
+    {
+      "panelType": "timeseries",
+      "path": "options.tooltip.sort"
+    },
+    {
+      "panelType": "*",
+      "path": "collapsed"
+    },
+    {
+      "panelType": "*",
+      "path": "description"
+    },
+    {
+      "panelType": "*",
+      "path": "hideTimeOverride"
+    },
+    {
+      "panelType": "*",
+      "path": "interval"
+    },
+    {
+      "panelType": "*",
+      "path": "links"
+    },
+    {
+      "panelType": "*",
+      "path": "maxDataPoints"
+    },
+    {
+      "panelType": "*",
+      "path": "timeFrom"
+    },
+    {
+      "panelType": "*",
+      "path": "timeShift"
+    },
+    {
+      "panelType": "*",
+      "path": "transformations"
+    }
+  ],
+  "note": "panelType '*' entries are panel-level keys that apply to every panel type; getGrafanaPanelOptionMapping(type, path) must resolve them for any type."
+}

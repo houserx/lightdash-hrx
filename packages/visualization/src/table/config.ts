@@ -11,6 +11,7 @@ import {
     type ColumnProperties,
     type ConditionalFormattingConfig,
     type ConditionalFormattingMinMaxMap,
+    type GrafanaValueMapping,
     type ItemsMap,
     type MetricQuery,
     type ParametersValuesMap,
@@ -90,6 +91,15 @@ export const getTableColumnWidth = (
     columnProperties: Record<string, ColumnProperties>,
     fieldId: string,
 ): number | undefined => columnProperties[fieldId]?.width;
+
+/** The column's Grafana value mappings, when it has any. */
+export const getTableColumnValueMappings = (
+    columnProperties: Record<string, ColumnProperties>,
+    fieldId: string,
+): GrafanaValueMapping[] | undefined => {
+    const mappings = columnProperties[fieldId]?.valueMappings;
+    return mappings && mappings.length > 0 ? mappings : undefined;
+};
 
 export const isPivotTableEnabled = (
     resultsData: VisualizationResults | undefined,

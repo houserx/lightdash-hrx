@@ -24,6 +24,7 @@ import { useToggle } from 'react-use';
 import useEmbed from '../../../../ee/providers/Embed/useEmbed';
 import {
     selectCartesianEchartsConfig,
+    selectCartesianEditor,
     selectCartesianSeries,
     useVisualizationSelector,
     type VisualizationStoreState,
@@ -32,6 +33,7 @@ import { useCartesianEditorActions } from '../../../../hooks/cartesianChartConfi
 import { useProjectUuid } from '../../../../hooks/useProjectUuid';
 import UnitInput from '../../../common/UnitInput';
 import { Config } from '../../common/Config';
+import { ThresholdsConfig } from '../../ThresholdsConfig/ThresholdsConfig';
 import { UnitInputsGrid } from '../common/UnitInputsGrid';
 import classes from './Legend.module.css';
 import { ReferenceLines } from './ReferenceLines';
@@ -153,6 +155,8 @@ const selectLegend = (state: VisualizationStoreState) =>
     selectCartesianEchartsConfig(state)?.legend;
 const selectGrid = (state: VisualizationStoreState) =>
     selectCartesianEchartsConfig(state)?.grid;
+const selectThresholds = (state: VisualizationStoreState) =>
+    selectCartesianEditor(state).thresholds;
 
 export const Legend: FC<Props> = ({ items }) => {
     const projectUuid = useProjectUuid();
@@ -162,7 +166,8 @@ export const Legend: FC<Props> = ({ items }) => {
     const series = useVisualizationSelector(selectCartesianSeries);
     const legend = useVisualizationSelector(selectLegend);
     const grid = useVisualizationSelector(selectGrid);
-    const { setLegend, mergeGrid } = useCartesianEditorActions();
+    const thresholds = useVisualizationSelector(selectThresholds);
+    const { setLegend, mergeGrid, setThresholds } = useCartesianEditorActions();
 
     // Extract fields used in autocomplete for tooltip
     // for non pivot charts, we can use all items in results
@@ -345,6 +350,10 @@ export const Legend: FC<Props> = ({ items }) => {
             {projectUuid && (
                 <ReferenceLines items={items} projectUuid={projectUuid} />
             )}
+            <ThresholdsConfig
+                thresholds={thresholds}
+                onChange={setThresholds}
+            />
             <Config>
                 <Config.Section>
                     <Config.Heading>Tooltips</Config.Heading>

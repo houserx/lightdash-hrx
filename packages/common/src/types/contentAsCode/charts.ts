@@ -12,11 +12,13 @@ import type {
     DataAppVizChart,
     FunnelChartConfig,
     GaugeChartConfig,
+    LogStreamChartConfig,
     MapChartConfig,
     PieChartConfig,
     SankeyChartConfig,
     SavedChart,
     TableChartConfig,
+    TraceWaterfallChartConfig,
     TreemapChartConfig,
 } from '../savedCharts';
 import type { SqlChart } from '../sqlRunner';
@@ -68,6 +70,8 @@ export type ChartAsCodeConfig<CustomChartConfig = DataAppVizChartConfigAsCode> =
     | GaugeChartConfig
     | MapChartConfig
     | SankeyChartConfig
+    | LogStreamChartConfig
+    | TraceWaterfallChartConfig
     | CustomChartConfig;
 
 // We want to only use properties that can be modified by the user

@@ -428,6 +428,10 @@
                 "rowLimit": {
                     "$ref": "#/$defs/RowLimit",
                     "description": "Limit displayed rows to first/last N"
+                },
+                "thresholds": {
+                    "$ref": "#/$defs/CartesianThresholds",
+                    "description": "Grafana-style thresholds drawn as lines and/or shaded bands"
                 }
             },
             "required": ["eChartsConfig", "layout"],
@@ -567,6 +571,34 @@
         },
         "CartesianSeriesType.LINE": {
             "enum": ["line"],
+            "type": "string"
+        },
+        "CartesianThresholds": {
+            "description": "Grafana-style thresholds on a cartesian chart (Grafana's time series\n`thresholdsStyle` plus its threshold steps). `mode` defaults to\n`absolute`.",
+            "properties": {
+                "mode": {
+                    "description": "Step values are absolute or percentages of the y range",
+                    "enum": ["absolute", "percentage"],
+                    "type": "string"
+                },
+                "steps": {
+                    "description": "Threshold steps; the base step has `value: null`",
+                    "items": {
+                        "$ref": "#/$defs/GrafanaThresholdStep"
+                    },
+                    "type": "array"
+                },
+                "style": {
+                    "$ref": "#/$defs/CartesianThresholdsStyle",
+                    "description": "How the thresholds are drawn"
+                }
+            },
+            "required": ["style", "steps"],
+            "type": "object"
+        },
+        "CartesianThresholdsStyle": {
+            "description": "How a cartesian chart draws its thresholds: a solid or dashed horizontal\nline at each step, shaded bands between steps, or lines plus bands.",
+            "enum": ["line", "dashed", "area", "line+area", "dashed+area"],
             "type": "string"
         },
         "ChartAsCode": {
@@ -716,6 +748,34 @@
                                 },
                                 "type": {
                                     "const": "sankey",
+                                    "description": "Type of chart visualization"
+                                }
+                            },
+                            "required": ["type"],
+                            "type": "object"
+                        },
+                        {
+                            "properties": {
+                                "config": {
+                                    "$ref": "#/$defs/LogStreamChart",
+                                    "description": "Chart-type-specific configuration"
+                                },
+                                "type": {
+                                    "const": "log_stream",
+                                    "description": "Type of chart visualization"
+                                }
+                            },
+                            "required": ["type"],
+                            "type": "object"
+                        },
+                        {
+                            "properties": {
+                                "config": {
+                                    "$ref": "#/$defs/TraceWaterfallChart",
+                                    "description": "Chart-type-specific configuration"
+                                },
+                                "type": {
+                                    "const": "trace_waterfall",
                                     "description": "Type of chart visualization"
                                 }
                             },
@@ -925,6 +985,12 @@
                     "$ref": "#/$defs/SankeyChartConfig"
                 },
                 {
+                    "$ref": "#/$defs/LogStreamChartConfig"
+                },
+                {
+                    "$ref": "#/$defs/TraceWaterfallChartConfig"
+                },
+                {
                     "$ref": "#/$defs/DataAppVizChartConfigAsCode"
                 }
             ],
@@ -947,7 +1013,9 @@
                 "gauge",
                 "map",
                 "sankey",
-                "data_app_viz"
+                "data_app_viz",
+                "log_stream",
+                "trace_waterfall"
             ],
             "type": "string"
         },
@@ -995,6 +1063,10 @@
             "enum": ["gauge"],
             "type": "string"
         },
+        "ChartType.LOG_STREAM": {
+            "enum": ["log_stream"],
+            "type": "string"
+        },
         "ChartType.MAP": {
             "enum": ["map"],
             "type": "string"
@@ -1009,6 +1081,10 @@
         },
         "ChartType.TABLE": {
             "enum": ["table"],
+            "type": "string"
+        },
+        "ChartType.TRACE_WATERFALL": {
+            "enum": ["trace_waterfall"],
             "type": "string"
         },
         "ChartType.TREEMAP": {
@@ -1037,6 +1113,13 @@
                 "negativeColor": {
                     "description": "Color for negative bars in diverging bar display (hex code). Falls back to `color` when unset.",
                     "type": "string"
+                },
+                "valueMappings": {
+                    "description": "Grafana value mappings that replace the cell's text and colour",
+                    "items": {
+                        "$ref": "#/$defs/GrafanaValueMapping"
+                    },
+                    "type": "array"
                 },
                 "visible": {
                     "description": "Whether the column is visible",
@@ -2484,6 +2567,145 @@
             "required": ["color", "max", "min"],
             "type": "object"
         },
+        "GrafanaRangeToTextMapping": {
+            "properties": {
+                "options": {
+                    "properties": {
+                        "from": {
+                            "description": "Inclusive lower bound; null or missing means open.",
+                            "format": "double",
+                            "type": ["number", "null"]
+                        },
+                        "result": {
+                            "$ref": "#/$defs/GrafanaValueMappingResult"
+                        },
+                        "to": {
+                            "description": "Inclusive upper bound; null or missing means open.",
+                            "format": "double",
+                            "type": ["number", "null"]
+                        }
+                    },
+                    "required": ["result"],
+                    "type": "object"
+                },
+                "type": {
+                    "enum": ["range"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
+        "GrafanaRegexToTextMapping": {
+            "properties": {
+                "options": {
+                    "properties": {
+                        "pattern": {
+                            "type": "string"
+                        },
+                        "result": {
+                            "$ref": "#/$defs/GrafanaValueMappingResult"
+                        }
+                    },
+                    "required": ["result", "pattern"],
+                    "type": "object"
+                },
+                "type": {
+                    "enum": ["regex"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
+        "GrafanaSpecialValueMapping": {
+            "properties": {
+                "options": {
+                    "properties": {
+                        "match": {
+                            "$ref": "#/$defs/GrafanaSpecialValueMatch"
+                        },
+                        "result": {
+                            "$ref": "#/$defs/GrafanaValueMappingResult"
+                        }
+                    },
+                    "required": ["result", "match"],
+                    "type": "object"
+                },
+                "type": {
+                    "enum": ["special"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
+        "GrafanaSpecialValueMatch": {
+            "enum": ["null", "nan", "null+nan", "true", "false", "empty"],
+            "type": "string"
+        },
+        "GrafanaThresholdStep": {
+            "description": "Grafana threshold steps, as stored in a panel's\n`fieldConfig.defaults.thresholds`. The first step is the base step and\nhas `value: null` (Grafana's -Infinity); each later step starts at its\nvalue. In `percentage` mode step values are percentages of the min..max\nrange instead of absolute values.",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "value": {
+                    "format": "double",
+                    "type": ["number", "null"]
+                }
+            },
+            "required": ["color", "value"],
+            "type": "object"
+        },
+        "GrafanaValueMapping": {
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/GrafanaValueToTextMapping"
+                },
+                {
+                    "$ref": "#/$defs/GrafanaRangeToTextMapping"
+                },
+                {
+                    "$ref": "#/$defs/GrafanaRegexToTextMapping"
+                },
+                {
+                    "$ref": "#/$defs/GrafanaSpecialValueMapping"
+                }
+            ]
+        },
+        "GrafanaValueMappingResult": {
+            "description": "Grafana value mappings, as stored in a panel's\n`fieldConfig.defaults.mappings`. Each result carries an `index`: the row\norder in Grafana's mapping editor, which is the order mappings are tried.",
+            "properties": {
+                "color": {
+                    "type": "string"
+                },
+                "icon": {
+                    "type": "string"
+                },
+                "index": {
+                    "format": "double",
+                    "type": "number"
+                },
+                "text": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "GrafanaValueToTextMapping": {
+            "properties": {
+                "options": {
+                    "$ref": "#/$defs/Record_string.GrafanaValueMappingResult_"
+                },
+                "type": {
+                    "enum": ["value"],
+                    "type": "string"
+                }
+            },
+            "required": ["options", "type"],
+            "type": "object"
+        },
         "GroupValueMatchType": {
             "enum": ["exact", "startsWith", "endsWith", "includes"],
             "type": "string"
@@ -2504,6 +2726,57 @@
             "description": "High-level legend placement preset. Set to 'outsideRight' or 'outsideLeft' to\nrender the legend beside the plot with reserved grid space. Undefined behaves\nlike 'custom' (no override of the existing legend position fields).",
             "enum": ["custom", "outsideRight", "outsideLeft"],
             "type": "string"
+        },
+        "LogStreamChart": {
+            "properties": {
+                "labelsFieldId": {
+                    "description": "Field id of the labels column (a JSON object of string values)",
+                    "type": "string"
+                },
+                "levelColors": {
+                    "$ref": "#/$defs/Partial_Record_LogLevel.string__",
+                    "description": "Colour overrides per log level, as CSS colours"
+                },
+                "levelFieldId": {
+                    "description": "Field id of the level column. Without one, the level comes from the labels",
+                    "type": "string"
+                },
+                "lineFieldId": {
+                    "description": "Field id of the log line column",
+                    "type": "string"
+                },
+                "newestFirst": {
+                    "description": "Show the newest line first. Defaults to true",
+                    "type": "boolean"
+                },
+                "showLabels": {
+                    "description": "Show each line's labels. Defaults to false",
+                    "type": "boolean"
+                },
+                "timestampFieldId": {
+                    "description": "Field id of the timestamp column",
+                    "type": "string"
+                },
+                "wrapLines": {
+                    "description": "Wrap long lines instead of truncating them. Defaults to false",
+                    "type": "boolean"
+                }
+            },
+            "type": "object"
+        },
+        "LogStreamChartConfig": {
+            "properties": {
+                "config": {
+                    "$ref": "#/$defs/LogStreamChart",
+                    "description": "Chart-type-specific configuration"
+                },
+                "type": {
+                    "$ref": "#/$defs/ChartType.LOG_STREAM",
+                    "description": "Type of chart visualization"
+                }
+            },
+            "required": ["type"],
+            "type": "object"
         },
         "MapChart": {
             "properties": {
@@ -3294,6 +3567,33 @@
             },
             "type": "object"
         },
+        "Partial_Record_LogLevel.string__": {
+            "description": "Make all properties in T optional",
+            "properties": {
+                "critical": {
+                    "type": "string"
+                },
+                "debug": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "info": {
+                    "type": "string"
+                },
+                "trace": {
+                    "type": "string"
+                },
+                "unknown": {
+                    "type": "string"
+                },
+                "warning": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
         "Pick_CompiledDimension.label-or-name-or-table_": {
             "description": "From T, pick a set of properties whose keys are in the union K",
             "properties": {
@@ -3722,6 +4022,14 @@
         "Record_string.FieldId_": {
             "additionalProperties": {
                 "type": "string"
+            },
+            "description": "Construct a type with a set of properties K of type T",
+            "properties": {},
+            "type": "object"
+        },
+        "Record_string.GrafanaValueMappingResult_": {
+            "additionalProperties": {
+                "$ref": "#/$defs/GrafanaValueMappingResult"
             },
             "description": "Construct a type with a set of properties K of type T",
             "properties": {},
@@ -4761,6 +5069,62 @@
                 "value_descending"
             ],
             "type": "string"
+        },
+        "TraceWaterfallChart": {
+            "description": "Trace waterfall chart (ENG-1799): a native chart type that shows the spans\nof a trace from a Telemetry Source, one row per span.",
+            "properties": {
+                "attributesFieldId": {
+                    "description": "Field id of the span attributes column (a JSON object)",
+                    "type": "string"
+                },
+                "durationMsFieldId": {
+                    "description": "Field id of the span duration column, in milliseconds",
+                    "type": "string"
+                },
+                "nameFieldId": {
+                    "description": "Field id of the span name column",
+                    "type": "string"
+                },
+                "parentSpanIdFieldId": {
+                    "description": "Field id of the parent span id column",
+                    "type": "string"
+                },
+                "serviceFieldId": {
+                    "description": "Field id of the service name column",
+                    "type": "string"
+                },
+                "spanIdFieldId": {
+                    "description": "Field id of the span id column",
+                    "type": "string"
+                },
+                "startFieldId": {
+                    "description": "Field id of the span start time column",
+                    "type": "string"
+                },
+                "statusFieldId": {
+                    "description": "Field id of the span status column",
+                    "type": "string"
+                },
+                "traceIdFieldId": {
+                    "description": "Field id of the trace id column",
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "TraceWaterfallChartConfig": {
+            "properties": {
+                "config": {
+                    "$ref": "#/$defs/TraceWaterfallChart",
+                    "description": "Chart-type-specific configuration"
+                },
+                "type": {
+                    "$ref": "#/$defs/ChartType.TRACE_WATERFALL",
+                    "description": "Type of chart visualization"
+                }
+            },
+            "required": ["type"],
+            "type": "object"
         },
         "TreemapChart": {
             "properties": {

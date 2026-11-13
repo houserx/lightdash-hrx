@@ -73,6 +73,7 @@ import VisualizationTableConfig from './VisualizationConfigTable';
 import VisualizationTreemapConfig from './VisualizationConfigTreemap';
 import VisualizationCustomConfig from './VisualizationCustomConfig';
 import VisualizationDataAppVizConfig from './VisualizationDataAppVizConfig';
+import VisualizationTelemetryConfig from './VisualizationTelemetryConfig';
 
 export type VisualizationProviderProps = {
     minimal?: boolean;
@@ -168,6 +169,8 @@ const editedChartConfig = (
             };
         case ChartType.CUSTOM:
         case ChartType.DATA_APP_VIZ:
+        case ChartType.LOG_STREAM:
+        case ChartType.TRACE_WATERFALL:
             return null;
         default:
             return assertUnreachable(visualizationConfig, 'Unknown chart type');
@@ -653,6 +656,16 @@ const VisualizationProvider: FC<
                     >
                         {renderState}
                     </VisualizationDataAppVizConfig>
+                );
+            case ChartType.LOG_STREAM:
+            case ChartType.TRACE_WATERFALL:
+                return (
+                    <VisualizationTelemetryConfig
+                        chartConfig={chartConfig}
+                        onChartConfigChange={forwardChartConfig}
+                    >
+                        {renderState}
+                    </VisualizationTelemetryConfig>
                 );
             default:
                 return assertUnreachable(chartConfig, 'Unknown chart type');

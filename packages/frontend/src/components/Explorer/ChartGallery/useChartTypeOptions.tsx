@@ -18,9 +18,11 @@ import {
     IconFilter,
     IconGauge,
     IconGitMerge,
+    IconListDetails,
     IconMap,
     IconSquareNumber1,
     IconTable,
+    IconTimeline,
     type Icon as TablerIcon,
 } from '@tabler/icons-react';
 import { getChartTypeIcon } from '../../../features/chartTypes/utils/chartTypeIcons';
@@ -31,10 +33,12 @@ import {
     isDataAppVizVisualizationConfig,
     isFunnelVisualizationConfig,
     isGaugeVisualizationConfig,
+    isLogStreamVisualizationConfig,
     isMapVisualizationConfig,
     isPieVisualizationConfig,
     isSankeyVisualizationConfig,
     isTableVisualizationConfig,
+    isTraceWaterfallVisualizationConfig,
     isTreemapVisualizationConfig,
 } from '../../LightdashVisualization/types';
 import {
@@ -266,6 +270,22 @@ export const useChartTypeOptions = () => {
             rotatedIcon: false,
             selected: isBigNumberVisualizationConfig(visualizationConfig),
             select: () => resetCartesian(ChartType.BIG_NUMBER),
+        },
+        {
+            id: ChartKind.LOG_STREAM,
+            label: 'Log stream',
+            icon: IconListDetails,
+            rotatedIcon: false,
+            selected: isLogStreamVisualizationConfig(visualizationConfig),
+            select: () => resetCartesian(ChartType.LOG_STREAM),
+        },
+        {
+            id: ChartKind.TRACE_WATERFALL,
+            label: 'Trace waterfall',
+            icon: IconTimeline,
+            rotatedIcon: false,
+            selected: isTraceWaterfallVisualizationConfig(visualizationConfig),
+            select: () => resetCartesian(ChartType.TRACE_WATERFALL),
         },
     ];
 

@@ -104,6 +104,7 @@ export {
     getFieldsNeedingMinMax,
     getNumUnpivotedDimensions,
     getRowTotalIndexFieldIds,
+    getTableColumnValueMappings,
     getTableColumnWidth,
     getTableDimensions,
     getTableFieldLabelDefault,
@@ -119,7 +120,9 @@ export {
     shouldDisableSubtotals,
 } from './table/config';
 export {
+    applyTableValueMappings,
     buildTableColumns,
+    getTableCellValueMapping,
     getTableSubtotalCell,
     getUniqueColumnOrder,
     type TableColumnsInput,

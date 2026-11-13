@@ -14,6 +14,7 @@ import {
     type FieldId,
     type FunnelChartConfig,
     type GaugeChartConfig,
+    type LogStreamChartConfig,
     type Item,
     type ItemsMap,
     type MapChartConfig,
@@ -29,6 +30,7 @@ import {
     type TableCalculation,
     type TableCalculationMetadata,
     type TableChartConfig,
+    type TraceWaterfallChartConfig,
     type TimeZone,
     type TreemapChartConfig,
 } from '@lightdash/common';
@@ -114,6 +116,10 @@ export type ConfigCacheMap = {
     [ChartType.CUSTOM]: ChartConfigCache<CustomVisConfig['config']>;
     [ChartType.SANKEY]: ChartConfigCache<SankeyChartConfig['config']>;
     [ChartType.DATA_APP_VIZ]: ChartConfigCache<DataAppVizChartConfig['config']>;
+    [ChartType.LOG_STREAM]: ChartConfigCache<LogStreamChartConfig['config']>;
+    [ChartType.TRACE_WATERFALL]: ChartConfigCache<
+        TraceWaterfallChartConfig['config']
+    >;
 };
 
 export type Action =

@@ -3,7 +3,8 @@
 The headless Lightdash chart engine. It turns a saved chart's config and the
 results of its query into what a renderer needs: an ECharts option for bar,
 line, area, scatter, pie, funnel, treemap, gauge and sankey charts, a table
-model, a big number model, and the data for a custom (Vega) visualization.
+model, a big number model, a log stream model, and the data for a custom
+(Vega) visualization.
 
 No React, no Mantine, no DOM. The Lightdash frontend renders every chart
 through this package, so a headless caller (a data app, a server-side render, a
@@ -51,6 +52,8 @@ switch (rendered.kind) {
     case 'table':       rendered.model.columns; rendered.model.rows; break;
     case 'bigNumber':   rendered.model.value; rendered.model.comparison; break;
     case 'custom':      rendered.spec; rendered.data; break;
+    case 'logStream':   rendered.model.lines; break; // line, timestamp, level, color, labels
+    case 'traceWaterfall': rendered.model.traces; break; // spans in tree order: depth, offsetMs, durationMs, color
     case 'empty':       rendered.reason; break; // noRows, incompleteConfig, needsPivotDetails, needsPivotTable
     case 'unsupported': break; // maps and data-app visualizations
 }

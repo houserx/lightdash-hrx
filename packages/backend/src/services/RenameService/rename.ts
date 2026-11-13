@@ -513,6 +513,49 @@ export const renameChartConfigType = (
             };
         }
 
+        case ChartType.LOG_STREAM: {
+            if (!chartConfig.config) return chartConfig;
+            const { config } = chartConfig;
+            return {
+                ...chartConfig,
+                config: {
+                    ...config,
+                    lineFieldId: replaceOptionalId(config.lineFieldId),
+                    timestampFieldId: replaceOptionalId(
+                        config.timestampFieldId,
+                    ),
+                    levelFieldId: replaceOptionalId(config.levelFieldId),
+                    labelsFieldId: replaceOptionalId(config.labelsFieldId),
+                },
+            };
+        }
+
+        case ChartType.TRACE_WATERFALL: {
+            if (!chartConfig.config) return chartConfig;
+            const { config } = chartConfig;
+            return {
+                ...chartConfig,
+                config: {
+                    ...config,
+                    traceIdFieldId: replaceOptionalId(config.traceIdFieldId),
+                    spanIdFieldId: replaceOptionalId(config.spanIdFieldId),
+                    parentSpanIdFieldId: replaceOptionalId(
+                        config.parentSpanIdFieldId,
+                    ),
+                    serviceFieldId: replaceOptionalId(config.serviceFieldId),
+                    nameFieldId: replaceOptionalId(config.nameFieldId),
+                    startFieldId: replaceOptionalId(config.startFieldId),
+                    durationMsFieldId: replaceOptionalId(
+                        config.durationMsFieldId,
+                    ),
+                    statusFieldId: replaceOptionalId(config.statusFieldId),
+                    attributesFieldId: replaceOptionalId(
+                        config.attributesFieldId,
+                    ),
+                },
+            };
+        }
+
         case ChartType.DATA_APP_VIZ: {
             const dataAppVizConfig = chartConfig as DataAppVizChartConfig;
             if (!dataAppVizConfig.config) return dataAppVizConfig;

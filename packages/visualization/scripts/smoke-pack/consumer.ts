@@ -85,6 +85,10 @@ const describeRendered = (chart: RenderedChart): string => {
             return 'bigNumber';
         case 'custom':
             return 'custom';
+        case 'logStream':
+            return `logStream ${chart.model.lines.length} lines`;
+        case 'traceWaterfall':
+            return `traceWaterfall ${chart.model.traces.length} traces`;
         case 'unsupported':
         case 'empty':
             return chart.kind;

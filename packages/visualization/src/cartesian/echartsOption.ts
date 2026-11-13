@@ -114,6 +114,7 @@ import {
     getLegendLabelTooltipStyle,
     type LegendLabelTooltipStyle,
 } from './legendTooltip';
+import { applyThresholdAreas, applyThresholdLines } from './thresholds';
 import {
     detectTimeAxisMode,
     finalizeTimeAxisOptions,
@@ -4669,11 +4670,26 @@ export const buildCartesianEchartsOptionFromData = (
                   })
                 : { series: orderedSeries, rows: dataToRender, tooltip };
 
+        const thresholdInput = {
+            thresholds: validCartesianConfig?.thresholds,
+            rows: incompletePeriod.rows,
+            flipAxes,
+            isVisible: (serie: EChartsSeries) =>
+                isSeriesVisibleInLegend(serie, validCartesianConfigLegend),
+        };
+        const seriesWithThresholds = applyThresholdAreas({
+            ...thresholdInput,
+            series: applyThresholdLines({
+                ...thresholdInput,
+                series: incompletePeriod.series,
+            }),
+        });
+
         const baseOptions = {
             xAxis: resolvedLabels.xAxis,
             yAxis: resolvedLabels.yAxis,
             useUTC: true,
-            series: incompletePeriod.series,
+            series: seriesWithThresholds,
             animation,
             legend: legendConfigWithInstructionsTooltip,
             dataset: {

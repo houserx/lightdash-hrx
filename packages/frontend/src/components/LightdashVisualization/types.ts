@@ -5,8 +5,12 @@ import {
     type DataAppVizChartConfig,
     type Dimension,
     type ItemsMap,
+    type LogStreamChart,
+    type LogStreamChartConfig,
     type Metric,
     type TableCalculation,
+    type TraceWaterfallChart,
+    type TraceWaterfallChartConfig,
 } from '@lightdash/common';
 import { type JSX } from 'react';
 import type useCartesianChartConfig from '../../hooks/cartesianChartConfig/useCartesianChartConfig';
@@ -243,6 +247,56 @@ export type VisualizationConfigSankeyProps = Pick<
     'onChartConfigChange' | 'children'
 >;
 
+// Telemetry charts (log stream, trace waterfall): the saved config is the
+// whole state, so the adapter exposes the prop as it is and hands edits
+// straight to the owner.
+
+export type VisualizationConfigLogStream = {
+    chartType: ChartType.LOG_STREAM;
+    chartConfig: {
+        validConfig: LogStreamChart;
+        setConfig: (config: LogStreamChart) => void;
+    };
+};
+
+export type VisualizationConfigTraceWaterfall = {
+    chartType: ChartType.TRACE_WATERFALL;
+    chartConfig: {
+        validConfig: TraceWaterfallChart;
+        setConfig: (config: TraceWaterfallChart) => void;
+    };
+};
+
+export type VisualizationConfigTelemetry =
+    | VisualizationConfigLogStream
+    | VisualizationConfigTraceWaterfall;
+
+export const isLogStreamVisualizationConfig = (
+    visualizationConfig: VisualizationConfig | undefined,
+): visualizationConfig is VisualizationConfigLogStream =>
+    visualizationConfig?.chartType === ChartType.LOG_STREAM;
+
+export const isTraceWaterfallVisualizationConfig = (
+    visualizationConfig: VisualizationConfig | undefined,
+): visualizationConfig is VisualizationConfigTraceWaterfall =>
+    visualizationConfig?.chartType === ChartType.TRACE_WATERFALL;
+
+export const isTelemetryVisualizationConfig = (
+    visualizationConfig: VisualizationConfig | undefined,
+): visualizationConfig is VisualizationConfigTelemetry =>
+    visualizationConfig?.chartType === ChartType.LOG_STREAM ||
+    visualizationConfig?.chartType === ChartType.TRACE_WATERFALL;
+
+export type VisualizationTelemetryConfigProps = Pick<
+    VisualizationConfigCommon<VisualizationConfigTelemetry>,
+    'children'
+> & {
+    chartConfig: LogStreamChartConfig | TraceWaterfallChartConfig;
+    onChartConfigChange?: (
+        chartConfig: LogStreamChartConfig | TraceWaterfallChartConfig,
+    ) => void;
+};
+
 // Union of all visualization configs
 
 export type VisualizationConfig =
@@ -256,4 +310,6 @@ export type VisualizationConfig =
     | VisualizationConfigMap
     | VisualizationCustomConfigType
     | VisualizationConfigSankeyType
-    | VisualizationConfigDataAppViz;
+    | VisualizationConfigDataAppViz
+    | VisualizationConfigLogStream
+    | VisualizationConfigTraceWaterfall;

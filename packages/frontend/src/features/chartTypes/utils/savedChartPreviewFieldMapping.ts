@@ -123,6 +123,8 @@ const getSourceRoles = (chart: SavedChartBindingSource): Roles => {
             break;
         }
         case ChartType.CUSTOM:
+        case ChartType.LOG_STREAM:
+        case ChartType.TRACE_WATERFALL:
             break;
         default:
             return assertUnreachable(chartConfig, 'Unknown saved chart type');
